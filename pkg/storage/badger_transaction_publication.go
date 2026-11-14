@@ -238,6 +238,19 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		bufferedCommit = tx.bufferedForecastFitsLocked()
 	}
 
+	// Key admission (storeKeyLimitErrorLocked, commit_admission.go): the two
+	// routes below accept the commit before they write its keys, the write
+	// buffer's WAL by journaling the commit its flusher applies later and the
+	// prepared hand-off by journaling it before the commit's own batches, so a
+	// key the store cannot hold is refused here, while nothing of the commit
+	// has been journaled. An accepted application has no such decision left:
+	// its record is already journaled.
+	if !tx.acceptedApplication && (bufferedCommit || prepare != nil) {
+		if err := tx.storeKeyLimitErrorLocked(ctx); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
+
 	// A commit the buffer does not take writes Badger itself: it is ordered
 	// after the commits acknowledged before it (orderAfterBufferedCommits), and
 	// that ordering owns every rejection it can surface: its drain, the rebase

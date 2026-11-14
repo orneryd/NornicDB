@@ -13,7 +13,7 @@ import (
 // Commit admission (NOR-412). Where the journal writes records larger than
 // one frame, a commit's record can reach the journal although a later stage
 // of the same commit would refuse it for its size; under the standard policy
-// the frame refusal comes first. Two such limits are decided here, before
+// the frame refusal comes first. Three such limits are decided here, before
 // anything of the commit is journaled:
 //
 //   - the write buffer's 64 MiB limit chooses the route
@@ -21,7 +21,13 @@ import (
 //   - the store's value limit is decided where the frame refusal was: the
 //     journal asks before it writes a record that needs more than one frame
 //     (WAL.appendDecidingLargeRecord; storeValueLimitErrorLocked for a
-//     prepared commit, replayedBodyLimit for the engine's own writes).
+//     prepared commit, replayedBodyLimit for the engine's own writes);
+//   - the store's key limit is decided where the route is chosen: a commit the
+//     write buffer's WAL or the prepared hand-off accepts before writing the
+//     commit's keys is refused here when one of those keys is longer than the
+//     store takes (storeKeyLimitErrorLocked, in PublishCommit). That refusal
+//     is definite whatever size the commit's record has, so the journal is
+//     not asked for it.
 //
 // A record that fits one frame is appended without the journal's question.
 // Refusals this file does not decide can still follow the journal.
@@ -30,19 +36,20 @@ import (
 // journaled because the store cannot hold one of its values.
 var ErrStoreValueTooLarge = errors.New("storage: value exceeds the store's value limit")
 
-// storeValueTooLargeError is ErrStoreValueTooLarge with the value and the
-// limit. Its BoltErrorCode is the statement argument error
-// (Neo.ClientError.Statement.ArgumentError): the refusal is about the size
-// of one value, which a retry of the same commit does not change.
-type storeValueTooLargeError struct{ detail string }
-
-func (e *storeValueTooLargeError) Error() string {
-	return ErrStoreValueTooLarge.Error() + ": " + e.detail
+// storeLimitError is the common definite storage-capacity rejection. Its cause
+// distinguishes key and value limits; both are non-retryable argument errors.
+type storeLimitError struct {
+	cause  error
+	detail string
 }
 
-func (e *storeValueTooLargeError) Unwrap() error { return ErrStoreValueTooLarge }
+func (e *storeLimitError) Error() string {
+	return e.cause.Error() + ": " + e.detail
+}
 
-func (e *storeValueTooLargeError) BoltErrorCode() string {
+func (e *storeLimitError) Unwrap() error { return e.cause }
+
+func (e *storeLimitError) BoltErrorCode() string {
 	return "Neo.ClientError.Statement.ArgumentError"
 }
 
@@ -52,7 +59,7 @@ func storeValueFits(limit int64, size int, what string, args ...any) error {
 	if int64(size) <= limit {
 		return nil
 	}
-	return &storeValueTooLargeError{detail: fmt.Sprintf("%s is %d bytes, more than the %d bytes this store holds in one value", fmt.Sprintf(what, args...), size, limit)}
+	return &storeLimitError{cause: ErrStoreValueTooLarge, detail: fmt.Sprintf("%s is %d bytes, more than the %d bytes this store holds in one value", fmt.Sprintf(what, args...), size, limit)}
 }
 
 // journalsLargeRecords reports whether b's commits are journaled by a WAL that
@@ -227,4 +234,173 @@ func (cw *commitWriter) replayedBodyLimit() error {
 func (tx *BadgerTransaction) bufferedForecastFitsLocked() bool {
 	forecast := estimateBufferedPayloadBytes(tx.namespace, tx.ID, tx.physicalOperationsLocked(), tx.pendingWrites, tx.pendingDeletes, nil, propKeyTxnDrain{}, 0, 0, 0)
 	return forecast <= maxBufferedWALPayloadBytes
+}
+
+// The store's key limit (B03/report6). Badger refuses a key longer than 65000
+// bytes (Txn.modify, maxKeySize; Badger does not export the rule). A commit's
+// keys reach Badger at different points of its route: the write buffer's WAL
+// and the prepared hand-off both accept the commit before any of its keys is
+// written, and the write-behind flusher, the commit's own batches or the
+// dictionary's token persistence write them afterwards. A key over the limit is
+// then refused only after the commit was accepted, which leaves an accepted
+// mutation the store can never apply; for the write buffer, a generation that
+// fails on every cycle. storeKeyLimitErrorLocked decides the limit where the
+// route is chosen, while nothing of the commit is journaled.
+//
+// The staged keys a commit writes are its own; its other keys are derived from
+// the names it writes (the derived label, edge-type and positional counts, and
+// the property-key dictionary), so they are measured with the builders that
+// write them.
+
+// ErrStoreKeyTooLong reports a commit refused before anything of it was
+// journaled because the store cannot hold one of its keys.
+var ErrStoreKeyTooLong = errors.New("storage: key exceeds the store's key limit")
+
+// storeKeyLimit is the longest key the store takes: Badger's own rule
+// (Txn.modify), 65000 bytes, the length a table's header can address.
+const storeKeyLimit = 65000
+
+// storeKeyFits returns nil when the store takes a key of size bytes, and
+// otherwise the refusal naming what the key is and the store's limit.
+func storeKeyFits(size int, what string, args ...any) error {
+	if size <= storeKeyLimit {
+		return nil
+	}
+	return &storeLimitError{cause: ErrStoreKeyTooLong, detail: fmt.Sprintf("%s is %d bytes, more than the %d bytes this store holds in one key", fmt.Sprintf(what, args...), size, storeKeyLimit)}
+}
+
+// refusalNameLimit is how much of a name a refusal repeats. A refused name can
+// be as long as the limit it exceeded.
+const refusalNameLimit = 64
+
+// refusalName shortens a name for a refusal.
+func refusalName(name string) string {
+	if len(name) <= refusalNameLimit {
+		return name
+	}
+	return name[:refusalNameLimit] + "..."
+}
+
+// pendingKeyName names a staged key in a refusal: the node, relationship,
+// label or relationship type whose key it is, and otherwise the key's leading
+// bytes. stagedKeyName names the same facts for a value refusal; a key refusal
+// is about the key, not about the value the commit stores under it.
+func pendingKeyName(key string) string {
+	raw := []byte(key)
+	switch {
+	case len(raw) > 1 && raw[0] == prefixNode:
+		return fmt.Sprintf("the key of node %q", refusalName(string(raw[1:])))
+	case len(raw) > 1 && raw[0] == prefixEdge:
+		return fmt.Sprintf("the key of relationship %q", refusalName(string(raw[1:])))
+	case len(raw) > 1 && raw[0] == prefixIDDictNodeForward:
+		return fmt.Sprintf("the ID dictionary's forward key of node %q", refusalName(string(raw[1:])))
+	case len(raw) > 1 && raw[0] == prefixIDDictEdgeForward:
+		return fmt.Sprintf("the ID dictionary's forward key of relationship %q", refusalName(string(raw[1:])))
+	case len(raw) > 10 && raw[0] == prefixLabelIndex && raw[len(raw)-9] == 0:
+		return fmt.Sprintf("the label index key of label %q", refusalName(string(raw[1:len(raw)-9])))
+	case len(raw) > 10 && raw[0] == prefixEdgeTypeIndex && raw[len(raw)-9] == 0:
+		return fmt.Sprintf("the edge-type index key of relationship type %q", refusalName(string(raw[1:len(raw)-9])))
+	case len(raw) > 26 && raw[0] == prefixEdgeBetweenIndex && raw[len(raw)-9] == 0:
+		return fmt.Sprintf("the relationship lookup key of relationship type %q", refusalName(string(raw[17:len(raw)-9])))
+	case len(raw) > 17 && raw[0] == prefixEdgeBetweenHead:
+		return fmt.Sprintf("the relationship lookup key of relationship type %q", refusalName(string(raw[17:])))
+	}
+	return fmt.Sprintf("the key %x", raw[:min(len(raw), 48)])
+}
+
+// storeKeyLimitErrorLocked decides, before a route that accepts the commit
+// ahead of its keys accepts it, whether every key the commit gives the store is
+// within the store's key limit:
+//
+//   - the staged writes (pendingWrites), by their length: the node and
+//     relationship bodies, the label and edge-type index entries, the
+//     relationship lookup entries, the embedding chunks and the temporal
+//     history entries. The ID dictionary's forward key of an entity is the
+//     length of that entity's body key, so it is within this too;
+//   - the derived count keys, by the canonical builder of each delta the
+//     commit appends: countDeltaKey for a label and for an edge type, and
+//     edgeTypeLabelCountKey for a positional (label, type) count. A delta
+//     key's suffix is one width for every delta, so a zero suffix stands in
+//     for the commit's;
+//   - the property-key dictionary's forward key (propKeyForwardKey) of every
+//     property name the commit's writes put in a namespace. A name the
+//     dictionary already persists has a key of the same length, which the
+//     store already holds, so measuring it refuses nothing that could be
+//     written.
+//
+// The commit's other keys are short: the ID dictionary's reverse keys, the MVCC
+// keys and the buffered commit marker are built from numeric IDs. The caller
+// holds tx.mu, before the transaction is parked at its hand-off, so this
+// measures the state its commit will write.
+func (tx *BadgerTransaction) storeKeyLimitErrorLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for key := range tx.pendingWrites {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(key) > storeKeyLimit {
+			return storeKeyFits(len(key), "%s", pendingKeyName(key))
+		}
+	}
+	for key := range tx.pendingLabelCountDeltas {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if size := countDeltaKeySize(key.namespace, key.label); size > storeKeyLimit {
+			return storeKeyFits(size, "the label count key of label %q", refusalName(key.label))
+		}
+	}
+	for key := range tx.pendingEdgeTypeCountDeltas {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if size := countDeltaKeySize(key.namespace, key.edgeType); size > storeKeyLimit {
+			return storeKeyFits(size, "the edge-type count key of relationship type %q", refusalName(key.edgeType))
+		}
+	}
+	for key := range tx.pendingEdgeTypeLabelCountDeltas {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if size := edgeTypeLabelCountKeySize(key.namespace, key.label, key.edgeType); size > storeKeyLimit {
+			return storeKeyFits(size, "the (label, type) count key of label %q and relationship type %q", refusalName(key.label), refusalName(key.edgeType))
+		}
+	}
+	return tx.propertyKeyLimitErrorLocked(ctx)
+}
+
+// propertyKeyLimitErrorLocked decides the property-key dictionary's forward
+// keys of the property names the commit's writes encode. The encoder allocates
+// a token for every name in a body's properties, whatever the name's value
+// (encodeTokenizedProperties), in the namespace of the entity's own ID.
+func (tx *BadgerTransaction) propertyKeyLimitErrorLocked(ctx context.Context) error {
+	measure := func(namespace string, properties map[string]any) error {
+		for name := range properties {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if size := propKeyForwardKeySize(namespace, name); size > storeKeyLimit {
+				return storeKeyFits(size, "the property-key dictionary's forward key of property %q in namespace %q", refusalName(name), namespace)
+			}
+		}
+		return nil
+	}
+	for _, operation := range tx.physicalOperationsLocked() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if operation.Node != nil {
+			if err := measure(namespaceForNodeID(operation.Node.ID), operation.Node.Properties); err != nil {
+				return err
+			}
+		}
+		if operation.Edge != nil {
+			if err := measure(namespaceForEdgeID(operation.Edge.ID), operation.Edge.Properties); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -31,10 +31,13 @@ var errMalformedDerivedCount = errors.New("derived count value malformed")
 
 const countDeltaFoldThreshold = 64
 
-// countDeltaKey builds the derived-count delta key for one namespace and
-// name (a label or an edge type).
+// countDeltaKeySize includes the two prefix bytes, separators and version suffix.
+func countDeltaKeySize(namespace, name string) int {
+	return 12 + len(namespace) + len(name)
+}
+
 func countDeltaKey(kind byte, namespace, name string, suffix uint64) []byte {
-	key := make([]byte, 0, util.SafePreallocSum(5, len(namespace), len(name)))
+	key := make([]byte, 0, util.SafePreallocCap(countDeltaKeySize(namespace, name)))
 	key = append(key, prefixMVCCMeta, kind)
 	key = append(key, namespace...)
 	key = append(key, 0)
