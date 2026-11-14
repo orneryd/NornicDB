@@ -105,7 +105,8 @@ func TestCachedStartupServesEveryStoredRelationshipVector(t *testing.T) {
 // The cached startup's relationship stream is the same owner the other
 // baselines use, so a stored relationship its index memory budget refuses is
 // still the build's failure: readiness is not published over the relationships
-// the stream admitted, and every schema-bound read falls back to storage.
+// the stream admitted. Scalar reads use storage; the index procedure reports
+// FAILED rather than serving that incomplete population.
 func TestCachedStartupRelationshipVectorBudgetRefusalFailsBuild(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -134,6 +135,10 @@ func TestCachedStartupRelationshipVectorBudgetRefusalFailsBuild(t *testing.T) {
 			want, err := fallback.Execute(ctx, query, nil)
 			require.NoError(t, err)
 			require.Len(t, want.Rows, 2)
+			if startsWithKeywordFold(query, "CALL") {
+				requireRelationshipIndexBudgetFailure(t, ctx, reader, query)
+				return
+			}
 			got, err := reader.Execute(ctx, query, nil)
 			require.NoError(t, err)
 			require.Equal(t, incarnationScores(t, want.Rows), incarnationScores(t, got.Rows),

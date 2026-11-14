@@ -1712,8 +1712,8 @@ func TestNOR404VectorIndexLifecycle(t *testing.T) {
 
 // Population records end with their indexes (round 9 of #1753): vector
 // indexes of 128 distinct names created and dropped leave none, the drop of a
-// FAILED index takes its record with it, and so does a drop and creation of
-// the name in one transaction.
+// FAILED index takes its record with it, and the committed recreation of a
+// dropped name keeps its own population's record.
 func TestNOR404PopulationRecordsEndWithTheirIndex(t *testing.T) {
 	ctx := context.Background()
 	store := newTestBadgerNamespacedStore(t)
@@ -1756,7 +1756,8 @@ func TestNOR404PopulationRecordsEndWithTheirIndex(t *testing.T) {
 	require.NoError(t, run("COMMIT"))
 	state, _ := svc.VectorIndexState("docs")
 	require.Equal(t, search.VectorIndexOnline, state)
-	require.Zero(t, records(), "a drop and creation in one transaction leaves no record")
+	require.Equal(t, 1, records(), "the created index keeps the record of the population that served it")
+	require.NotNil(t, svc.VectorIndexPopulationOf("docs"), "the dropped index's record is not restored")
 }
 
 // Review round 10 of #1753 (reviewer probe): an index created and dropped in

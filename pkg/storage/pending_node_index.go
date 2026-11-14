@@ -297,8 +297,9 @@ type pendingWriteView struct {
 }
 
 // keep reports whether an ID from the engine's index is current.
+// Candidate membership can be empty while the owner still holds deletions.
 func (v pendingWriteView) keep(id NodeID) bool {
-	return v.index == nil || !v.owner.nodeSupersededLocked(id)
+	return v.owner == nil || !v.owner.nodeSupersededLocked(id)
 }
 
 // inNamespace reports whether a pending node belongs to the view's

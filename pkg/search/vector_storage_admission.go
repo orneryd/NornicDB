@@ -61,7 +61,10 @@ func (s *Service) vectorSourcePolicy() string {
 	// Temporal constraints already decline static source certification below.
 	// Without one, mere exposure of that optional reader capability changes no
 	// selected row and cannot invalidate a forwarding reader's saved source.
-	return fmt.Sprintf("%s;embedding-space-configured=%t;embedding-space=%q",
+	// The prior producer could certify stale live vectors after rejecting a
+	// checkpoint. Its certificates cannot establish this policy's projection,
+	// even when their source stamp and vector digest are internally valid.
+	return fmt.Sprintf("pinned-source-v2;%s;embedding-space-configured=%t;embedding-space=%q",
 		s.composeVectorBuildSettings(), configured, space)
 }
 
