@@ -37,7 +37,7 @@ func validateStaticPropertySubscripts(ctx context.Context, text string, scope st
 		receiver := strings.TrimSpace(text[start:index])
 		// A bracket after a keyword (RETURN [..], x IN [..]) opens a list,
 		// not a subscript; true, false and null are values.
-		if !expressionTextAccepted(receiver, expressionTextOperand) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
+		if !expressionTextAccepted(ctx, receiver, expressionTextOperand) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
 			continue
 		}
 		if _, err := checker.checkPostfix(ctx, receiver, text[index+1:end], true); err != nil {
@@ -74,7 +74,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(ctx context.Context, express
 	baseExpression := strings.TrimSpace(expression[receiverStart:open])
 	// The trailing bracket must be a postfix access, not a list following
 	// an operator or clause keyword. Validate syntax before evaluating it.
-	if !expressionTextAccepted(baseExpression, expressionTextOperand) || (isCypherKeyword(baseExpression) && !isLiteralKeyword(baseExpression)) {
+	if !expressionTextAccepted(ctx, baseExpression, expressionTextOperand) || (isCypherKeyword(baseExpression) && !isLiteralKeyword(baseExpression)) {
 		return nil
 	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])

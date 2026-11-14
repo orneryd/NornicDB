@@ -413,6 +413,14 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // error in it. Its result is proven or unknown (gateProven): a type only a
 // verified rule produced can reach a consumer.
 func (checker staticOperatorChecker) check(ctx context.Context, expression string) (staticOperand, error) {
+	// Recognising one operand's form can scan its whole text several times, so
+	// a clause's operator check re-enters here once per operand: a canceled
+	// statement stops analysing at its next operand instead of finishing the
+	// clause first. The cancellation is returned as it is and never cached, so
+	// a canceled check publishes no typing verdict.
+	if err := ctx.Err(); err != nil {
+		return staticOperand{}, err
+	}
 	if checker.checked == nil {
 		operand, err := checker.derive(ctx, expression)
 		return gateProven(operand), err
@@ -452,7 +460,7 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	}
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
-	if !expressionTextAccepted(checker.maskMapProjections(expression), expressionTextOperator) {
+	if !expressionTextAccepted(ctx, checker.maskMapProjections(expression), expressionTextOperator) {
 		// A function call or subquery expression over a pattern still has
 		// its result type (size([(n)-->() | 1]) is an Integer).
 		return staticPatternExpressionType(expression), nil
@@ -551,7 +559,7 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 		// boundary, then derive operands from their original source.
 		position := len(left) + strings.IndexByte(scan[len(left):], operator)
 		left, right = strings.TrimSpace(expression[:position]), strings.TrimSpace(expression[position+1:])
-		if !staticArithmeticOperandText(left) || !staticArithmeticOperandText(right) {
+		if !staticArithmeticOperandText(ctx, left) || !staticArithmeticOperandText(ctx, right) {
 			return staticOperand{}, nil
 		}
 		leftType, err := checker.check(ctx, left)
@@ -924,13 +932,13 @@ func (checker staticOperatorChecker) checkPostfix(ctx context.Context, receiverT
 // arithmetic (expressionTextOperand policy), a subscript or slice of one
 // ([1, 2.5][0] + 'a' is a String), a whole CASE or a COUNT { } / COLLECT { } /
 // EXISTS { } expression: an operator split at a pattern's arrow is none.
-func staticArithmeticOperandText(text string) bool {
+func staticArithmeticOperandText(ctx context.Context, text string) bool {
 	text = strings.TrimSpace(text)
-	if expressionTextAccepted(text, expressionTextOperand) {
+	if expressionTextAccepted(ctx, text, expressionTextOperand) {
 		return true
 	}
 	if receiver, _, _, postfix := staticPostfixSplit(text); postfix {
-		return staticArithmeticOperandText(receiver)
+		return staticArithmeticOperandText(ctx, receiver)
 	}
 	if _, subquery := staticSubqueryExpressionOperand(text); subquery {
 		return true

@@ -93,6 +93,13 @@ func rowConditionHolds(condition interface{}, evaluated bool, err error) (bool, 
 func rowReduceLoop(ctx context.Context, form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error), term func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	bind := func(evaluate func() (interface{}, bool, error)) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
+			// A reduce over a long list evaluates its step once per element, and
+			// an element's evaluation is short: observe the caller's cancellation
+			// here so a canceled statement stops folding the list at the element
+			// it is on instead of after the last one.
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			scope[form.accumulator], scope[form.variable] = accumulator, item
 			value, resolved, err := evaluate()
 			if err == nil && !resolved {

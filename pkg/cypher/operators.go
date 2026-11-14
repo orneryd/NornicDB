@@ -619,9 +619,17 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
 func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	// A chain's operands re-enter this evaluator once per operator, and
+	// recognising one operand's form scans its text: a canceled statement stops
+	// here, in the statement's existing expression failure slot, instead of
+	// finishing the chain first.
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, true
+	}
 	// A relationship pattern or a map projection has - and * that aren't
 	// arithmetic.
-	if !expressionTextAccepted(expr, expressionTextOperator) {
+	if !expressionTextAccepted(ctx, expr, expressionTextOperator) {
 		return nil, false
 	}
 	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {

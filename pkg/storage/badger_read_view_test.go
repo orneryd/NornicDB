@@ -284,7 +284,9 @@ func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 // Replay progress and retirement are deliberately separate. Entity/index reads
 // must still see the generation while counters have already published it.
 func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
-	b := snapshotOverlayFixture(t)
+	// This test owns replay and retirement separately. A queued background
+	// flush can retire the generation even with the long fixture delay.
+	b := snapshotOverlayFixture(t, writeBehindTestOptions{manualDrain: true})
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("live_v", "Live", []string{"v"}))
 	check := func() {
@@ -320,7 +322,9 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 }
 
 func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
-	b := snapshotOverlayFixture(t)
+	// This test owns replay and retirement separately. A queued background
+	// flush can retire the generation even with the long fixture delay.
+	b := snapshotOverlayFixture(t, writeBehindTestOptions{manualDrain: true})
 	if _, rotateErr := b.writeBehind.rotate(t.Context()); rotateErr != nil {
 		t.Fatal(rotateErr)
 	}

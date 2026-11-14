@@ -125,7 +125,7 @@ func TestRowOperatorFailureBranches(t *testing.T) {
 			require.Contains(t, err.Error(), tc.code, tc.expr)
 		}
 	}
-	require.True(t, expressionTextAccepted("-x", expressionTextOperand))
-	require.False(t, expressionTextAccepted("", expressionTextOperand))
-	require.True(t, expressionTextAccepted("-[1]", expressionTextOperator))
+	require.True(t, expressionTextAccepted(context.Background(), "-x", expressionTextOperand))
+	require.False(t, expressionTextAccepted(context.Background(), "", expressionTextOperand))
+	require.True(t, expressionTextAccepted(context.Background(), "-[1]", expressionTextOperator))
 }
