@@ -329,6 +329,10 @@ func catalogGateFieldAddr(address *ssa.FieldAddr, gate *types.Var) bool {
 // catalogGateField is the receiver's own catalog gate: the chan struct{} field
 // the catalog serialization token travels on.
 func catalogGateField(receiver types.Type) *types.Var {
+	named := catalogPointerNamed(receiver)
+	if named == nil || named.Obj() == nil || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != Module+"pkg/multidb" || named.Obj().Name() != "DatabaseManager" {
+		return nil
+	}
 	fields := catalogStruct(receiver)
 	if fields == nil {
 		return nil
