@@ -29,6 +29,12 @@ of the completed database population. Unsupported custom reader views cannot
 implicitly inherit source authority. They rebuild through their own readers.
 Time-dependent selection cannot be certified as a static population.
 
+The producer policy is part of the certificate. Certificates from the earlier
+count-based producer are rejected: that producer could certify stale live
+vectors after rejecting their saved checkpoint. The first build repopulates
+those derived vectors; current certified populations keep the warm-load path.
+An uncertified in-process store is not current merely because it has entries.
+
 A complete, unchanged certified population can be reopened without hydrating all
 nodes. Source validation still reads source metadata; zero population scans does
 not mean constant-time startup. Source-validation costs are reported separately

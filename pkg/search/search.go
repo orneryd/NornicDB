@@ -2228,7 +2228,7 @@ func (s *Service) GetDefaultMinSimilarity() float64 {
 
 // SetFulltextIndexPath sets the path for persisting the BM25 fulltext index.
 // When both fulltext and vector paths are set, BuildIndexes() will try to load both;
-// if both load with count > 0, the full storage iteration is skipped.
+// reuse requires matching source/projection certificates and build settings.
 func (s *Service) SetFulltextIndexPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2237,7 +2237,7 @@ func (s *Service) SetFulltextIndexPath(path string) {
 
 // SetVectorIndexPath sets the path for persisting the vector index.
 // When both fulltext and vector paths are set, BuildIndexes() will try to load both;
-// if both load with count > 0, the full storage iteration is skipped.
+// reuse requires matching source/projection certificates and build settings.
 func (s *Service) SetVectorIndexPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -4396,18 +4396,15 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			return admissionErr
 		}
 		if rejected {
-			s.mu.RLock()
-			live := s.vectorFileStore
-			s.mu.RUnlock()
-			if live != nil && live.Count() > 0 {
-				// An in-process store already holds this build's own live
-				// projection; the unusable saved checkpoint was never installed.
-				// The build resumes from the live source (same-process resume).
-				s.logPrintf("📇 BuildIndexes: saved vector checkpoint unusable; resuming the live store")
-			} else {
-				forceVectorRebuild = true
-				forceHNSWRebuild, forceRoutingRebuild = true, true
-			}
+			// The saved tuple has no certificate equal to this build's pinned
+			// source, so neither it nor an in-process store holding those same
+			// entries is this database's projection: a positive count says an
+			// entry exists, not that it equals the source. The population is
+			// rebuilt from the pinned source instead of resumed; only an
+			// admitted checkpoint above keeps its loaded entries.
+			s.logPrintf("📇 BuildIndexes: saved vector checkpoint has no equal source certificate; rebuilding vectors from the pinned source")
+			forceVectorRebuild = true
+			forceHNSWRebuild, forceRoutingRebuild = true, true
 		}
 	}
 
