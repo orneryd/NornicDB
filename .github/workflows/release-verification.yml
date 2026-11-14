@@ -75,6 +75,7 @@ jobs:
           python3 -c 'import json,pathlib; g=pathlib.Path("groups.txt").read_text().splitlines(); assert g and len(g)==len(set(g)); shards=["cypher","storage","server","storagecensus","capturecensus","command","other"]; print("matrix="+json.dumps({"include":[{"kind":"coverage","item":x} for x in g]+[{"kind":"make-test","item":x} for x in shards]},separators=(",",":")))' >> "$GITHUB_OUTPUT"
   build:
     needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -102,6 +103,7 @@ jobs:
         run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
   tests:
     name: ${{ matrix.kind }} / ${{ matrix.item }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     env:
       CGO_ENABLED: "1"
     needs: prepare
@@ -159,6 +161,7 @@ jobs:
           if-no-files-found: warn
   lint:
     needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   ui:
-    environment: admin-approved-actions
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
