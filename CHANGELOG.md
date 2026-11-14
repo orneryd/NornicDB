@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Property-index reads keep pending deletions and relabels hidden when an older
+  write-behind generation retires its final candidate entries.
+
 - Refused WAL records no longer advance snapshot cuts or sealed ranges.
   Restarts preserve declared historical range floors so subsequent acknowledged
   writes are not assigned snapshot-covered sequence numbers.

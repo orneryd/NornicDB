@@ -2161,7 +2161,7 @@ func (idx *PropertyIndex) lookupLocked(ctx context.Context, view pendingWriteVie
 	if out == nil {
 		out = make([]NodeID, 0, len(stored)+len(pending))
 	}
-	if view.index == nil {
+	if view.owner == nil {
 		out, err := appendIndexNodeIDs(ctx, out, stored)
 		idx.mu.RUnlock()
 		return out, err

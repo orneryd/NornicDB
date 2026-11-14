@@ -23,3 +23,21 @@ Parent validation: search counts use an explicit 0.9 similarity threshold for or
 No new test skip/ENV gate, storage/WAL format or public Go signature change.
 
 - [x] Reconcile relationship startup/cached budget refusal with pinned Neo4j5.26.30: FAILED procedures error; scalar reads remain complete; healthy rebuilt procedures return both records. Full Cypher package passed before final rebase (615.833s); integrated current-head rerun follows.
+
+## CI generation-visibility regression
+
+- [x] CI on062ebfdb reports AcrossGenerations returning a superseded index ID.
+  One hundred ordinary repeats pass, which does not clear the reported failure.
+- [x] Deterministic generation schedule reproduces the same causal defect:
+  an older create retires while a newer delete remains active, the empty
+  candidate-membership index is released, and the committed ID leaks through.
+- [x] Separate pending ownership from candidate-index allocation in the existing
+  view and scalar/composite/ordered readers. No additional lock, scan or cache.
+- [x] Regression covers deleted and unlabelled successors, scalar/any-label,
+  ordered limit1/non-null, composite full/prefix, unrelated live control and
+  final flush. Ten repetitions plus the original generation test pass4.159s;
+  affected index checks pass1.961s and initial race controls pass2.687s.
+- [x] Independent source review confirms unique/backfill consumers reuse keep;
+  remaining nil-index checks only read membership, and idle fastpaths are unchanged.
+- [x] Integrated deleted/unlabelled and generation race controls pass2.622s.
+- [ ] Pushed-head full CI qualification.

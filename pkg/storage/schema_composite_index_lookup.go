@@ -62,7 +62,7 @@ func (sm *SchemaManager) CompositeIndexLookup(ctx context.Context, idx *Composit
 	if err != nil {
 		return nil, err
 	}
-	if view.index == nil {
+	if view.owner == nil {
 		// Nothing is pending, so the committed postings are the whole answer.
 		if err := ctx.Err(); err != nil {
 			return nil, err

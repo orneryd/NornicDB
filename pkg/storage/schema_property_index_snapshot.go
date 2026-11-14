@@ -230,7 +230,7 @@ func (idx *PropertyIndex) snapshotPropertyIndexLocked(ctx context.Context, view 
 			if request.exactBounds && request.bounds.bounded() && !request.bounds.contains(key) {
 				continue
 			}
-			if view.index == nil {
+			if view.owner == nil {
 				var err error
 				snapshot.ids, err = appendIndexNodeIDs(ctx, snapshot.ids, idx.values[key])
 				if err != nil {
