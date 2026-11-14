@@ -19,12 +19,13 @@ const (
 // readCatalogMetadataNode reads the catalog metadata node of systemDatabase
 // within inner, or storage.ErrNotFound when the store holds none. The
 // manager's load and the pre-recovery change-capture load
-// (LoadChangeCaptureModes) read this one record.
+// (LoadChangeCaptureModes) read this one record, independently of user-facing
+// visibility suppression. A hidden catalog still owns persisted database options.
 func readCatalogMetadataNode(ctx context.Context, inner storage.Engine, systemDatabase string) (*storage.Node, error) {
 	if systemDatabase == "" {
 		systemDatabase = DefaultConfig().SystemDatabase
 	}
-	return storage.NewNamespacedEngine(inner, systemDatabase).GetNode(ctx, storage.NodeID(metadataNodeID))
+	return storage.GetStoredNode(ctx, storage.NewNamespacedEngine(inner, systemDatabase), storage.NodeID(metadataNodeID))
 }
 
 // loadMetadata loads database metadata from storage.
