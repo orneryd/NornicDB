@@ -1,6 +1,9 @@
 package storage
 
-import "slices"
+import (
+	"math"
+	"slices"
+)
 
 // embeddingMetadataPropertyKeys are the properties that never feed a node's
 // managed embedding text: embedding bookkeeping, timestamps and the id.
@@ -123,18 +126,22 @@ type embeddingSourceJudge interface {
 // are nil embeddings (an explicit clear) and different ones (new vectors).
 // The policy is the one of the engine judge wraps (UnwrapEngine), or the
 // default policy when it has none.
-func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) {
+// The result reports a nonempty managed vector image kept unchanged. A
+// physical writer may reuse a verified matching sidecar instead of rewriting it.
+func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) bool {
 	if prev == nil || len(prev.EmbedMeta) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
-		return
+		return false
 	}
 	failed, _ := prev.EmbedMeta["embedding_failed"].(bool)
 	if len(node.ChunkEmbeddings) == 0 && !failed {
-		return
+		return false
 	}
 	if !canCarryManagedEmbeddings(judge, prev, node) {
 		node.ChunkEmbeddings = nil
 		node.EmbedMeta = nil
+		return false
 	}
+	return len(node.ChunkEmbeddings) > 0
 }
 
 // A body update starts a new attempt even for an idempotent upsert whose caller
@@ -171,14 +178,19 @@ func sameLabelSet(a, b []string) bool {
 }
 
 // sameChunkEmbeddings reports whether two embedding chunk lists hold the
-// same vectors.
+// same float bits, including signed zero and NaN payloads.
 func sameChunkEmbeddings(a, b [][]float32) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if !slices.Equal(a[i], b[i]) {
+		if len(a[i]) != len(b[i]) {
 			return false
+		}
+		for j, x := range a[i] {
+			if math.Float32bits(x) != math.Float32bits(b[i][j]) {
+				return false
+			}
 		}
 	}
 	return true

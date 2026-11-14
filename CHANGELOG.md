@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Property updates reuse matching managed embedding sidecars instead of rewriting
+  unchanged vector chunks and dropping their sidecar metadata.
+
 - Property-index reads keep pending deletions and relabels hidden when an older
   write-behind generation retires its final candidate entries.
 
