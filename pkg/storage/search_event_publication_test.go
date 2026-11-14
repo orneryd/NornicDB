@@ -96,6 +96,15 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": 2}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
 	requirePublished(t, events, "node updated test:a", "a transaction commit")
+	for _, kind := range []string{"created", "updated"} {
+		upsert, err := BeginEntityTransaction(t.Context(), engine, CommitModeExplicit)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = upsert.Rollback() })
+		require.NoError(t, upsert.UpsertGraphNode(t.Context(), &Node{ID: "test:upsert", Properties: map[string]any{"phase": kind}}, nil))
+		require.False(t, events.has("node "+kind+" test:upsert"), "staging must not publish")
+		require.NoError(t, upsert.Commit())
+		requirePublished(t, events, "node "+kind+" test:upsert", "UpsertGraphNode commit")
+	}
 	for _, images := range []EntityImagePolicy{ClientNodeEdits, StoredNodeImages} {
 		for _, abort := range []bool{true, false} {
 			tx, err := BeginEntityTransaction(t.Context(), engine, CommitModeExplicit)

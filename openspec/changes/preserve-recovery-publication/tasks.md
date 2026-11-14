@@ -80,3 +80,14 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [x] Full multidb package passes32.338s; storage fixture constructor inventory passes56.045s.
 - [ ] Recheck the catalog finding in exact-head CI; do not infer census success from focused runtime tests.
 - [ ] Two constructor cleanup-error paths need an additional approved proof scope: they compose, rather than discard, the original startup error. Existing direct-wrap approval does not cover captured error cells and deferred cleanup. No extra analyzer change applied while that decision is pending.
+
+## Approved cleanup proofs and CI follow-ups
+
+- [x] Explicit operator approval covers error-preserving constructor cleanup and the exact catalog abort pattern.
+- [x] Constructor proof uses the real compose.Outcomes owner; escaped local/result writes remain rejected. Parent fail-first controls caught and corrected an overly broad nil-store allowance.
+- [x] Catalog proof verifies canonical rollback, exact gate release and the same failed transaction. A different transaction of the same type is rejected; normalization errors without a proven transaction relation remain unclaimed.
+- [x] Parent focused controls pass across census/storage/Bolt/observability (10.686s/27.522s/1.391s/2.555s); actual constructor proof also passes7.169s.
+- [x] UpsertGraphNode create/update publication scenarios pass and its explicitly approved classification points at that scenario.
+- [x] Retired catalog endpoint fingerprints are removed only for expressions eliminated by the transaction-owned extraction; no new exemptions. Endpoint guard passes.
+- [x] Provider timeout/cleanup test is ordered after RUN admission instead of racing a250ms BEGIN timer;30 repetitions pass. Actual deadline-clock behavior remains covered by separate lifecycle tests.
+- [ ] Fresh exact-head CI, canonical artifact freshness and the remaining recovery-publication AC.
