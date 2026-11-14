@@ -176,13 +176,16 @@ func admissionReopen(t *testing.T, b *BadgerEngine, dir string, async, lowMemory
 	return b
 }
 
-// requireStoreRefusal checks a refusal by the store's value limit: the error is
-// ErrStoreValueTooLarge, its message contains the limit, and the journal holds
-// no transaction record with the commit's logical ID.
-func requireStoreRefusal(t *testing.T, err error, b *BadgerEngine, dir, logicalID string) {
+// requireCommitCapacityRefusal checks the capacity cause, diagnostic limit and
+// absence of the refused logical commit from the journal for both key and value
+// admission. An optional name verifies the offending key remains identifiable.
+func requireCommitCapacityRefusal(t *testing.T, err, cause error, limit int64, dir, logicalID, name string) {
 	t.Helper()
-	require.ErrorIs(t, err, ErrStoreValueTooLarge)
-	require.Contains(t, err.Error(), fmt.Sprint(storeValueLimit(b.db)), "the error names the store's limit")
+	require.ErrorIs(t, err, cause)
+	require.Contains(t, err.Error(), fmt.Sprint(limit), "the error names the store's limit")
+	if name != "" {
+		require.Contains(t, err.Error(), name, "the error names the key")
+	}
 	t.Logf("refused: %v", err)
 	require.Zero(t, admissionRecords(t, dir, logicalID), "the journal holds no record of the refused commit")
 }
@@ -200,7 +203,7 @@ func TestCommitAdmissionAppliesOrRefusesBeforeTheJournal(t *testing.T) {
 					err := admissionCommit(t, b, mode, "admission", c.stage)
 					if c.refused != nil {
 						require.ErrorIs(t, err, c.refused)
-						requireStoreRefusal(t, err, b, dir, "admission")
+						requireCommitCapacityRefusal(t, err, ErrStoreValueTooLarge, storeValueLimit(b.db), dir, "admission", "")
 						require.Zero(t, admissionStored(t, b))
 					} else {
 						require.NoError(t, err, "the commit is applied")
@@ -282,7 +285,7 @@ func TestStoreValueLimitBoundary(t *testing.T) {
 					want := 1
 					if over > 0 {
 						want = 0
-						requireStoreRefusal(t, err, b, dir, "boundary")
+						requireCommitCapacityRefusal(t, err, ErrStoreValueTooLarge, storeValueLimit(b.db), dir, "boundary", "")
 					} else {
 						require.NoError(t, err, "a body within the store's limit commits")
 					}
@@ -323,7 +326,7 @@ func TestStoreValueLimitRefusesABodyReplayWouldWriteOverTheLimit(t *testing.T) {
 				// 5,000,000 elements: the commit is refused, and the error says the size is
 				// that of the node as the journal's record of it is applied.
 				err := admissionCommit(t, b, mode, "narrow", admissionNodes(1, narrowList(5_000_000)))
-				requireStoreRefusal(t, err, b, dir, "narrow")
+				requireCommitCapacityRefusal(t, err, ErrStoreValueTooLarge, storeValueLimit(b.db), dir, "narrow", "")
 				require.Contains(t, err.Error(), "as the journal's record of it is applied")
 				require.Zero(t, admissionStored(t, b))
 				b = admissionReopen(t, b, dir, async, true)
@@ -457,7 +460,7 @@ func TestStoreValueLimitRefusesAHistoryRecordOverTheLimit(t *testing.T) {
 				require.Greater(t, len(record), limit, "the node's history record is larger than the store's limit")
 
 				err = admissionRetext(t, b, mode, "history-over", 'b')
-				requireStoreRefusal(t, err, b, dir, "history-over")
+				requireCommitCapacityRefusal(t, err, ErrStoreValueTooLarge, storeValueLimit(b.db), dir, "history-over", "")
 				require.Contains(t, err.Error(), "history record")
 				require.Equal(t, byte('a'), admissionLastByte(t, b), "the refused update is not visible")
 
@@ -491,7 +494,7 @@ func TestStoreValueLimitRefusesAChangeEventOverTheLimit(t *testing.T) {
 				require.Equal(t, 1, admissionStored(t, b))
 				// The update is refused, and the error names the change event.
 				err := admissionRetext(t, b, mode, "event-update", 'b')
-				requireStoreRefusal(t, err, b, dir, "event-update")
+				requireCommitCapacityRefusal(t, err, ErrStoreValueTooLarge, storeValueLimit(b.db), dir, "event-update", "")
 				require.Contains(t, err.Error(), "change event")
 				require.Equal(t, byte('a'), admissionLastByte(t, b), "the refused update is not visible")
 				// Without capture the same update commits.

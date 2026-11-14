@@ -85,10 +85,16 @@ func newPropertyKeyDictionary() *propertyKeyDictionary {
 	}
 }
 
-// propKeyForwardKey encodes a forward-map lookup key:
-// prefix + varint(len(ns)) + ns + varint(len(name)) + name.
+// propKeyForwardKeySize measures the same varints the forward-key encoder writes.
+func propKeyForwardKeySize(namespace, name string) int {
+	var word [binary.MaxVarintLen64]byte
+	return 1 + binary.PutUvarint(word[:], uint64(len(namespace))) + len(namespace) +
+		binary.PutUvarint(word[:], uint64(len(name))) + len(name)
+}
+
+// propKeyForwardKey encodes prefix + varint(len(ns)) + ns + varint(len(name)) + name.
 func propKeyForwardKey(namespace, name string) []byte {
-	out := make([]byte, 0, 1+binary.MaxVarintLen64+len(namespace)+binary.MaxVarintLen64+len(name))
+	out := make([]byte, 0, propKeyForwardKeySize(namespace, name))
 	out = append(out, prefixPropKeyForward)
 	out = binary.AppendUvarint(out, uint64(len(namespace)))
 	out = append(out, namespace...)
