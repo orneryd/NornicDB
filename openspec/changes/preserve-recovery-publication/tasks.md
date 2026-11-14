@@ -61,3 +61,5 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [x] Fresh integrated focused storage checks (2.007s) and public recovered-commit/embedding-clear checks (1.387s) pass on the working tree.
 - [ ] Journaled-but-unapplied capture-option changes remain correctly ordered with recovered commits.
 - [ ] Exact-head CI, race/census and integrated release qualification.
+
+- [x] Reproduce hidden persisted catalog failure in both pre-recovery capture-mode loading and manager reload; share the stored-inclusive catalog read owner and verify options/catalog preservation.

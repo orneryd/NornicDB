@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separately stored vectors instead of restoring stale or missing embeddings.
   Embedding resets keep their journal records ordered with concurrent node
   updates, and snapshot images remain consistent across cold and cached reads.
+  Catalog reloads retain persisted database options even when the metadata node
+  is suppressed from ordinary graph reads.
 
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
