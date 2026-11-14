@@ -149,6 +149,14 @@ func (zzCatalogAbortTransaction) Rollback() error { return nil }
 
 type zzCatalogAbortRollbacker interface{ Rollback() error }
 
+type zzCatalogGateImposter struct { catalogGate chan struct{} }
+func (m *zzCatalogGateImposter) zzCatalogAbortImposterOwner(tx *storage.BadgerTransaction) error {
+ <-m.catalogGate
+ release:=func(){m.catalogGate<-struct{}{}}
+ if err:=tx.SetNamespace("system");err!=nil { _=tx.Rollback();release();return err }
+ release();return nil
+}
+
 func (m *DatabaseManager) zzCatalogAbortWrongTransaction(tx, other *storage.BadgerTransaction) error {
  <-m.catalogGate
  release:=func(){m.catalogGate <-struct{}{}}
@@ -457,6 +465,7 @@ func TestCatalogAbortRejectsLookalikes(t *testing.T) {
 		{"zzCatalogAbortPositive", true},
 		{"zzCatalogAbortPositiveDirect", true},
 		{"zzCatalogAbortPositiveTuple", true},
+		{"zzCatalogAbortImposterOwner", false},
 		{"zzCatalogAbortWrongTransaction", false},
 		{"zzCatalogAbortLookalike", false},
 		{"zzCatalogAbortInterface", false},

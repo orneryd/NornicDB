@@ -441,7 +441,7 @@ func deferredCleanupReturn(branch *ssa.BasicBlock, cell *ssa.Alloc, errv ssa.Val
 			return false
 		}
 	}
-	return cleanupComposes(closure, capture)
+	return cleanupComposes(closure, capture) && cleanupEffects(closure, capture, cell, branch)
 }
 
 // clearsSiblingResult permits only the nil setup of a sibling return value.
@@ -461,6 +461,30 @@ func clearsSiblingResult(store *ssa.Store, ret *ssa.Return, cleanup *ssa.Functio
 	for _, result := range ret.Results {
 		if load, ok := result.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == cell {
 			returned = true
+		}
+	}
+	if !returned {
+		return false
+	}
+	return unaliasedSiblingResult(cell, ret.Parent(), cleanup, errorCell)
+}
+
+// unaliasedSiblingResult proves a named return cell cannot alias external state.
+// Both the return arm and its deferred cleanup use this same cell proof.
+func unaliasedSiblingResult(cell *ssa.Alloc, parent, cleanup *ssa.Function, errorCell *ssa.Alloc) bool {
+	if cell == nil || cell == errorCell || cell.Parent() != parent || cell.Referrers() == nil {
+		return false
+	}
+	returned := false
+	for _, block := range parent.Blocks {
+		for _, ins := range block.Instrs {
+			if ret, ok := ins.(*ssa.Return); ok {
+				for _, result := range ret.Results {
+					if load, ok := result.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == cell {
+						returned = true
+					}
+				}
+			}
 		}
 	}
 	if !returned {

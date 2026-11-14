@@ -87,7 +87,8 @@ const cleanupFixtureSource = `package storage
   body()
   return nil, nil
  }
- func build(releaseConstruction func()) (result *int, newErr error) {
+ func build() (result *int, newErr error) {
+  releaseConstruction := release
   defer func() {
    if newErr == nil && conditional() != nil {
     newErr = errClosed
