@@ -6,7 +6,7 @@
 - [x] Public storage controls pass on release7f565720f (2.012s).
 - [x] Expanded focused race controls pass5.648s.
 - [x] Exact current-release fail-first1.174s proves chunk rewrite and removed metadata.
-- [ ] Matched current-base allocation/profile qualification; overlapping trial is excluded.
+- [x] Matched current-base CPU/allocation profiles and four isolated samples per arm: ns/op20,685,989→13,642,069; B/op16,073,233→12,032,233; allocs44,454→20,853. Prior overlapping trial excluded.
 - [ ] Push candidate and run regular make-test CI.
 
 This correction removes physical sidecar rewrites only. The separate B30/B37
