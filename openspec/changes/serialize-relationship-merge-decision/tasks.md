@@ -1,7 +1,7 @@
 # Serialize relationship MERGE decisions
 
 - [x] Reproduce duplicate relationship/counter through public Bolt on release.
-- [x] Lock bound endpoints in identity order before MERGE existence decision.
+- [x] Prepare bound ON CREATE mutation targets through the canonical SET lock owner before MERGE existence decision; preserve independent bare MERGE staging.
 - [x] Verify unlocked, start-locked, keyed and incoming schedules on both parsers.
 - [x] Preserve already-locked MERGE control.
 - [ ] Extend concurrent opposite-direction/self-loop and rollback/deadlock controls.

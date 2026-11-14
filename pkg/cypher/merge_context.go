@@ -494,22 +494,6 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if parsedPattern.direction == mergeRelationshipIncoming {
 			mergeStartNode, mergeEndNode = endNode, startNode
 		}
-		// Decide existence after endpoint writers publish, not before a later
-		// ON CREATE SET waits for one of them. Otherwise a relationship that
-		// appeared during that wait is created twice. Order this pair's locks
-		// by identity so opposite-direction MERGEs use the same order.
-		firstLock, secondLock := mergeStartNode, mergeEndNode
-		if secondLock.ID < firstLock.ID {
-			firstLock, secondLock = secondLock, firstLock
-		}
-		if err := lockNodeForWrite(ctx, store, firstLock); err != nil {
-			return nil, err
-		}
-		if firstLock.ID != secondLock.ID {
-			if err := lockNodeForWrite(ctx, store, secondLock); err != nil {
-				return nil, err
-			}
-		}
 		// Cypher relationship properties inside the MERGE pattern are identity
 		// fields. Scan the bounded endpoint pair so same-type relationships with
 		// different property identities remain distinct.
