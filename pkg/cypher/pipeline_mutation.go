@@ -214,13 +214,8 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 		// Each written entity is locked before its assignments are evaluated:
 		// a row whose entity a waited-for writer committed reads that commit.
-		for _, target := range targets {
-			if err := lockNodeForWrite(ctx, store, nodes[target]); err != nil {
-				return nil, true, err
-			}
-			if err := lockEdgeForWrite(ctx, store, rels[target]); err != nil {
-				return nil, true, err
-			}
+		if err := lockSetTargets(ctx, store, row, targets); err != nil {
+			return nil, true, err
 		}
 		evalNodes := nodes
 		if simplePropertyAssignment {
@@ -363,6 +358,26 @@ func pipelineSetTargetVariables(assignments []string) []string {
 		targets = append(targets, target)
 	}
 	return targets
+}
+
+// lockSetTargets prepares only entities that the SET owner will mutate. Bound
+// MERGE actions use the same preparation before deciding whether to create, so
+// waiting for an action's writer cannot leave that decision stale. Bare MERGE
+// does not acquire unrelated endpoint body locks.
+func lockSetTargets(ctx context.Context, store storage.Engine, row pipelineRow, targets []string) error {
+	for _, target := range targets {
+		switch entity := row[target].(type) {
+		case *storage.Node:
+			if err := lockNodeForWrite(ctx, store, entity); err != nil {
+				return err
+			}
+		case *storage.Edge:
+			if err := lockEdgeForWrite(ctx, store, entity); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // changedPropertyCount is the SET counting rule: the number of properties
@@ -603,11 +618,13 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	clauseBody := strings.TrimSpace(clause)
 	isMerge := startsWithKeywordFold(clauseBody, "MERGE")
 	var clausePattern, onCreateSet, onMatchSet string
+	var actionTargets []string
 	multiRelationship := false
 	if isMerge {
 		parts := splitMergeClauseActions(ctx, pipelineClauseBody(clauseBody, "MERGE"), nil)
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
+		actionTargets = pipelineSetTargetVariables(append(mergeActionAssignments(parts.onCreate), mergeActionAssignments(parts.onMatch)...))
 	}
 	// Templates contain syntax only; row values stay in each prepared context.
 	// Reuse the statement template until preparation changes that syntax.
@@ -771,6 +788,13 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			}
 		}
 		if relationshipPattern != nil {
+			if len(actionTargets) != 0 {
+				if err := lockSetTargets(ctx, e.getStorage(ctx), row, actionTargets); err != nil {
+					return nil, nil, err
+				}
+				// A waited-for publisher may also have changed this pair's edges.
+				identities.reset()
+			}
 			// Bound endpoints: every existing relationship that matches the
 			// pattern is a row, and ON MATCH SET applies to each, as in
 			// Neo4j. One lookup decides; only a pattern with no match reaches
