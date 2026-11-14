@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refused WAL records no longer advance snapshot cuts or sealed ranges.
+  Restarts preserve declared historical range floors so subsequent acknowledged
+  writes are not assigned snapshot-covered sequence numbers.
+
 - Reject commits whose physical keys exceed the backend limit before buffered or
   prepared journal acceptance, preventing acknowledged writes that cannot flush
   or recover. Stored key encodings and storage versions are unchanged.

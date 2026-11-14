@@ -570,7 +570,13 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Older writers could seal a range through a refused, unwritten number.
+	// Preserve that durable range as a floor so a restart cannot reuse a
+	// snapshot-covered number for a newly acknowledged record.
 	last := manifest.RetiredThrough
+	for _, segment := range manifest.Segments {
+		last = max(last, segment.LastSeq)
+	}
 	if len(entries) > 0 && entries[len(entries)-1].Sequence > last {
 		last = entries[len(entries)-1].Sequence
 	}
@@ -650,8 +656,8 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 // the record written and the WAL's lock released, and writes the record only
 // when decide returns nil. decide's error is returned as a walRecordRejection,
 // as the frame refusal is, and nothing of the record is written. The first
-// attempt consumes a sequence number. A record that fits one frame is appended
-// at once and decide is not called (NOR-412, commit_admission.go).
+// attempt reserves no published sequence number. A record that fits one frame
+// is appended at once and decide is not called (NOR-412, commit_admission.go).
 func (w *WAL) appendDecidingLargeRecord(op OperationType, data interface{}, database string, decide func() error) (uint64, error) {
 	seq, err := w.appendWithDatabase(op, data, database, true)
 	if !errors.Is(err, errLargeRecordHeld) {
@@ -971,13 +977,14 @@ func (w *WAL) syncLocked() error {
 // lock let a waiting appender write a lower number after a higher one; a
 // roll-over between the two sealed a segment whose range overlapped the
 // previous one, the manifest refused it, the active file was left closed and
-// the journal could not be reopened. A record refused after it took its number
-// leaves that number unwritten; when no later record takes a number before a
-// snapshot's seal (ManageSnapshot), which names its segment up to the last
-// number taken, the seal names it past its last record.
+// the journal could not be reopened. The candidate number is derived here,
+// but becomes observable only after appendRecordLocked writes the complete
+// record. A refused candidate therefore cannot inflate a snapshot cut or a
+// retained segment range. Both operations hold w.mu, so no appender can take
+// the same candidate while a record is being prepared and appended.
 func (w *WAL) encodeNextRecordLocked(buf *bytes.Buffer, op OperationType, data []byte, checksum uint32, timestamp time.Time, database string) (WALEntry, walRecordFrames, error) {
 	entry := WALEntry{
-		Sequence:  w.sequence.Add(1),
+		Sequence:  w.sequence.Load() + 1,
 		Timestamp: timestamp,
 		Operation: op,
 		Data:      data,
@@ -997,6 +1004,9 @@ func (w *WAL) appendRecordLocked(entry *WALEntry, record walRecordFrames, writeF
 	if err != nil {
 		return err
 	}
+	// Publish only a complete appended record. Encoding or admission refusal
+	// must not advance snapshot cuts or sealed segment ranges.
+	w.sequence.Store(entry.Sequence)
 	w.entries.Add(1)
 	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
@@ -1166,7 +1176,9 @@ func (w *WAL) Stats() WALStats {
 	}
 }
 
-// Sequence returns the current sequence number.
+// Sequence returns the published operation boundary, including persisted
+// historical range floors. Refused records do not advance it. It does not
+// itself flush or fsync the journal.
 func (w *WAL) Sequence() uint64 {
 	return w.sequence.Load()
 }

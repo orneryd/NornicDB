@@ -95,9 +95,9 @@ func rollOverIdentity(t *testing.T, entry WALEntry) (id string, value []byte, ok
 // manifest entry does not state exactly its first and last record's numbers,
 // a segment that does not begin after the one before it, records out of
 // sequence order in file order, and a reopened journal that does not resume
-// at its last record (or at the manifest's retired number, when that is
-// higher). It returns the number the journal should resume at: the last
-// record's number, or the retired number when that is higher.
+// at the highest persisted operation boundary. Historical sealed ranges and
+// the retired boundary are floors even when an old refused record left a gap;
+// overstated ranges are still independently reported against actual records.
 func rollOverJournalRangeErrors(t *testing.T, dir string, reopened *WAL) (problems []string, resume uint64) {
 	t.Helper()
 	entries, err := ReadWALEntriesFromDir(t.Context(), dir)
@@ -113,6 +113,7 @@ func rollOverJournalRangeErrors(t *testing.T, dir string, reopened *WAL) (proble
 	resume = max(resume, manifest.RetiredThrough)
 	var previousLast uint64
 	for _, segment := range manifest.Segments {
+		resume = max(resume, segment.LastSeq)
 		if first, last, ok := parseSegmentFilename(segment.Path); !ok || first != segment.FirstSeq || last != segment.LastSeq {
 			problems = append(problems, fmt.Sprintf("%s: its name and its manifest range %d..%d differ", segment.Path, segment.FirstSeq, segment.LastSeq))
 		}
