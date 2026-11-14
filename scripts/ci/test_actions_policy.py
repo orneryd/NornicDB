@@ -30,6 +30,36 @@ class PolicyTests(unittest.TestCase):
                 broken['jobs']['verify']['needs'].remove('tests')
             self.assertTrue(policy['violations'](name, broken), mutate)
 
+    def test_automatic_release_jobs_run_after_manual_authorization_is_skipped(self):
+        jobs = self.load('release-verification.yml')['jobs']
+        for name in ('build', 'tests', 'lint'):
+            # An explicit status function suppresses GitHub's implicit success()
+            # over the skipped manual-only ancestor. Preparation still gates it.
+            self.assertEqual(jobs[name].get('if'),
+                             "${{ !cancelled() && needs.prepare.result == 'success' }}", name)
+
+    def test_manual_ui_review_retains_the_administrator_environment(self):
+        workflow = self.load('ui-review.yml')
+        self.assertEqual(workflow.get('on', workflow.get(True)), {'workflow_dispatch': None})
+        self.assertEqual(workflow['jobs']['ui']['environment'], policy['GATE'])
+        self.assertFalse(policy['violations']('ui-review.yml', workflow))
+
+    def test_release_final_gate_rejects_every_incomplete_dependency(self):
+        jobs = self.load('release-verification.yml')['jobs']
+        final = jobs['verify']
+        command = next(step['run'] for step in final['steps'] if 'run' in step)
+        complete = {name: {'result': 'success'} for name in final['needs']}
+        def result(values):
+            env = dict(os.environ, RESULTS=json.dumps(values))
+            return subprocess.run(['bash', '-c', command], env=env,
+                                  capture_output=True, text=True).returncode
+        self.assertEqual(result(complete), 0)
+        for name in complete:
+            for status in ('failure', 'cancelled', 'skipped'):
+                incomplete = copy.deepcopy(complete)
+                incomplete[name]['result'] = status
+                self.assertNotEqual(result(incomplete), 0, (name, status))
+
     def test_release_matrix_keeps_every_coverage_group_and_make_test_shard(self):
         workflow = self.load('release-verification.yml')
         step = next(step for step in workflow['jobs']['prepare']['steps'] if step.get('id') == 'groups')
