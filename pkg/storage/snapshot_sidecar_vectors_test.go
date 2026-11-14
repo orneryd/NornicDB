@@ -1,12 +1,40 @@
 package storage
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSnapshotLargeSidecarVectorsRespectRecordLimit(t *testing.T) {
+	engine := newSnapshotBadger(t)
+	_, err := engine.CreateNode(t.Context(), &Node{ID: "snapshot:large", Properties: map[string]any{"text": "source"}})
+	require.NoError(t, err)
+	node, err := engine.GetNode(t.Context(), "snapshot:large")
+	require.NoError(t, err)
+	vectors := snapshotSidecarFixtureVectors(17000, 256)
+	node.ChunkEmbeddings = vectors
+	node.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": len(vectors), "embedding_dimensions": 256}
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(t.Context(), node))
+
+	var output bytes.Buffer
+	require.NoError(t, WriteSnapshot(t.Context(), engine, &output, SnapshotOptions{}))
+	require.Greater(t, output.Len(), defaultSnapshotRecordSize)
+	visitor := &collectingSnapshotVisitor{}
+	metadata, err := ReadSnapshot(t.Context(), bytes.NewReader(output.Bytes()), visitor)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, metadata.NodeCount)
+	require.Len(t, visitor.nodes, 1)
+	require.Equal(t, vectors, visitor.nodes[0].ChunkEmbeddings)
+	requireSameStoredMap(t, node.EmbedMeta, visitor.nodes[0].EmbedMeta, "embedding metadata")
+
+	var limited bytes.Buffer
+	err = WriteSnapshot(t.Context(), engine, &limited, SnapshotOptions{MaxRecordBytes: defaultSnapshotRecordSize})
+	require.ErrorContains(t, err, "exceeds limit 16777216")
+}
 
 // Reports 45 and 53.5: a snapshot taken while the store holds the vectors its
 // reads return must carry them. Automatic compaction writes that snapshot

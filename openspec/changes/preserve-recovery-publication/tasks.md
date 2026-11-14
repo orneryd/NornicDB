@@ -113,3 +113,18 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
 - [ ] CI on the pushed correction; snapshot cost qualification remains open.
 - [x] Earlier source36077272c passed all seven make-test shards, lint and aggregate
   in CI43635884110. This does not qualify this newer uncommitted correction.
+
+## Approved closure refresh and bounded snapshot qualification
+
+- [x] Operator approved only the exact rollback closure fingerprint refresh
+  after the CDC WAL change. All thirteen pinned sources, two compensation
+  edges and caller sets are unchanged; compensation passes a nil journal.
+  Installed positive and stale-source/new-caller controls pass108.948s.
+- [x] Actual sidecar benchmark: 128/1024 nodes, 0.5/4 MiB raw vectors, complete
+  vector read-back before timing. Three samples show approximately linear work;
+  methodology and allocations are in the performance guide.
+- [x] A17,408,000-byte sidecar round-trips every vector/metadata value, and the
+  explicit16MiB record limit refuses it. Large-record/cancellation controls
+  pass3.835s. Existing byte-counter fixture is shared, not duplicated.
+- [ ] Foreground snapshot/write overlap and original production-size
+  performance remain unqualified; no peak-heap or full release claim.
