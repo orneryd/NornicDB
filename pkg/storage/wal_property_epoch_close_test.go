@@ -388,29 +388,41 @@ func TestWALPropertyEpochSealPlanVisitsEveryRecoveryFile(t *testing.T) {
 }
 
 func TestWALPropertyEpochSealPlanRejectsChangedFile(t *testing.T) {
-	t.Cleanup(config.WithWALEnabled())
-	source, wal, commit := bindingCostFixture(t, 1)
-	require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
-	require.NoError(t, wal.Close())
-	path := walActivePath(wal.Config().Dir)
-	var visited int
-	plan, err := scanWALPropertyEpochFile(path, func(WALEntry) error { visited++; return nil })
-	require.NoError(t, err)
-	require.NotEmpty(t, plan.controls)
-	_, _, controls := walEpochRawBodies(t, path)
-	require.Equal(t, len(plan.controls), controls, "a control is recognized by payload, not by framing version")
-	entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
-	require.NoError(t, err)
-	require.Equal(t, len(entries)+len(plan.controls), visited, "controls and records arrive in the scanning read")
-	_, err = scanWALPropertyEpochFile(path, func(WALEntry) error { return errors.New("veto") })
-	require.ErrorContains(t, err, "veto")
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, append(raw, 0), 0600))
-	require.ErrorContains(t, plan.apply(), "changed between scan and sealing")
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, append(raw, 0), after, "a rejected plan leaves the original log in place")
+	for _, prefix := range []bool{false, true} {
+		t.Run(fmt.Sprint(prefix), func(t *testing.T) {
+			t.Cleanup(config.WithWALEnabled())
+			source, wal, commit := bindingCostFixture(t, 1)
+			if prefix {
+				require.NoError(t, wal.AppendWithDatabase(OpCheckpoint, map[string]any{"before": "authority"}, "test"))
+			}
+			require.NoError(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
+			require.NoError(t, wal.Close())
+			path := walActivePath(wal.Config().Dir)
+			var visited int
+			plan, err := scanWALPropertyEpochFile(path, func(WALEntry) error { visited++; return nil })
+			require.NoError(t, err)
+			require.NotEmpty(t, plan.controls)
+			_, _, controls := walEpochRawBodies(t, path)
+			require.Equal(t, len(plan.controls), controls, "a control is recognized by payload, not by framing version")
+			entries, err := ReadWALEntriesFromDir(t.Context(), wal.Config().Dir)
+			require.NoError(t, err)
+			expectedVisits := len(entries)
+			if prefix {
+				expectedVisits += len(plan.controls)
+			}
+			require.Equal(t, expectedVisits, visited, "operation records and nonzero-sequence controls reach the visitor; initial sequence-zero authority is retained in the seal plan")
+			_, err = scanWALPropertyEpochFile(path, func(WALEntry) error { return errors.New("veto") })
+			require.ErrorContains(t, err, "veto")
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, append(raw, 0), 0600))
+			require.ErrorContains(t, plan.apply(), "changed between scan and sealing")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, append(raw, 0), after, "a rejected plan leaves the original log in place")
+
+		})
+	}
 }
 
 // An ordinary synchronous log never received a control, so clean close does

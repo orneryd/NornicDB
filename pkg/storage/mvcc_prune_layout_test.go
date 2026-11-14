@@ -14,6 +14,18 @@ package storage
 // waits and scheduler preemption can exhaust it before any commit, as the
 // controlled budget/admission tests separately establish. A timing sample
 // cannot guarantee that a later cycle receives the same amount of CPU time.
+//
+// Progress means committed deletions, never cursor movement: the walk also
+// moves the cursor past the keyspaces it finds empty and past every key with
+// nothing to delete, without committing anything. The calibration that sizes
+// a budget rolls its transaction back, so it measures the first key's scan
+// and delete planning without the commit that ends it; twice that sample can
+// therefore fall below the first key's own work, and the contract permits
+// such a cycle to commit nothing when MaxRuntime is spent (its admission, its
+// scanning and its commit gate all end with the budget). That cycle must then
+// leave the cursor before the candidate it found, so the next cycle decides
+// that candidate again with the whole budget; a cycle that returns earlier
+// than its budget without progress remains a defect.
 
 import (
 	"bytes"
@@ -223,15 +235,23 @@ func TestMVCCPruneProgressEveryLayout(t *testing.T) {
 					if pruned < expected {
 						require.True(t, next.kind > cursor.kind || (next.kind == cursor.kind && bytes.Compare(next.after, cursor.after) >= 0), "a spent budget must not move the resume cursor backwards")
 					}
-					if n == 0 && !advanced && pruned < expected {
-						// MaxRuntime includes admission and scheduling. Returning
-						// without progress before that budget ends is a defect;
-						// exhausting it is permitted, but cannot evade the bounded
-						// completion and exact population assertions below.
-						require.GreaterOrEqual(t, elapsed, budget, "cycle %d returned without progress before its budget expired: %d of %d deleted, cursor %d:%x", cycles+1, pruned, expected, next.kind, next.after)
+					if n == 0 {
+						// Only a committed deletion is progress: the walk moves
+						// the cursor over empty keyspaces and over every key
+						// with nothing to delete, so advanced alone proves
+						// nothing. MaxRuntime includes admission, scanning and
+						// the commit gate, so a cycle may find the front
+						// candidate and end before committing any of it;
+						// returning without progress before that budget ends
+						// is a defect, and the candidate it found must still
+						// stand before the cursor so the next cycle decides it
+						// again with the whole budget. Bounded completion and
+						// the exact population below then prove every candidate
+						// is committed.
+						require.GreaterOrEqual(t, elapsed, budget, "cycle %d committed nothing before its budget expired: %d of %d deleted, cursor %d:%x -> %d:%x", cycles+1, pruned, expected, cursor.kind, cursor.after, next.kind, next.after)
+						require.Equal(t, logical, frontLogical(next), "cycle %d committed nothing and passed the candidate it found: cursor %d:%x -> %d:%x", cycles+1, cursor.kind, cursor.after, next.kind, next.after)
 						expiredWithoutProgress++
-					} else if cycles == 0 {
-						require.Positive(t, n, "the first completed cycle commits the first candidate")
+						t.Logf("cycle %d committed nothing: %s of %s budget spent, cursor %d:%x -> %d:%x advanced=%v", cycles+1, elapsed.Round(time.Microsecond), budget.Round(time.Microsecond), cursor.kind, cursor.after, next.kind, next.after, advanced)
 					}
 					cursor = next
 				}

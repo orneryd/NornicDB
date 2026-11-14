@@ -73,6 +73,19 @@ func TestJournalAsksBeforeARecordOverOneFrame(t *testing.T) {
 	require.Equal(t, 2, commits)
 	require.Greater(t, largest, int(walMaxEntrySize)-8, "it reads back as one record of at least a frame less 8 bytes")
 
+	// Admission runs outside the journal lock. A different accepted append
+	// must get its own number before the held record retries preparation.
+	before := large.Sequence()
+	seq, err := large.appendDecidingLargeRecord(OpEntityCommit, over, "test", func() error {
+		return large.AppendWithDatabase(OpCheckpoint, map[string]any{"admission": "interleaved"}, "test")
+	})
+	require.NoError(t, err)
+	require.Equal(t, before+2, seq)
+	entries, err := ReadWALEntriesFromDir(t.Context(), large.config.Dir)
+	require.NoError(t, err)
+	require.Equal(t, before+1, entries[len(entries)-2].Sequence)
+	require.Equal(t, seq, entries[len(entries)-1].Sequence)
+
 	// A journal that writes standard records appends the first and refuses the
 	// second with the frame error; the caller is asked about neither.
 	standard := open(WALRecordsStandard)
