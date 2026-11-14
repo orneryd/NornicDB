@@ -649,6 +649,7 @@ func TestGraphitiScenarioE2E_PreWarmupVectorReadsScanStoredPopulationsOnce(t *te
 	require.NoError(t, err)
 
 	searchSvc := search.NewService(ns, dim, nil)
+	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
 	exec.SetSearchService(searchSvc)
 
 	for episode := 0; episode < episodes; episode++ {

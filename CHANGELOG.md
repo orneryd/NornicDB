@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Property-index reads keep pending deletions and relabels hidden when an older
+  write-behind generation retires its final candidate entries.
+
 - Refused WAL records no longer advance snapshot cuts or sealed ranges.
   Restarts preserve declared historical range floors so subsequent acknowledged
   writes are not assigned snapshot-covered sequence numbers.
+
+- Rebuild rejected vector populations from their pinned database source instead
+  of reusing stale live entries. Earlier producer certificates are invalidated
+  once; current certified checkpoints retain warm loading. This changes derived
+  search-index policy, not Badger data, WAL encoding or storage versions.
 
 - Reject commits whose physical keys exceed the backend limit before buffered or
   prepared journal acceptance, preventing acknowledged writes that cannot flush
@@ -33,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates, and snapshot images remain consistent across cold and cached reads.
   Catalog reloads retain persisted database options even when the metadata node
   is suppressed from ordinary graph reads.
+
+- Embedding resets publish committed per-node search refreshes instead of
+  clearing the entire index, preserving refused and unrelated vectors.
+  Replacement search services report a failed build as a failed vector index.
+  Successful per-index populations retain their own state across unrelated
+  global build failures; stored reads and lazy startup keep their existing paths.
 
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive

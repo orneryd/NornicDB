@@ -912,6 +912,12 @@ type Service struct {
 	buildMu        sync.RWMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
+	// buildFailure is the outcome of the service's last completed build: the
+	// error that left it not ready, or nil when the build succeeded. BuildIndexes
+	// is its only writer (recordBuildOutcome, under buildMu), and it is the state
+	// of an index this service holds no population record for
+	// (vectorIndexBuildState).
+	buildFailure atomic.Pointer[error]
 	// fulltextRebuilt records that the current build replaced the saved
 	// fulltext checkpoint from source. The checkpoint must then be written even
 	// when the rebuilt index holds no rows and is therefore not dirty: a
@@ -2222,7 +2228,7 @@ func (s *Service) GetDefaultMinSimilarity() float64 {
 
 // SetFulltextIndexPath sets the path for persisting the BM25 fulltext index.
 // When both fulltext and vector paths are set, BuildIndexes() will try to load both;
-// if both load with count > 0, the full storage iteration is skipped.
+// reuse requires matching source/projection certificates and build settings.
 func (s *Service) SetFulltextIndexPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2231,7 +2237,7 @@ func (s *Service) SetFulltextIndexPath(path string) {
 
 // SetVectorIndexPath sets the path for persisting the vector index.
 // When both fulltext and vector paths are set, BuildIndexes() will try to load both;
-// if both load with count > 0, the full storage iteration is skipped.
+// reuse requires matching source/projection certificates and build settings.
 func (s *Service) SetVectorIndexPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -4167,6 +4173,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			resultErr = ctx.Err()
 		}
 		resultErr, notifications = s.endBuildWrites(ctx, resultErr)
+		s.recordBuildOutcome(resultErr)
 	}()
 	s.startBuildWrites()
 	if err := s.beginPopulationPersistence(); err != nil {
@@ -4389,18 +4396,15 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			return admissionErr
 		}
 		if rejected {
-			s.mu.RLock()
-			live := s.vectorFileStore
-			s.mu.RUnlock()
-			if live != nil && live.Count() > 0 {
-				// An in-process store already holds this build's own live
-				// projection; the unusable saved checkpoint was never installed.
-				// The build resumes from the live source (same-process resume).
-				s.logPrintf("📇 BuildIndexes: saved vector checkpoint unusable; resuming the live store")
-			} else {
-				forceVectorRebuild = true
-				forceHNSWRebuild, forceRoutingRebuild = true, true
-			}
+			// The saved tuple has no certificate equal to this build's pinned
+			// source, so neither it nor an in-process store holding those same
+			// entries is this database's projection: a positive count says an
+			// entry exists, not that it equals the source. The population is
+			// rebuilt from the pinned source instead of resumed; only an
+			// admitted checkpoint above keeps its loaded entries.
+			s.logPrintf("📇 BuildIndexes: saved vector checkpoint has no equal source certificate; rebuilding vectors from the pinned source")
+			forceVectorRebuild = true
+			forceHNSWRebuild, forceRoutingRebuild = true, true
 		}
 	}
 
