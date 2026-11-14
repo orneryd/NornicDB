@@ -1,6 +1,7 @@
 package storagecensus
 
 import (
+	"go/constant"
 	"go/token"
 	"go/types"
 	"sort"
@@ -283,6 +284,11 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 			}
 			return true
 		}
+		// A contextual wrap is propagation only when it is the standard
+		// library's fmt.Errorf around exactly this read error.
+		if wrappedExactError(branch, ret, v, errv) {
+			return true
+		}
 		// A defer lowers even an unnamed error result to a local return cell.
 		// Accept only a nonescaping cell written with this exact error, then
 		// loaded after RunDefers; captured/named results remain fail-closed.
@@ -333,6 +339,153 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 		}
 	}
 	return false
+}
+
+// trustedErrorf is the standard library's contextual error constructor called
+// through its imported identity: package path fmt and name Errorf, with the
+// format-string, variadic-interface signature fmt.Errorf declares. A
+// same-shaped local wrapper is not it.
+func trustedErrorf(call *ssa.CallCommon) bool {
+	if call.IsInvoke() {
+		return false
+	}
+	callee := call.StaticCallee()
+	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg == nil || callee.Pkg.Pkg.Path() != "fmt" || callee.Name() != "Errorf" {
+		return false
+	}
+	sig := callee.Signature
+	if sig == nil || !sig.Variadic() || sig.Params().Len() != 2 || sig.Results().Len() != 1 {
+		return false
+	}
+	if format, ok := sig.Params().At(0).Type().Underlying().(*types.Basic); !ok || format.Kind() != types.String {
+		return false
+	}
+	spread, ok := sig.Params().At(1).Type().(*types.Slice)
+	if !ok {
+		return false
+	}
+	element, ok := spread.Elem().Underlying().(*types.Interface)
+	return ok && element.NumMethods() == 0 && types.Identical(sig.Results().At(0).Type(), types.Universe.Lookup("error").Type())
+}
+
+// wrappedExactError reports whether branch returns v, the trusted fmt.Errorf
+// call wrapping exactly errv. The format holds one %w verb, errv is the sole
+// formatted value after interface conversion, and the variadic array holding
+// it is local to this call: one element store, the call's own slice, and no
+// other write, read, escape or use. The branch may hold nothing besides that
+// argument setup, the call, the return, debug references and the aggregate
+// result transfer a return already allows.
+func wrappedExactError(branch *ssa.BasicBlock, ret *ssa.Return, v, errv ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok || !trustedErrorf(call.Common()) || len(call.Common().Args) != 2 {
+		return false
+	}
+	format, ok := call.Common().Args[0].(*ssa.Const)
+	if !ok || format.Value == nil || format.Value.Kind() != constant.String {
+		return false
+	}
+	// The proof accepts only a single %w format; other formatting shapes
+	// remain unproven and are rejected conservatively.
+	if text := constant.StringVal(format.Value); strings.Count(text, "%") != 1 || !strings.Contains(text, "%w") {
+		return false
+	}
+	spread, ok := call.Common().Args[1].(*ssa.Slice)
+	if !ok || spread.Low != nil || spread.High != nil || spread.Max != nil {
+		return false
+	}
+	array, ok := spread.X.(*ssa.Alloc)
+	if !ok {
+		return false
+	}
+	pointer, ok := array.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	argumentArray, ok := pointer.Elem().Underlying().(*types.Array)
+	if !ok || argumentArray.Len() != 1 {
+		return false
+	}
+	var index *ssa.IndexAddr
+	for _, ref := range *array.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.IndexAddr:
+			if index != nil || ref.X != array {
+				return false
+			}
+			index = ref
+		case *ssa.Slice:
+			if ref != spread {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	if index == nil || index.Referrers() == nil || len(*index.Referrers()) != 1 {
+		return false
+	}
+	position, ok := index.Index.(*ssa.Const)
+	if !ok || position.Value == nil || position.Value.Kind() != constant.Int || constant.Sign(position.Value) != 0 {
+		return false
+	}
+	store, ok := (*index.Referrers())[0].(*ssa.Store)
+	if !ok || store.Addr != index {
+		return false
+	}
+	var conversion ssa.Instruction
+	var converted ssa.Value
+	switch value := store.Val.(type) {
+	case *ssa.ChangeInterface:
+		if value.X != errv {
+			return false
+		}
+		conversion, converted = value, value
+	case *ssa.MakeInterface:
+		if value.X != errv {
+			return false
+		}
+		conversion, converted = value, value
+	default:
+		return false
+	}
+	for _, ref := range *converted.Referrers() {
+		if ref == store {
+			continue
+		}
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return false
+		}
+	}
+	for _, ref := range *spread.Referrers() {
+		if ref == call {
+			continue
+		}
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return false
+		}
+	}
+	allowed := map[ssa.Instruction]bool{array: true, index: true, store: true, conversion: true, spread: true, call: true}
+	present := map[ssa.Instruction]bool{}
+	for _, ins := range branch.Instrs {
+		present[ins] = true
+		if allowed[ins] {
+			continue
+		}
+		switch ins.(type) {
+		case *ssa.Return, *ssa.DebugRef:
+			continue
+		}
+		if !returnedAggregateTransfer(ins, ret) {
+			return false
+		}
+	}
+	for ins := range allowed {
+		if !present[ins] {
+			return false
+		}
+	}
+	return true
 }
 
 // returnedAggregateTransfer recognizes only the local aggregate result's

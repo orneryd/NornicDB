@@ -82,7 +82,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		release()
 		return err
 	}
-	previous, readErr := tx.GetNode(ctx, qualified.ID)
+	previous, readErr := tx.GetStoredNode(ctx, qualified.ID)
 	operation := storage.Operation{Type: storage.OpUpdateNode, Node: qualified}
 	var apply func() error
 	if errors.Is(readErr, storage.ErrNotFound) {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -588,9 +589,10 @@ func TestStoreValueLimitOverBolt(t *testing.T) {
 // stored through the embedding sidecar, on a server with automatic compaction
 // every 2 seconds. A property SET commits; a new snapshot file appears and the
 // commit's record is no longer in the journal, each within 30 seconds; the
-// snapshot file is smaller than 1 MiB; and after the commit and after a clean
-// restart the node has the SET and the vector check passes (number, first and
-// last value) (NOR-412).
+// snapshot contains every stored vector coordinate; and after the commit and
+// after a clean restart the node has the SET and the vector check passes
+// (number, first and last value). Full-vector snapshots are not subject to
+// the old embedding-free file-size cap (NOR-412).
 func TestManyChunkNodeCommitsAndIsCompacted(t *testing.T) {
 	const chunks = 6600
 	for _, explicit := range journalForms() {
@@ -618,9 +620,7 @@ func TestManyChunkNodeCommitsAndIsCompacted(t *testing.T) {
 				_, largest := lab.journalSince(0)
 				return largest == 0
 			}, 30*time.Second, 250*time.Millisecond, "and truncates the journal: the commit's record is gone from it")
-			info, err := os.Stat(newest())
-			require.NoError(t, err)
-			require.Less(t, info.Size(), int64(1<<20), "the snapshot file is smaller than 1 MiB")
+			requireManyChunkSnapshot(t, t.Context(), newest(), chunks)
 			check := func(stage string) {
 				require.Equal(t, [][]any{{true}}, lab.mustRun("MATCH (n:Many {id: 'many'}) RETURN n.flag", nil), stage)
 				lab.requireVectors("Many", 1, chunks)
@@ -631,4 +631,41 @@ func TestManyChunkNodeCommitsAndIsCompacted(t *testing.T) {
 			lab.requireNodeMeta("Many", chunks)
 		})
 	}
+}
+
+// manyChunkSnapshotProof checks the snapshot's sole user node without retaining
+// its decoded frame. DeepEqual reports only a boolean to avoid printing the
+// entire vector payload if a coordinate regresses.
+type manyChunkSnapshotProof struct {
+	t     *testing.T
+	want  [][]float32
+	found int
+}
+
+func (p *manyChunkSnapshotProof) VisitNode(ctx context.Context, node *storage.Node) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, label := range node.Labels {
+		if label == "Many" {
+			p.found++
+			require.True(p.t, reflect.DeepEqual(p.want, node.ChunkEmbeddings), "snapshot preserves every stored vector coordinate")
+		}
+	}
+	return nil
+}
+func (p *manyChunkSnapshotProof) VisitEdge(ctx context.Context, _ *storage.Edge) error {
+	return ctx.Err()
+}
+
+func requireManyChunkSnapshot(t *testing.T, ctx context.Context, path string, chunks int) {
+	t.Helper()
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer file.Close()
+	proof := manyChunkSnapshotProof{t: t, want: journalVectors(chunks, 0)}
+	metadata, err := storage.ReadSnapshot(ctx, file, &proof)
+	require.NoError(t, err, "compaction snapshot is fully decodable after journal truncation")
+	require.Equal(t, 1, proof.found, "the complete user node is present exactly once")
+	require.Zero(t, metadata.EdgeCount, "this fixture creates no relationships")
 }
