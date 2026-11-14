@@ -202,7 +202,7 @@ const standardRecordsFrameError = "wal: entry exceeds maximum WAL frame size of 
 
 // A WAL opened without a policy refuses a record that does not fit one frame
 // with the frame error, on the ordinary append and in a batch. The refused
-// record consumes a sequence number, the records written before it stay, and
+// record publishes no sequence number, the records written before it stay, and
 // later appends succeed. With fixed metadata through the batch writer, a record
 // of exactly one frame is written and the same record one byte longer is
 // refused. The frames in the file are version 6.
@@ -227,42 +227,42 @@ func TestStandardRecordsRefusals(t *testing.T) {
 	require.EqualError(t, err, "wal: failed to serialize entry: "+standardRecordsFrameError)
 	var rejection *walRecordRejection
 	require.True(t, errors.As(err, &rejection), "the error is the journal's record rejection")
-	require.EqualValues(t, 1, w.Sequence(), "the refused record consumed its sequence")
+	require.Zero(t, w.Sequence(), "the refused record publishes no sequence")
 	seq, err := w.AppendWithDatabaseReturningSeq(OpEntityCommit, small, "test")
 	require.NoError(t, err)
-	require.EqualValues(t, 2, seq)
-	require.Equal(t, []uint64{2}, sequences())
+	require.EqualValues(t, 1, seq)
+	require.Equal(t, []uint64{1}, sequences())
 
 	// A header that alone exceeds the frame is refused the same way.
 	_, err = w.AppendWithDatabaseReturningSeq(OpEntityCommit, small, strings.Repeat("d", int(walMaxEntrySize)))
 	require.EqualError(t, err, "wal: failed to serialize entry: "+standardRecordsFrameError)
-	require.EqualValues(t, 3, w.Sequence())
+	require.EqualValues(t, 1, w.Sequence())
 
 	// A batch whose second record does not fit: the first is written, the
-	// second consumes its sequence and fails the batch, the third never runs.
+	// second fails the batch without publishing its sequence, the third never runs.
 	batch := w.NewBatch()
 	for _, data := range []walEntityCommitData{small, large, small} {
 		require.NoError(t, batch.append(OpEntityCommit, data))
 	}
 	_, _, err = batch.CommitWithSeq()
-	require.EqualError(t, err, "wal batch: failed to serialize entry seq 5: "+standardRecordsFrameError)
-	require.EqualValues(t, 5, w.Sequence())
-	require.Equal(t, []uint64{2, 4}, sequences())
+	require.EqualError(t, err, "wal batch: failed to serialize entry seq 3: "+standardRecordsFrameError)
+	require.EqualValues(t, 2, w.Sequence())
+	require.Equal(t, []uint64{1, 2}, sequences())
 	seq, err = w.AppendWithDatabaseReturningSeq(OpEntityCommit, small, "test")
 	require.NoError(t, err)
-	require.EqualValues(t, 6, seq)
+	require.EqualValues(t, 3, seq)
 
 	// The frame boundary, with fixed metadata through the batch writer.
-	at := WALEntry{Sequence: 7, Timestamp: standardRecordsTime, Operation: OpEntityCommit}
+	at := WALEntry{Sequence: 4, Timestamp: standardRecordsTime, Operation: OpEntityCommit}
 	fit := standardRecordsExactFit(t, at)
 	batch = w.NewBatch()
 	batch.pending = append(batch.pending, pendingEntry{Operation: at.Operation, Data: fit, Checksum: crc32Checksum(fit), Timestamp: at.Timestamp})
 	first, _, err := batch.CommitWithSeq()
 	require.NoError(t, err)
-	require.EqualValues(t, 7, first)
+	require.EqualValues(t, 4, first)
 	// One more byte; its value is chosen so the new checksum does not make
 	// the header shorter, which would let the longer record fit again.
-	at.Sequence = 8
+	at.Sequence = 5
 	var over []byte
 	for last := byte('a'); last <= 'z' && over == nil; last++ {
 		candidate := append(append([]byte(nil), fit...), last)
@@ -275,8 +275,8 @@ func TestStandardRecordsRefusals(t *testing.T) {
 	batch = w.NewBatch()
 	batch.pending = append(batch.pending, pendingEntry{Operation: at.Operation, Data: over, Checksum: at.Checksum, Timestamp: at.Timestamp})
 	_, _, err = batch.CommitWithSeq()
-	require.EqualError(t, err, "wal batch: failed to serialize entry seq 8: "+standardRecordsFrameError)
-	require.Equal(t, []uint64{2, 4, 6, 7}, sequences())
+	require.EqualError(t, err, "wal batch: failed to serialize entry seq 5: "+standardRecordsFrameError)
+	require.Equal(t, []uint64{1, 2, 3, 4}, sequences())
 	for _, frame := range standardRecordsFrames(t, walActivePath(dir)) {
 		require.Equal(t, uint8(6), frame.Version, "seq %d", frame.Seq)
 	}
