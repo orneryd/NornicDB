@@ -1,6 +1,7 @@
 package storagecensus
 
 import (
+	"go/constant"
 	"go/token"
 	"go/types"
 	"sort"
@@ -264,6 +265,9 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 }
 
 func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
+	if catalogAbortReturnsExact(branch, errv) {
+		return true
+	}
 	ret, ok := branch.Instrs[len(branch.Instrs)-1].(*ssa.Return)
 	if !ok {
 		return false
@@ -283,6 +287,11 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 			}
 			return true
 		}
+		// A contextual wrap is propagation only when it is the standard
+		// library's fmt.Errorf around exactly this read error.
+		if wrappedExactError(branch, ret, v, errv) {
+			return true
+		}
 		// A defer lowers even an unnamed error result to a local return cell.
 		// Accept only a nonescaping cell written with this exact error, then
 		// loaded after RunDefers; captured/named results remain fail-closed.
@@ -291,48 +300,622 @@ func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 			continue
 		}
 		cell, ok := load.X.(*ssa.Alloc)
-		if !ok || cell.Heap {
+		if !ok {
 			continue
 		}
-		safe := true
-		stored := false
-		for _, use := range *cell.Referrers() {
-			switch use := use.(type) {
-			case *ssa.Store:
-				if use.Addr != cell {
-					safe = false
-				}
-			case *ssa.UnOp:
-				if use.Op != token.MUL {
-					safe = false
-				}
-			case *ssa.DebugRef:
-			default:
-				safe = false
-			}
+		if !cell.Heap && deferCellReturnsExact(branch, cell, errv) {
+			return true
 		}
-		for _, ins := range branch.Instrs {
-			switch ins := ins.(type) {
-			case *ssa.Store:
-				if ins.Addr != cell || ins.Val != errv {
-					safe = false
-				} else {
-					stored = true
-				}
-			case *ssa.UnOp:
-				if ins.X != cell || ins.Op != token.MUL {
-					safe = false
-				}
-			case *ssa.RunDefers, *ssa.Return, *ssa.DebugRef:
-			default:
-				safe = false
-			}
-		}
-		if safe && stored {
+		// A constructor that registered its own cleanup before failing and
+		// composes the cleanup's error with that failure still returns the
+		// failure: the named result holds the wrap and the deferred composition
+		// takes the cell's own error as its primary. The cell and the one
+		// closure that captures it are both proven below.
+		if deferredCleanupReturn(branch, cell, errv) {
 			return true
 		}
 	}
 	return false
+}
+
+// deferCellReturnsExact reports whether branch stores exactly errv into a local
+// error result cell and returns it after RunDefers, holding nothing else.
+func deferCellReturnsExact(branch *ssa.BasicBlock, cell *ssa.Alloc, errv ssa.Value) bool {
+	if cell.Referrers() == nil {
+		return false
+	}
+	safe := true
+	stored := false
+	for _, use := range *cell.Referrers() {
+		switch use := use.(type) {
+		case *ssa.Store:
+			if use.Addr != cell {
+				safe = false
+			}
+		case *ssa.UnOp:
+			if use.Op != token.MUL {
+				safe = false
+			}
+		case *ssa.DebugRef:
+		default:
+			safe = false
+		}
+	}
+	for _, ins := range branch.Instrs {
+		switch ins := ins.(type) {
+		case *ssa.Store:
+			if ins.Addr != cell || ins.Val != errv {
+				safe = false
+			} else {
+				stored = true
+			}
+		case *ssa.UnOp:
+			if ins.X != cell || ins.Op != token.MUL {
+				safe = false
+			}
+		case *ssa.RunDefers, *ssa.Return, *ssa.DebugRef:
+		default:
+			safe = false
+		}
+	}
+	return safe && stored
+}
+
+// deferredCleanupReturn reports whether branch fails with errv through the named
+// result cell of a constructor whose deferred cleanup composes the cell's own
+// error with the cleanup's. The branch's only write to the cell is the trusted
+// wrap of exactly errv (or errv itself); every other write in it clears a
+// sibling result to nil; the deferred calls run after that write and the cell is
+// loaded for the return afterwards. Any other instruction -- a call, a store
+// into state, a second store of the cell -- is an effect the branch decides, not
+// propagation.
+func deferredCleanupReturn(branch *ssa.BasicBlock, cell *ssa.Alloc, errv ssa.Value) bool {
+	closure, capture, ok := deferredCleanupClosure(cell, branch)
+	if !ok {
+		return false
+	}
+	allowed := map[ssa.Instruction]bool{}
+	stores := 0
+	for _, ins := range branch.Instrs {
+		store, ok := ins.(*ssa.Store)
+		if !ok || store.Addr != cell {
+			continue
+		}
+		stores++
+		value, ok := store.Val.(*ssa.Call)
+		if !ok {
+			if store.Val != errv {
+				return false
+			}
+			continue
+		}
+		if allowed, ok = wrappedErrorCall(value, errv); !ok {
+			return false
+		}
+	}
+	if stores != 1 {
+		return false
+	}
+	stored, rundefers, returned := -1, -1, -1
+	for i, ins := range branch.Instrs {
+		if allowed[ins] {
+			continue // the wrap's own argument setup
+		}
+		switch ins := ins.(type) {
+		case *ssa.Store:
+			if ins.Addr == cell {
+				stored = i
+				continue
+			}
+			ret, ok := branch.Instrs[len(branch.Instrs)-1].(*ssa.Return)
+			if !ok || !clearsSiblingResult(ins, ret, closure, cell) {
+				return false
+			}
+		case *ssa.RunDefers:
+			if rundefers >= 0 {
+				return false
+			}
+			rundefers = i
+		case *ssa.Return:
+			if returned >= 0 {
+				return false
+			}
+			returned = i
+		case *ssa.UnOp:
+			if ins.Op != token.MUL {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	if stored < 0 || rundefers < 0 || returned != len(branch.Instrs)-1 {
+		return false
+	}
+	if stored > rundefers || rundefers > returned {
+		return false
+	}
+	for ins := range allowed {
+		if ins.Block() != branch {
+			return false
+		}
+	}
+	return cleanupComposes(closure, capture) && cleanupEffects(closure, capture, cell, branch)
+}
+
+// clearsSiblingResult permits only the nil setup of a sibling return value.
+// An arbitrary local allocation can escape into shared state; being an Alloc
+// is therefore insufficient. The result address may be captured only by this
+// same verified deferred cleanup, never passed or published elsewhere.
+func clearsSiblingResult(store *ssa.Store, ret *ssa.Return, cleanup *ssa.Function, errorCell *ssa.Alloc) bool {
+	value, ok := store.Val.(*ssa.Const)
+	if !ok || !value.IsNil() {
+		return false
+	}
+	cell, ok := store.Addr.(*ssa.Alloc)
+	if !ok || cell == errorCell || cell.Referrers() == nil {
+		return false
+	}
+	returned := false
+	for _, result := range ret.Results {
+		if load, ok := result.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == cell {
+			returned = true
+		}
+	}
+	if !returned {
+		return false
+	}
+	return unaliasedSiblingResult(cell, ret.Parent(), cleanup, errorCell)
+}
+
+// unaliasedSiblingResult proves a named return cell cannot alias external state.
+// Both the return arm and its deferred cleanup use this same cell proof.
+func unaliasedSiblingResult(cell *ssa.Alloc, parent, cleanup *ssa.Function, errorCell *ssa.Alloc) bool {
+	if cell == nil || cell == errorCell || cell.Parent() != parent || cell.Referrers() == nil {
+		return false
+	}
+	returned := false
+	for _, block := range parent.Blocks {
+		for _, ins := range block.Instrs {
+			if ret, ok := ins.(*ssa.Return); ok {
+				for _, result := range ret.Results {
+					if load, ok := result.(*ssa.UnOp); ok && load.Op == token.MUL && load.X == cell {
+						returned = true
+					}
+				}
+			}
+		}
+	}
+	if !returned {
+		return false
+	}
+	for _, ref := range *cell.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.Store:
+			if ref.Addr != cell {
+				return false
+			}
+		case *ssa.UnOp:
+			if ref.Op != token.MUL || ref.X != cell {
+				return false
+			}
+		case *ssa.MakeClosure:
+			if ref.Fn != cleanup {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// deferredCleanupClosure returns the one closure that captures the error result
+// cell, and the index of that capture. The cell's other uses are stores and
+// loads only; the capture's only use is a defer instruction in the cell's own
+// function, and that defer dominates branch, so it runs on every path the
+// branch returns from.
+func deferredCleanupClosure(cell *ssa.Alloc, branch *ssa.BasicBlock) (*ssa.Function, int, bool) {
+	if cell.Referrers() == nil || branch.Parent() == nil {
+		return nil, 0, false
+	}
+	pointer, ok := cell.Type().Underlying().(*types.Pointer)
+	if !ok || !types.Identical(pointer.Elem(), types.Universe.Lookup("error").Type()) {
+		return nil, 0, false // only an error result cell holds the failure
+	}
+	var closure *ssa.Function
+	capture := -1
+	for _, ref := range *cell.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.Store:
+			if ref.Addr != cell {
+				return nil, 0, false
+			}
+		case *ssa.UnOp:
+			if ref.Op != token.MUL {
+				return nil, 0, false
+			}
+		case *ssa.MakeClosure:
+			if closure != nil {
+				return nil, 0, false
+			}
+			captured, ok := ref.Fn.(*ssa.Function)
+			if !ok || !deferredBefore(ref, branch) {
+				return nil, 0, false
+			}
+			for i, binding := range ref.Bindings {
+				if binding != cell {
+					continue
+				}
+				if capture >= 0 {
+					return nil, 0, false
+				}
+				capture = i
+			}
+			if capture < 0 || capture >= len(captured.FreeVars) || !types.Identical(captured.FreeVars[capture].Type(), cell.Type()) {
+				return nil, 0, false
+			}
+			closure = captured
+		case *ssa.DebugRef:
+		default:
+			return nil, 0, false
+		}
+	}
+	if closure == nil {
+		return nil, 0, false
+	}
+	return closure, capture, true
+}
+
+// deferredBefore reports whether mc is registered as a deferred call in the
+// branch's function and that defer dominates branch: nothing else uses mc, the
+// defer calls exactly it, and it is already registered on every path to branch.
+func deferredBefore(mc *ssa.MakeClosure, branch *ssa.BasicBlock) bool {
+	if mc.Referrers() == nil || mc.Block() == nil {
+		return false
+	}
+	deferred := false
+	for _, ref := range *mc.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.Defer:
+			if deferred || ref.Common().Value != ssa.Value(mc) || ref.Block() == nil || ref.Block().Parent() != branch.Parent() {
+				return false
+			}
+			deferred = true
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return deferred && mc.Block().Dominates(branch)
+}
+
+// cleanupComposes proves the deferred closure's use of the captured error
+// result: every load of it is the closure's own nil test or the primary failure
+// of the composition owner's Outcomes, exactly one store is that composition's
+// result, and every other store happens only where the closure's own nil test
+// found the cell empty, so no store replaces a failure the constructor already
+// returned.
+func cleanupComposes(fn *ssa.Function, capture int) bool {
+	if capture < 0 || capture >= len(fn.FreeVars) {
+		return false
+	}
+	cell := fn.FreeVars[capture]
+	if cell.Referrers() == nil {
+		return false
+	}
+	composed := false
+	for _, ref := range *cell.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.UnOp:
+			if ref.Op != token.MUL || !cleanupRead(ref) {
+				return false
+			}
+		case *ssa.Store:
+			if ref.Addr != cell {
+				return false
+			}
+			if composedValue(ref.Val, cell) {
+				if composed {
+					return false
+				}
+				composed = true
+				continue
+			}
+			if !nilGuardedStore(fn, cell, ref.Block()) {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return composed
+}
+
+// cleanupRead reports whether every use of a load of the captured error result
+// is only a nil test of it or the primary failure of a composition.
+func cleanupRead(load *ssa.UnOp) bool {
+	if load.Referrers() == nil {
+		return false
+	}
+	value := ssa.Value(load)
+	for _, ref := range *load.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.BinOp:
+			tested, _, ok := workcensus.NilComparison(ref)
+			if !ok || tested != value || ref.Referrers() == nil {
+				return false
+			}
+			for _, use := range *ref.Referrers() {
+				switch use.(type) {
+				case *ssa.If, *ssa.DebugRef:
+				default:
+					return false
+				}
+			}
+		case *ssa.Call:
+			if !composedPrimary(ref, value) {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// composedPrimary reports whether call is the composition owner's Outcomes with
+// primary as its primary failure.
+func composedPrimary(call *ssa.Call, primary ssa.Value) bool {
+	if !trustedOutcomes(call.Common()) {
+		return false
+	}
+	args := call.Common().Args
+	return len(args) > 0 && args[0] == primary
+}
+
+// composedValue reports whether v is the composition owner's Outcomes of the
+// cell's own error as its primary failure.
+func composedValue(v ssa.Value, cell ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok || !trustedOutcomes(call.Common()) {
+		return false
+	}
+	args := call.Common().Args
+	if len(args) == 0 {
+		return false
+	}
+	primary, ok := args[0].(*ssa.UnOp)
+	return ok && primary.Op == token.MUL && primary.X == cell
+}
+
+// nilGuardedStore reports whether block is reached only through the arm of a
+// dominating branch that tested this very cell against nil and found it empty.
+func nilGuardedStore(fn *ssa.Function, cell ssa.Value, block *ssa.BasicBlock) bool {
+	for _, dominating := range fn.Blocks {
+		if dominating == block || len(dominating.Instrs) == 0 {
+			continue
+		}
+		iff, ok := dominating.Instrs[len(dominating.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		tested, nilIndex, ok := workcensus.NilComparison(iff.Cond)
+		if !ok {
+			continue
+		}
+		load, ok := tested.(*ssa.UnOp)
+		if !ok || load.Op != token.MUL || load.X != cell {
+			continue
+		}
+		if dominating.Succs[nilIndex].Dominates(block) {
+			return true
+		}
+	}
+	return false
+}
+
+// trustedErrorf is the standard library's contextual error constructor called
+// through its imported identity: package path fmt and name Errorf, with the
+// format-string, variadic-interface signature fmt.Errorf declares. A
+// same-shaped local wrapper is not it.
+func trustedErrorf(call *ssa.CallCommon) bool {
+	if call.IsInvoke() {
+		return false
+	}
+	callee := call.StaticCallee()
+	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg == nil || callee.Pkg.Pkg.Path() != "fmt" || callee.Name() != "Errorf" {
+		return false
+	}
+	sig := callee.Signature
+	if sig == nil || !sig.Variadic() || sig.Params().Len() != 2 || sig.Results().Len() != 1 {
+		return false
+	}
+	if format, ok := sig.Params().At(0).Type().Underlying().(*types.Basic); !ok || format.Kind() != types.String {
+		return false
+	}
+	spread, ok := sig.Params().At(1).Type().(*types.Slice)
+	if !ok {
+		return false
+	}
+	element, ok := spread.Elem().Underlying().(*types.Interface)
+	return ok && element.NumMethods() == 0 && types.Identical(sig.Results().At(0).Type(), types.Universe.Lookup("error").Type())
+}
+
+// composeOutcomesPath is the module's error-composition owner. Its Outcomes
+// keeps the primary failure first: it skips a cleanup failure the primary
+// already wraps, returns a lone cause unchanged and joins several, so a
+// composition still carries the primary in its causal chain. The census trusts
+// that owner by identity -- this module path, the name Outcomes and its
+// (primary error, others ...error) error signature -- exactly as it trusts the
+// standard library's fmt.Errorf, never a bare spelling; the contract itself is
+// exercised against the real implementation in
+// cleanup_error_propagation_test.go.
+const composeOutcomesPath = Module + "pkg/errors/compose"
+
+// trustedOutcomes reports whether call is the composition owner's Outcomes,
+// called through its imported identity. A same-shaped local helper, another
+// package's Outcomes or a wrapper around it is not it.
+func trustedOutcomes(call *ssa.CallCommon) bool {
+	if call.IsInvoke() {
+		return false
+	}
+	callee := call.StaticCallee()
+	if callee == nil || callee.Pkg == nil || callee.Pkg.Pkg == nil {
+		return false
+	}
+	if callee.Pkg.Pkg.Path() != composeOutcomesPath || callee.Name() != "Outcomes" {
+		return false
+	}
+	sig := callee.Signature
+	errorType := types.Universe.Lookup("error").Type()
+	if sig == nil || !sig.Variadic() || sig.Params().Len() != 2 || sig.Results().Len() != 1 {
+		return false
+	}
+	if !types.Identical(sig.Params().At(0).Type(), errorType) {
+		return false
+	}
+	others, ok := sig.Params().At(1).Type().(*types.Slice)
+	if !ok || !types.Identical(others.Elem(), errorType) {
+		return false
+	}
+	return types.Identical(sig.Results().At(0).Type(), errorType)
+}
+
+// wrappedErrorCall reports whether call is the trusted fmt.Errorf wrapping
+// exactly errv, and returns the instructions that call lowers to. The format
+// holds one %w verb, errv is the sole formatted value after interface
+// conversion, and the variadic array holding it is local to this call: one
+// element store, the call's own slice, and no other write, read, escape or use.
+func wrappedErrorCall(call *ssa.Call, errv ssa.Value) (map[ssa.Instruction]bool, bool) {
+	if !trustedErrorf(call.Common()) || len(call.Common().Args) != 2 {
+		return nil, false
+	}
+	format, ok := call.Common().Args[0].(*ssa.Const)
+	if !ok || format.Value == nil || format.Value.Kind() != constant.String {
+		return nil, false
+	}
+	// The proof accepts only a single %w format; other formatting shapes
+	// remain unproven and are rejected conservatively.
+	if text := constant.StringVal(format.Value); strings.Count(text, "%") != 1 || !strings.Contains(text, "%w") {
+		return nil, false
+	}
+	spread, ok := call.Common().Args[1].(*ssa.Slice)
+	if !ok || spread.Low != nil || spread.High != nil || spread.Max != nil {
+		return nil, false
+	}
+	array, ok := spread.X.(*ssa.Alloc)
+	if !ok {
+		return nil, false
+	}
+	pointer, ok := array.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return nil, false
+	}
+	argumentArray, ok := pointer.Elem().Underlying().(*types.Array)
+	if !ok || argumentArray.Len() != 1 {
+		return nil, false
+	}
+	var index *ssa.IndexAddr
+	for _, ref := range *array.Referrers() {
+		switch ref := ref.(type) {
+		case *ssa.IndexAddr:
+			if index != nil || ref.X != array {
+				return nil, false
+			}
+			index = ref
+		case *ssa.Slice:
+			if ref != spread {
+				return nil, false
+			}
+		case *ssa.DebugRef:
+		default:
+			return nil, false
+		}
+	}
+	if index == nil || index.Referrers() == nil || len(*index.Referrers()) != 1 {
+		return nil, false
+	}
+	position, ok := index.Index.(*ssa.Const)
+	if !ok || position.Value == nil || position.Value.Kind() != constant.Int || constant.Sign(position.Value) != 0 {
+		return nil, false
+	}
+	store, ok := (*index.Referrers())[0].(*ssa.Store)
+	if !ok || store.Addr != index {
+		return nil, false
+	}
+	var conversion ssa.Instruction
+	var converted ssa.Value
+	switch value := store.Val.(type) {
+	case *ssa.ChangeInterface:
+		if value.X != errv {
+			return nil, false
+		}
+		conversion, converted = value, value
+	case *ssa.MakeInterface:
+		if value.X != errv {
+			return nil, false
+		}
+		conversion, converted = value, value
+	default:
+		return nil, false
+	}
+	for _, ref := range *converted.Referrers() {
+		if ref == store {
+			continue
+		}
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return nil, false
+		}
+	}
+	for _, ref := range *spread.Referrers() {
+		if ref == call {
+			continue
+		}
+		if _, ok := ref.(*ssa.DebugRef); !ok {
+			return nil, false
+		}
+	}
+	return map[ssa.Instruction]bool{array: true, index: true, store: true, conversion: true, spread: true, call: true}, true
+}
+
+// wrappedExactError reports whether branch returns v, the wrap wrappedErrorCall
+// proves. The branch holds nothing besides that argument setup, the call, the
+// return, debug references and the aggregate result transfer a return already
+// allows.
+func wrappedExactError(branch *ssa.BasicBlock, ret *ssa.Return, v, errv ssa.Value) bool {
+	call, ok := v.(*ssa.Call)
+	if !ok {
+		return false
+	}
+	allowed, ok := wrappedErrorCall(call, errv)
+	if !ok {
+		return false
+	}
+	present := map[ssa.Instruction]bool{}
+	for _, ins := range branch.Instrs {
+		present[ins] = true
+		if allowed[ins] {
+			continue
+		}
+		switch ins.(type) {
+		case *ssa.Return, *ssa.DebugRef:
+			continue
+		}
+		if !returnedAggregateTransfer(ins, ret) {
+			return false
+		}
+	}
+	for ins := range allowed {
+		if !present[ins] {
+			return false
+		}
+	}
+	return true
 }
 
 // returnedAggregateTransfer recognizes only the local aggregate result's

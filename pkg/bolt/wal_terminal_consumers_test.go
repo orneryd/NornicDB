@@ -110,11 +110,22 @@ func TestBoltWALTerminalRunTimeoutKeepsPriorCleanup(t *testing.T) {
 			engine := walterminal.New(t)
 			executor := newWALConsumerExecutor(engine)
 			observed := make(chan error, 1)
+			runStarted := make(chan struct{})
+			expireRun := make(chan struct{})
+			// Release the provider before server cleanup even if a wire assertion fails.
+			defer func() {
+				select {
+				case <-expireRun:
+				default:
+					close(expireRun)
+				}
+			}()
 			executor.run = func(ctx context.Context, q string, p map[string]any) (*QueryResult, error) {
 				if q != "RETURN 1 /* owner cleans timed-out transaction */" {
 					return executor.transactionalBoltQueryExecutorAdapter.Execute(ctx, q, p)
 				}
-				<-ctx.Done()
+				close(runStarted)
+				<-expireRun
 				// A provider may finish its own storage transaction before returning
 				// the RUN error. Lifecycle's later cleanup then has nothing to do.
 				cleanup := executor.transactionalBoltQueryExecutorAdapter.RollbackTransaction(context.WithoutCancel(ctx))
@@ -124,15 +135,24 @@ func TestBoltWALTerminalRunTimeoutKeepsPriorCleanup(t *testing.T) {
 				return nil, err
 			}
 			conn := openBoltTestConn(t, startControlledTransactionServer(t, executor))
-			beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(250)})
+			// This tests a provider timeout and preserved prior cleanup. Disable
+			// the separate BEGIN wall-clock timer: fixture I/O must not expire
+			// the transaction before the RUN under test is admitted.
+			beginExplicitTransaction(t, conn, map[string]any{"tx_timeout": int64(0)})
 			require.NoError(t, SendRun(t, conn, "CREATE (:WalWire)", nil, nil))
 			require.NoError(t, ReadSuccess(t, conn))
 			require.NoError(t, SendPull(t, conn, nil))
 			require.NoError(t, ReadSuccess(t, conn))
+			require.NoError(t, SendRun(t, conn, "RETURN 1 /* owner cleans timed-out transaction */", nil, nil))
+			select {
+			case <-runStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("RUN did not enter the provider")
+			}
 			if closed {
 				require.NoError(t, engine.WAL.Close())
 			}
-			require.NoError(t, SendRun(t, conn, "RETURN 1 /* owner cleans timed-out transaction */", nil, nil))
+			close(expireRun)
 			code, message, err := AssertFailure(t, conn)
 			require.NoError(t, err)
 			require.Equal(t, transactionTimedOutCode, code)

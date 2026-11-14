@@ -31,6 +31,7 @@ type commitWriter struct {
 	entityOperations      []Operation
 	entityLogicalID       string
 	entityMode            EntityCommitMode
+	entityCapture         changeCaptureDecision
 	entityJournalAccepted bool
 	entityWAL             *WAL
 	entityJournalData     []byte

@@ -27,6 +27,7 @@ type EntityTransactionEnvelope struct {
 	Version     uint16
 	Namespace   string
 	LogicalTxID string
+	capture     changeCaptureDecision
 }
 
 type entityWriter interface {
@@ -216,7 +217,7 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 // The existing native owner settles it without accepting another log entry.
 // Author: NOR-288 lane (Codex), 2026-10-29; preserves the merged decoded API.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	prepared, existing, err := prepareAcceptedEntityApplication(ctx, engine, envelope, ops, "", changeCaptureDecision{})
+	prepared, existing, err := prepareAcceptedEntityApplication(ctx, engine, envelope, ops, "", envelope.capture)
 	if err != nil {
 		return nil, AcceptedOutcome(CommitRecoveryPending, envelope.LogicalTxID, err)
 	}
@@ -230,8 +231,9 @@ func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelop
 // prepareAcceptedEntityApplication materializes the existing semantic command
 // through the native staging owner, borrowing retained entity authority during
 // an in-process retry. Empty authority means a cold replica/recovery application.
-// capture is the change-capture decision of the commit an in-process retry
-// applies; a cold application passes none and decides (changeCaptureLocked).
+// capture is the admitted decision carried by an in-process retry or its WAL
+// record. Only an application without a recorded decision chooses the current
+// database mode (changeCaptureLocked).
 func prepareAcceptedEntityApplication(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, authority string, capture changeCaptureDecision) (*PreparedEntityCommit, *CommitReceipt, error) {
 	tx, err := BeginEntityTransaction(ctx, engine, envelope.Mode)
 	if err != nil {

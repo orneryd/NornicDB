@@ -1014,3 +1014,55 @@ cap-retirement and namespace/type controls pass. Raw evidence:
 `/tmp/v150-relationship-index-cold-final.txt/.cpu`,
 `/tmp/v150-relationship-index-cold-summary.json`, and
 `/tmp/v150-final-suppression-relationship-focused.log`.
+
+### Admitted CDC decision in recovery records
+
+The recovery correction adds one scalar capture decision to the existing WAL
+record map. A commit records its admitted OFF/DIFF/FULL mode; recovery does not
+re-decide it from a newer catalog. It adds no vector copy or database key.
+
+Apple M2 Max, Go benchmark arm64, three 100 ms samples per arm, identical
+`marshalWALRecoveryPayload` ownership and synthetic payload bytes:
+
+| Payload | Historical metadata-free record | Recorded FULL decision | Allocations | Encoded bytes |
+| --- | --- | --- | --- | --- |
+| 256 B | median 192.2 ns/op, 369 B/op | median 216.3 ns/op, 369 B/op | 5 in both arms | 274 → 284 |
+| 64 KiB | median 6,406 ns/op, 73,909 B/op | median 6,546 ns/op, 73,913 B/op | 5 in both arms | 65,556 → 65,566 |
+
+These are codec measurements, not transaction throughput or snapshot cost.
+The small-record mode field costs about 24 ns in this sample. Large-record
+latency ranges overlap (6,377–6,536 versus 6,411–7,286 ns/op); byte-accounting
+variation also overlaps. A CPU-profiled repetition is dominated by runtime
+scheduling and GC, so it does not support finer attribution. The ten encoded
+bytes carry the required decision rather than an intermediate buffer. No
+additional allocation was observed. Snapshot-vector qualification remains
+separate.
+
+### Streaming snapshot sidecar qualification
+
+`BenchmarkSnapshotSidecarVectors` writes actual Badger sidecars with four
+256-dimensional float32 chunks per node. Before timing, it writes and reads a
+complete snapshot and compares every vector. Three one-operation samples on
+Apple M2 Max:
+
+| Nodes | Raw vector bytes | Snapshot bytes | Median time | Median allocated bytes | Median allocations |
+| --- | --- | --- | --- | --- | --- |
+| 128 | 524,288 | 690,887 | 7.202 ms | 3,719,584 | 14,301 |
+| 1,024 | 4,194,304 | 5,527,520 | 55.659 ms | 29,580,216 | 113,970 |
+
+Eight times the nodes produce approximately eight times the output, allocation
+work and latency. These are allocated bytes across the operation, not peak or
+retained heap. The old embedding-free output is not a correctness-equivalent
+baseline. The profile includes setup and read-back work; filtering allocations
+to `WriteSnapshot` identifies encoder buffers, stored embedding decoding and
+Badger value copies. The short CPU capture is insufficient for precise timing
+attribution. This does not qualify foreground commit latency during automatic
+compaction or the original production-size dataset.
+
+`TestSnapshotLargeSidecarVectorsRespectRecordLimit` additionally round-trips a
+17,408,000-byte sidecar (17,000 chunks × 256 float32 values) through the public
+snapshot writer/reader, checks every vector and metadata value, and verifies an
+explicit 16 MiB record limit refuses that snapshot. Large property-record and
+canceled-snapshot preservation controls pass with it (3.835 s). The byte counter
+is shared with the existing stored-graph benchmark; no second snapshot codec or
+write path is introduced.

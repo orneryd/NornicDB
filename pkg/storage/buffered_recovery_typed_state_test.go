@@ -155,7 +155,14 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 	}
 }
 
-func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
+// A snapshot carries the vectors a node's reads return, so a restored node
+// reports the image storage held: its chunk vectors, its named vectors and the
+// embedding metadata that describes them. The frame holds those vectors
+// inline, so a restored entity is settled and does not keep claiming separate
+// storage, and availability is claimed only where a restored vector backs it:
+// an absent or empty named vector is restored as stored rather than making the
+// claim on its own, and the stored entity is not modified.
+func TestSnapshotPreservesNamedVectorsAlongsideStoredChunks(t *testing.T) {
 	for _, vector := range [][]float32{nil, {}, {1, 2}} {
 		t.Run(string(rune('0'+len(vector))), func(t *testing.T) {
 			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
@@ -168,6 +175,9 @@ func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 			}
 			_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", ChunkEmbeddings: chunks, NamedEmbeddings: map[string][]float32{"title": vector}, EmbedMeta: map[string]any{"has_embedding": true, "has_chunks": true, "chunk_count": int64(16)}})
 			require.NoError(t, err)
+			source, err := engine.GetNode(t.Context(), "test:n")
+			require.NoError(t, err)
+
 			var out bytes.Buffer
 			require.NoError(t, WriteSnapshot(context.Background(), engine, &out, SnapshotOptions{}))
 			visitor := &recoveryFieldsVisitor{}
@@ -175,11 +185,19 @@ func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, visitor.nodes, 1)
 			restored := visitor.nodes[0]
-			require.Empty(t, restored.ChunkEmbeddings)
-			assert.Equal(t, len(vector) > 0, restored.EmbedMeta["has_embedding"] == true)
+			require.Equal(t, source.ChunkEmbeddings, restored.ChunkEmbeddings, "a snapshot carries the stored chunk vectors")
+			require.Equal(t, map[string][]float32{"title": vector}, restored.NamedEmbeddings, "the named vector is restored as stored")
+			require.Equal(t, source.EmbedMeta, restored.EmbedMeta, "embedding metadata is restored with the vectors it describes")
+			require.False(t, restored.RuntimeMetadata().EmbeddingsStoredSeparately, "a frame holds its vectors inline, so it never claims separate storage")
+			require.Equal(t, len(restored.ChunkEmbeddings) > 0 || snapshotHasNamedVector(restored.NamedEmbeddings), restored.EmbedMeta["has_embedding"] == true,
+				"availability is exactly what the restored vectors back")
+			require.False(t, NodeNeedsEmbedding(restored))
+
 			original, err := engine.GetNode(t.Context(), "test:n")
 			require.NoError(t, err)
 			require.Equal(t, true, original.EmbedMeta["has_embedding"])
+			require.Equal(t, source.EmbedMeta, original.EmbedMeta, "snapshot must not mutate stored metadata")
+			require.Equal(t, source.ChunkEmbeddings, original.ChunkEmbeddings, "snapshot must not mutate stored vectors")
 		})
 	}
 }

@@ -248,6 +248,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.PublishCommit":                   "Commit's implementation; " + scenarioPublishes,
 	"BadgerTransaction.CreateNode":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateEdge":                      "buffers in the transaction; published by its Commit",
+	"BadgerTransaction.UpsertGraphNode":                 scenarioPublishes + " (create/update staged without events, published by Commit)",
 	"BadgerTransaction.UpdateGraphNode":                 "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.DeleteGraphNode":                 "buffers deletion with the selected relationship policy; published by its Commit",
 	"BadgerTransaction.BulkCreateEdges":                 "buffers in the transaction; published by its Commit",

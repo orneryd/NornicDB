@@ -104,7 +104,7 @@ func (cw *commitWriter) acceptedNativeWALError(err error) error {
 func (cw *commitWriter) acceptNativeWAL() error {
 	// Before a record of more than one frame is written, what replay of it
 	// would give the store is decided (replayedBodyLimit, NOR-412).
-	sequence, err := cw.entityWAL.appendDecidingLargeRecord(OpEntityCommit, &walEntityCommitData{Payload: cw.entityJournalData}, firstOperationNamespace(cw.entityOperations), cw.replayedBodyLimit)
+	sequence, err := cw.entityWAL.appendDecidingLargeRecord(OpEntityCommit, &walEntityCommitData{Payload: cw.entityJournalData, Capture: uint8(cw.entityCapture.mode) + 1}, firstOperationNamespace(cw.entityOperations), cw.replayedBodyLimit)
 	if err != nil {
 		var rejection *walRecordRejection
 		if errors.Is(err, ErrWALClosed) || errors.As(err, &rejection) {

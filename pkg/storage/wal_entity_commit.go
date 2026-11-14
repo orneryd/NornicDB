@@ -11,6 +11,24 @@ const OpEntityCommit OperationType = "entity_commit"
 
 type walEntityCommitData struct {
 	Payload []byte `json:"payload"`
+	// Capture stores the admitted capture mode plus one; zero identifies an
+	// older record whose decision was not recorded. It is WAL metadata only.
+	Capture uint8 `json:"capture,omitempty" msgpack:",omitempty"`
+}
+
+// decode keeps replay admission and the accepted capture decision together.
+func (record walEntityCommitData) decode() (EntityTransactionEnvelope, []Operation, error) {
+	envelope, operations, err := DecodeEntityTransaction(record.Payload)
+	if err != nil {
+		return envelope, nil, err
+	}
+	if record.Capture > uint8(ChangeCaptureFull)+1 {
+		return envelope, nil, ErrInvalidData
+	}
+	if record.Capture != 0 {
+		envelope.capture = changeCaptureDecision{mode: ChangeCaptureMode(record.Capture - 1), decided: true}
+	}
+	return envelope, operations, nil
 }
 
 type walAcceptedEntityCommit struct {
@@ -94,7 +112,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	}
 	// The release owner decides publication; the accepted handle settles what
 	// it decided. Journal entry transfers the mutation lease to the receipt.
-	journalStarted, record := false, &walEntityCommitData{Payload: payload}
+	journalStarted, record := false, &walEntityCommitData{Payload: payload, Capture: uint8(prepared.capture.mode) + 1}
 	err = DecidePublication(ctx, func() error {
 		releaseMutation = nil
 		journalStarted = true

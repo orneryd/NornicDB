@@ -2589,7 +2589,15 @@ func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return err
 		}
-		return ApplyAcceptedEntityTransaction(baseEngine, data.Payload)
+		envelope, operations, err := data.decode()
+		if err != nil {
+			return err
+		}
+		receipt, err := SubmitAcceptedEntityTransaction(ctx, baseEngine, envelope, operations, nil)
+		if err != nil {
+			return err
+		}
+		return receipt.WaitOutcome(ctx).Err
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {

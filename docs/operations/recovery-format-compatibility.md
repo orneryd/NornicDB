@@ -50,6 +50,25 @@ from different database backups. Standalone current-version WAL readers accept
 current frames only, so use the matching old binary to inspect an unconverted
 archive.
 
+### Change-capture decisions during replay
+
+New semantic commit WAL records include the capture mode admitted for that
+commit (OFF, DIFF or FULL). Recovery applies that decision even if a catalog
+option change was journaled but had not reached the database before the crash.
+An OFF decision is explicit; it cannot become enabled merely because the
+reopened database has a newer option.
+
+The decision is optional metadata in the existing WAL record map. WAL framing,
+semantic transaction payloads, Badger keys, stored entity payloads and the
+storage version are unchanged; no database migration is required. Records
+written before this field existed retain their previous recovery behavior:
+the persisted capture mode available at recovery is used. Their original
+admitted mode cannot be reconstructed from a record that never stored it.
+After replay, startup loads the recovered catalog options for new statements.
+Go embedders constructing `EntityTransactionEnvelope` must use keyed literals;
+the envelope now also carries an internal replay decision. Exported function
+signatures are unchanged.
+
 ### Persisted relationship-search vectors
 
 Relationship-search snapshots are separate files under
@@ -139,12 +158,15 @@ ID; bare IDs without colons use the configured default database on restore.
 Callers constructing snapshots must qualify local IDs that themselves contain
 colons. This preserves existing snapshot qualification semantics.
 
-Streaming snapshot export retains its established embedding-free enumeration
-contract: separately stored vectors are not fetched by that route. The new
-codec does not change which sidecars that route loads. Exported nodes clear the
-separate-storage flag, and metadata no longer advertises omitted chunk vectors or
-unavailable embeddings. Inline vectors and unrelated metadata remain intact;
-the source node is unchanged.
+Streaming snapshot export reads each node with the managed vectors its reads
+return: a vector kept beside the node's body is fetched and exported, so a
+rebuild from that snapshot holds the store's vectors instead of an older inline
+image or none. The codec does not change the snapshot bytes beyond the vectors
+the enumeration now supplies. A node whose body flags separate storage but
+carries no vector to export still clears the flag, and its metadata no longer
+advertises unavailable embeddings. Inline vectors and unrelated metadata remain
+intact; the source node is unchanged. Reading each node's sidecar vectors makes
+an automatic snapshot larger than the embedding-free enumeration it replaces.
 
 ## Local validation
 
