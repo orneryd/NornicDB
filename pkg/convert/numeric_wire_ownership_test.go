@@ -365,3 +365,38 @@ func numericJSONReferences(node ast.Node, rawAliases map[string]bool, convertAli
 	})
 	return raw, calls
 }
+
+func TestNumericWireExceptionRejectsUnreviewedBodyChanges(t *testing.T) {
+	const path = "pkg/storage/historical_frame.go"
+	const declaration = `func readFrame(data []byte) error { var frame struct { Sequence uint64; Data []byte }; return json.Unmarshal(data, &frame) }`
+	compact := strings.Map(func(char rune) rune {
+		if unicode.IsSpace(char) {
+			return -1
+		}
+		return char
+	}, declaration)
+	hash := sha256.Sum256([]byte(compact))
+	exceptions := map[string]wireException{path + ":readFrame": {Reason: "Typed historical frame only", SHA256: hex.EncodeToString(hash[:])}}
+	for _, tc := range []struct {
+		name, body string
+		refused    bool
+	}{
+		{name: "reviewed", body: declaration},
+		{name: "changed", body: strings.Replace(declaration, "Sequence uint64", "Sequence interface{}", 1), refused: true},
+		{name: "new_reader", body: declaration + `\nfunc anotherFrame(data []byte) error { var frame interface{}; return json.Unmarshal(data, &frame) }`, refused: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			body := strings.ReplaceAll(tc.body, `\n`, "\n")
+			writeNumericWireFixture(t, root, path, "package storage\nimport \"encoding/json\"\n"+body)
+			violations := inspectNumericWire(root, nil, exceptions, true)
+			if tc.refused {
+				if !strings.Contains(strings.Join(violations, "\n"), "raw JSON reader/writer outside the owner") {
+					t.Fatalf("unreviewed reader must be rejected: %v", violations)
+				}
+			} else if len(violations) != 0 {
+				t.Fatalf("reviewed frame rejected: %v", violations)
+			}
+		})
+	}
+}
