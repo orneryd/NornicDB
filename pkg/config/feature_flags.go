@@ -124,6 +124,8 @@ const (
 	// don't depend on it.
 	// Environment: NORNICDB_CYPHER_QUERY_NORMALIZATION
 	EnvCypherQueryNormalization = "NORNICDB_CYPHER_QUERY_NORMALIZATION"
+	// EnvExperimentalPropertyStorage enables provisional per-property compression. Default: false.
+	EnvExperimentalPropertyStorage = "NORNICDB_EXPERIMENTAL_PROPERTY_STORAGE_ENABLED"
 
 	// Parser type constants
 	ParserTypeNornic = "nornic"
@@ -227,7 +229,8 @@ var (
 	// cypherQueryNormalizationDisabled is set when the Cypher query text
 	// normalization is turned off (EnvCypherQueryNormalization); its zero
 	// value is the default, enabled.
-	cypherQueryNormalizationDisabled atomic.Bool
+	cypherQueryNormalizationDisabled   atomic.Bool
+	experimentalPropertyStorageEnabled atomic.Bool
 )
 
 func init() {
@@ -253,6 +256,9 @@ func init() {
 			cypherQueryNormalizationDisabled.Store(true)
 		}
 
+		if env := strings.ToLower(strings.TrimSpace(os.Getenv(EnvExperimentalPropertyStorage))); env == "true" || env == "1" {
+			experimentalPropertyStorageEnabled.Store(true)
+		}
 		// Experimental features - DISABLED by default, enable with "true" or "1"
 		if env := os.Getenv(EnvKalmanEnabled); env == "true" || env == "1" {
 			kalmanEnabled.Store(true)
@@ -719,6 +725,7 @@ func DisableAllFeatures() {
 
 // ResetFeatureFlags resets all feature flags to defaults.
 func ResetFeatureFlags() {
+	experimentalPropertyStorageEnabled.Store(false)
 	kalmanEnabled.Store(false)
 	topologyLinkPredictionEnabled.Store(false)
 	cooldownAutoIntegrationEnabled.Store(false)
@@ -768,16 +775,17 @@ func GetEnabledFeatures() []string {
 
 // FeatureStatus returns the current status of all features.
 type FeatureStatus struct {
-	GlobalEnabled            bool
-	KalmanEnabled            bool
-	TopologyEnabled          bool
-	EdgeProvenanceEnabled    bool
-	CooldownEnabled          bool
-	EvidenceBufferingEnabled bool
-	PerNodeConfigEnabled     bool
-	WALEnabled               bool
-	GPUClusteringEnabled     bool
-	Features                 map[string]bool
+	ExperimentalPropertyStorageEnabled bool
+	GlobalEnabled                      bool
+	KalmanEnabled                      bool
+	TopologyEnabled                    bool
+	EdgeProvenanceEnabled              bool
+	CooldownEnabled                    bool
+	EvidenceBufferingEnabled           bool
+	PerNodeConfigEnabled               bool
+	WALEnabled                         bool
+	GPUClusteringEnabled               bool
+	Features                           map[string]bool
 }
 
 // GetFeatureStatus returns the complete feature status.
@@ -786,16 +794,17 @@ func GetFeatureStatus() FeatureStatus {
 	defer featureFlagsMu.RUnlock()
 
 	status := FeatureStatus{
-		GlobalEnabled:            kalmanEnabled.Load(),
-		KalmanEnabled:            kalmanEnabled.Load(),
-		TopologyEnabled:          topologyLinkPredictionEnabled.Load(),
-		EdgeProvenanceEnabled:    edgeProvenanceEnabled.Load(),
-		CooldownEnabled:          cooldownEnabled.Load(),
-		EvidenceBufferingEnabled: evidenceBufferingEnabled.Load(),
-		PerNodeConfigEnabled:     perNodeConfigEnabled.Load(),
-		WALEnabled:               walEnabled.Load(),
-		GPUClusteringEnabled:     gpuClusteringEnabled.Load(),
-		Features:                 make(map[string]bool),
+		ExperimentalPropertyStorageEnabled: experimentalPropertyStorageEnabled.Load(),
+		GlobalEnabled:                      kalmanEnabled.Load(),
+		KalmanEnabled:                      kalmanEnabled.Load(),
+		TopologyEnabled:                    topologyLinkPredictionEnabled.Load(),
+		EdgeProvenanceEnabled:              edgeProvenanceEnabled.Load(),
+		CooldownEnabled:                    cooldownEnabled.Load(),
+		EvidenceBufferingEnabled:           evidenceBufferingEnabled.Load(),
+		PerNodeConfigEnabled:               perNodeConfigEnabled.Load(),
+		WALEnabled:                         walEnabled.Load(),
+		GPUClusteringEnabled:               gpuClusteringEnabled.Load(),
+		Features:                           make(map[string]bool),
 	}
 
 	for k, v := range featureFlags {
@@ -1319,4 +1328,12 @@ func WithNornicParser() func() {
 	return func() {
 		SetParserType(prev)
 	}
+}
+
+// IsExperimentalPropertyStorageEnabled reports whether new property writes may use provisional codecs. Reads remain supported when disabled.
+func IsExperimentalPropertyStorageEnabled() bool { return experimentalPropertyStorageEnabled.Load() }
+
+// SetExperimentalPropertyStorageEnabled toggles encoding of new writes; existing records are not rewritten.
+func SetExperimentalPropertyStorageEnabled(enabled bool) {
+	experimentalPropertyStorageEnabled.Store(enabled)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 )
@@ -64,6 +65,7 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 	if len(props) == 0 {
 		return buf.Bytes(), nil
 	}
+	experimental := config.IsExperimentalPropertyStorageEnabled()
 	encoder := msgpack.GetEncoder()
 	defer msgpack.PutEncoder(encoder)
 	var valueBuf bytes.Buffer
@@ -109,7 +111,14 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 		if encodeErr != nil {
 			return nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
 		}
-		buf.Write(valueBuf.Bytes())
+		encodedValue := valueBuf.Bytes()
+		if experimental {
+			encodedValue, err = encodeExperimentalProperty(val, encodedValue)
+			if err != nil {
+				return nil, fmt.Errorf("encoding experimental property %q: %w", name, err)
+			}
+		}
+		buf.Write(encodedValue)
 	}
 	return buf.Bytes(), nil
 }
@@ -337,7 +346,11 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	// DecodeInterface is the msgpack package's hand-written scalar path.
 	// Decode(&any) routes through reflection and dominates large property
 	// arrays such as Graphiti embedding vectors.
-	return dec.DecodeInterface()
+	value, err := dec.DecodeInterface()
+	if packed, ok := value.(storedExperimentalProperty); ok {
+		return packed.value, err
+	}
+	return value, err
 }
 
 // decodeStrictTypedArray decodes a msgpack array. If every element is

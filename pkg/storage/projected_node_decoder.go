@@ -318,12 +318,19 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 // PropertyStringEquals rejection and the error it reports are the same
 // whichever walk read it.
 func (d *projectedNodeDecoder) decodePropertyValue(dec *msgpack.Decoder, property projectedProperty, raw []byte) (bool, error) {
-	if property.hasEquals && !msgpackStringEquals(raw, property.equals) {
+	compressed := isExperimentalProperty(raw)
+	if property.hasEquals && !compressed && !msgpackStringEquals(raw, property.equals) {
 		return false, nil
 	}
 	value, err := decodeStrictTypedValue(dec)
 	if err != nil {
 		return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
+	}
+	if property.hasEquals && compressed {
+		text, ok := value.(string)
+		if !ok || text != property.equals {
+			return false, nil
+		}
 	}
 	d.scratch[property.name] = restoreStoredTemporalValue(value)
 	return true, nil
