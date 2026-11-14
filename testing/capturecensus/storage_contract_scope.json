@@ -269,7 +269,7 @@
       "Approver": "orneryd (2 November 2026)",
       "Occurrences": [
         "call context.Background (+291 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
-        "call context.Background (+525 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
+        "call context.Background (+526 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)"
       ]
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).applyBufferedCommitsWithCountPublication": {

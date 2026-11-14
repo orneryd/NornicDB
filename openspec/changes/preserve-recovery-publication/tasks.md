@@ -128,3 +128,8 @@ analyzer, pre-journal admission, WAL migration or search-refresh change.
   pass3.835s. Existing byte-counter fixture is shared, not duplicated.
 - [ ] Foreground snapshot/write overlap and original production-size
   performance remain unqualified; no peak-heap or full release claim.
+
+- [x] Operator approved the existing PublishCommit completion occurrence
+  moving+525→+526 after the single CDC field binding. Only that inventory
+  occurrence changes; the completion source/consumers/phase remain unchanged.
+  Compiled context-site and walk rejection controls pass2.464s.
