@@ -1,0 +1,1781 @@
+{
+  "blocks": {
+    "columnar_mode_0": {
+      "Count": 4296,
+      "Bytes": 40744261,
+      "Saved": 0
+    },
+    "columnar_mode_1": {
+      "Count": 40394,
+      "Bytes": 56658168,
+      "Saved": 0
+    },
+    "columnar_mode_2": {
+      "Count": 31737,
+      "Bytes": 42410238,
+      "Saved": 4888762
+    }
+  },
+  "bloom_bytes_in_index": 3450376,
+  "families": {
+    "0x01": {
+      "Count": 101797,
+      "KeyBytes": 4478989,
+      "ValueBytes": 78626159,
+      "DuplicateValueBytes": 0
+    },
+    "0x02": {
+      "Count": 312050,
+      "KeyBytes": 13730200,
+      "ValueBytes": 19251500,
+      "DuplicateValueBytes": 0
+    },
+    "0x03": {
+      "Count": 101802,
+      "KeyBytes": 1683969,
+      "ValueBytes": 0,
+      "DuplicateValueBytes": 0
+    },
+    "0x04": {
+      "Count": 312050,
+      "KeyBytes": 5304850,
+      "ValueBytes": 15578450,
+      "DuplicateValueBytes": 0
+    },
+    "0x05": {
+      "Count": 312050,
+      "KeyBytes": 5304850,
+      "ValueBytes": 15578450,
+      "DuplicateValueBytes": 15578450
+    },
+    "0x06": {
+      "Count": 312050,
+      "KeyBytes": 5280800,
+      "ValueBytes": 0,
+      "DuplicateValueBytes": 0
+    },
+    "0x09": {
+      "Count": 2,
+      "KeyBytes": 16,
+      "ValueBytes": 1657,
+      "DuplicateValueBytes": 0
+    },
+    "0x0e": {
+      "Count": 101797,
+      "KeyBytes": 916173,
+      "ValueBytes": 1832346,
+      "DuplicateValueBytes": 1830762
+    },
+    "0x0f": {
+      "Count": 312050,
+      "KeyBytes": 2808450,
+      "ValueBytes": 5616900,
+      "DuplicateValueBytes": 5615370
+    },
+    "0x10": {
+      "Count": 32,
+      "KeyBytes": 496,
+      "ValueBytes": 242,
+      "DuplicateValueBytes": 0
+    },
+    "0x11": {
+      "Count": 312050,
+      "KeyBytes": 10273600,
+      "ValueBytes": 13418150,
+      "DuplicateValueBytes": 0
+    },
+    "0x12": {
+      "Count": 312041,
+      "KeyBytes": 7464943,
+      "ValueBytes": 13417763,
+      "DuplicateValueBytes": 13417763
+    },
+    "0x13": {
+      "Count": 172,
+      "KeyBytes": 10489,
+      "ValueBytes": 172,
+      "DuplicateValueBytes": 0
+    },
+    "0x1a": {
+      "Count": 101797,
+      "KeyBytes": 4478989,
+      "ValueBytes": 814376,
+      "DuplicateValueBytes": 0
+    },
+    "0x1b": {
+      "Count": 312050,
+      "KeyBytes": 13730200,
+      "ValueBytes": 2496400,
+      "DuplicateValueBytes": 0
+    },
+    "0x1c": {
+      "Count": 2,
+      "KeyBytes": 4,
+      "ValueBytes": 16,
+      "DuplicateValueBytes": 0
+    },
+    "0x1d": {
+      "Count": 101797,
+      "KeyBytes": 916173,
+      "ValueBytes": 4377192,
+      "DuplicateValueBytes": 0
+    },
+    "0x1e": {
+      "Count": 312050,
+      "KeyBytes": 2808450,
+      "ValueBytes": 13418150,
+      "DuplicateValueBytes": 13418150
+    },
+    "0x20": {
+      "Count": 42,
+      "KeyBytes": 714,
+      "ValueBytes": 42,
+      "DuplicateValueBytes": 0
+    },
+    "0x21": {
+      "Count": 42,
+      "KeyBytes": 378,
+      "ValueBytes": 336,
+      "DuplicateValueBytes": 0
+    },
+    "0x22": {
+      "Count": 2,
+      "KeyBytes": 16,
+      "ValueBytes": 2,
+      "DuplicateValueBytes": 0
+    },
+    "0x23": {
+      "Count": 312050,
+      "KeyBytes": 10297650,
+      "ValueBytes": 312050,
+      "DuplicateValueBytes": 0
+    },
+    "0x24": {
+      "Count": 312050,
+      "KeyBytes": 10297650,
+      "ValueBytes": 312050,
+      "DuplicateValueBytes": 0
+    }
+  },
+  "files": {
+    ".json": {
+      "Count": 1,
+      "Bytes": 459,
+      "Saved": 0
+    },
+    ".log": {
+      "Count": 1,
+      "Bytes": 27878280,
+      "Saved": 0
+    },
+    ".sst": {
+      "Count": 74,
+      "Bytes": 148172821,
+      "Saved": 0
+    },
+    ".vlog": {
+      "Count": 2,
+      "Bytes": 40,
+      "Saved": 0
+    },
+    ".wal": {
+      "Count": 2,
+      "Bytes": 210247400,
+      "Saved": 0
+    },
+    "DISCARD": {
+      "Count": 1,
+      "Bytes": 1048576,
+      "Saved": 0
+    },
+    "KEYREGISTRY": {
+      "Count": 1,
+      "Bytes": 28,
+      "Saved": 0
+    },
+    "MANIFEST": {
+      "Count": 1,
+      "Bytes": 822,
+      "Saved": 0
+    }
+  },
+  "mode2_gain_buckets": {
+    "1..5%": {
+      "Count": 1712,
+      "Bytes": 2704599,
+      "Saved": 95797
+    },
+    "5..12.5%": {
+      "Count": 18178,
+      "Bytes": 24187207,
+      "Saved": 2223107
+    },
+    "\u003c=1%": {
+      "Count": 669,
+      "Bytes": 1466851,
+      "Saved": 6251
+    },
+    "\u003e12.5%": {
+      "Count": 11178,
+      "Bytes": 14051581,
+      "Saved": 2563607
+    }
+  },
+  "note": "Duplicate bytes are logical upper bounds, not physical savings. Mode2 savings use same-block plain Zstd/raw counterfactual, level 1; no runtime policy was changed.",
+  "properties": {
+    "documents.body": {
+      "Count": 4352,
+      "EncodedBytes": 20275536,
+      "LogicalBytes": 56590272,
+      "Distinct": 272,
+      "UniqueLogicalBytes": 3536892,
+      "EntropyBitsByte": 5.1203026648124625,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "ordinary": 96,
+        "zstd-property": 4256
+      }
+    },
+    "documents.key": {
+      "Count": 4352,
+      "EncodedBytes": 182784,
+      "LogicalBytes": 182784,
+      "Distinct": 4352,
+      "UniqueLogicalBytes": 182784,
+      "EntropyBitsByte": 4.3770563908690905,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "ordinary": 4352
+      }
+    },
+    "documents.metrics": {
+      "Count": 4352,
+      "EncodedBytes": 1210992,
+      "LogicalBytes": 10040064,
+      "Distinct": 61,
+      "UniqueLogicalBytes": 140727,
+      "EntropyBitsByte": 1.642695238526155,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "zstd-property": 4352
+      }
+    },
+    "documents.noise": {
+      "Count": 4352,
+      "EncodedBytes": 17838848,
+      "LogicalBytes": 17838848,
+      "Distinct": 4352,
+      "UniqueLogicalBytes": 17838848,
+      "EntropyBitsByte": 7.999958304246002,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "ordinary": 4352
+      }
+    },
+    "documents.path": {
+      "Count": 4352,
+      "EncodedBytes": 152224,
+      "LogicalBytes": 152224,
+      "Distinct": 272,
+      "UniqueLogicalBytes": 9514,
+      "EntropyBitsByte": 4.714325601386915,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "ordinary": 4352
+      }
+    },
+    "documents.status": {
+      "Count": 4352,
+      "EncodedBytes": 34816,
+      "LogicalBytes": 34816,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 8,
+      "EntropyBitsByte": 2.75,
+      "Families": {
+        "current": 4352
+      },
+      "Modes": {
+        "ordinary": 4352
+      }
+    },
+    "northwind.address": {
+      "Count": 1200,
+      "EncodedBytes": 77646,
+      "LogicalBytes": 77646,
+      "Distinct": 91,
+      "UniqueLogicalBytes": 11068,
+      "EntropyBitsByte": 4.58243666225677,
+      "Families": {
+        "current": 1200
+      },
+      "Modes": {
+        "ordinary": 1200
+      }
+    },
+    "northwind.categoryID": {
+      "Count": 96,
+      "EncodedBytes": 864,
+      "LogicalBytes": 864,
+      "Distinct": 96,
+      "UniqueLogicalBytes": 864,
+      "EntropyBitsByte": 1.7180892288109706,
+      "Families": {
+        "current": 96
+      },
+      "Modes": {
+        "ordinary": 96
+      }
+    },
+    "northwind.categoryName": {
+      "Count": 96,
+      "EncodedBytes": 2103,
+      "LogicalBytes": 2103,
+      "Distinct": 96,
+      "UniqueLogicalBytes": 2103,
+      "EntropyBitsByte": 4.5512035543043785,
+      "Families": {
+        "current": 96
+      },
+      "Modes": {
+        "ordinary": 96
+      }
+    },
+    "northwind.city": {
+      "Count": 1200,
+      "EncodedBytes": 9633,
+      "LogicalBytes": 9633,
+      "Distinct": 17,
+      "UniqueLogicalBytes": 136,
+      "EntropyBitsByte": 4.804725749495129,
+      "Families": {
+        "current": 1200
+      },
+      "Modes": {
+        "ordinary": 1200
+      }
+    },
+    "northwind.companyName": {
+      "Count": 1344,
+      "EncodedBytes": 35868,
+      "LogicalBytes": 35868,
+      "Distinct": 1344,
+      "UniqueLogicalBytes": 35868,
+      "EntropyBitsByte": 4.995115845873061,
+      "Families": {
+        "current": 1344
+      },
+      "Modes": {
+        "ordinary": 1344
+      }
+    },
+    "northwind.contactName": {
+      "Count": 1344,
+      "EncodedBytes": 18474,
+      "LogicalBytes": 18474,
+      "Distinct": 194,
+      "UniqueLogicalBytes": 2657,
+      "EntropyBitsByte": 4.941025905894808,
+      "Families": {
+        "current": 1344
+      },
+      "Modes": {
+        "ordinary": 1344
+      }
+    },
+    "northwind.country": {
+      "Count": 1344,
+      "EncodedBytes": 4032,
+      "LogicalBytes": 4032,
+      "Distinct": 15,
+      "UniqueLogicalBytes": 45,
+      "EntropyBitsByte": 3.6494678810630248,
+      "Families": {
+        "current": 1344
+      },
+      "Modes": {
+        "ordinary": 1344
+      }
+    },
+    "northwind.customerID": {
+      "Count": 1200,
+      "EncodedBytes": 10800,
+      "LogicalBytes": 10800,
+      "Distinct": 1200,
+      "UniqueLogicalBytes": 10800,
+      "EntropyBitsByte": 2.421641962219711,
+      "Families": {
+        "current": 1200
+      },
+      "Modes": {
+        "ordinary": 1200
+      }
+    },
+    "northwind.data": {
+      "Count": 1,
+      "EncodedBytes": 433,
+      "LogicalBytes": 433,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 433,
+      "EntropyBitsByte": 4.875855220696338,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.databases": {
+      "Count": 3,
+      "EncodedBytes": 9,
+      "LogicalBytes": 9,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 3,
+      "EntropyBitsByte": 1.584962500721156,
+      "Families": {
+        "current": 3
+      },
+      "Modes": {
+        "ordinary": 3
+      }
+    },
+    "northwind.description": {
+      "Count": 48096,
+      "EncodedBytes": 7747705,
+      "LogicalBytes": 7747705,
+      "Distinct": 6320,
+      "UniqueLogicalBytes": 1566369,
+      "EntropyBitsByte": 4.551397165031329,
+      "Families": {
+        "current": 48096
+      },
+      "Modes": {
+        "ordinary": 48096
+      }
+    },
+    "northwind.discontinued": {
+      "Count": 48000,
+      "EncodedBytes": 48000,
+      "LogicalBytes": 48000,
+      "Distinct": 2,
+      "UniqueLogicalBytes": 2,
+      "EntropyBitsByte": 0.2775701463157195,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.migrated_to": {
+      "Count": 1,
+      "EncodedBytes": 7,
+      "LogicalBytes": 7,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 7,
+      "EntropyBitsByte": 2.5216406363433186,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.notes": {
+      "Count": 48144,
+      "EncodedBytes": 2449480,
+      "LogicalBytes": 2449480,
+      "Distinct": 102,
+      "UniqueLogicalBytes": 10512,
+      "EntropyBitsByte": 4.6340393070976535,
+      "Families": {
+        "current": 48144
+      },
+      "Modes": {
+        "ordinary": 48144
+      }
+    },
+    "northwind.orderDate": {
+      "Count": 48000,
+      "EncodedBytes": 432000,
+      "LogicalBytes": 432000,
+      "Distinct": 365,
+      "UniqueLogicalBytes": 3285,
+      "EntropyBitsByte": 3.998035117845193,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.orderID": {
+      "Count": 48000,
+      "EncodedBytes": 432000,
+      "LogicalBytes": 432000,
+      "Distinct": 48000,
+      "UniqueLogicalBytes": 432000,
+      "EntropyBitsByte": 2.9717583970064694,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.pending_drops": {
+      "Count": 1,
+      "EncodedBytes": 5,
+      "LogicalBytes": 5,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 5,
+      "EntropyBitsByte": 1.9219280948873623,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.phone": {
+      "Count": 144,
+      "EncodedBytes": 2441,
+      "LogicalBytes": 2441,
+      "Distinct": 144,
+      "UniqueLogicalBytes": 2441,
+      "EntropyBitsByte": 3.635856947422999,
+      "Families": {
+        "current": 144
+      },
+      "Modes": {
+        "ordinary": 144
+      }
+    },
+    "northwind.productID": {
+      "Count": 48000,
+      "EncodedBytes": 432000,
+      "LogicalBytes": 432000,
+      "Distinct": 48000,
+      "UniqueLogicalBytes": 432000,
+      "EntropyBitsByte": 2.970171834234476,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.productName": {
+      "Count": 48000,
+      "EncodedBytes": 1086227,
+      "LogicalBytes": 1086227,
+      "Distinct": 48000,
+      "UniqueLogicalBytes": 1086227,
+      "EntropyBitsByte": 4.972777943947882,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.region": {
+      "Count": 144,
+      "EncodedBytes": 1054,
+      "LogicalBytes": 1054,
+      "Distinct": 7,
+      "UniqueLogicalBytes": 51,
+      "EntropyBitsByte": 4.39867776136369,
+      "Families": {
+        "current": 144
+      },
+      "Modes": {
+        "ordinary": 144
+      }
+    },
+    "northwind.role": {
+      "Count": 3,
+      "EncodedBytes": 20,
+      "LogicalBytes": 20,
+      "Distinct": 3,
+      "UniqueLogicalBytes": 20,
+      "EntropyBitsByte": 3.546439344671015,
+      "Families": {
+        "current": 3
+      },
+      "Modes": {
+        "ordinary": 3
+      }
+    },
+    "northwind.server_created_at": {
+      "Count": 1,
+      "EncodedBytes": 30,
+      "LogicalBytes": 30,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 30,
+      "EntropyBitsByte": 3.6695767463163933,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.server_id": {
+      "Count": 1,
+      "EncodedBytes": 38,
+      "LogicalBytes": 38,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 38,
+      "EntropyBitsByte": 3.810317237572778,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.shipCity": {
+      "Count": 48000,
+      "EncodedBytes": 384637,
+      "LogicalBytes": 384637,
+      "Distinct": 17,
+      "UniqueLogicalBytes": 136,
+      "EntropyBitsByte": 4.80104884252617,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.shipCountry": {
+      "Count": 48000,
+      "EncodedBytes": 144000,
+      "LogicalBytes": 144000,
+      "Distinct": 15,
+      "UniqueLogicalBytes": 45,
+      "EntropyBitsByte": 3.634168890068533,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.sku": {
+      "Count": 48000,
+      "EncodedBytes": 672000,
+      "LogicalBytes": 672000,
+      "Distinct": 48000,
+      "UniqueLogicalBytes": 672000,
+      "EntropyBitsByte": 4.342488957639784,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.status": {
+      "Count": 1,
+      "EncodedBytes": 9,
+      "LogicalBytes": 9,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 9,
+      "EntropyBitsByte": 2.94770277922009,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.supplierID": {
+      "Count": 144,
+      "EncodedBytes": 1296,
+      "LogicalBytes": 1296,
+      "Distinct": 144,
+      "UniqueLogicalBytes": 1296,
+      "EntropyBitsByte": 1.7830850622244374,
+      "Families": {
+        "current": 144
+      },
+      "Modes": {
+        "ordinary": 144
+      }
+    },
+    "northwind.tags": {
+      "Count": 48000,
+      "EncodedBytes": 900588,
+      "LogicalBytes": 900588,
+      "Distinct": 13154,
+      "UniqueLogicalBytes": 362651,
+      "EntropyBitsByte": 4.627761733870563,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.type": {
+      "Count": 1,
+      "EncodedBytes": 10,
+      "LogicalBytes": 10,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 10,
+      "EntropyBitsByte": 2.6464393446710153,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    },
+    "northwind.unitPrice": {
+      "Count": 48000,
+      "EncodedBytes": 432000,
+      "LogicalBytes": 432000,
+      "Distinct": 18175,
+      "UniqueLogicalBytes": 163575,
+      "EntropyBitsByte": 5.877083112830555,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.unitsInStock": {
+      "Count": 48000,
+      "EncodedBytes": 432000,
+      "LogicalBytes": 432000,
+      "Distinct": 500,
+      "UniqueLogicalBytes": 4500,
+      "EntropyBitsByte": 2.1441096154462436,
+      "Families": {
+        "current": 48000
+      },
+      "Modes": {
+        "ordinary": 48000
+      }
+    },
+    "northwind.updated_at": {
+      "Count": 1,
+      "EncodedBytes": 9,
+      "LogicalBytes": 9,
+      "Distinct": 1,
+      "UniqueLogicalBytes": 9,
+      "EntropyBitsByte": 2.2810361125534233,
+      "Families": {
+        "current": 1
+      },
+      "Modes": {
+        "ordinary": 1
+      }
+    }
+  },
+  "property_counts": {
+    "current.documents": {
+      "6": 4352
+    },
+    "current.northwind": {
+      "2": 4,
+      "3": 96,
+      "5": 48000,
+      "6": 1201,
+      "7": 144,
+      "8": 48000
+    }
+  },
+  "read_only": true,
+  "table_index_bytes": 8359120,
+  "tables": {
+    "compression_3_level_0": {
+      "Count": 1,
+      "Bytes": 183,
+      "Saved": 0
+    },
+    "compression_3_level_6": {
+      "Count": 73,
+      "Bytes": 148172638,
+      "Saved": 0
+    }
+  },
+  "tables_info": [
+    {
+      "ID": 84,
+      "Level": 0,
+      "Left": "EAj////////9FA==",
+      "Right": "EAj////////9FQ==",
+      "KeyCount": 2,
+      "OnDiskSize": 169,
+      "StaleDataSize": 0,
+      "UncompressedSize": 48,
+      "MaxVersion": 747,
+      "IndexSz": 120,
+      "BloomFilterSize": 9
+    },
+    {
+      "ID": 11,
+      "Level": 6,
+      "Left": "AW5vcm5pYzowMDAwYmQxYi03ZDg1LTRlYTAtYmYwZi1jMmIyNGQ1ZWMyMGH/////////ng==",
+      "Right": "AW5vcm5pYzowODI5YjA2Mi03ZTVmLTRkNmYtYWE1NC05ZDI4ODZmYWMzNGL/////////pg==",
+      "KeyCount": 3332,
+      "OnDiskSize": 2008935,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2802191,
+      "MaxVersion": 731,
+      "IndexSz": 47392,
+      "BloomFilterSize": 2917
+    },
+    {
+      "ID": 12,
+      "Level": 6,
+      "Left": "AW5vcm5pYzowODJhOWE2Mi0xNWZlLTRkYjctODM1Ny1mMWUwNjA1ZmUwY2H/////////QA==",
+      "Right": "AW5vcm5pYzoxMTdhMTVlZS0wOTVjLTQ0NDgtODgyNy03NTdlNjgwMGU2YjX////////9cg==",
+      "KeyCount": 3702,
+      "OnDiskSize": 2050396,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2936754,
+      "MaxVersion": 731,
+      "IndexSz": 51440,
+      "BloomFilterSize": 3241
+    },
+    {
+      "ID": 13,
+      "Level": 6,
+      "Left": "AW5vcm5pYzoxMTdhOTQzOC0zZWMyLTQ1ZGEtODUyNy1iZWQzMWIwOWY2NTT/////////mg==",
+      "Right": "AW5vcm5pYzoxYTc2MDg3Mi1iZjU1LTQ1MjItYTU1Ni01YzFjODJhNzE5Nzn////////+7w==",
+      "KeyCount": 3514,
+      "OnDiskSize": 2039538,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2878073,
+      "MaxVersion": 731,
+      "IndexSz": 48688,
+      "BloomFilterSize": 3076
+    },
+    {
+      "ID": 14,
+      "Level": 6,
+      "Left": "AW5vcm5pYzoxYTc2OWRjZi1jNzUzLTRhMjUtYmFlMy1mMWEwZGJjYzI3ZmX////////+/w==",
+      "Right": "AW5vcm5pYzoyMzk2M2ZiOC1lOWFiLTRjNmEtYTQwZC02Njg0ZWU0MjllYzb/////////Kw==",
+      "KeyCount": 3645,
+      "OnDiskSize": 2035831,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2908589,
+      "MaxVersion": 731,
+      "IndexSz": 50168,
+      "BloomFilterSize": 3191
+    },
+    {
+      "ID": 15,
+      "Level": 6,
+      "Left": "AW5vcm5pYzoyMzk3M2MwMC1kMDU5LTRmOTAtOTU2Zi00NDBlZTlhNDIzZDT/////////dg==",
+      "Right": "AW5vcm5pYzoyYmY4YTYwYy00YWJkLTQ4OWMtOGQ0My1jMzdkYWU3NzA2Nzj////////9aQ==",
+      "KeyCount": 3315,
+      "OnDiskSize": 2101576,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2884085,
+      "MaxVersion": 731,
+      "IndexSz": 47448,
+      "BloomFilterSize": 2902
+    },
+    {
+      "ID": 16,
+      "Level": 6,
+      "Left": "AW5vcm5pYzoyYmZhMTMxZi1jNDA4LTQyMGYtYjVhNy01ZGRjMjE3NDQ1YzH/////////qw==",
+      "Right": "AW5vcm5pYzozNGZiMjVlYy03MTdlLTRlNWUtYTBmYy05YWVkYThjNjliNzH/////////Ew==",
+      "KeyCount": 3534,
+      "OnDiskSize": 2000344,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2844524,
+      "MaxVersion": 731,
+      "IndexSz": 49240,
+      "BloomFilterSize": 3094
+    },
+    {
+      "ID": 17,
+      "Level": 6,
+      "Left": "AW5vcm5pYzozNGZjMDU4OS05MDk4LTQ5ODMtODNlNS1hYzQ1ZDZjMTVkNTT////////+7w==",
+      "Right": "AW5vcm5pYzozZDhjNDYzMi1jZmU4LTRlMTItODNjNC1jZmEwOWNkY2ZiN2P/////////kg==",
+      "KeyCount": 3394,
+      "OnDiskSize": 2069336,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2878125,
+      "MaxVersion": 731,
+      "IndexSz": 48280,
+      "BloomFilterSize": 2971
+    },
+    {
+      "ID": 18,
+      "Level": 6,
+      "Left": "AW5vcm5pYzozZDhjYjIwNi02Y2E0LTRkYjQtOWY0ZS1jMmQ0ZjdkYWE5ODD/////////tg==",
+      "Right": "AW5vcm5pYzo0NjcwY2Y2ZS02NGMxLTQwMzMtYTk2OS0zZTE4MzU5ZGM0ZTX/////////jg==",
+      "KeyCount": 3523,
+      "OnDiskSize": 2066758,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2909011,
+      "MaxVersion": 731,
+      "IndexSz": 48312,
+      "BloomFilterSize": 3084
+    },
+    {
+      "ID": 19,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo0NjcyNzM0MC00NmE1LTQ1ZDgtYTMwMS0zZWVjYzZjYzM4NzX////////9cg==",
+      "Right": "AW5vcm5pYzo0ZWYzN2UxMC0wOGJlLTRlNzYtOGM0Zi0wYTVjYWE5NTA3ZDn/////////Vg==",
+      "KeyCount": 3467,
+      "OnDiskSize": 2027825,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2856966,
+      "MaxVersion": 731,
+      "IndexSz": 47888,
+      "BloomFilterSize": 3035
+    },
+    {
+      "ID": 20,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo0ZWY0MjRjMC1mNjQyLTQwZGUtYmFhMS03YjE2N2Y4MjM5Nzb/////////Bw==",
+      "Right": "AW5vcm5pYzo1ODM5MzU5Ny1hZGNhLTQ0MWMtYTQ2Mi04M2ExYjJlNWJhNzH/////////Vg==",
+      "KeyCount": 3585,
+      "OnDiskSize": 2004940,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2861887,
+      "MaxVersion": 731,
+      "IndexSz": 49280,
+      "BloomFilterSize": 3138
+    },
+    {
+      "ID": 21,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo1ODM5NWM2NC1mOGQ0LTRiZWEtYmZmMi1mNmM0MmZhNWFjNGL/////////qw==",
+      "Right": "AW5vcm5pYzo2MDdmOWYwYS00MTJjLTQ5NTgtYjg0Ni1kNzJjOGQ3ZTgxOGX////////9dQ==",
+      "KeyCount": 3174,
+      "OnDiskSize": 2019275,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2768873,
+      "MaxVersion": 731,
+      "IndexSz": 46032,
+      "BloomFilterSize": 2779
+    },
+    {
+      "ID": 22,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo2MDgwODEzZi1jMTU3LTQ4YmYtYWY5Yi0zZjBiYjEyNDVjZWH////////+6w==",
+      "Right": "AW5vcm5pYzo2OTBhZTJlZi00MjliLTRlYmMtYTllOC0zZGUxNGI5ZjA5YzT/////////gg==",
+      "KeyCount": 3432,
+      "OnDiskSize": 2003923,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2813457,
+      "MaxVersion": 731,
+      "IndexSz": 48008,
+      "BloomFilterSize": 3004
+    },
+    {
+      "ID": 23,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo2OTBjNWI1Zi00NDNjLTQ2NDAtOWJmZi1mYzBkZjk4OGJjYzD/////////Gw==",
+      "Right": "AW5vcm5pYzo3MjRhYmE2ZC1mYjUyLTQxNTItYTQzZS0xODQ1MjI3MDU2ZjD////////9Mw==",
+      "KeyCount": 3569,
+      "OnDiskSize": 2032015,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2874022,
+      "MaxVersion": 731,
+      "IndexSz": 50936,
+      "BloomFilterSize": 3124
+    },
+    {
+      "ID": 24,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo3MjRiMWI2MS03NWZiLTQyNmEtODk5Ny0zY2M4MzQ5YTRiNzj/////////pg==",
+      "Right": "AW5vcm5pYzo3YWExYWIwZC1jNDg1LTRhYjItOGQ0My0yMTViYTlhYTY1MjX/////////og==",
+      "KeyCount": 3399,
+      "OnDiskSize": 2024313,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2834876,
+      "MaxVersion": 731,
+      "IndexSz": 48056,
+      "BloomFilterSize": 2976
+    },
+    {
+      "ID": 25,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo3YWExYmVhMy00ZGViLTQxZDktYWZkZi00YTgyYjUyNDJkZjn/////////QA==",
+      "Right": "AW5vcm5pYzo4MjljMDk2ZS0zNjBiLTQ3YzQtOGMxNS1mMjlhNDg1MTNkMTf/////////tg==",
+      "KeyCount": 3165,
+      "OnDiskSize": 2025059,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2771793,
+      "MaxVersion": 731,
+      "IndexSz": 45720,
+      "BloomFilterSize": 2771
+    },
+    {
+      "ID": 26,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo4MjljOGYwZS1mYzM2LTRlNjItODI5Yi04ZWM5ZDE0MTZlOTf/////////qw==",
+      "Right": "AW5vcm5pYzo4YWIyYTMyNy0xYWI0LTQwM2UtOWM5OS0yN2JlY2U2MmM5ZjD////////9YA==",
+      "KeyCount": 3372,
+      "OnDiskSize": 2007386,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2808349,
+      "MaxVersion": 731,
+      "IndexSz": 47040,
+      "BloomFilterSize": 2952
+    },
+    {
+      "ID": 27,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo4YWIzZWNmYi1mMWQ0LTRiNDItOGYxMC0yMTM0OTk3NTlkYWb/////////NA==",
+      "Right": "AW5vcm5pYzo5MzAwZDcxNy1kZjFlLTRkNWItOTVmZC1hNDU1M2MyYmZiYjH/////////Aw==",
+      "KeyCount": 3451,
+      "OnDiskSize": 2017623,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2840876,
+      "MaxVersion": 731,
+      "IndexSz": 48176,
+      "BloomFilterSize": 3021
+    },
+    {
+      "ID": 28,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo5MzAxYzk5MS1mYjgwLTRlOTMtYjgyMy00ZWFjYjFlMTkwODf////////+9w==",
+      "Right": "AW5vcm5pYzo5YjlmN2RmZC1lOWQ3LTRlZmQtOTc2Ny1hNDliNmRlNGRkNDb/////////bg==",
+      "KeyCount": 3418,
+      "OnDiskSize": 2010520,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2823861,
+      "MaxVersion": 731,
+      "IndexSz": 48448,
+      "BloomFilterSize": 2992
+    },
+    {
+      "ID": 29,
+      "Level": 6,
+      "Left": "AW5vcm5pYzo5YjlmZTJmMy1jMGI5LTQ4ZWMtODVkYi0wNTk2NjkzNGE5NzH/////////jg==",
+      "Right": "AW5vcm5pYzphNDM2ZGMwMC01OTg2LTRiZTItYmQ1OC0yZDgxNGYyYTJhMDL/////////ig==",
+      "KeyCount": 3525,
+      "OnDiskSize": 2034295,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2870803,
+      "MaxVersion": 731,
+      "IndexSz": 48928,
+      "BloomFilterSize": 3086
+    },
+    {
+      "ID": 30,
+      "Level": 6,
+      "Left": "AW5vcm5pYzphNDM3NDYwNy0zYTUyLTQ5MTMtODVkNS01YzA3ZmJmMzVmZTX/////////gg==",
+      "Right": "AW5vcm5pYzphYzM2OTVmYS1lNWU2LTQ1ODQtYmUzYS03ZjZiNDQzYjQ1NTL////////9Jw==",
+      "KeyCount": 3174,
+      "OnDiskSize": 2086511,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2837397,
+      "MaxVersion": 731,
+      "IndexSz": 45576,
+      "BloomFilterSize": 2779
+    },
+    {
+      "ID": 31,
+      "Level": 6,
+      "Left": "AW5vcm5pYzphYzM2OTYyYy1jYjU0LTRlYzctOWYwOS0xOGZmYzE4MmZhM2b/////////QA==",
+      "Right": "AW5vcm5pYzpiNThiYjVlOC1hMTBlLTRhMzktOTYyNC0zNDc4OTNiNjdhMTb/////////jg==",
+      "KeyCount": 3632,
+      "OnDiskSize": 2041284,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2913814,
+      "MaxVersion": 731,
+      "IndexSz": 49248,
+      "BloomFilterSize": 3179
+    },
+    {
+      "ID": 32,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpiNThiYzc4My0yNjkxLTRlNmEtOWE3Zi02NmRlNTA2ZDcyYzL////////9XQ==",
+      "Right": "AW5vcm5pYzpiZWYyZGUzYy0xZDE4LTRiZDktYTcxOS1jOGMwOTRmMjRmMTf////////9MA==",
+      "KeyCount": 3765,
+      "OnDiskSize": 2045749,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2956317,
+      "MaxVersion": 728,
+      "IndexSz": 50504,
+      "BloomFilterSize": 3296
+    },
+    {
+      "ID": 33,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpiZWYyZTBlOC01ZjdiLTQ1NmUtYTc3Ni0xMzk3OTIyN2JmMTD/////////NA==",
+      "Right": "AW5vcm5pYzpjN2Q3NDMyMy1jODI5LTQ4NmQtOWI3ZC1jNzRlYWExNzliNjT/////////fg==",
+      "KeyCount": 3569,
+      "OnDiskSize": 2022469,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2871078,
+      "MaxVersion": 731,
+      "IndexSz": 49800,
+      "BloomFilterSize": 3124
+    },
+    {
+      "ID": 34,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpjN2Q4MjNmYy1hNGE3LTQzNWUtOTFhMC0wZDgwM2MyMzMyMDj/////////ag==",
+      "Right": "AW5vcm5pYzpkMDdjNTZiMi0yNDRkLTQ0NGMtYTEwNy04NzgwOGNiYzM2ZGP////////9dQ==",
+      "KeyCount": 3458,
+      "OnDiskSize": 2034439,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2860204,
+      "MaxVersion": 731,
+      "IndexSz": 47040,
+      "BloomFilterSize": 3027
+    },
+    {
+      "ID": 35,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpkMDdmODY3NC0zYjQxLTQ5ZjMtYmFkYy0xNmI4OGQ0NWRkNDf/////////cg==",
+      "Right": "AW5vcm5pYzpkOTZmODczMS0yNGEzLTQ2MjQtYjI1NS0yZTE4OGFmMWVjNTb////////+7w==",
+      "KeyCount": 3582,
+      "OnDiskSize": 2034427,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2889487,
+      "MaxVersion": 731,
+      "IndexSz": 50648,
+      "BloomFilterSize": 3136
+    },
+    {
+      "ID": 36,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpkOTZmOTI0OS1lZDM0LTQ1NzYtOTliYS0yMWRlMjYyODU3ZTb/////////gg==",
+      "Right": "AW5vcm5pYzplMWRkZjRlYi00MjU1LTRmZjYtOTdlOS0xZmVlODM3ZTE2OGL////////9Wg==",
+      "KeyCount": 3310,
+      "OnDiskSize": 2011888,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2797807,
+      "MaxVersion": 731,
+      "IndexSz": 45776,
+      "BloomFilterSize": 2898
+    },
+    {
+      "ID": 37,
+      "Level": 6,
+      "Left": "AW5vcm5pYzplMWRlNGRkNi01M2YxLTQxYmMtYWM3Yi01YjQ4ZjYyZTkyNTT/////////hg==",
+      "Right": "AW5vcm5pYzplYTNjN2JlYi05YjBkLTQzNTMtYjM2OC00MGE1ZDE5ZDVhODb////////9ew==",
+      "KeyCount": 3276,
+      "OnDiskSize": 2048823,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2825042,
+      "MaxVersion": 731,
+      "IndexSz": 46656,
+      "BloomFilterSize": 2868
+    },
+    {
+      "ID": 38,
+      "Level": 6,
+      "Left": "AW5vcm5pYzplYTNlMWM5Ni02MWQ2LTQzMGEtYTgxMC1mNGRmNmE4YTg3OWH/////////ig==",
+      "Right": "AW5vcm5pYzpmMjRlMjFhYS05YWNlLTQ5MDUtYjAyZC02MDc3Y2JmZGE0MzX////////9Jw==",
+      "KeyCount": 3145,
+      "OnDiskSize": 2051243,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2796893,
+      "MaxVersion": 731,
+      "IndexSz": 45176,
+      "BloomFilterSize": 2753
+    },
+    {
+      "ID": 39,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpmMjUwMzk0OS03NDM0LTRlOWQtODVlNC1iZmI4ZWFhMzQ2Mzj/////////NA==",
+      "Right": "AW5vcm5pYzpmYjExMjAwYS01ZDc5LTQwYmYtOWZkZS0xNjNlN2ZkMzkyNjP/////////sA==",
+      "KeyCount": 3483,
+      "OnDiskSize": 2015094,
+      "StaleDataSize": 0,
+      "UncompressedSize": 2842384,
+      "MaxVersion": 731,
+      "IndexSz": 49576,
+      "BloomFilterSize": 3049
+    },
+    {
+      "ID": 40,
+      "Level": 6,
+      "Left": "AW5vcm5pYzpmYjExYTczNC01OWQ2LTQ0MGUtOThiYS1kMmUyOGY3YjBjNGX/////////Hw==",
+      "Right": "Am5vcm5pYzowYmFiMjdmZS1iY2ZlLTRiZTktYTgzNi0yYTgyYjhlOTg3ZmH/////////hg==",
+      "KeyCount": 16194,
+      "OnDiskSize": 2023410,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3243709,
+      "MaxVersion": 731,
+      "IndexSz": 69888,
+      "BloomFilterSize": 14171
+    },
+    {
+      "ID": 41,
+      "Level": 6,
+      "Left": "Am5vcm5pYzowYmFiNTI3OS0zZGVhLTQ3OTYtYmIxMS0yMDY2MzQ0NDgyMjf/////////gg==",
+      "Right": "Am5vcm5pYzoyNzNmNTVmNy1jZDU3LTQ5MDktYWUxYy0yYWU5YzcyZjUzZDT////////9xg==",
+      "KeyCount": 33534,
+      "OnDiskSize": 2040402,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3843111,
+      "MaxVersion": 621,
+      "IndexSz": 102008,
+      "BloomFilterSize": 29344
+    },
+    {
+      "ID": 42,
+      "Level": 6,
+      "Left": "Am5vcm5pYzoyNzNmZDUxMC00YmQ4LTQ5MGEtYjZlNC0yYjZiZWMyODMxZDX/////////UQ==",
+      "Right": "Am5vcm5pYzo0MmRmNWZmNy0wZDA5LTRkMjAtODVlMi0zMWMwN2JhOTQyYmX////////92g==",
+      "KeyCount": 33764,
+      "OnDiskSize": 2053991,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3868167,
+      "MaxVersion": 621,
+      "IndexSz": 102744,
+      "BloomFilterSize": 29545
+    },
+    {
+      "ID": 43,
+      "Level": 6,
+      "Left": "Am5vcm5pYzo0MmRmODQ0Yi1lNDUyLTQ5MzctODI0ZS03MjM3OTRiNmFkYjf////////+Ng==",
+      "Right": "Am5vcm5pYzo1ZWJhNmMzZi1mY2M3LTRkOTctYjg5ZS04ZmNkNzE2NGQ1N2H/////////kg==",
+      "KeyCount": 33673,
+      "OnDiskSize": 2048027,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3857238,
+      "MaxVersion": 621,
+      "IndexSz": 102440,
+      "BloomFilterSize": 29465
+    },
+    {
+      "ID": 44,
+      "Level": 6,
+      "Left": "Am5vcm5pYzo1ZWJiNmRiZi1lN2RiLTRlOGEtYTg3YS01MGQ0N2E5OTE3ODP/////////Kw==",
+      "Right": "Am5vcm5pYzo3YTIyZDU0Mi1mNzFhLTRjNWQtODkyNi1jOWE4ZWI1MmU0Mjf////////+jg==",
+      "KeyCount": 33530,
+      "OnDiskSize": 2038848,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3840284,
+      "MaxVersion": 621,
+      "IndexSz": 101928,
+      "BloomFilterSize": 29340
+    },
+    {
+      "ID": 45,
+      "Level": 6,
+      "Left": "Am5vcm5pYzo3YTIyZGYyYy1hYjA3LTQ0MWEtYmNhOS05NmViZGU3ZDgyZTj////////9tg==",
+      "Right": "Am5vcm5pYzo5NWY0ZGRlMi0wMjk4LTQzOWMtODEwMC1hMDNkM2UxZTZkOTX////////+tg==",
+      "KeyCount": 33806,
+      "OnDiskSize": 2055825,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3873322,
+      "MaxVersion": 621,
+      "IndexSz": 102856,
+      "BloomFilterSize": 29582
+    },
+    {
+      "ID": 46,
+      "Level": 6,
+      "Left": "Am5vcm5pYzo5NWY0ZWVmZC01Y2U2LTRhNWItOGNlNy00ZDVkODFmNTgwOTL/////////qw==",
+      "Right": "Am5vcm5pYzpiMTk1NGE2OS04ZjEzLTQ5Y2ItYTk4Zi05NDBiMDU0MGU4Yjb////////9+g==",
+      "KeyCount": 33532,
+      "OnDiskSize": 2040315,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3841968,
+      "MaxVersion": 621,
+      "IndexSz": 102008,
+      "BloomFilterSize": 29342
+    },
+    {
+      "ID": 47,
+      "Level": 6,
+      "Left": "Am5vcm5pYzpiMTk1NWRjNS02NGM2LTRhZjMtYWJkZi1mOTUzYjE0M2Y4OGT////////+Ag==",
+      "Right": "Am5vcm5pYzpjY2ZjOGFlMy0wNzg4LTQwYTItOTU3Yi05ZGE2OTRkNGMzODn////////+4A==",
+      "KeyCount": 33596,
+      "OnDiskSize": 2047040,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3852865,
+      "MaxVersion": 621,
+      "IndexSz": 102296,
+      "BloomFilterSize": 29398
+    },
+    {
+      "ID": 48,
+      "Level": 6,
+      "Left": "Am5vcm5pYzpjY2ZjOWI0MC0xNGJjLTRkOWMtYmFkMi1iZmE0YmM2ZDRiNTf/////////Sg==",
+      "Right": "Am5vcm5pYzplODQ1MjI2Yi0xNjY1LTQyMWEtOWIyYi1mM2RkZTVkNjViMDb/////////ig==",
+      "KeyCount": 33217,
+      "OnDiskSize": 2020662,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3803865,
+      "MaxVersion": 621,
+      "IndexSz": 101048,
+      "BloomFilterSize": 29066
+    },
+    {
+      "ID": 49,
+      "Level": 6,
+      "Left": "Am5vcm5pYzplODQ1MjNkNC02YzVhLTQxYzYtOGJhMy0yMzEwYWMxMmQyNDf/////////eg==",
+      "Right": "A1Byb2R1Y3QAAAAAAAAAF27/////////sA==",
+      "KeyCount": 82940,
+      "OnDiskSize": 2049785,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4436385,
+      "MaxVersion": 621,
+      "IndexSz": 148768,
+      "BloomFilterSize": 72574
+    },
+    {
+      "ID": 50,
+      "Level": 6,
+      "Left": "A1Byb2R1Y3QAAAAAAAAAF2//////////UQ==",
+      "Right": "BAAAAAAAACEnAAAAAAAAOsD/////////sA==",
+      "KeyCount": 150995,
+      "OnDiskSize": 2092900,
+      "StaleDataSize": 0,
+      "UncompressedSize": 8782497,
+      "MaxVersion": 731,
+      "IndexSz": 245112,
+      "BloomFilterSize": 132122
+    },
+    {
+      "ID": 51,
+      "Level": 6,
+      "Left": "BAAAAAAAACEoAAAAAAAANWf/////////qw==",
+      "Right": "BAAAAAAAASVEAAAAAAADkJv////////+Mg==",
+      "KeyCount": 130585,
+      "OnDiskSize": 2068589,
+      "StaleDataSize": 0,
+      "UncompressedSize": 10134321,
+      "MaxVersion": 461,
+      "IndexSz": 244600,
+      "BloomFilterSize": 114263
+    },
+    {
+      "ID": 52,
+      "Level": 6,
+      "Left": "BAAAAAAAASVFAAAAAAADkJz////////+Mg==",
+      "Right": "BQAAAAAAAAhgAAAAAAAEBAX////////99g==",
+      "KeyCount": 129611,
+      "OnDiskSize": 2090155,
+      "StaleDataSize": 0,
+      "UncompressedSize": 9751956,
+      "MaxVersion": 621,
+      "IndexSz": 238808,
+      "BloomFilterSize": 113411
+    },
+    {
+      "ID": 53,
+      "Level": 6,
+      "Left": "BQAAAAAAAAhgAAAAAAAEHSD////////96g==",
+      "Right": "BQAAAAAAAE1HAAAAAAAAj0T/////////jg==",
+      "KeyCount": 79464,
+      "OnDiskSize": 2060893,
+      "StaleDataSize": 0,
+      "UncompressedSize": 6168497,
+      "MaxVersion": 621,
+      "IndexSz": 149064,
+      "BloomFilterSize": 69532
+    },
+    {
+      "ID": 54,
+      "Level": 6,
+      "Left": "BQAAAAAAAE1HAAAAAAACe+z////////+vg==",
+      "Right": "BQAAAAAAAJJUAAAAAAADHz7////////+ag==",
+      "KeyCount": 79533,
+      "OnDiskSize": 2063041,
+      "StaleDataSize": 0,
+      "UncompressedSize": 6173914,
+      "MaxVersion": 621,
+      "IndexSz": 149232,
+      "BloomFilterSize": 69593
+    },
+    {
+      "ID": 55,
+      "Level": 6,
+      "Left": "BQAAAAAAAJJUAAAAAAADJlH////////+Zg==",
+      "Right": "BQAAAAAAAVtFAAAAAAACESD////////+/w==",
+      "KeyCount": 93321,
+      "OnDiskSize": 2048620,
+      "StaleDataSize": 0,
+      "UncompressedSize": 7358862,
+      "MaxVersion": 621,
+      "IndexSz": 176640,
+      "BloomFilterSize": 81657
+    },
+    {
+      "ID": 56,
+      "Level": 6,
+      "Left": "BQAAAAAAAVtGAAAAAAACESH////////+/w==",
+      "Right": "DgAAAAAAAUtv/////////wc=",
+      "KeyCount": 405465,
+      "OnDiskSize": 2307238,
+      "StaleDataSize": 0,
+      "UncompressedSize": 10403591,
+      "MaxVersion": 630,
+      "IndexSz": 478264,
+      "BloomFilterSize": 354783
+    },
+    {
+      "ID": 57,
+      "Level": 6,
+      "Left": "DgAAAAAAAUtw/////////wc=",
+      "Right": "EQAAAAAAAAB8AAAAAAAAMixTVVBQTElFUwAAAAAAAABZDv////////+e",
+      "KeyCount": 337458,
+      "OnDiskSize": 2251913,
+      "StaleDataSize": 10822,
+      "UncompressedSize": 13281900,
+      "MaxVersion": 745,
+      "IndexSz": 443320,
+      "BloomFilterSize": 295277
+    },
+    {
+      "ID": 58,
+      "Level": 6,
+      "Left": "EQAAAAAAAAB8AAAAAAAAMrxTVVBQTElFUwAAAAAAAABaLv////////+e",
+      "Right": "EQAAAAAAAALPAAAAAAAA6e5QVVJDSEFTRUQAAAAAAAABn8n/////////OA==",
+      "KeyCount": 59546,
+      "OnDiskSize": 2040483,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4975743,
+      "MaxVersion": 276,
+      "IndexSz": 136432,
+      "BloomFilterSize": 52104
+    },
+    {
+      "ID": 59,
+      "Level": 6,
+      "Left": "EQAAAAAAAALPAAAAAAAA7RJQVVJDSEFTRUQAAAAAAAABou3/////////OA==",
+      "Right": "EQAAAAAAAHhIAAAAAAAAAEhQQVJUX09GAAAAAAAAAOVF/////////3o=",
+      "KeyCount": 58373,
+      "OnDiskSize": 2031847,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5087523,
+      "MaxVersion": 276,
+      "IndexSz": 136984,
+      "BloomFilterSize": 51078
+    },
+    {
+      "ID": 60,
+      "Level": 6,
+      "Left": "EQAAAAAAAHhJAAAAAAAAAElQQVJUX09GAAAAAAAAAOVH/////////3o=",
+      "Right": "EQAAAAAAAPFKAAAAAAAAUyFPUkRFUlMAAAAAAAAC2kv////////+jg==",
+      "KeyCount": 61607,
+      "OnDiskSize": 2032417,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5337874,
+      "MaxVersion": 369,
+      "IndexSz": 140088,
+      "BloomFilterSize": 53908
+    },
+    {
+      "ID": 61,
+      "Level": 6,
+      "Left": "EQAAAAAAAPFKAAAAAAAAZrZPUkRFUlMAAAAAAAAC2kj////////+jg==",
+      "Right": "EQAAAAAAATVoAAAAAAAAhWZPUkRFUlMAAAAAAAADyZH////////+Eg==",
+      "KeyCount": 61257,
+      "OnDiskSize": 2033039,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5283346,
+      "MaxVersion": 493,
+      "IndexSz": 137144,
+      "BloomFilterSize": 53601
+    },
+    {
+      "ID": 62,
+      "Level": 6,
+      "Left": "EQAAAAAAATVpAAAAAAAAVcxPUkRFUlMAAAAAAAADyZT////////+Eg==",
+      "Right": "EQAAAAAAAXmrAAAAAAAASrdPUkRFUlMAAAAAAAAEuIP////////9lg==",
+      "KeyCount": 61171,
+      "OnDiskSize": 2031172,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5275791,
+      "MaxVersion": 617,
+      "IndexSz": 136944,
+      "BloomFilterSize": 53526
+    },
+    {
+      "ID": 63,
+      "Level": 6,
+      "Left": "EQAAAAAAAXmrAAAAAAAAt95PUkRFUlMAAAAAAAAEuIb////////9lg==",
+      "Right": "EgAAAAAAAAKmAAAAAAABHaJQVVJDSEFTRUT/////////Hw==",
+      "KeyCount": 67985,
+      "OnDiskSize": 2067609,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5079838,
+      "MaxVersion": 621,
+      "IndexSz": 135040,
+      "BloomFilterSize": 59488
+    },
+    {
+      "ID": 64,
+      "Level": 6,
+      "Left": "EgAAAAAAAAKmAAAAAAABIcRQVVJDSEFTRUT////////+6w==",
+      "Right": "EgAAAAAAAI7UAAAAAAAAAFRQQVJUX09G/////////24=",
+      "KeyCount": 65802,
+      "OnDiskSize": 2035371,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5146650,
+      "MaxVersion": 276,
+      "IndexSz": 131088,
+      "BloomFilterSize": 57578
+    },
+    {
+      "ID": 65,
+      "Level": 6,
+      "Left": "EgAAAAAAAI7VAAAAAAAAAFVQQVJUX09G/////////24=",
+      "Right": "EgAAAAAAAP1kAAAAAAAAi0FPUkRFUlP////////+eg==",
+      "KeyCount": 66610,
+      "OnDiskSize": 2034605,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5160569,
+      "MaxVersion": 389,
+      "IndexSz": 129888,
+      "BloomFilterSize": 58285
+    },
+    {
+      "ID": 66,
+      "Level": 6,
+      "Left": "EgAAAAAAAP1kAAAAAAAAr4lPUkRFUlP////////+eg==",
+      "Right": "EgAAAAAAAUcGAAAAAAAAI39PUkRFUlP////////99g==",
+      "KeyCount": 66246,
+      "OnDiskSize": 2037635,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5115557,
+      "MaxVersion": 521,
+      "IndexSz": 129008,
+      "BloomFilterSize": 57967
+    },
+    {
+      "ID": 67,
+      "Level": 6,
+      "Left": "EgAAAAAAAUcHAAAAAAAAB2dPUkRFUlP////////99g==",
+      "Right": "Gm5vcm5pYzoyZDIwNmUwYy0wNjg2LTQxMmYtODNhZC1jNWM0NDM3YTQyNDD/////////qw==",
+      "KeyCount": 66198,
+      "OnDiskSize": 2075547,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4821905,
+      "MaxVersion": 731,
+      "IndexSz": 130472,
+      "BloomFilterSize": 57925
+    },
+    {
+      "ID": 68,
+      "Level": 6,
+      "Left": "Gm5vcm5pYzoyZDIxODZkMC0wYmFhLTQxNmYtOTFmNy02MzlhZWE0ZTNjMGb/////////Wg==",
+      "Right": "Gm5vcm5pYzpjYTIyNjI1NC00MWUwLTRiNDgtYTljOC05N2RhMmEyYjI4ZWP////////+9w==",
+      "KeyCount": 62682,
+      "OnDiskSize": 2062839,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3839036,
+      "MaxVersion": 731,
+      "IndexSz": 127208,
+      "BloomFilterSize": 54848
+    },
+    {
+      "ID": 69,
+      "Level": 6,
+      "Left": "Gm5vcm5pYzpjYTIyN2Q1Yi1jNWIzLTQ5MDctOGE2MS1mMDFlMjQ3OGU1Njj/////////qw==",
+      "Right": "G25vcm5pYzoyMTcwYzhjNS00MTQxLTRkY2MtYTdhZi0wNzY3NGZlMjAzNGH////////+qg==",
+      "KeyCount": 61924,
+      "OnDiskSize": 2057455,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3773873,
+      "MaxVersion": 731,
+      "IndexSz": 125184,
+      "BloomFilterSize": 54185
+    },
+    {
+      "ID": 70,
+      "Level": 6,
+      "Left": "G25vcm5pYzoyMTcxMmFlNS00N2Q0LTQzZTQtYWQ2ZS01NzA1M2ViNmEyOGT////////9yg==",
+      "Right": "G25vcm5pYzo1NDQxZTUwYi1mY2FiLTRjYmUtOGJhMi1mMTNhMjQ0MmE0NWL/////////Fw==",
+      "KeyCount": 61754,
+      "OnDiskSize": 2058581,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3754030,
+      "MaxVersion": 621,
+      "IndexSz": 124648,
+      "BloomFilterSize": 54036
+    },
+    {
+      "ID": 71,
+      "Level": 6,
+      "Left": "G25vcm5pYzo1NDQyMDVlMy1kNzYyLTRlYTMtOTg2NS1hY2ZmMTZkZjY4ZjD////////+Cg==",
+      "Right": "G25vcm5pYzo4NzM1MzlkNS03ZjViLTQzM2MtYTlkYS1iNTFlY2E2Njc2YTH////////+Yg==",
+      "KeyCount": 62048,
+      "OnDiskSize": 2069363,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3771589,
+      "MaxVersion": 621,
+      "IndexSz": 125216,
+      "BloomFilterSize": 54293
+    },
+    {
+      "ID": 72,
+      "Level": 6,
+      "Left": "G25vcm5pYzo4NzM1NGVhNS1mYTY0LTRjNTAtOWZiMC0yYTE0N2ZlMWQ3MTH////////92g==",
+      "Right": "G25vcm5pYzpiYTU4NTE3Yi00NDAwLTQ0ZTUtODkwOC03ZTYzNTMwMGJlY2T/////////UQ==",
+      "KeyCount": 62317,
+      "OnDiskSize": 2078380,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3787500,
+      "MaxVersion": 621,
+      "IndexSz": 125752,
+      "BloomFilterSize": 54529
+    },
+    {
+      "ID": 73,
+      "Level": 6,
+      "Left": "G25vcm5pYzpiYTU4YmRmMy03Mjk1LTQ5ODItYTMyMi0zZDBlZmMyMTRhZTn////////90g==",
+      "Right": "G25vcm5pYzplZDJkY2VhZi0wZjQyLTRmNmItYTc0Ni1mZjI5NmUxNGRjM2X/////////UQ==",
+      "KeyCount": 62100,
+      "OnDiskSize": 2071044,
+      "StaleDataSize": 0,
+      "UncompressedSize": 3774517,
+      "MaxVersion": 621,
+      "IndexSz": 125256,
+      "BloomFilterSize": 54339
+    },
+    {
+      "ID": 74,
+      "Level": 6,
+      "Left": "G25vcm5pYzplZDJkZjU2Zi0zYzgxLTRlMjctOTY0OC01ZDNkN2YwZDA3NTH////////+Zg==",
+      "Right": "HQAAAAAAALCe/////////14=",
+      "KeyCount": 68497,
+      "OnDiskSize": 2045058,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4277076,
+      "MaxVersion": 733,
+      "IndexSz": 117496,
+      "BloomFilterSize": 59936
+    },
+    {
+      "ID": 75,
+      "Level": 6,
+      "Left": "HQAAAAAAALCf/////////14=",
+      "Right": "HgAAAAAAAEEH/////////6I=",
+      "KeyCount": 73230,
+      "OnDiskSize": 2044417,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4647932,
+      "MaxVersion": 731,
+      "IndexSz": 114536,
+      "BloomFilterSize": 64078
+    },
+    {
+      "ID": 76,
+      "Level": 6,
+      "Left": "HgAAAAAAAEEI/////////6I=",
+      "Right": "HgAAAAAAAV/d/////////1o=",
+      "KeyCount": 73430,
+      "OnDiskSize": 2063600,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4653564,
+      "MaxVersion": 165,
+      "IndexSz": 114848,
+      "BloomFilterSize": 64253
+    },
+    {
+      "ID": 77,
+      "Level": 6,
+      "Left": "HgAAAAAAAV/e/////////1o=",
+      "Right": "HgAAAAAAAoEd/////////ro=",
+      "KeyCount": 74048,
+      "OnDiskSize": 2045981,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4699032,
+      "MaxVersion": 325,
+      "IndexSz": 115824,
+      "BloomFilterSize": 64793
+    },
+    {
+      "ID": 78,
+      "Level": 6,
+      "Left": "HgAAAAAAAoEe/////////ro=",
+      "Right": "HgAAAAAAA6xP/////////iI=",
+      "KeyCount": 76594,
+      "OnDiskSize": 2046682,
+      "StaleDataSize": 0,
+      "UncompressedSize": 4860521,
+      "MaxVersion": 477,
+      "IndexSz": 119768,
+      "BloomFilterSize": 67021
+    },
+    {
+      "ID": 79,
+      "Level": 6,
+      "Left": "HgAAAAAAA6xQ/////////iI=",
+      "Right": "IwAAAAAAAACZAAAAAAAAcOiY6ASqWHDkdwAAAAAAAAAL/////////5Y=",
+      "KeyCount": 88644,
+      "OnDiskSize": 2053995,
+      "StaleDataSize": 0,
+      "UncompressedSize": 5203575,
+      "MaxVersion": 631,
+      "IndexSz": 138088,
+      "BloomFilterSize": 77565
+    },
+    {
+      "ID": 80,
+      "Level": 6,
+      "Left": "IwAAAAAAAACZAAAAAAAAcgiY6ASqWHDkdwAAAAAAAAAL/////////5Y=",
+      "Right": "IwAAAAAAAVchAAAAAAAEPtyY6AStlpDZxAAAAAAAAAB3/////////dY=",
+      "KeyCount": 261104,
+      "OnDiskSize": 2179060,
+      "StaleDataSize": 0,
+      "UncompressedSize": 11555219,
+      "MaxVersion": 553,
+      "IndexSz": 422008,
+      "BloomFilterSize": 228467
+    },
+    {
+      "ID": 81,
+      "Level": 6,
+      "Left": "IwAAAAAAAVchAAAAAAAEPt2Y6AStlpDZxAAAAAAAAAB3/////////dY=",
+      "Right": "JAAAAAAAAFZdAAAAAAADYwiY6AStBBcTmwAAAAAAAABa/////////ko=",
+      "KeyCount": 174925,
+      "OnDiskSize": 2141183,
+      "StaleDataSize": 0,
+      "UncompressedSize": 7599832,
+      "MaxVersion": 621,
+      "IndexSz": 280440,
+      "BloomFilterSize": 153061
+    },
+    {
+      "ID": 82,
+      "Level": 6,
+      "Left": "JAAAAAAAAFZdAAAAAAAEwYWY6ASt2lyVkwAAAAAAAACI/////////ZI=",
+      "Right": "JAAAAAAAAPsXAAAAAAABsPKY6ASrmSbykQAAAAAAAAAj/////////xs=",
+      "KeyCount": 137773,
+      "OnDiskSize": 2097169,
+      "StaleDataSize": 0,
+      "UncompressedSize": 6223296,
+      "MaxVersion": 621,
+      "IndexSz": 224808,
+      "BloomFilterSize": 120553
+    },
+    {
+      "ID": 83,
+      "Level": 6,
+      "Left": "JAAAAAAAAPsYAAAAAAABsPOY6ASrmSbykQAAAAAAAAAj/////////xs=",
+      "Right": "JAAAAAAAAXylAAAAAAACMoCY6ASsFmf26wAAAAAAAAAz/////////u8=",
+      "KeyCount": 33166,
+      "OnDiskSize": 263617,
+      "StaleDataSize": 0,
+      "UncompressedSize": 1506475,
+      "MaxVersion": 276,
+      "IndexSz": 54328,
+      "BloomFilterSize": 29022
+    }
+  ],
+  "uncompressed_block_bytes": 322485901,
+  "unsupported_node_records": {}
+}

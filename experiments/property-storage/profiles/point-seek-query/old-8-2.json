@@ -1,0 +1,81 @@
+{
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "documents": 4352,
+  "northwind_nodes": 97440,
+  "northwind_relationships": 312050,
+  "phases": [
+    {
+      "mean_ms": 0.57920133275,
+      "name": "document_projection",
+      "p50_ms": 0.458926,
+      "p95_ms": 0.809446,
+      "p99_ms": 1.03306,
+      "queries": 4000,
+      "queries_second": 13465.563778193604,
+      "result_sha256": "4370f2038939a28e0499a4f095d0cf61cd7b7bf523ca55b657e61b22c98a82ae",
+      "sampled_server_peak_rss_kib": 2454316,
+      "server_rss_after_kib": 2454316,
+      "server_rss_before_kib": 2453164,
+      "workers": 8
+    },
+    {
+      "mean_ms": 0.5910750720000001,
+      "name": "northwind_projection",
+      "p50_ms": 0.446325,
+      "p95_ms": 0.779944,
+      "p99_ms": 1.075162,
+      "queries": 4000,
+      "queries_second": 13052.786784826107,
+      "result_sha256": "2661f8bc7f3523882b13d62be650f6101a2b1bcc610a4c171903720cbbd0ed1f",
+      "sampled_server_peak_rss_kib": 2454700,
+      "server_rss_after_kib": 2454700,
+      "server_rss_before_kib": 2454316,
+      "workers": 8
+    },
+    {
+      "mean_ms": 0.46643483750000003,
+      "name": "mixed_projection",
+      "p50_ms": 0.396523,
+      "p95_ms": 0.607135,
+      "p99_ms": 0.789545,
+      "queries": 4000,
+      "queries_second": 16756.559674706583,
+      "result_sha256": "d2ee9f1db45c740ec9e66bd9d421ad7719908ab2fa488d83d53824925184bf11",
+      "sampled_server_peak_rss_kib": 2454700,
+      "server_rss_after_kib": 2454700,
+      "server_rss_before_kib": 2454700,
+      "workers": 8
+    },
+    {
+      "mean_ms": 1.17835703425,
+      "name": "document_batch_projection",
+      "p50_ms": 0.816646,
+      "p95_ms": 2.287331,
+      "p99_ms": 13.113251,
+      "queries": 4000,
+      "queries_second": 6558.53644790053,
+      "result_sha256": "5e664cc84b4ee8222e630218fdaca460ffdcc743858514c1f84fb133b5b6990d",
+      "sampled_server_peak_rss_kib": 2522668,
+      "server_rss_after_kib": 2522668,
+      "server_rss_before_kib": 2454828,
+      "workers": 8
+    },
+    {
+      "mean_ms": 0.670117112,
+      "name": "document_full_control",
+      "p50_ms": 0.434324,
+      "p95_ms": 0.735041,
+      "p99_ms": 1.485186,
+      "queries": 4000,
+      "queries_second": 9916.15587762712,
+      "result_sha256": "74b845697360f635d6a6840c0af2ef17b8884e8372dbdd5390d72ed1d9799e67",
+      "sampled_server_peak_rss_kib": 2522796,
+      "server_rss_after_kib": 2522796,
+      "server_rss_before_kib": 2522668,
+      "workers": 8
+    }
+  ],
+  "query_cache_enabled": false,
+  "sampling_interval_ms": 10,
+  "server_start_rss_kib": 2447276
+}

@@ -1,0 +1,12 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-skip-final",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "working tree point projection tuning; public Badger 4af841ebc969",
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-hvdj12o1",
+  "source_stores_unchanged": true
+}

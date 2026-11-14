@@ -291,7 +291,7 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 			// records that span for the body its filter keeps; a property its
 			// projection does not want is never decoded.
 			before := d.reader.Len()
-			if err := dec.Skip(); err != nil {
+			if err := skipUnselectedProperty(dec, &d.reader, rest[offset+n:]); err != nil {
 				return false, fmt.Errorf("decoding tokenized properties: skip key %d value: %w", token, err)
 			}
 			if d.filterSelection != nil {

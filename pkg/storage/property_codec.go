@@ -204,7 +204,7 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, names
 		}
 		if include != nil {
 			if _, wanted := include[name]; !wanted {
-				if err := dec.Skip(); err != nil {
+				if err := skipUnselectedProperty(dec, reader, rest[consumedSoFar+n:]); err != nil {
 					return nil, fmt.Errorf("decoding tokenized properties: skip key %q value: %w", name, err)
 				}
 				continue

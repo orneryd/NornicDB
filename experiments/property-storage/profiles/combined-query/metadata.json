@@ -1,0 +1,12 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "496c3c934 with public Badger 4af841ebc969, experimental flag on",
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-rxg7ihvs",
+  "source_stores_unchanged": true
+}

@@ -1,0 +1,10 @@
+{
+  "old": {
+    "file_bytes": 458432725,
+    "allocated_disk_bytes": 458690560
+  },
+  "new": {
+    "file_bytes": 387348426,
+    "allocated_disk_bytes": 387567616
+  }
+}

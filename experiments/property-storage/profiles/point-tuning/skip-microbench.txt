@@ -1,0 +1,26 @@
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: Intel(R) Core(TM) i9-9900KF CPU @ 3.60GHz
+BenchmarkExperimentalProjectionSkip/compressed-body/copy-4         	 2433270	       492.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/copy-4         	 2439553	       491.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/copy-4         	 2458788	       490.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/copy-4         	 2434407	       491.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/copy-4         	 2437252	       488.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/seek-4         	204229504	         5.831 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/seek-4         	141393128	         8.450 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/seek-4         	142446124	         8.403 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/seek-4         	201685311	         5.927 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/compressed-body/seek-4         	199254372	         6.043 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/copy-4           	17314423	        70.14 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/copy-4           	17480646	        68.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/copy-4           	17552704	        69.60 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/copy-4           	17428090	        68.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/copy-4           	17720206	        67.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/seek-4           	204067972	         5.903 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/seek-4           	226353181	         5.293 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/seek-4           	228518103	         5.240 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/seek-4           	228120751	         5.284 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExperimentalProjectionSkip/random-binary/seek-4           	225988695	         5.306 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	24.071s

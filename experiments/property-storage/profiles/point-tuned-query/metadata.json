@@ -1,0 +1,12 @@
+{
+  "old_binary": "/src/nornicdb",
+  "new_binary": "/src/nornicdb-tuned",
+  "old_source": "496c3c934 experimental before point tuning",
+  "new_source": "working tree point projection tuning; public Badger 4af841ebc969",
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-k7prcgk4",
+  "source_stores_unchanged": true
+}
