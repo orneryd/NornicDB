@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add opt-in experimental per-property compression and packed integer arrays from
+  the private Badger fork. `NORNICDB_EXPERIMENTAL_PROPERTY_STORAGE_ENABLED` is off
+  by default; existing property writes retain their format unless enabled.
+
 - Reject commits whose physical keys exceed the backend limit before buffered or
   prepared journal acceptance, preventing acknowledged writes that cannot flush
   or recover. Stored key encodings and storage versions are unchanged.

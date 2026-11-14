@@ -1,6 +1,6 @@
 # Experimental property storage
 
-This branch integrates the private Badger development fork into NornicDB's existing tokenized-property owner. It does not replace the graph engine, transaction model, property-name dictionaries, constraints or indexes.
+This branch integrates the Badger development fork into NornicDB's existing tokenized-property owner. It does not replace the graph engine, transaction model, property-name dictionaries, constraints or indexes.
 
 ## Enable
 
@@ -25,11 +25,11 @@ Use disposable test databases for this experiment. Stock release binaries cannot
 
 This is per-property compression and integer-array encoding, not immutable cross-entity column segments. Independently compressed disk blocks, true physical partial reads, delta overlays and segment compaction remain work in the fork's implementation plan. Badger still retrieves the enclosing Item value before Nornic selects properties. The directory prototype and test-only patched/delta candidates are not silently promoted into a new production format.
 
-## Dependency and private access
+## Dependency
 
-The branch pins `github.com/dgraph-io/badger/v4` to the private `orneryd/nornic-badger/v4` repository at commit `2f4175a83c6cb848853c6db2ab972187ef41f400`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
+The branch pins `github.com/dgraph-io/badger/v4` to the public `orneryd/nornic-badger/v4` repository at commit `2f4175a83c6cb848853c6db2ab972187ef41f400`. The upstream module path is retained. The repository name is provisional pending the maintainer's naming choice.
 
-Developers and CI builders need read access to the private repository and `GOPRIVATE=github.com/orneryd/nornic-badger`. Use a credential helper or a scoped CI credential; do not embed credentials in go.mod or build arguments. Public unauthenticated builders cannot resolve this dependency while the fork is private. The local Linux laboratory primes Go's module cache with the checksum-verified archive of that exact fork revision and runs with GOWORK=off. This avoids copying host credentials into the container and lets source-analysis tests create independent temporary modules.
+The fork is public, so normal dependency downloads do not require GitHub credentials or GOPRIVATE. The local Linux laboratory primes Go's module cache with the checksum-verified archive of that exact fork revision and runs with GOWORK=off. This avoids copying host credentials into the container and lets source-analysis tests create independent temporary modules.
 
 ## Validation
 
@@ -51,4 +51,3 @@ go test -tags noui ./pkg/storage -run '^TestExperimentalDocsStorage$' -count=1
 ```
 
 For Northwind, use `scripts/benchmark_northwind_vs_neo4j.sh --nornic-only` with identical parameters and fresh data directories. Use `NORNIC_ASYNC_WRITES=0` for durable commits in both runs. Disable power sampling on Linux with `SKIP_POWERMETRICS=1`. A server build without local inference libraries can use `GOFLAGS=-tags=noui,nolocalllm`. Run both `nornic` and `antlr` parser modes. Graph-only Northwind primarily exercises small scalar values; large codec-only savings are not a prediction of Northwind speedups.
-

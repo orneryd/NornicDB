@@ -1,0 +1,20 @@
+[
+  {
+    "Enabled": false,
+    "Documents": 273,
+    "CorpusSHA256": "8730ccfccf87a977d1a6c69f6f12c5a03cf4f94f03416a9f03cc04b3ceebe7af",
+    "DirectoryBytes": 4959388,
+    "SeedNS": 60250700,
+    "ProjectedReadNS": 536500,
+    "FullReadNS": 2907100
+  },
+  {
+    "Enabled": true,
+    "Documents": 273,
+    "CorpusSHA256": "8730ccfccf87a977d1a6c69f6f12c5a03cf4f94f03416a9f03cc04b3ceebe7af",
+    "DirectoryBytes": 3681965,
+    "SeedNS": 90383500,
+    "ProjectedReadNS": 544300,
+    "FullReadNS": 2245700
+  }
+]
