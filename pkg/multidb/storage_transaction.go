@@ -142,7 +142,14 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 	if err != nil {
 		return prepared, nil, err
 	}
-	release, err := t.writeMu.acquire(ctx, true, summary.HoldsMergeKey)
+	// Submission routes always use prepared admission: their gate holders
+	// have already acquired native authority and release the gate before
+	// submission. Waiting here cannot invert admission against a publisher
+	// waiting for this transaction's MERGE key. Native ordinary publication
+	// can still take authority while holding a shared lease, so retain its
+	// try-once protection across a managed-policy transition.
+	tryOnce := summary.HoldsMergeKey && !owner.route.RequiresSubmission
+	release, err := t.writeMu.acquire(ctx, true, tryOnce)
 	if err != nil {
 		return prepared, nil, err
 	}
