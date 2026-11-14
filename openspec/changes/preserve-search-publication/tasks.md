@@ -16,3 +16,5 @@
 Parent validation: search counts use an explicit 0.9 similarity threshold for orthogonal unit-vector fixtures; the default search returns zero-similarity candidates too. No assertion is relaxed to hide that distinction. Clear retains a database lifetime ticket and catches up published refreshes before returning rather than weakening immediate completion to eventual delivery.
 
 No new test skip/ENV gate, storage/WAL format or public Go signature change.
+
+- [x] Reconcile relationship startup/cached budget refusal with pinned Neo4j5.26.30: FAILED procedures error; scalar reads remain complete; healthy rebuilt procedures return both records. Full Cypher package passed before final rebase (615.833s); integrated current-head rerun follows.
