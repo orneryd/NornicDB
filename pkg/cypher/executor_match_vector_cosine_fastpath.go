@@ -134,7 +134,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexCanPlanRead)
 	if !hasIndex {
 		return nil, false
 	}
@@ -388,7 +388,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if !projectionOK {
 		projectedProps = nil
 	}
-	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, e.vectorIndexCanPlanRead)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -589,7 +589,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexCanPlanRead)
 	if !hasIndex {
 		return nil, false
 	}
@@ -742,7 +742,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexOnline)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, e.vectorIndexCanPlanRead)
 	if !hasIndex {
 		return nil, false
 	}
@@ -1048,7 +1048,7 @@ var vectorQueryReads = [...]vectorQueryRead{vectorReadWarm, vectorReadPassive}
 // paths. Storage answers through the exact fallbacks, which read a node's
 // vector by search.VectorSourcePrecedence as the service does.
 //   - The index must be ONLINE: its population state, which the search
-//     service owns (vectorIndexOnline). The publication, which establishes
+//     service owns. The publication, which establishes
 //     that state, passes no index.
 //   - The service must hold vectors of the requested dimensions; relationship
 //     reads also require entries of the requested type and property.
@@ -1065,6 +1065,15 @@ func (e *StorageExecutor) vectorIndexServiceAnswers(ctx context.Context, svc *se
 	if index != "" {
 		// Gate the service this caller resolved, not a second resolver result.
 		state, _ := readVectorIndexState(ctx, svc, index)
+		if state == search.VectorIndexPopulating && read == vectorReadWarm && svc.VectorIndexDimensions() == dims && readVectorIndexPopulation(ctx, svc, index) == nil {
+			// An existing index can await this service's lazy startup rather
+			// than its own population. Warm that source before rejecting it;
+			// never start a global build for an index still being populated.
+			if err := svc.EnsureWarm(ctx); err != nil {
+				return false, err
+			}
+			state, _ = readVectorIndexState(ctx, svc, index)
+		}
 		if state != search.VectorIndexOnline {
 			return false, nil
 		}

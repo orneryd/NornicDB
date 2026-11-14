@@ -383,7 +383,7 @@ func (e *StorageExecutor) dropIndexByName(ctx context.Context, name string, ifEx
 		if vi, ok := readVectorIndexDefinition(ctx, schema, name); ok && vi != nil {
 			copyVI := *vi
 			droppedVectorIndex = &copyVI
-			// The index's population record (FAILED, or one still running)
+			// The index's population record (POPULATING, ONLINE or FAILED)
 			// ends with the index, once its drop commits.
 			population = readVectorIndexPopulation(ctx, e.search(), name)
 		}
