@@ -69,7 +69,23 @@ func streamNodesByLabelProjectedInScope(ctx context.Context, engine Engine, scop
 	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
 		return reader.StreamNodesByLabelProjected(ctx, label, properties, visit)
 	}
-	return ErrNotImplemented
+	// The mandatory stream kernel expresses this read without requiring an
+	// optional alias, and answers from the inner engine's own view (a
+	// historical reader's cutoff, say) instead of a current scan. The kernel
+	// takes Label as an index hint only, visiting every node the prefix
+	// covers, so this owner settles the label membership the read promises: a
+	// row of another label is not a row of this read. The kernel's nil visit
+	// check cannot see through that settlement, so this read keeps the
+	// optional readers' error for it.
+	if visit == nil {
+		return ErrInvalidData
+	}
+	return engine.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: scope, Label: label, Projection: properties, ApplyDecayFilter: true}, func(node *Node) error {
+		if node == nil || !hasLabel(node.Labels, label) {
+			return nil
+		}
+		return visit(node)
+	})
 }
 
 func getNodesByLabelVisibleAtInScope(ctx context.Context, engine Engine, scope, label string, version MVCCVersion) ([]*Node, error) {

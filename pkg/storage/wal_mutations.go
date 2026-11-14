@@ -175,6 +175,23 @@ func (w *WALEngine) beginNativeMutation(ctx context.Context) (context.Context, *
 	admission := &nativeWALAdmission{owner: w}
 	return context.WithValue(ctx, nativeWALKey{}, admission), admission, nil
 }
+
+// CommitTransaction preserves journal ownership when an executor has staged
+// changes on the native transaction underneath this decorator. The native
+// publication owner journals the final entity changes, just as it does for
+// CreateNode and UpdateNode; begin/commit markers alone cannot recover them.
+func (w *WALEngine) CommitTransaction(ctx context.Context, tx *BadgerTransaction) error {
+	if tx == nil || tx.engine != UnwrapEngine(w.engine) {
+		return ErrInvalidData
+	}
+	selected, admission, err := w.beginNativeMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.finishNativeMutation(admission)
+	return tx.CommitContext(selected)
+}
+
 func (w *WALEngine) CreateNode(ctx context.Context, node *Node) (NodeID, error) {
 	selected, admission, err := w.beginNativeMutation(ctx)
 	if err != nil {

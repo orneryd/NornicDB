@@ -5,7 +5,8 @@ NornicDB keeps multi-version history for nodes and edges so you can ask historic
 This guide covers:
 
 - what MVCC history gives you
-- how to query historical state
+- how to query historical state with `db.temporal.asOf`
+- what a historical read can and cannot return
 - how retention and pruning work
 - which knobs control history size and age
 - how MVCC interacts with search and serialization
@@ -15,7 +16,7 @@ This guide covers:
 MVCC history enables:
 
 - snapshot-consistent reads of nodes, edges, labels, and relationship topology
-- temporal procedures that can answer "what was true at system time T?"
+- historical reads of retained states of entity incarnations that still exist
 - pruning of older versions without deleting the current head
 - tombstone-chain compaction when it is safe to do so
 
@@ -58,62 +59,93 @@ Atomic commit visibility contract:
 - a single MVCC Version ID covers all node, edge, and property mutations produced by one committed transaction
 - snapshot queries that use one selector are guaranteed to be cross-entity consistent for that committed version
 
-If a requested object was tombstoned at that snapshot, or if the requested snapshot predates the retained floor for that logical key, the read returns not found.
+Those low-level storage selectors differ from the public `asOf` contract below: raw visibility can report not-found below a retained floor. Public historical queries report unavailable history explicitly and exclude currently deleted entity incarnations.
 
 ## Querying Historical State
 
-### Cypher Temporal Procedure
+### Cypher Historical Reads
 
-The main Cypher entry point is `db.temporal.asOf`.
-
-```cypher
-CALL db.temporal.asOf(
-  'Account',
-  'accountId',
-  'acct-42',
-  'valid_from',
-  'valid_to',
-  datetime('2026-03-01T00:00:00Z')
-) YIELD node
-RETURN node
-```
-
-That answers the business-time question: which row was valid at the requested `asOf` instant.
-
-The arguments are ordinary expressions (literals, parameters, variables). `asOf` and the stored validity properties may be `datetime()`, `date()` or `localdatetime()` values, ISO 8601 strings, or Unix seconds; they are read the same way the `TEMPORAL NO OVERLAP` constraint reads them, with a date or local date-time taken as UTC.
-
-You can also pin the query to a historical MVCC snapshot by supplying `systemTime` and, optionally, `systemSequence`:
+The Cypher entry point for historical reads is `db.temporal.asOf`:
 
 ```cypher
-CALL db.temporal.asOf(
-  'Account',
-  'accountId',
-  'acct-42',
-  'valid_from',
-  'valid_to',
-  datetime('2026-03-01T00:00:00Z'),
-  datetime('2026-03-15T12:30:00Z'),
-  1842
-) YIELD node
-RETURN node
+CALL db.temporal.asOf(at, query, parameters)
+YIELD row
 ```
 
-Use the optional snapshot arguments when you need to answer both:
+- `at` is the commit-time cutoff for the retained entity states selected by the query.
+- `query` is an ordinary read-only `MATCH` query.
+- `parameters` is an optional map bound to that query's `$parameters`; it defaults to `{}`.
+- each yielded `row` is one row of the query's result, resolved against the historical view.
 
-- business time: which version was valid for the domain event
-- system time: which version was committed and visible at a historical database snapshot
+For a runnable example, enable retention and create an account:
+
+<!-- temporal-example: history-first -->
+```cypher
+CREATE (:Account {accountId:'acct-42', balance:100});
+```
+
+Capture the client timestamp `$at` after that statement commits, then update it:
+
+<!-- temporal-example: history-update -->
+```cypher
+MATCH (a:Account {accountId:'acct-42'}) SET a.balance=200;
+```
+
+<!-- temporal-example: history-read -->
+```cypher
+CALL db.temporal.asOf(
+  $at,
+  'MATCH (a:Account) WHERE a.accountId = $accountId
+   RETURN a.accountId AS accountId, a.balance AS balance',
+  {accountId:'acct-42'}
+) YIELD row
+RETURN row
+```
+
+The result is `{accountId: 'acct-42', balance: 100}`; a normal current read returns
+`200`. This test captures real commit ordering rather than assuming a fixed
+calendar date has retained records.
+
+`at` is read the same way the `TEMPORAL NO OVERLAP` constraint reads its bounds: `datetime()`, `date()` and `localdatetime()` values, ISO 8601 strings, and Unix seconds are accepted, with a date or local date-time taken as UTC.
+
+#### What the historical view returns
+
+A `db.temporal.asOf` read resolves properties, labels, and relationships as they were at `at` for the entity incarnations that exist now:
+
+- property values, labels, and relationship state come from retained history, not from the current values
+- only entities that exist in the current graph are readable: a deleted node or relationship is not resurrected, even when it existed at `at`
+- an identifier that was deleted and later reused does not expose the earlier incarnation's state
+- a current entity that did not exist at `at` has no state at `at` to report
+- the read is independent of temporal constraints: `db.temporal.asOf` needs no interval constraint, and an interval constraint does not restrict it
+- no physical graph snapshot is created or materialized: the procedure does not copy the graph or build an in-memory snapshot of it
+
+#### Retention is required
+
+Historical reads depend on retained MVCC history. When the requested `at` is not covered by retained history — for example after pruning — the call fails with an explicit error instead of returning empty rows, partial rows, or current state.
+
+Size `mvcc_retention_max_versions` and `mvcc_retention_ttl` for the longest lookback you need, and keep the prune schedule inside that window. Historical reads need no storage migration: they use the MVCC history the database already retains.
+
+#### Historical embeddings are not available
+
+MVCC version records keep logical graph state without embedding payloads. A `db.temporal.asOf` read therefore returns historical properties, labels, and relationships only: no historical embedding vector is stored to return. Current vector and BM25 search stay current-only (see [Search Behavior](#search-behavior)), so a historical read cannot provide the embeddings a version once had.
+
+#### Deprecated positional form
+
+Before 1.5.0 the procedure took positional arguments: `CALL db.temporal.asOf(label, keyProp, keyValue, validFromProp, validToProp, asOf [, systemTime [, systemSequence]]) YIELD node`. That form is deprecated starting in 1.5.0; it is still accepted for compatibility and no removal version is set.
+
+It reads one label and one key value per call and yields a single `node`. Without `systemTime` and `systemSequence` it selects among the label's current nodes by their validity windows — the answer is a current node, not that node's state at `asOf`. With them, the read is pinned to an MVCC snapshot. New queries should use the `at`/`query`/`parameters` form above. The older tuple form of the temporal constraint is deprecated in the same release; see [Managing Constraints](managing-constraints.md).
 
 ### Embedded Go APIs
 
 If you embed NornicDB, the storage and DB layers expose explicit MVCC visibility methods:
 
 ```go
-head, err := engine.GetNodeCurrentHead(nodeID)
+head, err := engine.GetNodeCurrentHead(ctx, nodeID)
 if err != nil {
     return err
 }
 
-node, err := engine.GetNodeVisibleAt(nodeID, head.Version)
+node, err := engine.GetNodeVisibleAt(ctx, nodeID, head.Version)
 if err != nil {
     return err
 }
@@ -131,7 +163,7 @@ NornicDB now has a formal retention policy surface for MVCC history.
 
 Defaults:
 
-- `MaxVersionsPerKey = 100`
+- `MaxVersionsPerKey = 0` (head-only; enable historical retention explicitly)
 - `TTL = 0` which means no age-based protection
 
 Semantics:
@@ -157,14 +189,14 @@ Guaranteed behavior:
 Important non-guarantees:
 
 - pruning does **not** preserve every historical snapshot forever
-- a long-running query that depends on versions older than the retained floor may fail with `ErrNotFound` after pruning
-- retention settings define the default pruning policy, but they do not reserve an independent per-query historical snapshot window
+- a new historical query cannot recover versions already removed before read admission
+- retention settings define the pruning policy; historical readers register their cutoff for the read lifetime
 
 Reader-aware grace period:
 
 - active snapshot readers prevent the most aggressive physical tombstone compaction path
-- active readers do **not** indefinitely delay version pruning beyond the configured retention policy
-- once a version falls behind the Minimum Retained Snapshot for a key, `ErrNotFound` is the expected and safe result
+- registered readers protect the versions they need while active; close or cancel abandoned readers promptly
+- `asOf` reports unavailable history explicitly when its requested state has already been pruned
 
 Operationally, this means you should size `mvcc_retention_max_versions` and `mvcc_retention_ttl` for the longest historical lookback you actually need, and schedule prune maintenance accordingly.
 
@@ -200,7 +232,8 @@ Use a TTL when:
 
 Practical starting points:
 
-- default workload: `100` versions, no TTL
+- default workload: `0` versions, no TTL; historical lookback is not retained
+- example history-enabled workload: `100` versions, no TTL
 - moderate write churn with recent debugging needs: `50` versions, `24h` TTL
 - audit-heavy but bounded history: `100` versions, `168h` TTL
 
@@ -242,11 +275,11 @@ if err := db.RebuildMVCCHeads(ctx); err != nil {
 
 The main failure and degradation modes to plan for are:
 
-1. snapshots older than the retained floor
-  Reads below the Minimum Retained Snapshot for a logical key return `ErrNotFound`. This is expected after pruning and should be treated as history no longer being retained.
+1. requested history older than the retained floor
+  Public `asOf` queries return an explicit unavailable-history error. Raw storage visibility APIs can return `ErrNotFound`; do not interpret that as proof of an empty historical query result.
 
 2. long-running historical queries during aggressive pruning
-  Active snapshot readers prevent the most aggressive tombstone compaction path, but pruning still enforces retention policy. If a query depends on versions outside the retained window, it can still lose access to those older versions.
+  Historical readers register their cutoff and pin their admitted read view. Pruning does not make a newly started reader recover history already removed; close abandoned readers to release their resources.
 
 3. startup and restore rebuild cost
   `RebuildMVCCHeads` is correctness-first. The current implementation scans stored MVCC version records and then current records to restore missing head state. On large stores, that can increase startup or restore time.
@@ -311,4 +344,7 @@ When those appear:
 - [Operations Configuration](../operations/configuration.md)
 - [Environment Variables](../operations/environment-variables.md)
 - [Storage Serialization](../operations/storage-serialization.md)
+- [Managing Constraints](managing-constraints.md)
 - [Cypher Queries](cypher-queries.md)
+
+See [temporal read and constraint costs](../performance/temporal-read-and-constraint-costs.md) for N-arity examples, applicable indexes, scaling costs and scoped measurements.

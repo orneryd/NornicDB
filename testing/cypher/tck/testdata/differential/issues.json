@@ -2196,8 +2196,8 @@
     "query": "CREATE (a:I {sku:'a1', price:10.5, qty:3}), (b:I {sku:'b2', price:20.0, qty:0}), (c:I {sku:'c3', price:5.25, qty:7}), (o1:O {id:1}), (o2:O {id:2}), (o1)-[:HAS {n:2}]->(a), (o1)-[:HAS {n:1}]->(c), (o2)-[:HAS {n:5}]->(a)"
    },
    {
-    "id": "b50c2fe403ee",
-    "query": "MATCH (i:I) RETURN avg(i.price) AS av"
+    "id": "c0be5e0db5d2",
+    "query": "MATCH (i:I) WITH i ORDER BY i.sku RETURN avg(i.price) AS av"
    },
    {
     "id": "72df9219afac",

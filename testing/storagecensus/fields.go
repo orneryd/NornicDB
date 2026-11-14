@@ -132,9 +132,9 @@ var fieldClasses = map[string]fieldRow{
 	// The synchronous read snapshot fills it before returning it by value.
 	"pkg/storage.CountStoreRead.Count": {class: "count-store read answer (detached result value)"},
 	// Derived counts a transaction stages until it commits.
-	"pkg/storage.BadgerTransaction.pendingLabelCountDeltas":         {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
-	"pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas":      {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
-	"pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas": {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.acquireCommitPublicationLocked", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
+	"pkg/storage.BadgerTransaction.pendingLabelCountDeltas":         {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
+	"pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas":      {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
+	"pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas": {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.acquireCommitPublicationLocked", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
 	// Suppression: whether reads must consult manual suppression at all.
 	"pkg/storage.BadgerEngine.manualSuppressionCount": {class: "suppression", owners: []string{
 		"pkg/storage.BadgerEngine.dropManualSuppressions", "pkg/storage.BadgerEngine.forgetManualSuppression",
@@ -226,6 +226,13 @@ var fieldClasses = map[string]fieldRow{
 	// The composite engine's configured transaction timeout, set by its
 	// database manager (NOR-284); not entity state.
 	"pkg/storage.CompositeEngine.transactionTimeout": {class: "configuration"},
+
+	// The pinned historical read counts the reads in flight on it so that a
+	// Close while they run retires the snapshot once, after the last read
+	// ends: reader bookkeeping, not a stored entity count, quota, suppression
+	// or publication-order value. Classify only this field so another field on
+	// the type still needs its own row.
+	"pkg/storage.historicalReadEngine.active": {class: "snapshot readers"},
 
 	// Not entity state.
 	"pkg/storage.BadgerEngine.activeMVCCSnapshotReaders": {class: "snapshot readers"},

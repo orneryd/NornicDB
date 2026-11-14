@@ -74,11 +74,10 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 	}
 
 	keyValue := args[4]
-	newStart, ok := storage.CoerceTemporalTime(args[5])
+	newStart, newEnd, newHasEnd, ok := storage.ReadTemporalBounds(args[5], args[6])
 	if !ok {
-		return nil, localizedError(localization.CypherSpecializedCallsDateTimeRequired("newValidFrom"), nil)
+		return nil, localizedError(localization.StorageValidationTemporalBoundsInvalid("newValidFrom", "newValidTo"), nil)
 	}
-	newEnd, newHasEnd := coerceDateTimeOptional(args[6])
 	snapshotVersion, hasSnapshot, err := coerceOptionalMVCCVersion(args[7:])
 	if err != nil {
 		return nil, err
@@ -97,11 +96,10 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 			continue
 		}
 
-		existingStart, ok := storage.CoerceTemporalTime(node.Properties[validFromProp])
+		existingStart, existingEnd, existingHasEnd, ok := storage.ReadTemporalBounds(node.Properties[validFromProp], node.Properties[validToProp])
 		if !ok {
 			continue
 		}
-		existingEnd, existingHasEnd := coerceDateTimeOptional(node.Properties[validToProp])
 
 		if storage.TemporalIntervalsOverlap(newStart, newEnd, newHasEnd, existingStart, existingEnd, existingHasEnd) {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalOverlap(keyProp, keyValue), nil)
@@ -128,6 +126,24 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 //
 // The registry checks the argument count (6 to 8) before the call.
 func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	if len(args) == 2 || len(args) == 3 {
+		return e.callHistoricalQuery(ctx, args)
+	}
+	if len(args) < 6 || len(args) > 8 {
+		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "TemporalArguments", "db.temporal.asOf expects (at, query [, parameters]); the deprecated interval signature accepts six to eight arguments")
+	}
+
+	// The deprecated positional overload retains its STRING argument contract.
+	for _, parameter := range [...]struct {
+		index int
+		name  string
+	}{{0, "label"}, {1, "keyProp"}, {3, "validFromProp"}, {4, "validToProp"}} {
+		if args[parameter.index] != nil {
+			if _, ok := args[parameter.index].(string); !ok {
+				return nil, procedureArgumentTypeError("db.temporal.asOf", parameter.name, "STRING", args[parameter.index])
+			}
+		}
+	}
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -195,13 +211,12 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 			continue
 		}
 
-		start, ok := storage.CoerceTemporalTime(node.Properties[validFromProp])
+		start, end, hasEnd, ok := storage.ReadTemporalBounds(node.Properties[validFromProp], node.Properties[validToProp])
 		if !ok {
 			continue
 		}
-		end, hasEnd := coerceDateTimeOptional(node.Properties[validToProp])
 
-		if asOf.Before(start) {
+		if !start.IsZero() && asOf.Before(start) {
 			continue
 		}
 		if hasEnd && !asOf.Before(end) {
@@ -240,13 +255,6 @@ func coerceStringArg(val interface{}, name string) (string, error) {
 	default:
 		return fmt.Sprint(val), nil
 	}
-}
-
-func coerceDateTimeOptional(val interface{}) (time.Time, bool) {
-	if val == nil {
-		return time.Time{}, false
-	}
-	return storage.CoerceTemporalTime(val)
 }
 
 func coerceOptionalMVCCVersion(args []interface{}) (storage.MVCCVersion, bool, error) {

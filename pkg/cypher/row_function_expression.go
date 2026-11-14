@@ -126,7 +126,7 @@ func (e *StorageExecutor) evaluateRowFunction(operationCtx context.Context, fact
 			}
 			arguments[index] = value
 		}
-		result, err := evaluateCypherRange(arguments)
+		result, err := evaluateCypherRange(operationCtx, arguments)
 		if err != nil {
 			return nil, true, false, err
 		}

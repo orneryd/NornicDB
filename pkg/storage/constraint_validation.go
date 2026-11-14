@@ -431,8 +431,7 @@ func validateTemporalConstraintOnCreationWithEngine(ctx context.Context, engine 
 
 		interval, ok := spec.interval(node.Properties)
 		if !ok {
-			message := localization.StorageValidationTemporalNodeInvalidCreation(string(node.ID), spec.startProp)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return temporalBoundsViolation(c, node.Properties)
 		}
 		interval.nodeID = node.ID
 		byKey[key] = append(byKey[key], interval)

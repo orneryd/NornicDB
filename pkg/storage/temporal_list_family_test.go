@@ -681,7 +681,7 @@ func TestTemporalListFamilyConstraintLockPreservation(t *testing.T) {
 			values := make([]interface{}, 0, len(props))
 			complete := true
 			for _, prop := range props {
-				value, ok, lockErr := constraintLockValue(t.Context(), &Node{Properties: tc.values}, prop)
+				value, ok, lockErr := constraintLockValue(t.Context(), tc.values, prop)
 				require.NoError(t, lockErr)
 				if !ok {
 					complete = false

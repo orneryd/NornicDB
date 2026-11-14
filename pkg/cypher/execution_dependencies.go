@@ -9,6 +9,8 @@ type ProcedureCypherInput struct {
 	Field              string
 	ParametersArgument int
 	StoredText         string
+	// MaxArguments bounds an overload interpreting text; zero is unrestricted.
+	MaxArguments int
 }
 
 // ProcedureResultCache describes execution, not an independent cache decision.
@@ -35,6 +37,7 @@ const (
 // These are registry declarations for the supported text interpreters. Read
 // mode alone is not a determinism declaration: live/opaque handlers are omitted.
 var builtinProcedureResultCache = map[string]ProcedureResultCache{
+	"db.temporal.asOf":                     {CypherInputs: []ProcedureCypherInput{{Argument: 1, ParametersArgument: 3, MaxArguments: 3}}},
 	"db.labels":                            {Deterministic: true},
 	"db.relationshipTypes":                 {Deterministic: true},
 	"db.propertyKeys":                      {Deterministic: true},

@@ -256,12 +256,10 @@ func newRelTemporalCheck(ctx context.Context, c Constraint) (relEdgeCheck, error
 			message := localization.StorageValidationTemporalCreationFailed(err.Error())
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, err)
 		}
-		start, ok := CoerceTemporalTime(edge.Properties[startProp])
+		start, end, hasEnd, ok := ReadTemporalBounds(edge.Properties[startProp], edge.Properties[endProp])
 		if !ok {
-			message := localization.StorageValidationTemporalEdgeInvalid(string(edge.ID), startProp)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return temporalBoundsViolation(c, edge.Properties)
 		}
-		end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 		group := groups.groupFor(key)
 		byKey[group] = append(byKey[group], edgeInterval{
 			temporalInterval: temporalInterval{start: start, end: end, hasEnd: hasEnd},

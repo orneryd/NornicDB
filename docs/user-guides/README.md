@@ -24,6 +24,7 @@ Use this section for task-oriented product workflows and examples.
 - Use ACID transactions: [transactions.md](transactions.md)
 - Configure opt-in retention enforcement: [retention-policies.md](retention-policies.md)
 - Query historical state and retention: [historical-reads-mvcc-retention.md](historical-reads-mvcc-retention.md)
+- Choose epochs, interval constraints, or as-of history: [../temporal-patterns/index.md](../temporal-patterns/index.md)
 - Operate MVCC lifecycle controls: [mvcc-lifecycle-admin-api.md](mvcc-lifecycle-admin-api.md)
 - Build distributed composite topology: [infinigraph-topology.md](infinigraph-topology.md)
 - Model canonical truth + mutation log: [canonical-graph-ledger.md](canonical-graph-ledger.md)

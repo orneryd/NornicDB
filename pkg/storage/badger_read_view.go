@@ -178,6 +178,17 @@ func (v *badgerReadView) withView(ctx context.Context, read func(*badger.Txn) er
 	if v.closed {
 		return ErrStorageClosed
 	}
+	return v.readPinned(ctx, read)
+}
+
+// readPinned executes against the captured timestamp. Its caller must keep
+// that timestamp leased until the callback returns: withView holds v.mu;
+// historical streams hold their read owner's active-operation lease so a
+// callback can perform another read without recursively acquiring v.mu.
+func (v *badgerReadView) readPinned(ctx context.Context, read func(*badger.Txn) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := v.engine.pendingReadConflict(v.scopeKind, v.scope, nil, ctx); err != nil {
 		return err
 	}

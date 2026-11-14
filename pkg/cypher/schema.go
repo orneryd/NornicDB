@@ -105,7 +105,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 
 	// Order matters: check more specific patterns first
 	var run func(context.Context, string) (*ExecuteResult, error)
-	if strings.Contains(upper, "CREATE CONSTRAINT") {
+	statement := strings.TrimSpace(cypher)
+	if isCreateConstraintStatement(ctx, statement) || strings.Contains(upper, "CREATE CONSTRAINT") {
 		run = e.executeCreateConstraint
 	} else if strings.Contains(upper, "DROP CONSTRAINT") {
 		run = e.executeDropConstraint
@@ -132,7 +133,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 			err = wrapper.tx.StageSchemaChanges()
 		}
 	}
-	if err != nil && startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT") {
+	if err != nil && isCreateConstraintStatement(ctx, statement) {
 		var violation *storage.ConstraintViolationError
 		if errors.As(err, &violation) {
 			return nil, &classifiedCypherError{cause: err, code: "Neo.DatabaseError.Schema.ConstraintCreationFailed", detail: "ConstraintCreationFailed"}
@@ -187,7 +188,21 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 	return func() {}, nil
 }
 
-// executeCreateConstraint handles CREATE CONSTRAINT commands.
+func createConstraintHeadAt(ctx context.Context, cypher string) string {
+	if startsWithKeywords(ctx, cypher, "CREATE", "CONSTRAINT") {
+		return "CREATE CONSTRAINT"
+	}
+	return ""
+}
+
+// isCreateConstraintStatement reports whether cypher declares a constraint, in
+// the standard CREATE CONSTRAINT head.
+func isCreateConstraintStatement(ctx context.Context, cypher string) bool {
+	return createConstraintHeadAt(ctx, cypher) != ""
+}
+
+// executeCreateConstraint handles CREATE CONSTRAINT and CREATE NO OVERLAP
+// CONSTRAINT commands.
 //
 // Supported syntax (Neo4j 5.x):
 //
@@ -196,6 +211,16 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 // Supported syntax (Neo4j 4.x):
 //
 //	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
+//
+// Supported syntax (NornicDB temporal no-overlap, epoch spelling):
+//
+//	CREATE CONSTRAINT name FOR (n:Account)
+//	REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId
+//
+// The tuple spelling of that requirement — CREATE CONSTRAINT name FOR
+// (n:Account) REQUIRE (n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO
+// OVERLAP — was shipped first, is deprecated, and stays accepted; both compile
+// to the same constraint definition.
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	onPosition := keywordIndexFrom(ctx, cypher, "ON", 0, defaultKeywordScanOpts())
 	forPosition := keywordIndexFrom(ctx, cypher, "FOR", 0, defaultKeywordScanOpts())
@@ -249,7 +274,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
+	} else if isCreateConstraintStatement(ctx, cypher) &&
 		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
 		return nil, err
 	}
@@ -275,7 +300,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
+	} else if isCreateConstraintStatement(ctx, cypher) &&
 		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
 		return nil, err
 	}
@@ -933,21 +958,22 @@ func splitDDLOptionsTail(ctx context.Context, s string) (expr string, optionsTai
 	return s, ""
 }
 
-// parseCreateConstraintForRequireParts parses the shared CREATE CONSTRAINT
-// [name] FOR <pattern> REQUIRE prefix used by every constraint DDL shape. It
-// returns the parsed optional name, the FOR-pattern span, and the REQUIRE tail
-// with any OPTIONS tail still attached, so a shape whose REQUIRE is not a
-// predicate reads that tail itself. Error messages are shared so every
+// parseCreateConstraintForRequireParts parses the shared CREATE [NO OVERLAP]
+// CONSTRAINT [name] FOR <pattern> REQUIRE prefix used by every constraint DDL
+// shape. It returns the parsed optional name, the FOR-pattern span, and the
+// REQUIRE tail with any OPTIONS tail still attached, so a shape whose REQUIRE
+// is not a predicate reads that tail itself. Error messages are shared so every
 // constraint shape rejects malformed prefixes identically.
 func (e *StorageExecutor) parseCreateConstraintForRequireParts(ctx context.Context, cypher string) (name string, patternSpan string, requireText string, err error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
 		return "", "", "", localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
-	if keywordIndexFrom(ctx, q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts()) != 0 {
+	header := createConstraintHeadAt(ctx, q)
+	if header == "" {
 		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
-	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE CONSTRAINT")
+	prefixEnd, ok := keywordSpanAt(q, 0, header)
 	if !ok {
 		return "", "", "", localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}

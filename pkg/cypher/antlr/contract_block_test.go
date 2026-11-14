@@ -387,7 +387,43 @@ func TestContractRequirementWordsAreTheGrammars(t *testing.T) {
     | MAX COUNT integerLit
     | ALLOWED
     | DISALLOWED
-    | constraintBlock`), " "), strings.Join(strings.Fields(rule), " "))
+    | constraintBlock
+    | constraintEpochRequirement`), " "), strings.Join(strings.Fields(rule), " "))
+	start = strings.Index(text, "\nconstraintEpochRequirement\n")
+	require.GreaterOrEqual(t, start, 0)
+	rule = text[start+1:]
+	rule = rule[:strings.Index(rule, "\n    ;")]
+	require.Equal(t, strings.Join(strings.Fields(`constraintEpochRequirement
+    : functionInvocation (GROUP BY expression (COMMA expression)*)?`), " "), strings.Join(strings.Fields(rule), " "))
+}
+
+// Epoch grouping belongs to its own requirement even when adjacent entries
+// have no semicolons. The retained tree must keep that boundary for every
+// consumer, rather than merely accepting the complete token sequence.
+func TestContractEpochEntriesRetainTheirGroupingBoundaries(t *testing.T) {
+	for _, separator := range []string{" ", "; ", "\n"} {
+		t.Run(fmt.Sprintf("separator=%q", separator), func(t *testing.T) {
+			parts := []string{
+				"n.id IS UNIQUE",
+				"temporal.epoch(n.starts,n.ends) GROUP BY n.assetId,n.tenant",
+				"n.hours > 0",
+				"temporal.epoch(n.starts,n.ends) GROUP BY n.employeeId",
+				"n.status IN ['active','inactive']",
+			}
+			statement := "CREATE CONSTRAINT c FOR (n:Period) REQUIRE { " + strings.Join(parts, separator) + " }"
+			syntax, err := ParseSyntax(context.Background(), statement, StatementEntry, false, AcceptedSource)
+			require.NoError(t, err)
+			var epochs []string
+			syntax.Walk(func(node SyntaxNode) func() {
+				if node.Rule() == CypherParserRULE_constraintEpochRequirement {
+					start, end := node.Span()
+					epochs = append(epochs, statement[start:end])
+				}
+				return nil
+			})
+			require.Equal(t, []string{parts[1], parts[3]}, epochs)
+		})
+	}
 }
 
 func TestContractBlockEntriesReachTheReadersOfTheTree(t *testing.T) {

@@ -83,11 +83,61 @@ func TestScopedLabelTracingPreservesReaderCapabilities(t *testing.T) {
 	nodes, err := traced.GetNodesByLabelVisibleAtInScope(context.Background(), "a:", "Person", engine.currentMVCCReadVersion("a"))
 	require.NoError(t, err)
 	require.Equal(t, []NodeID{"a:z", "a:a", "a:m"}, testNodeIDs(nodes))
+	// The adapter hides the optional scoped and projected readers, so the
+	// projected stream is answered by the mandatory stream kernel inside the
+	// engine's own view. The kernel takes Label as an index hint and visits
+	// every node the scope covers, so the fallback settles the read's label
+	// membership: the scope's other label ("person" on a:lower, #862) is not a
+	// row of this read.
 	legacy := NewTracedEngine(scopedLabelBasicAdapter{Engine: engine})
-	require.ErrorIs(t, legacy.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", nil, func(*Node) error {
-		t.Fatal("unsupported engine delivered a projected row")
+	var legacyIDs []NodeID
+	require.NoError(t, legacy.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", []string{"id"}, func(node *Node) error {
+		legacyIDs = append(legacyIDs, node.ID)
+		require.Equal(t, map[string]any{"id": string(node.ID)}, node.Properties)
 		return nil
-	}), ErrNotImplemented)
+	}))
+	require.ElementsMatch(t, []NodeID{"a:z", "a:a", "a:m"}, legacyIDs)
+	legacyVisits := 0
+	require.ErrorIs(t, legacy.StreamNodesByLabelProjectedInScope(context.Background(), "a:", "Person", nil, func(node *Node) error {
+		legacyVisits++
+		require.True(t, hasLabel(node.Labels, "Person"), "the fallback visited a node of another label")
+		require.Equal(t, map[string]any{"id": string(node.ID), "extra": true}, node.Properties)
+		return stop
+	}), stop)
+	require.Equal(t, 1, legacyVisits)
+	// The snapshot-visible label read has no such fallback: an engine without
+	// MVCCIndexedVisibilityEngine cannot answer it and reports that.
 	_, err = legacy.GetNodesByLabelVisibleAtInScope(context.Background(), "a:", "Person", engine.currentMVCCReadVersion("a"))
 	require.ErrorIs(t, err, ErrNotImplemented)
+}
+
+// TestScopedLabelProjectedFallbackStaysInsideItsLabel proves the public
+// namespaced projected read over an engine that exposes only the mandatory
+// Engine methods: every row is the label's and the scope's, so a consumer that
+// trusts the storage read (the vector index population, for one) never sees
+// another label's node.
+func TestScopedLabelProjectedFallbackStaysInsideItsLabel(t *testing.T) {
+	engine := scopedLabelOrderFixture(t)
+	namespace := NewNamespacedEngine(NewTracedEngine(scopedLabelBasicAdapter{Engine: engine}), "a")
+	require.ErrorIs(t, namespace.StreamNodesByLabelProjected(context.Background(), "Person", nil, nil), ErrInvalidData)
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, namespace.StreamNodesByLabelProjected(canceled, "Person", nil, func(*Node) error {
+		t.Fatal("a canceled read delivered a node")
+		return nil
+	}), context.Canceled)
+	var ids []NodeID
+	require.NoError(t, namespace.StreamNodesByLabelProjected(context.Background(), "Person", []string{"id"}, func(node *Node) error {
+		ids = append(ids, node.ID)
+		require.Equal(t, map[string]any{"id": "a:" + string(node.ID)}, node.Properties)
+		return nil
+	}))
+	require.ElementsMatch(t, []NodeID{"z", "a", "m"}, ids)
+	stop := errors.New("caller stopped")
+	visits := 0
+	require.ErrorIs(t, namespace.StreamNodesByLabelProjected(context.Background(), "Person", nil, func(*Node) error {
+		visits++
+		return stop
+	}), stop)
+	require.Equal(t, 1, visits)
 }

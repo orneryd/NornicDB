@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -76,11 +77,8 @@ func (p *PreparedEntityCommit) Operations() []Operation {
 		op.Edge = copyEdge(op.Edge)
 		op.OldNode = copyNode(op.OldNode)
 		op.OldEdge = copyEdge(op.OldEdge)
-		if op.DeletedEdgeIDs != nil {
-			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
-			copy(ids, op.DeletedEdgeIDs)
-			op.DeletedEdgeIDs = ids
-		}
+		op.DeletedEdgeIDs = slices.Clone(op.DeletedEdgeIDs)
+		op.DeletedEdgeFacts = slices.Clone(op.DeletedEdgeFacts)
 	}
 	return ops
 }
@@ -235,12 +233,18 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if err != nil {
 				return err
 			}
+			// After-images are private copies made by staging. The frame is
+			// detached and parked, so retain them instead of cloning every
+			// vector again. Before-images still need detachment: embedding
+			// reconciliation may have exposed their slices to the caller.
+			// Diagnostics and listener delivery retain their own copy owners.
 			operations := append([]Operation(nil), tx.operations...)
 			for i := range operations {
 				if err := preparationContext.Err(); err != nil {
 					return err
 				}
-				operations[i].snapshotForNotification()
+				operations[i].OldNode = copyNode(operations[i].OldNode)
+				operations[i].OldEdge = copyEdge(operations[i].OldEdge)
 			}
 			nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(preparationContext)
 			if err != nil {

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reject commits whose physical keys exceed the backend limit before buffered or
+  prepared journal acceptance, preventing acknowledged writes that cannot flush
+  or recover. Stored key encodings and storage versions are unchanged.
+
+- Prepared commits reuse transaction-owned after-images rather than copying
+  every vector again. Before-images, diagnostics and listener payloads retain
+  their required detachment; diagnostic deletion facts are now detached too.
+- Bound-endpoint relationship MERGE prepares its MERGE action mutation targets before deciding
+  whether to create, preventing a stale ON CREATE branch after a lock wait.
+
+- Statement cancellation now interrupts materialized ranges, reduce folds and
+  recursive expression admission instead of finishing their remaining work.
+
+- Temporal epochs support a null start (unbounded past) or null end (unbounded
+  future), with at least one bound required. Malformed bounds and non-positive
+  finite spans are rejected. Node and relationship constraints, blocks, indexed
+  lookups and deprecated interval reads share the same bounds rules. Existing
+  finite index-key encoding and storage payload formats are unchanged.
+
+- Temporal no-overlap constraints accept the epoch spelling
+  `CREATE CONSTRAINT name FOR (n:Account) REQUIRE temporal.epoch(n.starts_at, n.ends_at) GROUP BY n.accountId`,
+  with one or more grouping key properties and both node (`FOR (n:Account)`) and
+  relationship (`FOR ()-[r:OWNS]-()`) contracts. It compiles to the existing
+  temporal constraint definition, so declaration-time validation, write-time
+  enforcement and persistence are the same; `SHOW CONSTRAINTS` and the Neo4j CSV
+  schema export now spell a temporal constraint this way. The earlier tuple
+  spelling `REQUIRE (n.accountId, n.starts_at, n.ends_at) IS TEMPORAL NO OVERLAP`
+  is deprecated and stays accepted, and stored definitions need no migration.
+
 - Go USE/clause preparation scanners now require operation contexts and explicit
   errors across thirteen existing Cypher APIs. Fabric keyword-name and import
   readers are context-first stateless callbacks; canceled preparation is not
@@ -21,6 +50,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search and Cypher result caches through the canonical installation owner.
 
 ### Fixed
+
+- Embedded Cypher transactions now retain their WAL publication owner when
+  committing native storage. Durable create, update, delete and relationship
+  changes can be rebuilt from the journal instead of leaving only transaction
+  begin/commit markers. Existing WAL and storage formats are unchanged.
+
+- Two or more concurrent journal writers (client transactions, write-behind
+  commits, the embedding worker, checkpoints) no longer write records out of
+  sequence order. Each record now takes its sequence number under the journal
+  lock that orders the writes. Before, a roll-over between two records written
+  out of order could seal a segment that overlapped the previous one: the
+  journal refused it ("unlisted segment ... overlaps the manifest"), every
+  later append failed with "file already closed", and the store did not
+  reopen. Records the batch writer commits now count toward the active
+  segment, so a segment's name covers them. The journal format is unchanged.
+
+- An HTTP transaction canceled before commit admission returns a structured
+  failure instead of empty success. Cancellation after commit admission still
+  waits for the accepted outcome.
+- Upgrading an old WAL now preserves the complete record prefix when the
+  active file ends inside an oversized historical frame. Complete corrupt
+  frames and incomplete sealed segments remain rejected; normal WAL readers
+  and integrity checks keep their existing strict behavior.
 
 - Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage formats are unchanged.
 

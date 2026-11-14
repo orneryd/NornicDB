@@ -150,8 +150,14 @@ func showConstraintType(constraintType storage.ConstraintType, entityType storag
 // constraint: Neo4j's form for Neo4j's constraint types, and the documented
 // NornicDB form (docs/neo4j-migration/cypher-compatibility.md) for
 // temporal no-overlap, domain, cardinality and endpoint policy constraints.
+// A temporal no-overlap constraint is written in the interval spelling of its
+// declaration: its own head, temporal.epoch(valid_from, valid_to) for the
+// window, and GROUP BY for the key. The tuple spelling (REQUIRE (key…,
+// valid_from, valid_to) IS TEMPORAL NO OVERLAP) stays accepted as its
+// deprecated form.
 func showConstraintCreateStatement(c storage.Constraint) interface{} {
-	head := "CREATE CONSTRAINT " + cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource) + " FOR "
+	name := cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource)
+	head := "CREATE CONSTRAINT " + name + " FOR "
 	entityType := c.EffectiveEntityType()
 	pattern, variable := schemaPattern(string(entityType), []string{c.Label})
 	properties := "(" + schemaProperties(variable, c.Properties) + ")"
@@ -165,7 +171,12 @@ func showConstraintCreateStatement(c storage.Constraint) interface{} {
 	case storage.ConstraintExists:
 		return head + pattern + " REQUIRE " + properties + " IS NOT NULL"
 	case storage.ConstraintTemporal:
-		return head + pattern + " REQUIRE " + properties + " IS TEMPORAL NO OVERLAP"
+		keys, startProp, endProp, _ := storage.TemporalKeyAndWindow(c.Properties)
+		tail := " REQUIRE temporal.epoch(" + schemaProperties(variable, []string{startProp, endProp}) + ")"
+		if len(keys) > 0 {
+			tail += " GROUP BY " + schemaProperties(variable, keys)
+		}
+		return head + pattern + tail
 	case storage.ConstraintDomain:
 		values := make([]string, len(c.AllowedValues))
 		for i, value := range c.AllowedValues {
