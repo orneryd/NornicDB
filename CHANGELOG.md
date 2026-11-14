@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prepared commits reuse transaction-owned after-images rather than copying
   every vector again. Before-images, diagnostics and listener payloads retain
   their required detachment; diagnostic deletion facts are now detached too.
+- Bound-endpoint relationship MERGE prepares its MERGE action mutation targets before deciding
+  whether to create, preventing a stale ON CREATE branch after a lock wait.
+
+- Statement cancellation now interrupts materialized ranges, reduce folds and
+  recursive expression admission instead of finishing their remaining work.
 
 - Temporal epochs support a null start (unbounded past) or null end (unbounded
   future), with at least one bound required. Malformed bounds and non-positive
