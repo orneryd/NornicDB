@@ -618,13 +618,13 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	clauseBody := strings.TrimSpace(clause)
 	isMerge := startsWithKeywordFold(clauseBody, "MERGE")
 	var clausePattern, onCreateSet, onMatchSet string
-	var createTargets []string
+	var actionTargets []string
 	multiRelationship := false
 	if isMerge {
 		parts := splitMergeClauseActions(ctx, pipelineClauseBody(clauseBody, "MERGE"), nil)
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
-		createTargets = pipelineSetTargetVariables(mergeActionAssignments(parts.onCreate))
+		actionTargets = pipelineSetTargetVariables(append(mergeActionAssignments(parts.onCreate), mergeActionAssignments(parts.onMatch)...))
 	}
 	// Templates contain syntax only; row values stay in each prepared context.
 	// Reuse the statement template until preparation changes that syntax.
@@ -788,8 +788,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			}
 		}
 		if relationshipPattern != nil {
-			if len(createTargets) != 0 {
-				if err := lockSetTargets(ctx, e.getStorage(ctx), row, createTargets); err != nil {
+			if len(actionTargets) != 0 {
+				if err := lockSetTargets(ctx, e.getStorage(ctx), row, actionTargets); err != nil {
 					return nil, nil, err
 				}
 				// A waited-for publisher may also have changed this pair's edges.

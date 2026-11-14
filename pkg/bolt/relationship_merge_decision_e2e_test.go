@@ -8,13 +8,18 @@ import (
 )
 
 func TestRelationshipMergeRechecksAfterWaitingForEndpointWriter(t *testing.T) {
-	for _, tc := range []struct{ name, prefix, pattern, first string }{
+	for _, tc := range []struct{ name, prefix, pattern, first, action string }{
+		{name: "on_match", action: "ON MATCH", pattern: "(d)-[r:HAS]->(x)", first: "(d)-[:HAS]->(x)"},
 		{name: "unlocked", pattern: "(d)-[r:HAS]->(x)", first: "(d)-[:HAS]->(x)"},
 		{name: "start_locked", prefix: "SET d += {} WITH d, x ", pattern: "(d)-[r:HAS]->(x)", first: "(d)-[:HAS]->(x)"},
 		{name: "keyed_start_locked", prefix: "SET d += {} WITH d, x ", pattern: "(d)-[r:HAS {id:$rid}]->(x)", first: "(d)-[:HAS {id:$rid}]->(x)"},
 		{name: "incoming", pattern: "(x)<-[r:HAS]-(d)", first: "(d)-[:HAS]->(x)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			action, wantHolders := tc.action, int64(2)
+			if action == "" {
+				action, wantHolders = "ON CREATE", 1
+			}
 			port, waits := nor213RelationshipStore(t, false)
 			setup := openBoltTestConn(t, port)
 			params := map[string]any{"d": "holder", "x": "asset", "rid": "identity"}
@@ -31,7 +36,7 @@ func TestRelationshipMergeRechecksAfterWaitingForEndpointWriter(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				done <- nor213RunBoltStatement(t, second,
-					"MATCH (d:Holder {id:$d}), (x:Asset {id:$x}) "+tc.prefix+"MERGE "+tc.pattern+" ON CREATE SET x.holders = x.holders + 1", params)
+					"MATCH (d:Holder {id:$d}), (x:Asset {id:$x}) "+tc.prefix+"MERGE "+tc.pattern+" "+action+" SET x.holders = x.holders + 1", params)
 			}()
 			select {
 			case <-waits:
@@ -43,8 +48,8 @@ func TestRelationshipMergeRechecksAfterWaitingForEndpointWriter(t *testing.T) {
 			nor213BoltCommit(t, first)
 			require.NoError(t, nor213AwaitBoltStatement(t, second, done, "relationship MERGE"))
 			nor213BoltCommit(t, second)
-			require.Equal(t, [][]any{{int64(1), int64(1)}}, runBoltQueryWithParams(t, setup, read, params),
-				"MERGE must match the relationship published while it waited, without running ON CREATE")
+			require.Equal(t, [][]any{{int64(1), wantHolders}}, runBoltQueryWithParams(t, setup, read, params),
+				"MERGE must match the relationship published while it waited, with the selected action applied exactly once")
 		})
 	}
 }
