@@ -16,7 +16,7 @@ github.com/orneryd/nornicdb/cmd/nornicdb-admin.runCheckIDs -> github.com/orneryd
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull
-github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction
 github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb.*httpAdapter.Start

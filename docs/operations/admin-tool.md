@@ -13,6 +13,12 @@ Use `nornicdb-admin` when you need to:
 - run an import that should build search artifacts after load
 - verify the resulting database by namespace after import
 
+## Value capacity
+
+Full import uses the ordinary server’s high-performance disk profile: each encoded stored value may be at most 256 MiB. A property’s available space is smaller because the encoded value also contains entity metadata. This lets the tool import CSV exports containing values accepted by the ordinary server. The profile also selects the server’s larger memtables and caches; allow memory for those and for the largest CSV record.
+
+The embedded balanced disk profile still has a 128 MiB value limit, and the explicitly selected low-memory profile has a 32 MiB limit. A large value accepted by the ordinary server can be read from an existing store with those profiles, but rewriting it or restoring it into a fresh smaller-capacity store can fail. Use a destination whose per-value capacity holds the original encoded value; snapshot framing does not increase storage capacity. No values are truncated.
+
 ## Build
 
 ```bash
