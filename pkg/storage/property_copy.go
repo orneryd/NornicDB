@@ -54,8 +54,8 @@ const callerCopyPooledReferences = 1024
 var callerCopyOverflowPool sync.Pool
 
 func (w *callerCopyWalker) release() {
-	if w.seen != nil && len(w.seen) <= callerCopyPooledReferences {
-		clear(w.seen)
+	if w.seen != nil && w.seen.count <= callerCopyPooledReferences {
+		w.seen.clear()
 		callerCopyOverflowPool.Put(w.seen)
 	}
 }
@@ -82,7 +82,7 @@ type callerCopyWalker struct {
 	mapCopied func(source, copied map[string]any)
 	inline    [callerCopyInlineReferences]callerCopyTracked
 	count     int
-	seen      map[callerCopyReference]reflect.Value
+	seen      *callerCopyIndex
 }
 
 // callerCopyReference identifies one reference-bearing source. The length keeps
@@ -111,8 +111,7 @@ func (w *callerCopyWalker) copied(key callerCopyReference) (reflect.Value, bool)
 	if w.seen == nil {
 		return reflect.Value{}, false
 	}
-	copied, ok := w.seen[key]
-	return copied, ok
+	return w.seen.lookup(key)
 }
 
 // remember records the copy made for a reference before its contents are walked,
@@ -124,13 +123,13 @@ func (w *callerCopyWalker) remember(key callerCopyReference, copied reflect.Valu
 		return
 	}
 	if w.seen == nil {
-		if reused, ok := callerCopyOverflowPool.Get().(map[callerCopyReference]reflect.Value); ok {
+		if reused, ok := callerCopyOverflowPool.Get().(*callerCopyIndex); ok {
 			w.seen = reused
 		} else {
-			w.seen = make(map[callerCopyReference]reflect.Value, callerCopyInlineReferences)
+			w.seen = newCallerCopyIndex()
 		}
 	}
-	w.seen[key] = copied
+	w.seen.insert(key, copied)
 }
 
 // callerCopyScalar is the immutable runtime-value policy shared by root
