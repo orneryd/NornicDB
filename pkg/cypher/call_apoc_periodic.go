@@ -35,6 +35,16 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 		batchSize = bs
 	}
 
+	// The config's params entry is the parameter source of both inner
+	// statements (APOC's contract for apoc.periodic.iterate). Its values were
+	// evaluated with the call's own parameters, so an entry may be an
+	// expression over them; the entry itself, not the outer statement's
+	// parameter map, is what the action and iterate statements receive.
+	configParams, err := optionalProcedureMap(procedure, []interface{}{config["params"]}, 0, "params")
+	if err != nil {
+		return nil, err
+	}
+
 	// An action that calls an internal function is the call's error
 	// (#1105), not a failure per row.
 	if err := internalFunctionCallError(ctx, actionQuery); err != nil {
@@ -43,7 +53,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 
 	// Execute the iterate query to get data to process
 	iterateResult, err := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
-		return batch.executeUserStatement(batchCtx, iterateQuery, nil)
+		return batch.executeUserStatement(batchCtx, iterateQuery, configParams)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("iterate query failed: %w", err)
@@ -57,6 +67,11 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	errorCount := int64(0)
 	successCount := int64(0)
 	failedBatches := int64(0)
+	// errorMessages counts failed executions, not the rows in their batches;
+	// batchErrors counts the batches it failed. Both are owned here, the one
+	// place that runs the batches and sees their errors.
+	errorMessages := make(map[string]interface{})
+	batchErrors := make(map[string]interface{})
 
 	for batchNum := 0; batchNum < batches; batchNum++ {
 		startIdx := batchNum * batchSize
@@ -69,7 +84,13 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 		_, batchErr := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
 			for i := startIdx; i < endIdx; i++ {
 				row := iterateResult.Rows[i]
-				params := make(map[string]interface{})
+				// An iterate row's columns are the action's parameters; a
+				// column of the same name as a configured parameter is that
+				// row's value.
+				params := make(map[string]interface{}, len(configParams)+len(iterateResult.Columns))
+				for name, value := range configParams {
+					params[name] = value
+				}
 				for j, col := range iterateResult.Columns {
 					if j < len(row) {
 						params[col] = row[j]
@@ -86,8 +107,14 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 			return &ExecuteResult{Stats: batchStats}, nil
 		})
 		if batchErr != nil {
-			errorCount += int64(endIdx - startIdx)
+			failedOperations := int64(endIdx - startIdx)
+			errorCount += failedOperations
 			failedBatches++
+			message := batchErr.Error()
+			operations, _ := errorMessages[message].(int64)
+			errorMessages[message] = operations + 1
+			batchCount, _ := batchErrors[message].(int64)
+			batchErrors[message] = batchCount + 1
 			continue
 		}
 		successCount += int64(endIdx - startIdx)
@@ -98,25 +125,25 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 		Columns: columnNames(periodicIterateColumns),
 		Rows: [][]interface{}{
 			{
-				int64(batches),           // batches
-				int64(totalRows),         // total
-				int64(0),                 // timeTaken (ms) - not measured
-				successCount,             // committedOperations
-				errorCount,               // failedOperations
-				failedBatches,            // failedBatches
-				int64(0),                 // retries
-				map[string]interface{}{}, // errorMessages
+				int64(batches),   // batches
+				int64(totalRows), // total
+				int64(0),         // timeTaken (ms) - not measured
+				successCount,     // committedOperations
+				errorCount,       // failedOperations
+				failedBatches,    // failedBatches
+				int64(0),         // retries
+				errorMessages,    // errorMessages
 				map[string]interface{}{ // batch
 					"total":     int64(batches),
 					"committed": int64(batches) - failedBatches,
 					"failed":    failedBatches,
-					"errors":    map[string]interface{}{},
+					"errors":    batchErrors,
 				},
 				map[string]interface{}{ // operations
 					"total":     int64(totalRows),
 					"committed": successCount,
 					"failed":    errorCount,
-					"errors":    map[string]interface{}{},
+					"errors":    errorMessages,
 				},
 				false,                    // wasTerminated
 				map[string]interface{}{}, // failedParams
