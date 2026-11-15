@@ -73,17 +73,20 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	}
 	// The accepted owner encodes the prepared snapshot once and retains its
 	// authority; every outcome below settles through that owner.
-	handle, payload, err := AcceptEntityCommit(ctx, w.engine, prepared)
-	if err != nil {
-		return nil, err
-	}
 	if releaseMutation == nil {
 		if err := w.mutationMu.RLockContext(ctx); err != nil {
-			handle.Discard(nil, err)
 			return nil, err
 		}
 		var mutationOnce sync.Once
 		releaseMutation = func() { mutationOnce.Do(w.mutationMu.RUnlock) }
+	}
+	references, err := w.wal.managedReferences(ctx, ops, func() error { return prepared.storeValueLimitError(ctx) })
+	if err != nil {
+		return nil, err
+	}
+	handle, payload, err := AcceptEntityCommit(ctx, w.engine, EntityTransactionRequest{Prepared: prepared, VectorReferences: references})
+	if err != nil {
+		return nil, err
 	}
 	releaseAcceptedMutation := releaseMutation
 	identity := acceptedApplicationKey{namespace: prepared.Namespace(), logicalID: prepared.LogicalID()}

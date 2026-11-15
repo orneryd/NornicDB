@@ -38,7 +38,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	}
 	// The storage accepted owner encodes the snapshot once and retains its
 	// authority. Author: NOR-288 lane (Codex), 2026-10-26. Preserve accepted identity.
-	accepted, payload, err := storage.AcceptEntityCommit(ctx, a.engine, prepared)
+	accepted, payload, err := storage.AcceptEntityCommit(ctx, a.engine, storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {

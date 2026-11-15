@@ -101,6 +101,7 @@ func startupUpdateRecord(t *testing.T, dir string) (version uint16, vectors int)
 		for _, op := range ops {
 			if op.Type == storage.OpUpdateNode && op.Node != nil {
 				version, vectors = envelope.Version, len(op.Node.ChunkEmbeddings)
+				require.NotEqual(t, storage.ManagedVectorReferences{}, envelope.VectorReferences, "local unchanged-vector updates retain an explicit durable reference")
 			}
 		}
 	}
@@ -229,8 +230,8 @@ func startupWorkload(t *testing.T, db *DB) error {
 }
 
 // What a server opened with nornicdb.Open journals in five modes. In each, the
-// update's journal record is version 3 and its node image has the 4 chunk
-// vectors (their number is checked). In the unset and the standalone mode there
+// local update journal uses version 7 with a durable vector reference and no
+// inline coordinates. The peer command remains a complete version-3 image. In the unset and the standalone mode there
 // is no replicator, the 900-node transaction commits and the WAL files under
 // the data directory hold part frames (frame version 7). In ha_standby, raft
 // and multi_region there is a replicator, the replicated update command is
@@ -250,8 +251,8 @@ func TestOpenJournalRecordsByClusterMode(t *testing.T) {
 			frames := startupFrameVersions(t, dir)
 			t.Logf("mode=%q: update record version %d with %d vectors; frame versions %v; large transaction: %v", mode, version, vectors, frames, largeErr)
 
-			require.Equal(t, uint16(3), version)
-			require.Equal(t, 4, vectors, "the update's record carries the node's 4 chunk vectors")
+			require.Equal(t, uint16(7), version)
+			require.Zero(t, vectors, "the local update references its exact anchored coordinates")
 			if mode == "" || mode == "standalone" {
 				require.Nil(t, db.GetReplicator())
 				require.NoError(t, largeErr, "a single node commits a transaction larger than one frame")
@@ -315,8 +316,8 @@ func TestOpenKeepsItsClusterConfigurationWhenTheEnvironmentChanges(t *testing.T)
 			largeErr := startupWorkload(t, db)
 			version, vectors := startupUpdateRecord(t, dir)
 			frames := startupFrameVersions(t, dir)
-			require.Equal(t, uint16(3), version)
-			require.Equal(t, 4, vectors)
+			require.Equal(t, uint16(7), version)
+			require.Zero(t, vectors, "the local journal references exact managed coordinates")
 			if tc.start == "standalone" {
 				require.Nil(t, db.GetReplicator())
 				require.NoError(t, largeErr)
