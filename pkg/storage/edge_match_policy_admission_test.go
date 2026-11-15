@@ -9,7 +9,7 @@ import (
 
 func TestEdgeMatchReadPoliciesRejectInvalidRequestsAtEveryNativeBoundary(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	readers := map[string]EdgesBetweenMatcher{
