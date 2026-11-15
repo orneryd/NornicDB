@@ -5,27 +5,22 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 type nodePropertyProofKey struct{ variable, expression string }
 
 // Retain the pure text analysis, not a projection-specific node image or row
 // values. The existing bounded, sharded query-analysis owner supplies admission.
-// Allocate it only when the experimental path first uses it.
-var experimentalNodePropertyProofs = sync.OnceValue(func() *boundedCache[nodePropertyProofKey, []string] {
+// Allocate it only when property analysis first uses it.
+var nodePropertyProofs = sync.OnceValue(func() *boundedCache[nodePropertyProofKey, []string] {
 	return newBoundedCache[nodePropertyProofKey, []string](4096, func(key nodePropertyProofKey) int {
 		return boundedCacheStringShardIndex(key.expression)
 	})
 })
 
 func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
-	if !config.IsProjectedReadsEnabled() {
-		return parsePipelineNodePredicateProperties(variable, expression, inline)
-	}
 	key := nodePropertyProofKey{variable: variable, expression: expression}
-	proofs := experimentalNodePropertyProofs()
+	proofs := nodePropertyProofs()
 	properties, found := proofs.get(key)
 	if !found {
 		// The one canonical parser still decides whole-node use and decoded

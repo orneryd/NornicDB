@@ -10,7 +10,7 @@ import (
 func TestProjectedReadsOversizedProjectionScanRetainsExistingCoverage(t *testing.T) {
 	for _, snapshot := range []bool{false, true} {
 		t.Run(fmt.Sprintf("snapshot=%t", snapshot), func(t *testing.T) {
-			projectedReadsFlag(t, true)
+
 			const count = labelScanPointLookups + 300
 			b, ids := labelScanFixture(t, count)
 			b.nodeCacheMaxEntries = labelScanPointLookups + 100

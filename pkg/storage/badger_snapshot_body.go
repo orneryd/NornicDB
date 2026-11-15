@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // nodeBodyAccess keeps mutable query results detached. Commit validation may
@@ -231,7 +230,7 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		if err != nil {
 			return node, err
 		}
-		if config.IsProjectedReadsEnabled() && admit {
+		if admit {
 			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs(), properties)
 		}
 	}
