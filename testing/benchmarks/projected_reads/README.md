@@ -16,9 +16,13 @@ against the frozen files. Corpus identity hashes relative paths and file content
 Keep the same frozen source files for seeding, verification and measurement.
 
 `run_lab.py` requires Linux `/proc`, two prebuilt servers, ordinary-format prepared
-data directories and explicit source revisions. It copies the inputs before each
+offline data directories and explicit source revisions. It copies the inputs before each
 trial, alternates run order and validates paired result fingerprints. No source
 fixture is opened by a server. Query-result caching is explicitly disabled.
+
+The recorded corpus is the 272 Markdown files in `ddc59dc20:docs`, with CRLF line
+endings, replicated 16 times. Reproduce that frozen checkout rather than seeding
+from changed documentation. The result folder's manifest lists every file hash.
 
 ```sh
 python3 testing/benchmarks/projected_reads/run_lab.py \

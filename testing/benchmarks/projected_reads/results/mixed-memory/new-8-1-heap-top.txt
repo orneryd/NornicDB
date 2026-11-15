@@ -1,0 +1,33 @@
+File: nornicdb-default-projections
+Build ID: b4b4bf9147d9e657489c604ae6c5b47261052261
+Type: inuse_space
+Time: 2026-11-15 15:14:33 UTC
+Showing nodes accounting for 493341407B, 94.72% of 520814722B total
+Dropped 122 nodes (cum <= 2604073B)
+Showing top 25 nodes out of 116
+      flat  flat%   sum%        cum   cum%
+219208245B 42.09% 42.09% 219208245B 42.09%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+174489600B 33.50% 75.59% 174489600B 33.50%  github.com/dgraph-io/badger/v4/skl.newArena (inline)
+ 48936734B  9.40% 84.99%  72615989B 13.94%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).loadFromBadger.func1
+  9961908B  1.91% 86.90%   9961908B  1.91%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+  9886462B  1.90% 88.80%  11983646B  2.30%  github.com/orneryd/nornicdb/pkg/storage.(*CompositeIndex).fileValueLocked (inline)
+  4792703B  0.92% 89.72%   4792703B  0.92%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+  4195456B  0.81% 90.53%   4195456B  0.81%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+  4194904B  0.81% 91.33%  15730992B  3.02%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+  4194752B  0.81% 92.14% 223402997B 42.89%  github.com/dgraph-io/badger/v4/table.(*Table).block
+  3273066B  0.63% 92.77% 477520313B 91.69%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+  3146096B   0.6% 93.37%   7341552B  1.41%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+  2725172B  0.52% 93.89%   2725172B  0.52%  github.com/dgraph-io/ristretto/v2.(*Cache[go.shape.[]uint8,go.shape.*uint8]).processItems.func1
+  2621480B   0.5% 94.40%   2621480B   0.5%  internal/stringslite.Clone (inline)
+  1048592B   0.2% 94.60%   2621520B   0.5%  github.com/vmihailenco/msgpack/v5.(*Decoder).DecodeInterface
+   666237B  0.13% 94.72%   3211407B  0.62%  github.com/dgraph-io/ristretto/v2.NewCache[go.shape.[]uint8,go.shape.*uint8]
+         0     0% 94.72% 174489600B 33.50%  github.com/dgraph-io/badger/v4.(*DB).newMemTable
+         0     0% 94.72% 174489600B 33.50%  github.com/dgraph-io/badger/v4.(*DB).openMemTable
+         0     0% 94.72%   2621532B   0.5%  github.com/dgraph-io/badger/v4.(*Item).Value
+         0     0% 94.72% 222876659B 42.79%  github.com/dgraph-io/badger/v4.(*Iterator).Next
+         0     0% 94.72% 223402997B 42.89%  github.com/dgraph-io/badger/v4.(*Iterator).parseItem
+         0     0% 94.72% 178892684B 34.35%  github.com/dgraph-io/badger/v4.Open
+         0     0% 94.72% 178892684B 34.35%  github.com/dgraph-io/badger/v4.OpenManaged (inline)
+         0     0% 94.72% 174489600B 33.50%  github.com/dgraph-io/badger/v4/skl.NewSkiplist
+         0     0% 94.72% 223402997B 42.89%  github.com/dgraph-io/badger/v4/table.(*ConcatIterator).Next
+         0     0% 94.72% 222876659B 42.79%  github.com/dgraph-io/badger/v4/table.(*Iterator).Next

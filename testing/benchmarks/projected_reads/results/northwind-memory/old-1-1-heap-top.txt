@@ -1,0 +1,33 @@
+File: nornicdb
+Build ID: 2f1f348b7442cc2d42bf763cdf63a4e73bde2114
+Type: inuse_space
+Time: 2026-11-15 15:16:49 UTC
+Showing nodes accounting for 521013119B, 92.75% of 561711902B total
+Dropped 203 nodes (cum <= 2808559B)
+Showing top 25 nodes out of 163
+      flat  flat%   sum%        cum   cum%
+174489600B 31.06% 31.06% 174489600B 31.06%  github.com/dgraph-io/badger/v4/skl.newArena (inline)
+161059616B 28.67% 59.74% 161059616B 28.67%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+ 52151237B  9.28% 69.02%  86885598B 15.47%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).loadFromBadger.func1
+ 46672889B  8.31% 77.33%  56110977B  9.99%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+ 33559552B  5.97% 83.30%  83378217B 14.84%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+ 14280446B  2.54% 85.85%  17426222B  3.10%  github.com/orneryd/nornicdb/pkg/storage.(*CompositeIndex).fileValueLocked (inline)
+  9962480B  1.77% 87.62%   9962480B  1.77%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+  8915104B  1.59% 89.21%  11012336B  1.96%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+  4792703B  0.85% 90.06%   4792703B  0.85%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+  4194752B  0.75% 90.81% 166827256B 29.70%  github.com/dgraph-io/badger/v4/table.(*Table).block
+  3145776B  0.56% 91.37%   3145776B  0.56%  github.com/orneryd/nornicdb/pkg/storage.appendUnique (inline)
+  2621480B  0.47% 91.83%   8389496B  1.49%  github.com/vmihailenco/msgpack/v5.(*Decoder).DecodeInterface
+  2097376B  0.37% 92.21%  12585280B  2.24%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+  1462724B  0.26% 92.47%  88519183B 15.76%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).getEdgesByType.func2
+   545034B 0.097% 92.57% 370154514B 65.90%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+   538038B 0.096% 92.66%   4250414B  0.76%  github.com/orneryd/nornicdb/pkg/cypher/antlr.parseStatementSyntaxAttempt
+   524312B 0.093% 92.75%   7340976B  1.31%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+         0     0% 92.75% 174489600B 31.06%  github.com/dgraph-io/badger/v4.(*DB).newMemTable
+         0     0% 92.75% 174489600B 31.06%  github.com/dgraph-io/badger/v4.(*DB).openMemTable
+         0     0% 92.75%  89670525B 15.96%  github.com/dgraph-io/badger/v4.(*Item).Value
+         0     0% 92.75% 139990119B 24.92%  github.com/dgraph-io/badger/v4.(*Iterator).Next
+         0     0% 92.75%  25264249B  4.50%  github.com/dgraph-io/badger/v4.(*Iterator).Rewind
+         0     0% 92.75%  25264249B  4.50%  github.com/dgraph-io/badger/v4.(*Iterator).Seek
+         0     0% 92.75% 146832521B 26.14%  github.com/dgraph-io/badger/v4.(*Iterator).parseItem
+         0     0% 92.75%   6842402B  1.22%  github.com/dgraph-io/badger/v4.(*Iterator).prefetch

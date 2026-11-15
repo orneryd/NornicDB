@@ -1,0 +1,33 @@
+File: nornicdb-default-projections
+Build ID: b4b4bf9147d9e657489c604ae6c5b47261052261
+Type: inuse_space
+Time: 2026-11-15 15:18:55 UTC
+Showing nodes accounting for 529396723B, 93.67% of 565193412B total
+Dropped 192 nodes (cum <= 2825967B)
+Showing top 25 nodes out of 173
+      flat  flat%   sum%        cum   cum%
+174489600B 30.87% 30.87% 174489600B 30.87%  github.com/dgraph-io/badger/v4/skl.newArena (inline)
+158953943B 28.12% 59.00% 158953943B 28.12%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+ 69222745B 12.25% 71.24%  73941565B 13.08%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+ 48549684B  8.59% 79.83%  71706590B 12.69%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).loadFromBadger.func1
+ 28315872B  5.01% 84.84%  99635801B 17.63%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+  8238718B  1.46% 86.30%  11908790B  2.11%  github.com/orneryd/nornicdb/pkg/storage.(*CompositeIndex).fileValueLocked (inline)
+  7864756B  1.39% 87.69%   7864756B  1.39%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+  5244200B  0.93% 88.62%   6292800B  1.11%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+  4719096B  0.83% 89.46% 164721631B 29.14%  github.com/dgraph-io/badger/v4/table.(*Table).block
+  4260181B  0.75% 90.21%   4260181B  0.75%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+  3670072B  0.65% 90.86%   3670072B  0.65%  github.com/orneryd/nornicdb/pkg/storage.appendUnique (inline)
+  3146296B  0.56% 91.42%   3146296B  0.56%  github.com/nicksnyder/go-i18n/v2/i18n.setPluralTemplate (inline)
+  2097376B  0.37% 91.79%   7865744B  1.39%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+  2097184B  0.37% 92.16%   4194524B  0.74%  github.com/vmihailenco/msgpack/v5.(*Decoder).DecodeInterface
+  1614114B  0.29% 92.44%   3711650B  0.66%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putEdgeLocked
+  1614114B  0.29% 92.73% 361596860B 63.98%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+  1462724B  0.26% 92.99% 104776815B 18.54%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).getEdgesByType.func2
+  1058869B  0.19% 93.18%   4787797B  0.85%  github.com/orneryd/nornicdb/pkg/cypher/antlr.parseStatementSyntaxAttempt
+  1048608B  0.19% 93.36%   4194904B  0.74%  github.com/nicksnyder/go-i18n/v2/i18n.NewMessageTemplate
+   666237B  0.12% 93.48%   3877645B  0.69%  github.com/dgraph-io/ristretto/v2.NewCache[go.shape.[]uint8,go.shape.*uint8]
+   538038B 0.095% 93.57%   4732942B  0.84%  github.com/nicksnyder/go-i18n/v2/i18n.(*Bundle).AddMessages
+   524296B 0.093% 93.67%   4718820B  0.83%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedValue
+         0     0% 93.67% 174489600B 30.87%  github.com/dgraph-io/badger/v4.(*DB).newMemTable
+         0     0% 93.67% 174489600B 30.87%  github.com/dgraph-io/badger/v4.(*DB).openMemTable
+         0     0% 93.67% 103306033B 18.28%  github.com/dgraph-io/badger/v4.(*Item).Value
