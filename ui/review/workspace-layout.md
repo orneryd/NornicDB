@@ -108,3 +108,10 @@ Modal policy follows [NN/g's modal and nonmodal dialog guidance](https://www.nng
 ![Schema creation](prototype/18-create-constraint.png)
 ![Mobile query workspace](prototype/05-mobile-query.png)
 ![Mobile schema creation](prototype/19-mobile-schema-create.png)
+
+
+### Dialog positioning regression
+
+The shared native dialog explicitly uses viewport-fixed insets and automatic margins. Width limits belong to the dialog itself; its inner panel has no asymmetric horizontal margin. Geometry checks cover unsaved record, schema and database edits at desktop and mobile viewports, including safe initial focus and Escape preserving the draft. All six positioning cases and 15 related editing/operation checks passed (`npm run test:browser --prefix ui -- modal-position.spec.mjs workspace-editing-prototype.spec.mjs operations.spec.mjs --workers=1`).
+
+![Centered mobile unsaved-change dialog](prototype/22-mobile-unsaved-warning.png)
