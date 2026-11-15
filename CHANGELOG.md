@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Historical WAL upgrades stage every converted file before publishing their
+  recovery backup. Failed preparation leaves source files unchanged and cleans
+  its staging directories; interrupted publication still resumes from backup.
+
+
 - Embedded Cypher transactions now retain their WAL publication owner when
   committing native storage. Durable create, update, delete and relationship
   changes can be rebuilt from the journal instead of leaving only transaction
