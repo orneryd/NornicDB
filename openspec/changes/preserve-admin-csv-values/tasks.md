@@ -16,3 +16,9 @@ No Badger keys, stored payloads, migration version or public Go API changes.
 Old ambiguous CSV exports cannot recover property absence that was not recorded.
 Graph retrieval remains unavailable (HTTP-to-HTTPS400); manual owner review is
 required, and no clean graph duplicate report is claimed.
+
+- [x] Consolidate node/relationship row construction; isolated ABBA benchmark lowers bytes29.1%/32.1% and allocations10.0%; timing ranges overlap.
+- [x] Node IDs use the existing canonical ID reader; truncated rows now report their source column before engine admission.
+- [x] Reuse one testfixture.ErrorWriter across IO/transport fixtures; parent fail-first concurrency control caught non-atomic call counting, now corrected with atomic counts.
+- [x] Full adminimport/admin CLI race checks and selected fixture/storage/convert/replication/heimdall/server consumer races pass.
+- [ ] Push the convergence candidate and complete its new-head CI.

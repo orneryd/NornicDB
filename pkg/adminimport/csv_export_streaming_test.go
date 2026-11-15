@@ -38,11 +38,6 @@ type plainFieldSink struct {
 
 func (s *plainFieldSink) Write(p []byte) (int, error) { return s.buf.Write(p) }
 
-// failingFieldSink fails every write it receives.
-type failingFieldSink struct{ err error }
-
-func (s *failingFieldSink) Write([]byte) (int, error) { return 0, s.err }
-
 // byteFailingFieldSink accepts field bytes but fails the single-byte forward of
 // a byte withheld from an earlier chunk.
 type byteFailingFieldSink struct {
@@ -153,7 +148,7 @@ func TestCSVFieldTailWriterReleasesThroughWriterFallback(t *testing.T) {
 // withheld only once the preceding bytes have reached the sink.
 func TestCSVFieldTailWriterReportsSinkFailures(t *testing.T) {
 	t.Run("write fails", func(t *testing.T) {
-		sink := &failingFieldSink{err: errCSVFieldSink}
+		sink := &fixtureowner.ErrorWriter{Err: errCSVFieldSink}
 		writer := &csvFieldTailWriter{out: sink}
 
 		n, err := writer.Write([]byte("abc"))

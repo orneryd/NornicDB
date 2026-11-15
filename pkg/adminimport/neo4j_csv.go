@@ -174,52 +174,39 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 }
 
 func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptions) error {
-	columns := inferNodeColumns(nodes)
-	cells := make([][]csvExportCell, len(nodes))
-	for i, node := range nodes {
-		cells[i] = make([]csvExportCell, len(columns))
-		for j, col := range columns {
-			cells[i][j] = nodePropertyCell(node, col, opts)
-		}
-	}
-	return writeEntityCSV(path, []string{":ID", ":LABEL"}, columns, cells, opts, func(i int) []csvExportCell {
-		return []csvExportCell{
-			{Text: string(nodes[i].ID)},
-			{Text: strings.Join(nodes[i].Labels, string(opts.ArrayDelimiter))},
-		}
-	})
+	return writeEntityCSV(path, []string{":ID", ":LABEL"}, inferNodeColumns(nodes), nodes, opts,
+		func(node *storage.Node, lead []csvExportCell) {
+			lead[0].Text = string(node.ID)
+			lead[1].Text = strings.Join(node.Labels, string(opts.ArrayDelimiter))
+		}, nodePropertyCell)
 }
 
 func exportRelationshipsCSV(path string, edges []*storage.Edge, opts Neo4jCSVExportOptions) error {
-	columns := inferEdgeColumns(edges)
-	cells := make([][]csvExportCell, len(edges))
-	for i, edge := range edges {
-		cells[i] = make([]csvExportCell, len(columns))
-		for j, col := range columns {
-			cells[i][j] = propertyCell(edge.Properties[col.Property], col, opts)
-		}
-	}
-	return writeEntityCSV(path, []string{":ID", ":START_ID", ":END_ID", ":TYPE"}, columns, cells, opts, func(i int) []csvExportCell {
-		return []csvExportCell{
-			{Text: string(edges[i].ID)},
-			{Text: string(edges[i].StartNode)},
-			{Text: string(edges[i].EndNode)},
-			{Text: edges[i].Type},
-		}
-	})
+	return writeEntityCSV(path, []string{":ID", ":START_ID", ":END_ID", ":TYPE"}, inferEdgeColumns(edges), edges, opts,
+		func(edge *storage.Edge, lead []csvExportCell) {
+			lead[0].Text, lead[1].Text = string(edge.ID), string(edge.StartNode)
+			lead[2].Text, lead[3].Text = string(edge.EndNode), edge.Type
+		}, func(edge *storage.Edge, col inferredColumn, opts Neo4jCSVExportOptions) csvExportCell {
+			return propertyCell(edge.Properties[col.Property], col, opts)
+		})
 }
 
-// writeEntityCSV writes one exported entity file: the lead columns, then one
-// column per inferred property.
-func writeEntityCSV(path string, leadHeader []string, columns []inferredColumn, cells [][]csvExportCell, opts Neo4jCSVExportOptions, lead func(entity int) []csvExportCell) error {
+// writeEntityCSV owns column ordering and row construction for both entity
+// kinds. Each row has one allocation; no second property-cell matrix is kept.
+func writeEntityCSV[T any](path string, leadHeader []string, columns []inferredColumn, entities []T, opts Neo4jCSVExportOptions, lead func(T, []csvExportCell), property func(T, inferredColumn, Neo4jCSVExportOptions) csvExportCell) error {
 	header := make([]string, 0, len(leadHeader)+len(columns))
 	header = append(header, leadHeader...)
 	for _, col := range columns {
 		header = append(header, col.Header)
 	}
-	rows := make([][]csvExportCell, len(cells))
-	for i := range cells {
-		rows[i] = append(lead(i), cells[i]...)
+	rows := make([][]csvExportCell, len(entities))
+	for i, entity := range entities {
+		row := make([]csvExportCell, len(leadHeader)+len(columns))
+		lead(entity, row[:len(leadHeader)])
+		for j, col := range columns {
+			row[len(leadHeader)+j] = property(entity, col, opts)
+		}
+		rows[i] = row
 	}
 	return writeCSV(path, header, rows, opts.Delimiter)
 }

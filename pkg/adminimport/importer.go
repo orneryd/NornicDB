@@ -406,8 +406,11 @@ func nodeFromRecord(record csvRecord, filePath string, cols []columnSpec, idCols
 	props := make(map[string]any)
 	named := make(map[string][]float32)
 	labels := append([]string{}, prefixLabels...)
-	var idValues []string
-	var idSpaces []string
+	idValues, idSpaces, badColumn, err := idValuesFromRecord(record, cols, idCols, opts)
+	if err != nil {
+		return nil, "", csvErr(filePath, line, badColumn+1, err)
+	}
+	idOrdinal := 0 // filterColumns returns ID columns in header order.
 	for i, col := range cols {
 		if i >= len(record) {
 			continue
@@ -415,18 +418,10 @@ func nodeFromRecord(record csvRecord, filePath string, cols []columnSpec, idCols
 		value := record[i].Text
 		switch col.Kind {
 		case kindID:
-			if value == "" {
-				return nil, "", csvErr(filePath, line, i+1, fmt.Errorf("missing ID value"))
-			}
-			canonical, err := canonicalID(value, opts.IDType)
-			if err != nil {
-				return nil, "", csvErr(filePath, line, i+1, err)
-			}
-			idValues = append(idValues, canonical)
-			idSpaces = append(idSpaces, col.IDSpace)
 			if col.Name != "" {
-				props[col.Name] = canonical
+				props[col.Name] = idValues[idOrdinal]
 			}
+			idOrdinal++
 		case kindLabel:
 			if value == "" {
 				continue
