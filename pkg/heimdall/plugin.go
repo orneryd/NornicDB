@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -474,8 +475,9 @@ func tryParseActionResponse(response string) *parsedActionCmd {
 	}
 
 	jsonStr := response[start:end]
+	// Plugin actions share the exact-number tool input contract.
 	var action parsedActionCmd
-	if err := json.Unmarshal([]byte(jsonStr), &action); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &action); err != nil {
 		return nil
 	}
 	if action.Action == "" {

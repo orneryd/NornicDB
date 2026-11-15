@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"golang.org/x/text/language"
 )
@@ -64,8 +65,9 @@ func parseActionEnvelope(response string) *ParsedAction {
 	if jsonStr == "" {
 		return nil
 	}
+	// Tool parameters use the canonical exact-number input contract.
 	var parsed ParsedAction
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &parsed); err != nil {
 		return nil
 	}
 	if strings.TrimSpace(parsed.Action) == "" {
@@ -926,7 +928,8 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 		for _, tc := range toolCalls {
 			var paramsMap map[string]interface{}
 			if tc.Arguments != "" {
-				_ = json.Unmarshal([]byte(tc.Arguments), &paramsMap)
+				// Keep model-emitted integers exact, including nested arguments.
+				_ = valueconvert.CypherInputJSON.Unmarshal([]byte(tc.Arguments), &paramsMap)
 			}
 			if paramsMap == nil {
 				paramsMap = make(map[string]interface{})
