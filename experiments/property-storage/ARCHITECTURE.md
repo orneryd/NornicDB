@@ -22,12 +22,12 @@ assign `title` token 17. Each entity still has its own arbitrary set of properti
 
 ```mermaid
 flowchart TD
-    App["Node or relationship\nwith its own property map"]
-    Encode["Nornic record\nmetadata + property tokens + typed values"]
+    App["Node or relationship<br/>with its own property map"]
+    Encode["Nornic record<br/>metadata + property tokens + typed values"]
     Tx["Nornic transaction and durability pipeline"]
-    Badger["Badger key/value transaction\nWAL and memory tables"]
-    Tables["Sorted table blocks\nSnappy in the stock default profile"]
-    Vlog["Value log\nfor values above the configured threshold"]
+    Badger["Badger key/value transaction<br/>WAL and memory tables"]
+    Tables["Sorted table blocks<br/>Snappy in the stock default profile"]
+    Vlog["Value log<br/>for values above the configured threshold"]
     App --> Encode --> Tx --> Badger
     Badger --> Tables
     Badger --> Vlog
@@ -55,18 +55,18 @@ change the bytes inside values and table blocks.
 
 ```mermaid
 flowchart TD
-    App["Node or relationship\nwith its own property map"]
+    App["Node or relationship<br/>with its own property map"]
     Choose["Choose an encoding for each property"]
-    Plain["Ordinary typed bytes\nsmall or poorly compressing values"]
-    Text["Compressed typed bytes\nZstd property frame"]
-    Numbers["Exact int64 column\nconstant, packed differences, or raw values"]
-    Record["Existing Nornic record envelope\nmetadata + token/value list"]
+    Plain["Ordinary typed bytes<br/>small or poorly compressing values"]
+    Text["Compressed typed bytes<br/>Zstd property frame"]
+    Numbers["Exact int64 column<br/>constant, packed differences, or raw values"]
+    Record["Existing Nornic record envelope<br/>metadata + token/value list"]
     Tx["Same transaction and durability owners"]
     Badger["Badger memory tables and WAL"]
-    Pick["At table creation:\nchoose the smallest complete block encoding"]
+    Pick["At table creation:<br/>choose the smallest complete block encoding"]
     Raw["Raw block"]
     Zstd["Zstd block"]
-    Columns["Grouped byte columns + Zstd\nwhen the complete frame is smaller"]
+    Columns["Grouped byte columns + Zstd<br/>when the complete frame is smaller"]
     Vlog["Value log for large values"]
     App --> Choose
     Choose --> Plain --> Record
@@ -137,15 +137,15 @@ forwards that request to storage.
 ```mermaid
 flowchart TD
     Query["Query asks for title and author"]
-    Proof["Prove the needed properties\ninclude filters and lookup fields"]
-    Scope["Existing read admission\nnamespace, pending writes and snapshot"]
-    Cache["One cache entry for the node\nbound to its physical body version"]
+    Proof["Prove the needed properties<br/>include filters and lookup fields"]
+    Scope["Existing read admission<br/>namespace, pending writes and snapshot"]
+    Cache["One cache entry for the node<br/>bound to its physical body version"]
     Covered{"Requested fields covered?"}
-    Result["Return owned copies\nof requested properties"]
+    Result["Return owned copies<br/>of requested properties"]
     Missing["Find only missing fields"]
-    Read["Badger reads the stored value/block\nand applies its normal integrity checks"]
-    Decode["Decode missing properties\nskip other property payloads"]
-    Merge["Merge values and known absence\ninto the same entity/version entry"]
+    Read["Badger reads the stored value/block<br/>and applies its normal integrity checks"]
+    Decode["Decode missing properties<br/>skip other property payloads"]
+    Merge["Merge values and known absence<br/>into the same entity/version entry"]
     Query --> Proof --> Scope --> Cache --> Covered
     Covered -->|Yes| Result
     Covered -->|No| Missing --> Read --> Decode --> Merge --> Result
