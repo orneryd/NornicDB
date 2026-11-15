@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Property updates reuse matching managed embedding sidecars instead of rewriting
   unchanged vector chunks and dropping their sidecar metadata.
+- Scoped CALL subqueries retain their imported variables inside FOREACH, and
+  transactional CALL bodies preserve wildcard imports.
 
 - Property-index reads keep pending deletions and relabels hidden when an older
   write-behind generation retires its final candidate entries.
