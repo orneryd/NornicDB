@@ -320,7 +320,7 @@ export function KnowledgePoliciesAdmin() {
         }
       />
 
-      <main className="w-full min-w-0 max-w-6xl mx-auto px-4 py-6 sm:p-6 space-y-6">
+      <main className="w-full min-w-0 mx-auto px-4 py-6 sm:p-6 space-y-6">
         {notification && (
           <div
             className="fixed right-4 top-4 z-50 w-[min(26rem,calc(100vw-2rem))]"

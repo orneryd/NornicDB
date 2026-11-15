@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord, UiGridApi } from "@ornery/ui-grid-core";
-import { Activity, Database, Info, Plus, Settings, Trash2 } from "lucide-react";
+import { Activity, Database, Info, Plus, Settings, Star, Trash2 } from "lucide-react";
+import { useViewState } from "../utils/useUrlState";
 import { api } from "../utils/api";
 import type { DatabaseInfo } from "../utils/api";
 import { Alert } from "../components/common/Alert";
@@ -27,10 +28,23 @@ export function Databases() {
   const configDbName = location.pathname.replace(/\/$/,'').endsWith('/edit') ? route.database ?? null : null;
   const setConfigDbName = (name:string|null) => navigate(resourcePath(name ?? undefined,Boolean(name)));
 
+  const [nameFilter, setNameFilter] = useViewState('databaseName', '');
+  const [favoritesOnly, setFavoritesOnly] = useViewState('favoritesOnly', false);
+  const [favoriteKey, setFavoriteKey] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoriteError, setFavoriteError] = useState('');
+  const toggleFavorite = (name:string) => {
+    if (!favoriteKey) return;
+    const next=favorites.includes(name)?favorites.filter(value=>value!==name):[...favorites,name];
+    try { localStorage.setItem(favoriteKey,JSON.stringify(next));setFavorites(next);setFavoriteError(''); }
+    catch { setFavoriteError('This browser could not save favorites. Allow local storage and try again.'); }
+  };
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  const visibleDatabases=useMemo(()=>databases.filter(db=>db.name.toLowerCase().includes(nameFilter.trim().toLowerCase())&&(!favoritesOnly||favorites.includes(db.name))).sort((a,b)=>Number(favorites.includes(b.name))-Number(favorites.includes(a.name))),[databases,nameFilter,favoritesOnly,favorites]);
 
   // Create database state
   const [newName, setNewName] = useState("");
@@ -116,8 +130,14 @@ export function Databases() {
   useEffect(() => {
     fetch(joinBasePath(BASE_PATH, "/auth/me"), { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((me: { roles?: string[] } | null) => {
+      .then((me: { username?: string; roles?: string[] } | null) => {
         setIsAdmin(Array.isArray(me?.roles) && me.roles.includes("admin"));
+        if (me) {
+          const key=`nornic:database-favorites:${BASE_PATH}:${me.username ?? 'local'}`;
+          setFavoriteKey(key);
+          try { const saved=JSON.parse(localStorage.getItem(key) ?? '[]');setFavorites(Array.isArray(saved)?saved.filter((value:unknown):value is string=>typeof value==='string'):[]); }
+          catch { setFavoriteError('This browser could not load favorites. Allow local storage and try again.'); }
+        }
       })
       .catch(() => setIsAdmin(false));
   }, []);
@@ -431,7 +451,7 @@ export function Databases() {
       />
 
       {loading&&<p role="status" className="p-6 text-norse-silver">Loading databases…</p>}
-      <div className="database-content max-w-6xl mx-auto p-6">
+      <div className="database-content w-full min-w-0 mx-auto p-6">
         {error && (
           <Alert
             type="error"
@@ -444,6 +464,14 @@ export function Databases() {
 
         {!loading && !route.database && !showCreateModal && <>
         <p className="database-intro">Choose a database to query its data, inspect its schema, or manage its configuration.</p>
+        {favoriteError && <Alert type="error" message={favoriteError} className="mb-4" />}
+        {databases.length>0 && <div className="database-list-tools">
+          <label className="database-name-filter">Filter databases by name<input type="search" value={nameFilter} onChange={event=>setNameFilter(event.target.value)} placeholder="Database name" /></label>
+          <label className="database-favorites-filter"><input type="checkbox" checked={favoritesOnly} onChange={event=>setFavoritesOnly(event.target.checked)} />Favorites only</label>
+          <span role="status">{visibleDatabases.length} of {databases.length} databases</span>
+          {(nameFilter||favoritesOnly)&&<button type="button" onClick={()=>{setNameFilter('');setFavoritesOnly(false);}}>Clear filters</button>}
+          <p>Favorites appear first and are saved for your account in this browser.</p>
+        </div>}
         {databases.length === 0 ? (
           <div className="bg-norse-shadow border border-norse-rune rounded-lg p-12 text-center">
             <Database className="w-16 h-16 text-norse-silver mx-auto mb-4" />
@@ -464,7 +492,8 @@ export function Databases() {
         ) : (
           <>
             <div className="database-catalog-list">
-              {databases.map((db) => {
+              {visibleDatabases.length===0&&<p className="py-8 text-norse-silver">No databases match these filters. Clear the filters to see all databases.</p>}
+              {visibleDatabases.map((db) => {
               const isComposite = db.type === "composite";
               const ready = db.searchReady === true;
               const searchLabel = ready
@@ -483,9 +512,7 @@ export function Databases() {
                   >
                   <div className="database-record-heading flex items-start justify-between mb-3">
                     <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-white mb-1">
-                        {db.name}
-                      </h3>
+                      <div className="database-name-heading"><button type="button" aria-label={`Favorite ${db.name}`} aria-pressed={favorites.includes(db.name)} disabled={!favoriteKey} onClick={()=>toggleFavorite(db.name)} title={favorites.includes(db.name)?'Remove from favorites':'Add to favorites'}><Star size={18} fill={favorites.includes(db.name)?'currentColor':'none'} aria-hidden="true" /></button><h3 className="text-lg font-semibold text-white mb-1">{db.name}</h3></div>
                       <div className="flex items-center gap-2 text-sm text-norse-silver flex-wrap">
                         <span
                           className={`px-2 py-1 rounded text-xs ${

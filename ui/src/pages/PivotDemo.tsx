@@ -305,7 +305,7 @@ function PivotScene({ database }: { database: string }) {
   return (
     <PageLayout>
       <PageHeader title="Pivot analysis" />
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="w-full min-w-0 mx-auto p-6 space-y-6">
         <p className="text-norse-silver">
           Regroup synthetic orders by account, region, product, quarter or
           channel. Dimensions and measures run in NornicDB; the grid virtualizes

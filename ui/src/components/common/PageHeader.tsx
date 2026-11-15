@@ -23,7 +23,7 @@ export function PageHeader({
 
   return (
     <header className="bg-norse-shadow border-b border-norse-rune px-4 py-3">
-      <div className="max-w-6xl mx-auto flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="w-full mx-auto flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-4">
           {backTo && (
             <Button

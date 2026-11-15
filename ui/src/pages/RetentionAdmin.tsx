@@ -751,7 +751,7 @@ export function RetentionAdmin() {
         }
       />
 
-      <main className="max-w-6xl mx-auto p-6 space-y-6">
+      <main className="w-full min-w-0 mx-auto p-6 space-y-6">
         {error && (
           <Alert
             type="error"
