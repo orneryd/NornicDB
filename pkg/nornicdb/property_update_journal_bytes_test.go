@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -38,24 +39,6 @@ func propertyUpdateJournalPublicVector(index int) []float32 {
 	return vector
 }
 
-// propertyUpdateJournalPublicConfig is the one configuration of these
-// fixtures: a standalone server with the journal synced on every commit, no
-// automatic compaction and no embedding worker.
-func propertyUpdateJournalPublicConfig() *Config {
-	config := DefaultConfig()
-	config.Database.AsyncWritesEnabled = false
-	config.Database.StrictDurability = true
-	config.Database.WALSyncMode = "immediate"
-	config.Database.WALAutoCompactionEnabled = false
-	config.Memory.DecayEnabled = false
-	config.Memory.AutoLinksEnabled = false
-	config.Memory.EmbeddingEnabled = false
-	config.Memory.EmbeddingDimensions = propertyUpdateJournalPublicDims
-	config.EmbeddingWorker.PropertiesInclude = []string{"text"}
-	config.EmbeddingWorker.IncludeLabels = false
-	return config
-}
-
 // propertyUpdateJournalPublicFixture opens a server with the fixture
 // configuration, stores the node with the fixture named vector and managed
 // chunk vectors, and returns the store, its native engine, the server
@@ -63,7 +46,8 @@ func propertyUpdateJournalPublicConfig() *Config {
 func propertyUpdateJournalPublicFixture(t *testing.T, chunks int, named bool) (*DB, *storage.BadgerEngine, string, *Config, storage.NodeID) {
 	t.Helper()
 	dir := t.TempDir()
-	config := propertyUpdateJournalPublicConfig()
+	config := startupConfig()
+	config.Memory.EmbeddingDimensions = propertyUpdateJournalPublicDims
 	db, err := Open(dir, config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
@@ -103,22 +87,13 @@ func requirePropertyUpdateJournalPublicVectors(t *testing.T, node *storage.Node,
 	t.Helper()
 	require.Len(t, node.ChunkEmbeddings, chunks)
 	for i, vector := range node.ChunkEmbeddings {
-		require.Len(t, vector, propertyUpdateJournalPublicDims)
-		for j, got := range vector {
-			want := float32(1) + float32((i+1)*propertyUpdateJournalPublicDims+j)/7
-			if got != want {
-				t.Fatalf("chunk[%d][%d] = %v, want %v", i, j, got, want)
-			}
-		}
+		fixtureowner.RequireFloat32Vector(t, "managed chunk", vector, propertyUpdateJournalPublicDims, func(j int) float32 {
+			return float32(1) + float32((i+1)*propertyUpdateJournalPublicDims+j)/7
+		})
 	}
-	named := node.NamedEmbeddings["title"]
-	require.Len(t, named, propertyUpdateJournalPublicDims)
-	for j, got := range named {
-		want := float32(1) + float32(j)/7
-		if got != want {
-			t.Fatalf("named[%d] = %v, want %v", j, got, want)
-		}
-	}
+	fixtureowner.RequireFloat32Vector(t, "named title", node.NamedEmbeddings["title"], propertyUpdateJournalPublicDims, func(j int) float32 {
+		return float32(1) + float32(j)/7
+	})
 }
 
 // propertyUpdateJournalPublicBytes is the size of every file of the journal

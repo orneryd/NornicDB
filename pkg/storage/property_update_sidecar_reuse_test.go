@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,22 +78,13 @@ func requirePropertyUpdateVectors(t testing.TB, node *Node, chunks int) {
 	t.Helper()
 	require.Len(t, node.ChunkEmbeddings, chunks)
 	for i, vector := range node.ChunkEmbeddings {
-		require.Len(t, vector, propertyUpdateVectorDims)
-		for j, got := range vector {
-			want := float32(1) + float32(i*propertyUpdateVectorDims+j)/7
-			if got != want {
-				t.Fatalf("vector[%d][%d] = %v, want %v", i, j, got, want)
-			}
-		}
+		fixtureowner.RequireFloat32Vector(t, "managed chunk", vector, propertyUpdateVectorDims, func(j int) float32 {
+			return float32(1) + float32(i*propertyUpdateVectorDims+j)/7
+		})
 	}
-	named := node.NamedEmbeddings[propertyUpdateNamedVector]
-	require.Len(t, named, propertyUpdateVectorDims, "named vector of %s", node.ID)
-	for j, got := range named {
-		want := float32(2) + float32(j)/7
-		if got != want {
-			t.Fatalf("named vector[%d] = %v, want %v", j, got, want)
-		}
-	}
+	fixtureowner.RequireFloat32Vector(t, "named title", node.NamedEmbeddings[propertyUpdateNamedVector], propertyUpdateVectorDims, func(j int) float32 {
+		return float32(2) + float32(j)/7
+	})
 	require.Equal(t, true, node.EmbedMeta["has_embedding"])
 	require.EqualValues(t, chunks, node.EmbedMeta["chunk_count"])
 }
