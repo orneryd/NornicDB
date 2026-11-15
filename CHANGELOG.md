@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use the normal server storage profile for full CSV import so exported large values remain importable. Explicitly smaller embedded and low-memory capacities are unchanged.
 - Reduce temporary identity-table allocations when copying large cached query results while preserving detached mutable outputs.
+- Historical WAL upgrades reconstruct damaged derived keys only when the journal
+  proves their complete contents; unprovable records leave the source untouched.
 
 - Property updates reuse matching managed embedding sidecars instead of rewriting
   unchanged vector chunks and dropping their sidecar metadata.

@@ -33,6 +33,9 @@ func TestBufferedWALBindingOwner(t *testing.T) {
 			writerObject: true,
 			pkg.Scope().Lookup("rewriteWALPropertyBodies").(*types.Func):   true,
 			pkg.Scope().Lookup("rewriteWALPropertyPayloads").(*types.Func): true,
+			// The reviewed upgrade owner copies entity bodies verbatim and changes
+			// only derived physical keys proved by the record's surviving facts.
+			pkg.Scope().Lookup("repairV4BufferedCommitPhysicalKeys").(*types.Func): true,
 		}
 		var add func(*ssa.Function, bool)
 		add = func(fn *ssa.Function, owner bool) {
