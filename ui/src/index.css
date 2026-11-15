@@ -441,3 +441,22 @@ textarea.property-value { resize: vertical; }
 .database-name-heading > button[aria-pressed=true] { color: #fbbf24; }
 .database-name-heading > button:disabled { opacity: .5; }
 @media (pointer: coarse) { .database-name-heading > button { min-width: 44px; min-height: 44px; } }
+
+.managed-embedding-databases { border: 1px solid #2a3247; border-radius: 3px; padding: 1rem; display: grid; gap: 1rem; }
+.embedding-database-filters { display:flex; flex-wrap:wrap; gap:1rem; align-items:end; font-size:.8125rem; color:#c6cbd5; }
+.embedding-database-filters label { display:flex; flex-direction:column; gap:.5rem; }
+.embedding-database-filters input,.embedding-database-filters select { background:#141824; border:1px solid #2a3247; border-radius:3px; padding:.5rem; color:#f3f4f6; min-height:40px; max-width:100%; }
+.embedding-database-filters input:focus-visible,.embedding-database-filters select:focus-visible { outline:2px solid #10b981; outline-offset:0; }
+.embedding-database-filters p { padding-bottom:.5rem; }
+.embedding-database-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:.8125rem; }
+.embedding-database-table th,.embedding-database-table td { text-align:left; vertical-align:middle; padding:.75rem; border-bottom:1px solid #2a3247; overflow-wrap:anywhere; }
+.embedding-database-table thead { color:#9ca3af; }
+.embedding-database-table th:first-child { width:30%; }
+.embedding-database-table th:nth-child(2) { width:25%; }
+.embedding-generation-switch { display:inline-flex; align-items:center; gap:.5rem; min-height:44px; }
+.embedding-generation-switch:disabled { opacity:.6; cursor:wait; }
+.embedding-switch-track { display:inline-flex; align-items:center; width:36px; height:22px; padding:3px; background:#46516a; border-radius:12px; flex-shrink:0; }
+.embedding-switch-track > span { display:block; width:16px; height:16px; border-radius:50%; background:white; }
+.embedding-generation-switch[aria-checked=true] .embedding-switch-track { background:#047857; }
+.embedding-generation-switch[aria-checked=true] .embedding-switch-track > span { transform:translateX(14px); }
+@media(max-width:600px) { .managed-embedding-databases { padding:.75rem; } .embedding-database-table th,.embedding-database-table td { padding:.5rem .25rem; } .embedding-database-table th:first-child { width:32%; } .embedding-database-table th:nth-child(2) { width:30%; } .embedding-database-filters label { width:100%; } }

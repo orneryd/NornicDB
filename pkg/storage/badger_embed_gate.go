@@ -1,8 +1,9 @@
 package storage
 
 type embeddingLabelPolicy struct {
-	include map[string]struct{}
-	exclude map[string]struct{}
+	disabled bool
+	include  map[string]struct{}
+	exclude  map[string]struct{}
 }
 
 type embeddingLabelPolicies map[string]embeddingLabelPolicy
@@ -28,11 +29,46 @@ func (b *BadgerEngine) SetEmbeddingLabelPolicy(namespace string, include, exclud
 				updated[name] = existing
 			}
 		}
+		policy.disabled = updated[namespace].disabled
 		updated[namespace] = policy
 		if b.embeddingLabelPolicies.CompareAndSwap(old, &updated) {
 			return
 		}
 	}
+}
+
+// SetDatabaseEmbeddingsEnabled changes admission for one database without
+// deleting its existing vectors. Returns whether the setting changed.
+func (b *BadgerEngine) SetDatabaseEmbeddingsEnabled(namespace string, enabled bool) bool {
+	for {
+		old := b.embeddingLabelPolicies.Load()
+		updated := make(embeddingLabelPolicies)
+		if old != nil {
+			for name, policy := range *old {
+				updated[name] = policy
+			}
+		}
+		policy := updated[namespace]
+		changed := policy.disabled == enabled
+		policy.disabled = !enabled
+		updated[namespace] = policy
+		if b.embeddingLabelPolicies.CompareAndSwap(old, &updated) {
+			return changed
+		}
+	}
+}
+
+// IsDatabaseEmbeddingsEnabled reports per-database generation admission.
+func (b *BadgerEngine) IsDatabaseEmbeddingsEnabled(namespace string) bool {
+	policies := b.embeddingLabelPolicies.Load()
+	if policies == nil {
+		return true
+	}
+	policy, ok := (*policies)[namespace]
+	if !ok {
+		policy = (*policies)[""]
+	}
+	return !policy.disabled
 }
 
 func (b *BadgerEngine) embeddingLabelsAllowed(node *Node) bool {
@@ -46,6 +82,9 @@ func (b *BadgerEngine) embeddingLabelsAllowed(node *Node) bool {
 		if !ok {
 			return true
 		}
+	}
+	if policy.disabled {
+		return false
 	}
 	matched := len(policy.include) == 0
 	for _, label := range node.Labels {

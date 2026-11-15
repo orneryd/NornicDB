@@ -126,16 +126,16 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 	ew.applyNodeUpdatesLocked()
 	count := len(ew.claimedNodes)
 	for id := range ew.nodeRetries {
-		if _, claimed := ew.claimedNodes[string(id)]; !claimed {
+		if _, claimed := ew.claimedNodes[string(id)]; !claimed && ew.admitsEmbedding(id) {
 			count++
 		}
 	}
 	var accept func([]byte) bool
-	if len(ew.claimedNodes)+len(ew.nodeRetries) > 0 {
+	if len(ew.claimedNodes)+len(ew.nodeRetries) > 0 || ew.embeddingAdmission.Load() != nil {
 		accept = func(id []byte) bool {
 			_, claimed := ew.claimedNodes[string(id)]
 			_, queued := ew.nodeRetries[storage.NodeID(id)]
-			return !claimed && !queued
+			return !claimed && !queued && ew.admitsEmbedding(storage.NodeID(id))
 		}
 	}
 	count += storage.CountPendingEmbeddingIDs(ew.ctx, ew.storage, accept) // the worker's own lifetime
