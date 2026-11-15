@@ -106,13 +106,10 @@ func requireLargeRecordVectors(t *testing.T, b *BadgerEngine, id NodeID, chunks 
 	return got
 }
 
-// One property changed on a node with 17,000 chunk vectors of 256 dimensions
-// (17.4 MB): the commit succeeds, the journal holds one record of it, larger
-// than a frame, that carries the vectors value for value, and the node has the
-// property and the vectors after the commit and after crashClose and the
-// recovery at open. On main at 620595a5f the same commit is refused with "wal:
-// entry exceeds maximum WAL frame size" (the lab job is in the PR description).
-func TestLargeNodeUpdateAboveFrameLimitCommits(t *testing.T) {
+// Replacing vectors on a node with 17,000 chunks needs a complete transaction
+// image larger than one frame. Unchanged-vector property updates have separate
+// anchor/reference tests; this case retains the full-image framing contract.
+func TestLargeNodeVectorUpdateAboveFrameLimitCommits(t *testing.T) {
 	dir := t.TempDir()
 	b, w := largeRecordEngine(t, dir, WALRecordsLarge)
 	const chunks = 17000 // x 256 dims x 4 bytes = 17.4 MB
@@ -125,13 +122,14 @@ func TestLargeNodeUpdateAboveFrameLimitCommits(t *testing.T) {
 	require.NoError(t, err)
 	node = CopyNode(node)
 	node.Properties["flag"] = true
+	node.ChunkEmbeddings = largeRecordVectors(chunks, 2)
 	require.NoError(t, tx.UpdateGraphNode(ctx, NodeUpdateRequest{After: node}))
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: "above-frame"})
 	require.NoError(t, err)
 	receipt, err := NewWALEngine(b, w).SubmitEntityCommit(ctx, prepared, nil)
 	require.NoError(t, err, "a record larger than one frame must commit")
 	require.NoError(t, receipt.Wait(ctx))
-	got := requireLargeRecordVectors(t, b, "test:large", chunks, 1)
+	got := requireLargeRecordVectors(t, b, "test:large", chunks, 2)
 	require.Equal(t, true, got.Properties["flag"])
 
 	// The journal holds one record of the commit, with the node's vectors.
@@ -153,11 +151,11 @@ func TestLargeNodeUpdateAboveFrameLimitCommits(t *testing.T) {
 		require.Greater(t, len(data.Payload), int(walMaxEntrySize), "the record is larger than one frame")
 		require.Equal(t, EntityTransactionVersion, envelope.Version)
 		require.Len(t, ops, 1)
-		require.Equal(t, largeRecordVectors(chunks, 1), ops[0].Node.ChunkEmbeddings, "the record carries the node's vectors")
+		require.Equal(t, largeRecordVectors(chunks, 2), ops[0].Node.ChunkEmbeddings, "the record carries the node's vectors")
 	}
 	require.Equal(t, 1, records)
 
 	b, _ = largeRecordReopen(t, b, w, dir)
-	got = requireLargeRecordVectors(t, b, "test:large", chunks, 1)
+	got = requireLargeRecordVectors(t, b, "test:large", chunks, 2)
 	require.Equal(t, true, got.Properties["flag"])
 }
