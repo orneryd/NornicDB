@@ -233,14 +233,7 @@
     "read_domain": "input",
     "contract": "Externally generated action envelope whose parameters become tool parameters; the numbers keep the exact value the model emitted.",
     "calls": {
-      "input.Unmarshal": 1
-    }
-  },
-  "pkg/heimdall/plugin.go:tryParseActionResponse": {
-    "read_domain": "input",
-    "contract": "Externally generated action envelope for plugin-invoked SLM actions; the numbers keep the exact value the model emitted.",
-    "calls": {
-      "input.Unmarshal": 1
+      "input.NewDecoder": 1
     }
   },
   "pkg/graphql/models/models.go:FloatArray.MarshalGQL": {
