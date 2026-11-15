@@ -1,0 +1,4 @@
+# github.com/orneryd/nornicdb/pkg/storage [github.com/orneryd/nornicdb/pkg/storage.test]
+pkg/storage/experimental_projected_cache_test.go:72:23: b.DeleteGraphNode undefined (type *BadgerEngine has no field or method DeleteGraphNode)
+FAIL	github.com/orneryd/nornicdb/pkg/storage [build failed]
+FAIL

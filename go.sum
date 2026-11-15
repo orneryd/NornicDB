@@ -299,6 +299,8 @@ github.com/orneryd/nornic-badger/v4 v4.0.0-20261114192004-adf08d82495b h1:Mo08AO
 github.com/orneryd/nornic-badger/v4 v4.0.0-20261114192004-adf08d82495b/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
 github.com/orneryd/nornic-badger/v4 v4.0.0-20261114204014-4af841ebc969 h1:jAo1M1NMh6UQZw61b01tAbDT4ak4a+hzS5YUG6BNQUU=
 github.com/orneryd/nornic-badger/v4 v4.0.0-20261114204014-4af841ebc969/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261114232838-dccab80b05b7 h1:obXTpCuVXfK+swlwQHXed3xtki2Dp+X4KHTAKbQiTP4=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261114232838-dccab80b05b7/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
 github.com/pierrec/lz4/v4 v4.1.26 h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
 github.com/pierrec/lz4/v4 v4.1.26/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

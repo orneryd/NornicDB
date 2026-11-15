@@ -1,0 +1,9 @@
+--- FAIL: TestSizeTrackingEngine_GetNodeProjected (0.01s)
+    storage_size_tracking_projection_test.go:19: 
+        	Error Trace:	/src/pkg/multidb/storage_size_tracking_projection_test.go:19
+        	Error:      	Should be true
+        	Test:       	TestSizeTrackingEngine_GetNodeProjected
+        	Messages:   	database wrapper must preserve point projection, got *multidb.sizeTrackingEngine
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/multidb	0.029s
+FAIL

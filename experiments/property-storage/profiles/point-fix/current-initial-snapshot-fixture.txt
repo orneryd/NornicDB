@@ -1,0 +1,8 @@
+--- FAIL: TestExperimentalProjectedBodyCacheLatestAdmission (0.02s)
+    experimental_projected_cache_test.go:138: 
+        	Error Trace:	/src/pkg/storage/experimental_projected_cache_test.go:138
+        	Error:      	Expected value not to be nil.
+        	Test:       	TestExperimentalProjectedBodyCacheLatestAdmission
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	3.909s
+FAIL

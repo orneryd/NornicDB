@@ -1,0 +1,24 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: alloc_space
+Time: 2026-11-14 22:54:37 UTC
+Showing nodes accounting for 408.85MB, 86.49% of 472.71MB total
+Dropped 197 nodes (cum <= 2.36MB)
+Showing top 16 nodes out of 156
+      flat  flat%   sum%        cum   cum%
+   91.50MB 19.36% 19.36%    91.50MB 19.36%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+   77.59MB 16.41% 35.77%    77.59MB 16.41%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+   74.90MB 15.85% 51.62%    74.90MB 15.85%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+   50.57MB 10.70% 62.31%    52.45MB 11.10%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   34.13MB  7.22% 69.53%    34.13MB  7.22%  slices.Clone[go.shape.[]uint8,go.shape.uint8] (inline)
+   19.54MB  4.13% 73.67%    19.54MB  4.13%  slices.Clone[go.shape.[]int64,go.shape.int64] (inline)
+   15.56MB  3.29% 76.96%    15.56MB  3.29%  github.com/vmihailenco/msgpack/v5.readN
+   12.02MB  2.54% 79.50%    12.02MB  2.54%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedArray
+    8.50MB  1.80% 81.30%     8.50MB  1.80%  context.WithValue
+    6.50MB  1.38% 82.68%     6.50MB  1.38%  github.com/antlr4-go/antlr/v4.NewATNConfig
+       4MB  0.85% 83.52%        4MB  0.85%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+       4MB  0.85% 84.37%    58.17MB 12.31%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+       3MB  0.63% 85.00%        3MB  0.63%  internal/bytealg.MakeNoZero
+    2.53MB  0.54% 85.54%     2.53MB  0.54%  github.com/antlr4-go/antlr/v4.(*JStore[go.shape.*uint8,go.shape.interface { Equals2(*github.com/antlr4-go/antlr/v4.ATNConfig, *github.com/antlr4-go/antlr/v4.ATNConfig) bool; Hash1(*github.com/antlr4-go/antlr/v4.ATNConfig) int }]).Put
+    2.50MB  0.53% 86.07%     2.50MB  0.53%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries
+       2MB  0.42% 86.49%   400.23MB 84.67%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamedNodeMatchSource.func1.1

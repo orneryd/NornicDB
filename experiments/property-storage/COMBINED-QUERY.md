@@ -1,5 +1,7 @@
 # Combined Northwind and document projections
 
+This records the measurements leading to the fix. See [the indexed point-read correction](POINT-PROJECTION-FIX.md) for the current result and root cause.
+
 ## Scope and method
 
 The workload combines 97,440 Northwind nodes and 312,050 relationships with
@@ -56,8 +58,7 @@ regression in this run, not proof of a fixed cost in every process.
 The index candidate reader hydrates every user property, whereas the label reader
 already carries a proven projection. A candidate reused that analyzer and passed
 focused native/ANTLR checks, including filters, whole entities, mutations and
-embedding metadata. Its patch and regression fixture are retained in `rejected/`;
-it is not active runtime code.
+embedding metadata. The incomplete candidate was rejected at this checkpoint; its patch artifact has since been removed. The integrated correction and active regression tests are described in `POINT-PROJECTION-FIX.md`.
 
 The candidate was compared against the unchanged experimental binary on identical
 copies of the experimental combined store, flag on for both. All query fingerprints
@@ -70,8 +71,7 @@ matched, but the latency result did not justify adoption:
 | Batch sixteen | 1.027 / 1.442 | 1.172 / 1.667 |
 
 The severe first-run tail did not recur in the unchanged binary either. Do not
-attribute that difference to the candidate. Partial projections bypass full-body
-cache admission, which is a plausible cost requiring profiling before a redesign.
+attribute that difference to the candidate. Subsequent profiling found the server wrapper did not expose projected point reads, so this candidate did not reach physical projection on that path. The earlier cache-admission explanation was an unverified hypothesis.
 The candidate was removed because latency/concurrency take priority over avoiding
 materialization in isolation.
 
@@ -82,9 +82,9 @@ materialization in isolation.
 `verify_projected_queries.py` checks each old/new result fingerprint and prints
 medians. `projected-query/` contains the Bolt workload and Linux lab runner.
 No full test suite was run for this iteration, as requested.
-## Retained payload-skip tuning
+## Payload-skip checkpoint before the indexed correction
 
-The final runtime change is limited to skipping unselected length-framed strings,
+At this checkpoint the runtime change was limited to skipping unselected length-framed strings,
 binary values and extensions by a checked bytes.Reader seek. Selected properties
 retain the canonical strict decoder. Nested containers retain its Skip walk. The
 same default-off experimental flag controls this change. No storage format,
@@ -105,7 +105,7 @@ The final stock-versus-experimental rerun uses three trials, the same combined
 source stores and all five point workloads. All fingerprints match. Here are
 medians at eight clients:
 
-| Query | Stock mean/p95 ms | Final experimental mean/p95 ms | Stock/final queries/s |
+| Query | Stock mean/p95 ms | Skip-only mean/p95 ms | Stock/final queries/s |
 |---|---:|---:|---:|
 | Document point | 0.579 / 0.809 | 0.788 / 1.237 | 13,466 / 9,874 |
 | Northwind product | 0.554 / 0.763 | 0.568 / 0.806 | 13,994 / 13,822 |

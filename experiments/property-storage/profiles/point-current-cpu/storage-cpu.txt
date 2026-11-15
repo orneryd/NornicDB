@@ -1,0 +1,1 @@
+         0     0%  8.23%      0.48s 15.19%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).getQueryNode

@@ -4,7 +4,7 @@ from pathlib import Path
 from statistics import median
 
 root=Path(__file__).parent/'profiles'
-for directory in ('combined-query','combined-query-scans','point-tuned-query','point-seek-query'):
+for directory in ('combined-query','combined-query-scans','point-tuned-query','point-seek-query','point-fixed-query','point-final-query','point-current-query','point-current-full-cold'):
     folder=root/directory
     if not folder.exists(): continue
     print('\n'+directory)

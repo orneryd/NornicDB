@@ -1,0 +1,25 @@
+{
+  "corpus_sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64",
+  "documents": 4352,
+  "northwind_nodes": 97440,
+  "northwind_relationships": 312050,
+  "phases": [
+    {
+      "mean_ms": 0.52818371875,
+      "name": "document_full_control",
+      "p50_ms": 0.513335,
+      "p95_ms": 0.657545,
+      "p99_ms": 0.811956,
+      "queries": 4000,
+      "queries_second": 1609.239112932558,
+      "result_sha256": "74b845697360f635d6a6840c0af2ef17b8884e8372dbdd5390d72ed1d9799e67",
+      "sampled_server_peak_rss_kib": 2370332,
+      "server_rss_after_kib": 2370332,
+      "server_rss_before_kib": 2369564,
+      "workers": 1
+    }
+  ],
+  "query_cache_enabled": false,
+  "sampling_interval_ms": 10,
+  "server_start_rss_kib": 2364188
+}

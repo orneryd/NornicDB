@@ -1,0 +1,18 @@
+{
+  "consumer_parent": "fad8a3469a27bb9495b0263e11d14e1adfb1f0f0",
+  "verified_container_source_matches_workspace": true,
+  "runtime_source_sha256": {
+    "pkg/storage/badger_cache.go": "e7273e0cde8bbbfd74a8ae2741b478cc52492d051e6281f9235f86e534991eae",
+    "pkg/cypher/node_helpers.go": "bb3953151b3c623c4d9e91a1f1ab969bf61b4db18073570750f49639d70f935d",
+    "pkg/storage/composite_capabilities.go": "08dad366e499acb34ea525e1cdb41536e6315e5ae3ebc5532301b407876adf2c",
+    "pkg/storage/badger_nodes.go": "23aba575c9bdb514dbd6a25b769fbbc799b01b45825d4fd3efad23a47c5341ab",
+    "go.sum": "9797658f27ff7bed3bd3d667c1b86c45ab69430cee0d1f4261bb4830398b707f",
+    "pkg/storage/badger_snapshot_body.go": "1607275b453d333ede2bbd207bf16db7f45ca970f06ac7ab0837eb9279d880af",
+    "pkg/cypher/node_index_candidate_plan.go": "7e1015bf4f064900da0e85b3dcc2e138320a156acc5a5038aacb5fa481099d6d",
+    "pkg/storage/wrapper_capabilities.go": "bd3224952520961937d83f97d7e762844b74abffde4b7b27769fa13834c58645",
+    "pkg/multidb/storage_size_tracking_engine.go": "68e32d21ccf79da44fdfb925b2e9efff8ca161a2b371144025aa22b291477827",
+    "go.mod": "fc074c0b4061779d67b074118490a53210686850c5d6b099539e9989045cd311",
+    "pkg/cypher/match_index_seek.go": "7ed92a3493d66e011c1dbfb763424d44d0e9485c50cdf35b7656fd1ab54a682a"
+  },
+  "fork_commit": "dccab80b05b7934849a2e640b7e4d43a2cf1bc97"
+}

@@ -1,0 +1,12 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-point-fixed",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "indexed-projection-and-wrapper-fix",
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-ix3g0itf",
+  "source_stores_unchanged": true
+}

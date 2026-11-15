@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -1962,6 +1963,13 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	plan, used, err := e.planPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
 	if err != nil || !used {
 		return nil, false, false, err
+	}
+	if config.IsExperimentalPropertyStorageEnabled() {
+		// Use the same read-tail proof as the label stream. It includes
+		// residual predicates and declines whole entities, writes and viewports.
+		if projection, safe := pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail); safe {
+			plan.projection = projection
+		}
 	}
 	return e.readNodeIndexCandidatePlan(ctx, plan)
 }

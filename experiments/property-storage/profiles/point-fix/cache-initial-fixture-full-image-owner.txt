@@ -1,0 +1,19 @@
+--- FAIL: TestExperimentalProjectedBodyCacheCoverageAndOwnership (0.01s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x8 pc=0x2a50060]
+
+goroutine 11 [running]:
+testing.tRunner.func1.2({0x808c5c0, 0x84a7120})
+	/usr/local/go/src/testing/testing.go:2125 +0x232
+testing.tRunner.func1()
+	/usr/local/go/src/testing/testing.go:2128 +0x329
+panic({0x808c5c0?, 0x84a7120?})
+	/usr/local/go/src/runtime/panic.go:859 +0x125
+github.com/orneryd/nornicdb/pkg/storage.TestExperimentalProjectedBodyCacheCoverageAndOwnership(0x1bd1b8a4c6c8)
+	/src/pkg/storage/experimental_projected_cache_test.go:47 +0xbc0
+testing.tRunner(0x1bd1b8a4c6c8, 0x848c020)
+	/usr/local/go/src/testing/testing.go:2195 +0xea
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:2260 +0x4d4
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.114s
+FAIL

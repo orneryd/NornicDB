@@ -406,7 +406,7 @@ func (c *CompositeEngine) GetNodeProjected(ctx context.Context, id NodeID, prope
 		if err != nil {
 			continue
 		}
-		node, err := getNodeProjectedThrough(ctx, engine, id, properties)
+		node, err := GetNodeProjectedThrough(ctx, engine, id, properties)
 		if err == nil {
 			return c.sourceNode(alias, engine, node), nil
 		}

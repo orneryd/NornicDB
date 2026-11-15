@@ -72,6 +72,8 @@ const (
 // and node IDs; reading it reads node bodies.
 type nodeIndexCandidatePlan struct {
 	route nodeCandidateRoute
+	// projection is a caller-proven property-only read; nil keeps full images.
+	projection []string
 
 	// ids are the candidates the route listed, in the order it listed them:
 	// the resolver's ID result, which keeps an ordinary lookup's few IDs in
@@ -247,6 +249,7 @@ func (e *StorageExecutor) readNodeIndexCandidatePlan(ctx context.Context, plan n
 			policy:     nodeCandidateReadIdentity,
 			labels:     plan.pattern.labels,
 			properties: plan.pattern.properties,
+			projection: plan.projection,
 		})
 		if err != nil {
 			return nil, false, false, err
@@ -254,9 +257,10 @@ func (e *StorageExecutor) readNodeIndexCandidatePlan(ctx context.Context, plan n
 		return nodes, plan.whereApplied, true, nil
 	case nodeCandidateIndexedProperty:
 		nodes, err = e.readNodeCandidates(ctx, e.storage, nodeCandidateRead{
-			ids:    plan.ids.ids(),
-			policy: nodeCandidateReadIndexedProperty,
-			labels: plan.pattern.labels,
+			ids:        plan.ids.ids(),
+			policy:     nodeCandidateReadIndexedProperty,
+			labels:     plan.pattern.labels,
+			projection: plan.projection,
 		})
 		if err != nil {
 			return nil, false, false, err
@@ -266,18 +270,20 @@ func (e *StorageExecutor) readNodeIndexCandidatePlan(ctx context.Context, plan n
 		// admits the pattern's labels as it read them: every candidate carries
 		// every pattern label.
 		nodes, err = e.readNodeCandidates(ctx, plan.seek.store, nodeCandidateRead{
-			ids:    plan.ids.ids(),
-			policy: nodeCandidateReadInline,
-			seek:   &plan.seek,
+			ids:        plan.ids.ids(),
+			policy:     nodeCandidateReadInline,
+			seek:       &plan.seek,
+			projection: plan.projection,
 		})
 		if err != nil {
 			return nil, false, false, err
 		}
 	case nodeCandidateSeek:
 		nodes, err = e.readNodeCandidates(ctx, e.storage, nodeCandidateRead{
-			ids:    plan.ids.ids(),
-			policy: nodeCandidateReadSeek,
-			seek:   &plan.seek,
+			ids:        plan.ids.ids(),
+			policy:     nodeCandidateReadSeek,
+			seek:       &plan.seek,
+			projection: plan.projection,
 		})
 		if err != nil {
 			return nil, false, false, err
@@ -336,8 +342,9 @@ const (
 // nodeCandidateRead is one route's request to hydrate the candidates it listed:
 // the IDs it listed in order, and the admission applied to each node they name.
 type nodeCandidateRead struct {
-	ids    []storage.NodeID
-	policy nodeCandidateReadPolicy
+	ids        []storage.NodeID
+	policy     nodeCandidateReadPolicy
+	projection []string
 
 	// labels and properties are the pattern's resolved labels and its inline
 	// properties: the indexed-property route admits the labels alone, and with
@@ -373,7 +380,7 @@ func (e *StorageExecutor) readNodeCandidates(ctx context.Context, store storage.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		node, err := e.getQueryNode(ctx, store, id)
+		node, err := e.getQueryNode(ctx, store, id, req.projection)
 		if err != nil || node == nil {
 			continue
 		}

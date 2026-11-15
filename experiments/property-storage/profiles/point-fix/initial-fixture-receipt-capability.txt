@@ -1,0 +1,9 @@
+--- FAIL: TestExperimentalPointProjectionThroughManagedDatabase (0.01s)
+    experimental_point_projection_test.go:90: 
+        	Error Trace:	/src/pkg/cypher/experimental_point_projection_test.go:90
+        	Error:      	Received unexpected error:
+        	            	catalog storage requires entity commit receipts: invalid data
+        	Test:       	TestExperimentalPointProjectionThroughManagedDatabase
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.173s
+FAIL

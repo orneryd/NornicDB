@@ -1,0 +1,9 @@
+--- FAIL: TestExperimentalPointProjectionThroughManagedDatabase (0.01s)
+    experimental_point_projection_test.go:97: 
+        	Error Trace:	/src/pkg/cypher/experimental_point_projection_test.go:97
+        	Error:      	Received unexpected error:
+        	            	engine does not support transactions
+        	Test:       	TestExperimentalPointProjectionThroughManagedDatabase
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.179s
+FAIL

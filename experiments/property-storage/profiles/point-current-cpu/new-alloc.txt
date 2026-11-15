@@ -1,0 +1,28 @@
+File: nornicdb-point-public
+Build ID: 5de3c069449c2c2b0eb75b7663651afdef2540ad
+Type: alloc_space
+Time: 2026-11-14 23:38:40 UTC
+Showing nodes accounting for 161.83MB, 83.16% of 194.59MB total
+Dropped 76 nodes (cum <= 0.97MB)
+Showing top 20 nodes out of 217
+      flat  flat%   sum%        cum   cum%
+   40.45MB 20.79% 20.79%    40.45MB 20.79%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+   38.42MB 19.75% 40.53%    38.42MB 19.75%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+   33.40MB 17.16% 57.70%    33.40MB 17.16%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    6.50MB  3.34% 61.04%     6.50MB  3.34%  context.WithValue
+    5.50MB  2.83% 63.86%        6MB  3.08%  github.com/orneryd/nornicdb/pkg/bolt.decodePackStreamMap
+       5MB  2.57% 66.43%        5MB  2.57%  github.com/antlr4-go/antlr/v4.NewATNConfig
+       4MB  2.06% 68.49%        4MB  2.06%  github.com/orneryd/nornicdb/pkg/cypher.parameterRowsOf
+    3.50MB  1.80% 70.29%     3.50MB  1.80%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+    3.50MB  1.80% 72.09%   154.28MB 79.28%  github.com/orneryd/nornicdb/pkg/bolt.(*boltQueryExecutorAdapter).Execute
+    2.55MB  1.31% 73.40%     2.55MB  1.31%  github.com/antlr4-go/antlr/v4.(*JStore[go.shape.*uint8,go.shape.interface { Equals2(*github.com/antlr4-go/antlr/v4.ATNConfig, *github.com/antlr4-go/antlr/v4.ATNConfig) bool; Hash1(*github.com/antlr4-go/antlr/v4.ATNConfig) int }]).Put
+    2.50MB  1.29% 74.68%     2.50MB  1.29%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).withRunningStatement
+    2.50MB  1.28% 75.97%     2.50MB  1.28%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+    2.50MB  1.28% 77.25%     2.50MB  1.28%  go.opentelemetry.io/otel/internal/global.(*tracer).newSpan
+       2MB  1.03% 78.28%   126.78MB 65.15%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamedNodeMatchSource.func1.1
+       2MB  1.03% 79.31%        2MB  1.03%  runtime/pprof.allFrames
+    1.50MB  0.77% 80.08%     1.50MB  0.77%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).readWireMessage
+    1.50MB  0.77% 80.85%     1.50MB  0.77%  github.com/orneryd/nornicdb/pkg/cypher.NewResultStream
+    1.50MB  0.77% 81.62%     1.50MB  0.77%  github.com/orneryd/nornicdb/pkg/cypher.cachedPipelineClauses
+    1.50MB  0.77% 82.39%     1.50MB  0.77%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).parseReturnItems
+    1.50MB  0.77% 83.16%     1.50MB  0.77%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)

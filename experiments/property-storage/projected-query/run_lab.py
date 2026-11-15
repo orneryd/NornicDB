@@ -19,6 +19,7 @@ p.add_argument("--docs",required=True)
 p.add_argument("--out",required=True)
 p.add_argument("--queries",type=int,default=4000)
 p.add_argument("--prepared",action="store_true",help="source stores already contain the document corpus")
+p.add_argument("--phase",default="",help="restrict the workload for a focused comparison")
 p.add_argument("--scans",action="store_true",help="run streaming label projections only")
 p.add_argument("--new-source",default="working tree payload-skip tuning; public Badger 4af841ebc969")
 p.add_argument("--old-experimental",action="store_true",help="compare two experimental builds")
@@ -76,6 +77,7 @@ for trial in (1,2,3):
             try:
                 command=[args.client,"-docs",args.docs,"-pid",str(proc.pid),"-workers",str(clients),"-queries",str(args.queries),"-out",str(out/(tag+".json"))]
                 if args.scans: command += ["-scan-only","-warmup","4"]
+                if args.phase: command += ["-phase",args.phase]
                 subprocess.run(command,check=True)
             finally:
                 stop(proc,log)

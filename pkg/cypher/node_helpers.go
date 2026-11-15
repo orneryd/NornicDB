@@ -60,7 +60,7 @@ const profileKindNodeByIdSeek = queryprofile.KindNodeByIDSeek
 // seek that hydrates the entries its index listed, the traversal that reads an
 // endpoint and the MERGE that reads its own pattern each report those reads
 // here, and never under the operator that named the node.
-func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine, id storage.NodeID, projection ...[]string) (*storage.Node, error) {
 	reader := e.queryNodeReader(ctx, store)
 	counter := queryprofile.Access(ctx, profileKindNodeByIdSeek, "")
 	var (
@@ -68,7 +68,15 @@ func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine
 		err  error
 	)
 	if reader != nil {
-		node, err = reader.GetQueryNode(ctx, id)
+		if len(projection) > 0 && projection[0] != nil {
+			if projected, ok := store.(storage.ProjectedNodeReader); ok {
+				node, err = projected.GetNodeProjected(ctx, id, projection[0])
+			} else {
+				node, err = reader.GetQueryNode(ctx, id)
+			}
+		} else {
+			node, err = reader.GetQueryNode(ctx, id)
+		}
 	} else {
 		node, err = store.GetNode(ctx, id)
 	}

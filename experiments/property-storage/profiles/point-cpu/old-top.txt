@@ -1,0 +1,34 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: cpu
+Time: 2026-11-14 22:52:27 UTC
+Duration: 25s, Total samples = 48.41s (193.63%)
+Showing nodes accounting for 22.87s, 47.24% of 48.41s total
+Dropped 989 nodes (cum <= 0.24s)
+Showing top 25 nodes out of 270
+      flat  flat%   sum%        cum   cum%
+     5.66s 11.69% 11.69%      5.66s 11.69%  internal/runtime/syscall/linux.Syscall6
+     3.72s  7.68% 19.38%     10.56s 21.81%  github.com/orneryd/nornicdb/pkg/cypher.keywordIndexFrom
+     1.37s  2.83% 22.21%      1.39s  2.87%  github.com/orneryd/nornicdb/internal/cyphertext.CommentEndStatus
+     1.12s  2.31% 24.52%      1.13s  2.33%  strings.EqualFold
+     1.01s  2.09% 26.61%      1.37s  2.83%  context.value
+     0.99s  2.05% 28.65%      0.99s  2.05%  sync/atomic.(*Int32).Add (inline)
+     0.87s  1.80% 30.45%      0.87s  1.80%  internal/runtime/maps.memHashAES
+     0.79s  1.63% 32.08%      0.79s  1.63%  github.com/orneryd/nornicdb/internal/cyphertext.RuneAt
+     0.77s  1.59% 33.67%      0.77s  1.59%  runtime.memmove
+     0.65s  1.34% 35.01%      0.65s  1.34%  context.(*valueCtx).Err
+     0.61s  1.26% 36.27%      0.61s  1.26%  runtime.futex
+     0.51s  1.05% 37.33%      0.51s  1.05%  unicode.IsSpace
+     0.50s  1.03% 38.36%      0.50s  1.03%  runtime.asyncPreempt
+     0.46s  0.95% 39.31%      1.62s  3.35%  github.com/orneryd/nornicdb/pkg/cypher.trimKeywordWSBounds
+     0.46s  0.95% 40.26%      0.46s  0.95%  memeqbody
+     0.39s  0.81% 41.07%      0.42s  0.87%  internal/sync.(*Mutex).Unlock (inline)
+     0.37s  0.76% 41.83%      1.54s  3.18%  github.com/orneryd/nornicdb/internal/cyphertext.IsWhitespaceAt
+     0.37s  0.76% 42.59%      0.87s  1.80%  github.com/orneryd/nornicdb/pkg/cypher.lastTopLevelClauseWord
+     0.35s  0.72% 43.32%      1.23s  2.54%  github.com/orneryd/nornicdb/pkg/cypher.(*statementContext).Err
+     0.34s   0.7% 44.02%      0.34s   0.7%  runtime.memclrNoHeapPointers
+     0.32s  0.66% 44.68%      2.03s  4.19%  github.com/orneryd/nornicdb/pkg/cypher.startsWithKeywords
+     0.32s  0.66% 45.34%      1.98s  4.09%  runtime.mapaccess2
+     0.31s  0.64% 45.98%      1.64s  3.39%  github.com/orneryd/nornicdb/internal/cyphertext.CommentEnd (inline)
+     0.31s  0.64% 46.62%      0.31s  0.64%  runtime.nextFreeFast
+     0.30s  0.62% 47.24%      1.29s  2.66%  github.com/orneryd/nornicdb/pkg/cypher.containsFold

@@ -1,0 +1,33 @@
+File: nornicdb-skip-final
+Build ID: f0fad21650403ff0d2ec1f1f3a0473cad000098d
+Type: alloc_space
+Time: 2026-11-14 22:53:01 UTC
+Showing nodes accounting for 4.01GB, 76.58% of 5.24GB total
+Dropped 305 nodes (cum <= 0.03GB)
+Showing top 25 nodes out of 197
+      flat  flat%   sum%        cum   cum%
+    0.48GB  9.07%  9.07%     0.48GB  9.07%  slices.Clone[go.shape.[]uint8,go.shape.uint8] (inline)
+    0.47GB  8.95% 18.02%     1.23GB 23.44%  github.com/orneryd/nornicdb/pkg/storage.visitAtomicWALEntries
+    0.30GB  5.75% 23.77%     0.30GB  5.75%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+    0.30GB  5.73% 29.50%     0.30GB  5.73%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    0.28GB  5.34% 34.84%     0.28GB  5.34%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+    0.28GB  5.28% 40.13%     0.28GB  5.28%  github.com/vmihailenco/msgpack/v5.readN
+    0.26GB  5.01% 45.13%     0.28GB  5.31%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+    0.23GB  4.35% 49.48%     0.23GB  4.35%  slices.Clone[go.shape.[]int64,go.shape.int64] (inline)
+    0.15GB  2.84% 52.32%     0.53GB 10.05%  github.com/orneryd/nornicdb/pkg/storage.decodeSemanticTransaction[go.shape.struct { time.wall uint64; time.ext int64; time.loc *time.Location }]
+    0.13GB  2.57% 54.90%     0.13GB  2.57%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+    0.13GB  2.54% 57.44%     0.13GB  2.54%  context.WithValue
+    0.12GB  2.37% 59.81%     0.13GB  2.43%  github.com/dgraph-io/badger/v4/experimental/nornic.DecodePayload
+    0.09GB  1.80% 61.61%     0.44GB  8.44%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+    0.09GB  1.65% 63.26%     0.22GB  4.20%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedMap
+    0.08GB  1.62% 64.88%     0.08GB  1.62%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries
+    0.08GB  1.53% 66.41%     0.10GB  1.95%  go.opentelemetry.io/otel/internal/global.(*tracer).newSpan
+    0.07GB  1.33% 67.74%     0.09GB  1.77%  github.com/orneryd/nornicdb/pkg/bolt.decodePackStreamMap
+    0.07GB  1.31% 69.06%     0.96GB 18.28%  github.com/dgraph-io/badger/v4.(*Txn).Get
+    0.07GB  1.30% 70.35%     0.07GB  1.30%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+    0.06GB  1.16% 71.52%     0.06GB  1.16%  reflect.unsafe_New
+    0.06GB  1.13% 72.65%     0.06GB  1.13%  github.com/orneryd/nornicdb/pkg/cypher.NewResultStream
+    0.06GB  1.12% 73.76%     0.06GB  1.12%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).readWireMessage
+    0.05GB  0.96% 74.72%     0.05GB  0.96%  github.com/orneryd/nornicdb/pkg/storage.scanAtomicWALForRepair
+    0.05GB  0.93% 75.66%     0.12GB  2.35%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+    0.05GB  0.92% 76.58%     1.90GB 36.24%  github.com/orneryd/nornicdb/pkg/bolt.(*boltQueryExecutorAdapter).Execute

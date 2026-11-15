@@ -1,0 +1,24 @@
+File: nornicdb-skip-final
+Build ID: f0fad21650403ff0d2ec1f1f3a0473cad000098d
+Type: alloc_space
+Time: 2026-11-14 22:54:49 UTC
+Showing nodes accounting for 328.24MB, 84.68% of 387.61MB total
+Dropped 157 nodes (cum <= 1.94MB)
+Showing top 16 nodes out of 174
+      flat  flat%   sum%        cum   cum%
+   57.87MB 14.93% 14.93%    61.02MB 15.74%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   54.19MB 13.98% 28.91%    56.34MB 14.53%  github.com/dgraph-io/badger/v4/experimental/nornic.DecodePayload
+   40.94MB 10.56% 39.47%    40.94MB 10.56%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize
+   39.15MB 10.10% 49.57%    39.15MB 10.10%  slices.Clone[go.shape.[]uint8,go.shape.uint8]
+   31.35MB  8.09% 57.66%    31.35MB  8.09%  github.com/dgraph-io/badger/v4/y.SafeCopy
+   29.35MB  7.57% 65.23%    29.35MB  7.57%  github.com/dgraph-io/badger/v4/y.Copy
+   16.64MB  4.29% 69.53%   141.01MB 36.38%  github.com/orneryd/nornicdb/pkg/storage.init.1.func1
+   14.56MB  3.76% 73.28%    14.56MB  3.76%  github.com/vmihailenco/msgpack/v5.readN
+   14.03MB  3.62% 76.90%    14.03MB  3.62%  slices.Clone[go.shape.[]int64,go.shape.int64]
+    7.01MB  1.81% 78.71%     7.01MB  1.81%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedArray
+       5MB  1.29% 80.00%        5MB  1.29%  context.WithValue
+    4.50MB  1.16% 81.16%     4.50MB  1.16%  github.com/antlr4-go/antlr/v4.NewATNConfig
+       4MB  1.03% 82.19%        4MB  1.03%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).readWireMessage
+    3.50MB   0.9% 83.10%        4MB  1.03%  go.opentelemetry.io/otel/internal/global.(*tracer).newSpan
+    3.15MB  0.81% 83.91%     3.15MB  0.81%  github.com/vmihailenco/msgpack/v5.readNGrow
+       3MB  0.77% 84.68%        3MB  0.77%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries

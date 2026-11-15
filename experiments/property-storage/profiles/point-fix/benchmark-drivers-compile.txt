@@ -1,0 +1,4 @@
+?   	github.com/orneryd/nornicdb/experiments/property-storage/corpus	[no test files]
+?   	github.com/orneryd/nornicdb/experiments/property-storage/layout	[no test files]
+?   	github.com/orneryd/nornicdb/experiments/property-storage/profile	[no test files]
+?   	github.com/orneryd/nornicdb/experiments/property-storage/projected-query	[no test files]

@@ -1,0 +1,34 @@
+File: nornicdb-skip-final
+Build ID: f0fad21650403ff0d2ec1f1f3a0473cad000098d
+Type: cpu
+Time: 2026-11-14 22:53:01 UTC
+Duration: 25s, Total samples = 49.41s (197.62%)
+Showing nodes accounting for 22.67s, 45.88% of 49.41s total
+Dropped 1042 nodes (cum <= 0.25s)
+Showing top 25 nodes out of 281
+      flat  flat%   sum%        cum   cum%
+     5.52s 11.17% 11.17%      5.52s 11.17%  internal/runtime/syscall/linux.Syscall6
+     3.33s  6.74% 17.91%     10.41s 21.07%  github.com/orneryd/nornicdb/pkg/cypher.keywordIndexFrom
+     1.48s  3.00% 20.91%      1.49s  3.02%  github.com/orneryd/nornicdb/internal/cyphertext.CommentEndStatus
+     1.10s  2.23% 23.13%      1.10s  2.23%  strings.EqualFold
+     1.06s  2.15% 25.28%      1.06s  2.15%  sync/atomic.(*Int32).Add (inline)
+     0.98s  1.98% 27.26%      0.98s  1.98%  internal/runtime/maps.memHashAES
+     0.85s  1.72% 28.98%      0.85s  1.72%  runtime.memmove
+     0.84s  1.70% 30.68%      1.17s  2.37%  context.value
+     0.70s  1.42% 32.10%      0.72s  1.46%  github.com/orneryd/nornicdb/internal/cyphertext.RuneAt
+     0.66s  1.34% 33.43%      0.66s  1.34%  context.(*valueCtx).Err
+     0.56s  1.13% 34.57%      0.56s  1.13%  runtime.futex
+     0.51s  1.03% 35.60%      0.51s  1.03%  runtime.asyncPreempt
+     0.47s  0.95% 36.55%      0.50s  1.01%  unicode.IsSpace
+     0.45s  0.91% 37.46%      1.41s  2.85%  github.com/orneryd/nornicdb/pkg/cypher.containsFold
+     0.44s  0.89% 38.35%      1.50s  3.04%  github.com/orneryd/nornicdb/pkg/cypher.trimKeywordWSBounds
+     0.44s  0.89% 39.24%      0.44s  0.89%  memeqbody
+     0.42s  0.85% 40.09%      1.53s  3.10%  github.com/orneryd/nornicdb/internal/cyphertext.IsWhitespaceAt
+     0.42s  0.85% 40.94%      1.48s  3.00%  github.com/orneryd/nornicdb/pkg/cypher.(*statementContext).Err
+     0.39s  0.79% 41.73%      0.39s  0.79%  runtime.memclrNoHeapPointers
+     0.37s  0.75% 42.48%      1.03s  2.08%  github.com/orneryd/nornicdb/pkg/cypher.lastTopLevelClauseWord
+     0.36s  0.73% 43.21%      0.37s  0.75%  internal/sync.(*Mutex).Unlock (inline)
+     0.34s  0.69% 43.90%      1.97s  3.99%  runtime.mapaccess2
+     0.33s  0.67% 44.57%      0.43s  0.87%  context.(*cancelCtx).Err
+     0.33s  0.67% 45.23%      2.02s  4.09%  github.com/orneryd/nornicdb/pkg/cypher.startsWithKeywords
+     0.32s  0.65% 45.88%      0.32s  0.65%  internal/runtime/maps.ctrlGroup.matchH2 (inline)

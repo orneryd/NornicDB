@@ -1,0 +1,2 @@
+         0     0%  1.02%      1.12s 28.57%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).getQueryNode
+         0     0%  6.89%      0.49s 12.50%  github.com/dgraph-io/badger/v4/experimental/nornic.DecodePayload

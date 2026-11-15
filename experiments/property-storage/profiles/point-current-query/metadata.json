@@ -1,0 +1,12 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-point-public",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "public-dccab80-projection-and-single-lazy-cache",
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-raw17qxg",
+  "source_stores_unchanged": true
+}

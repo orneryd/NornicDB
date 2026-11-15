@@ -66,6 +66,7 @@ func run() error {
 	pid := flag.Int("pid", 0, "database server PID for Linux RSS sampling")
 	count := flag.Int("queries", 4000, "queries per phase")
 	workers := flag.Int("workers", 8, "concurrent Bolt clients")
+	phase := flag.String("phase", "", "measure only the named phase for profiling")
 	scanOnly := flag.Bool("scan-only", false, "measure the label-streaming projection path")
 	warmup := flag.Int("warmup", 64, "warm-up calls per phase")
 	flag.Parse()
@@ -158,9 +159,12 @@ func run() error {
 		return err
 	}
 	var phases []map[string]any
-	kinds := []string{"document_projection", "northwind_projection", "mixed_projection", "document_batch_projection", "document_full_control"}
+	kinds := []string{"document_projection", "northwind_projection", "mixed_projection", "document_batch_projection", "document_full_control", "document_full_warm_control"}
 	if *scanOnly {
 		kinds = []string{"document_label_projection"}
+	}
+	if *phase != "" {
+		kinds = []string{*phase}
 	}
 	for _, kind := range kinds {
 		operation := func(s neo4j.SessionWithContext, i int) ([][]any, error) {
@@ -179,7 +183,7 @@ func run() error {
 				return query(ctx, s, batchProjection, map[string]any{"keys": keys})
 			}
 			text := documentProjection
-			if kind == "document_full_control" {
+			if strings.HasPrefix(kind, "document_full_") {
 				text = documentFull
 			}
 			return query(ctx, s, text, map[string]any{"key": records[index].ID})

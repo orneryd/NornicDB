@@ -41,10 +41,9 @@ or skiplist per entity, and do not turn each requested property into another
 transaction.Get. Those choices add allocation, seeks and fan-out to point reads.
 
 A sorted KV directory still needs offsets or lengths to locate payloads. The
-fork already has an NPR1 prototype with a per-record sorted directory, but its
+fork had an NPR1 prototype with a per-record sorted directory, but its
 12-byte header and 24-byte entry cost 156 bytes for a six-property record before
-values. The current tokenized list has much smaller key overhead. NPR1 is not
-integrated into the physical Nornic path and is not a demonstrated point-read win.
+values. The current tokenized list has much smaller key overhead. NPR1 never entered the physical Nornic path and was removed: its overhead did not help fix the measured regression.
 
 First remove unnecessary payload copies from the current token walk. MessagePack's
 Skip reads omitted strings/binaries/extensions into decoder scratch. A bounded

@@ -1,6 +1,9 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/config"
+)
 
 // nodeBodyAccess keeps mutable query results detached. Commit validation may
 // borrow an immutable version-matched body only for its immediate comparisons.
@@ -96,15 +99,38 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
 	}
-	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
-	if !cached {
+	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
+	node := read.node
+	if !read.complete {
+		decodeInclude := include
+		if node != nil {
+			decodeInclude = make(map[string]struct{}, len(read.missing))
+			for _, name := range read.missing {
+				decodeInclude[name] = struct{}{}
+			}
+		}
 		err := item.Value(func(value []byte) error {
-			var err error
-			node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
-			return err
+			decoded, err := b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+			if err != nil {
+				return err
+			}
+			if node == nil {
+				node = decoded
+			} else if decoded != nil {
+				if node.Properties == nil {
+					node.Properties = make(map[string]any, len(decoded.Properties))
+				}
+				for name, value := range decoded.Properties {
+					node.Properties[name] = value
+				}
+			}
+			return nil
 		})
 		if err != nil {
 			return node, err
+		}
+		if config.IsExperimentalPropertyStorageEnabled() {
+			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs(), properties)
 		}
 	}
 	// A projection that names has_embedding gets the node's embedding metadata

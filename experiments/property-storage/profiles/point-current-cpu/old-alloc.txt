@@ -1,0 +1,28 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: alloc_space
+Time: 2026-11-14 23:38:29 UTC
+Showing nodes accounting for 383.75MB, 88.95% of 431.40MB total
+Dropped 176 nodes (cum <= 2.16MB)
+Showing top 20 nodes out of 160
+      flat  flat%   sum%        cum   cum%
+   82.95MB 19.23% 19.23%    82.95MB 19.23%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+   76.41MB 17.71% 36.94%    76.41MB 17.71%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+   70.49MB 16.34% 53.28%    70.49MB 16.34%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+   43.57MB 10.10% 63.38%    46.12MB 10.69%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   33.13MB  7.68% 71.06%    33.13MB  7.68%  slices.Clone[go.shape.[]uint8,go.shape.uint8] (inline)
+   15.53MB  3.60% 74.66%    15.53MB  3.60%  slices.Clone[go.shape.[]int64,go.shape.int64] (inline)
+   14.05MB  3.26% 77.92%    14.05MB  3.26%  github.com/vmihailenco/msgpack/v5.readN
+   13.03MB  3.02% 80.94%    13.03MB  3.02%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedArray
+    6.50MB  1.51% 82.44%     6.50MB  1.51%  github.com/antlr4-go/antlr/v4.NewATNConfig
+       4MB  0.93% 83.37%        5MB  1.16%  github.com/orneryd/nornicdb/pkg/bolt.decodePackStreamMap
+    3.50MB  0.81% 84.18%     3.50MB  0.81%  context.WithValue
+    3.03MB   0.7% 84.88%     3.03MB   0.7%  github.com/antlr4-go/antlr/v4.(*JStore[go.shape.*uint8,go.shape.interface { Equals2(*github.com/antlr4-go/antlr/v4.ATNConfig, *github.com/antlr4-go/antlr/v4.ATNConfig) bool; Hash1(*github.com/antlr4-go/antlr/v4.ATNConfig) int }]).Put
+       3MB   0.7% 85.58%        3MB   0.7%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries
+       3MB   0.7% 86.27%        4MB  0.93%  go.opentelemetry.io/otel/internal/global.(*tracer).newSpan
+    2.56MB  0.59% 86.87%     2.56MB  0.59%  github.com/vmihailenco/msgpack/v5.readNGrow
+    2.50MB  0.58% 87.45%     2.50MB  0.58%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+       2MB  0.46% 87.91%   372.73MB 86.40%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamReturn
+    1.50MB  0.35% 88.26%   369.73MB 85.71%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamedNodeMatchSource.func1.1
+    1.50MB  0.35% 88.61%    50.66MB 11.74%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+    1.50MB  0.35% 88.95%   164.86MB 38.22%  github.com/dgraph-io/badger/v4.(*Txn).Get

@@ -1,0 +1,31 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: cpu
+Time: 2026-11-14 23:38:29 UTC
+Duration: 6s, Total samples = 3.54s (58.99%)
+Showing nodes accounting for 0.06s, 1.69% of 3.54s total
+Dropped 297 nodes (cum <= 0.02s)
+Showing top 22 nodes out of 390
+      flat  flat%   sum%        cum   cum%
+     0.01s  0.28%  0.28%      3.28s 92.66%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).dispatchMessage
+         0     0%  0.28%      3.28s 92.66%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).handleQueuedMessage
+         0     0%  0.28%      3.28s 92.66%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).processMessage.func1
+         0     0%  0.28%      3.28s 92.66%  github.com/orneryd/nornicdb/pkg/memory.(*WireRequest).Run
+         0     0%  0.28%      3.27s 92.37%  github.com/orneryd/nornicdb/pkg/bolt.(*Server).handleConnectionOwned
+         0     0%  0.28%      3.26s 92.09%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).processMessage (inline)
+         0     0%  0.28%      3.25s 91.81%  github.com/orneryd/nornicdb/pkg/bolt.(*Server).startConnection.func1
+         0     0%  0.28%      3.24s 91.53%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).dispatchInner
+         0     0%  0.28%      3.24s 91.53%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).dispatchMessage.func2
+     0.01s  0.28%  0.56%      2.96s 83.62%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).handleRun
+         0     0%  0.56%      2.74s 77.40%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).runStreamed
+         0     0%  0.56%      2.72s 76.84%  github.com/orneryd/nornicdb/pkg/bolt.(*boltQueryExecutorAdapter).Execute
+         0     0%  0.56%      2.72s 76.84%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).Execute (inline)
+     0.01s  0.28%  0.85%      2.72s 76.84%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).execute
+         0     0%  0.85%      1.99s 56.21%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeImplicitAsync
+     0.01s  0.28%  1.13%      1.94s 54.80%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeWithoutTransaction
+         0     0%  1.13%      1.45s 40.96%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executePipeline
+         0     0%  1.13%      1.45s 40.96%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeRequiredPipeline
+     0.01s  0.28%  1.41%      1.32s 37.29%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+         0     0%  1.41%      1.11s 31.36%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamReturn
+         0     0%  1.41%      1.10s 31.07%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineProjectPlainReturn
+     0.01s  0.28%  1.69%      1.10s 31.07%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamedNodeMatchSource.func1
