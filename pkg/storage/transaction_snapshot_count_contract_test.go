@@ -163,7 +163,7 @@ func TestPinnedTransactionCountersDeclineAfterPeerCommit(t *testing.T) {
 
 	// The same counters still describe a transaction begun after the peer's
 	// commit: the decline is about the stale snapshot, not a disabled counter.
-	fresh, err := engine.BeginTransaction(ctx)
+	fresh, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Rollback() })
 	require.NoError(t, fresh.SetNamespace("test"))

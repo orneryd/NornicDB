@@ -103,7 +103,7 @@ func TestTransactionCountScopeDeclinesACutItsTransactionLeft(t *testing.T) {
 	engine := newIsolatedBadgerEngine(t)
 	ctx := t.Context()
 	createEdgeEndpoints(t, engine)
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -116,7 +116,7 @@ func TestTransactionCountScopeDeclinesACutItsTransactionLeft(t *testing.T) {
 
 	// A peer publishes a node of the counted label, and the implicit caller
 	// continues onto a snapshot that holds it.
-	peer, err := engine.BeginTransaction(ctx)
+	peer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = peer.CreateNode(ctx, &Node{ID: "test:peer", Labels: []string{"L"}})
 	require.NoError(t, err)
