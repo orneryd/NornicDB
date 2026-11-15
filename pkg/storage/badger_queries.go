@@ -1801,14 +1801,16 @@ func (b *BadgerEngine) readAdjacentEdgeHeadersInTxn(ctx context.Context, txn *ba
 			return nil
 		})
 		if header != nil {
-			edges = append(edges, header)
+			if request.admits(header) {
+				edges = append(edges, header)
+			}
 			continue
 		}
 		edge, err := b.readIndexedEdgeInTxn(txn, edgeID, edgeGen)
 		if err != nil {
 			return nil, err
 		}
-		if edge != nil && adjacentTypesAdmit(request.Types, edge.Type) {
+		if request.admits(edge) {
 			edges = append(edges, request.header(edge))
 		}
 	}
@@ -1891,7 +1893,7 @@ func (b *BadgerEngine) adjacentSnapshotHeadersInTxn(ctx context.Context, txn *ba
 		if header == nil {
 			continue
 		}
-		if len(request.Types) > 0 && !adjacentTypesAdmit(request.Types, header.Type) {
+		if !request.admits(header) {
 			if decided == nil {
 				decided = make(map[EdgeID]struct{})
 			}

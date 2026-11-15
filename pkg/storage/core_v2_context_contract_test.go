@@ -94,7 +94,7 @@ func TestCoreV2PointAndScalarReadsRejectCancelledRequest(t *testing.T) {
 			return err
 		},
 		"matching": func() error {
-			_, err := e.MatchEdgesBetween(ctx, "test:a", "test:b", "R", nil, func(*Edge) bool { t.Error("canceled match invoked predicate"); return true })
+			_, err := e.MatchEdgesBetween(ctx, "test:a", "test:b", "R", nil, func(*Edge) bool { t.Error("canceled match invoked predicate"); return true }, SnapshotEdgeMatch)
 			return err
 		},
 	}

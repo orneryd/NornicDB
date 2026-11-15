@@ -353,5 +353,5 @@ func findRelationshipsForMerge(ctx context.Context,
 	}
 	return storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
 		return relationshipMatchesMergePattern(edge, relType, matchProps)
-	})
+	}, storage.CurrentEdgeMatch)
 }
