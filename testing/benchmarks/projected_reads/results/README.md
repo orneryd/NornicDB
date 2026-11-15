@@ -31,7 +31,27 @@ The equal process-cold large-field control improves p95 from **0.908 to 0.882 ms
 
 ### Northwind: all 14 queries
 
-Paired timing trials are still running. No memory-pass latency numbers are substituted here.
+| Query | Release mean ms | PR mean ms | Change |
+| --- | --- | --- | --- |
+| `products_per_category` | 1,185.61 | 993.03 | -16.2% |
+| `customer_category_distinct_orders` | 8,860.91 | 8,183.04 | -7.7% |
+| `optional_match_orders_count` | 7,508.89 | 7,292.23 | -2.9% |
+| `revenue_by_product` | 6,323.68 | 5,348.91 | -15.4% |
+| `products_by_supplier` | 1,149.41 | 1,025.76 | -10.8% |
+| `orders_by_customer` | 1,205.09 | 974.01 | -19.2% |
+| `revenue_by_category` | 7,164.70 | 6,350.29 | -11.4% |
+| `revenue_by_supplier` | 6,906.32 | 6,372.56 | -7.7% |
+| `revenue_by_customer` | 7,405.82 | 6,491.28 | -12.3% |
+| `order_line_sales_by_country` | 6,158.02 | 5,241.46 | -14.9% |
+| `low_stock_products` | 428.66 | 439.39 | +2.5% |
+| `products_in_category` | 4.26 | 4.57 | +7.3% |
+| `order_line_quantity_distribution` | 6,762.89 | 5,458.11 | -19.3% |
+| `customer_order_details` | 1.66 | 1.78 | +7.2% |
+| **Overall mean** | **4,361.85** | **3,869.74** | **-11.3%** |
+
+Two alternating-order trials, three measured calls per query per trial and one reference/warm-up call. These six observations per query do not establish stable tail percentiles. All row counts and canonical result fingerprints match.
+
+Northwind median sampled peak RSS: **4,148 → 4,222 MiB**.
 
 ### Memory profiles
 
