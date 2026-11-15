@@ -430,6 +430,16 @@ type WAL struct {
 	degraded       atomic.Bool
 	lastCorruption atomic.Value // *CorruptionDiagnostics
 
+	// managedVectorGeneration is this journal's managed vector provenance
+	// epoch (B30): it moves forward whenever the journal's managed vector
+	// records change in a way that can stale what was proven from them - an
+	// an OpUpdateEmbedding audit's acceptance or uncertainty,
+	// an embedding reset, and journal retirement (advanceManagedVectorGeneration).
+	// It only ever increases, so a reader that recorded it can tell whether a
+	// conclusion about managed vector state is still current.
+	managedVectorGeneration atomic.Uint64
+	managedVectorAnchors    walManagedAnchorCache
+
 	// walLog is the pre-bound subsystem=wal *slog.Logger derived from
 	// cfg.SlogLogger at NewWAL entry. D-07 single-allocation: every WAL
 	// instance pays one .With(...) cost; recovery / truncate / corruption
@@ -1000,6 +1010,12 @@ func (w *WAL) encodeNextRecordLocked(buf *bytes.Buffer, op OperationType, data [
 // the active segment, whose roll-over limits maybeRotateLocked checks. The
 // caller holds w.mu.
 func (w *WAL) appendRecordLocked(entry *WALEntry, record walRecordFrames, writeFrame func(io.Writer, []byte, uint8) (int64, error)) error {
+	// Every embedding audit can remove an image on replay. Invalidate proof
+	// reuse at the canonical append owner, even when writing has an uncertain
+	// outcome; all direct and batched producers share this WAL-mutex cut.
+	if entry.Operation == OpUpdateEmbedding {
+		w.advanceManagedVectorGeneration()
+	}
 	alignedRecordLen, err := record.write(w.writer, writeFrame)
 	if err != nil {
 		return err
@@ -1709,6 +1725,8 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 		if err := w.retainSealedSegmentsLocked(snapshotSeq); err != nil {
 			return err
 		}
+		// Retired segments no longer hold the records a snapshot covers.
+		w.advanceManagedVectorGeneration()
 		return w.sealPropertyEpochsLocked()
 	}
 
@@ -1910,6 +1928,8 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 	}
 	w.entries.Store(retainedCount)
 	w.bytes.Store(bytesWritten + retainedSegmentBytes)
+	// The rewrite retired every record the snapshot covers.
+	w.advanceManagedVectorGeneration()
 
 	w.propertyEpoch, w.propertyEpochKnown, w.propertyEpochFormatChecked = retainedEpoch, true, true
 	return w.sealPropertyEpochsLocked()
@@ -2616,6 +2636,11 @@ func replayWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 	case OpUpdateEmbedding:
 		return replayEmbeddingOutcome(ctx, namespacedEngine, entry)
 
+	case opManagedVectorAnchor:
+		// The anchor carries an acknowledged node's managed embedding state
+		// and restores only that, onto the node the store has committed.
+		return replayManagedVectorAnchor(ctx, namespacedEngine, entry)
+
 	case OpDeleteNode:
 		var data WALDeleteData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
@@ -2863,8 +2888,10 @@ func UndoWALEntry(ctx context.Context, engine Engine, entry WALEntry) error {
 		}
 		return namespacedEngine.BulkCreateEdges(ctx, data.OldEdges)
 
-	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
-		// These don't need undo
+	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding, opManagedVectorAnchor:
+		// These don't need undo. A managed vector anchor records an embedding
+		// state the store already acknowledged and is never part of a
+		// transaction, so there is nothing to roll back.
 		return nil
 
 	default:

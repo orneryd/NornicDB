@@ -8,13 +8,16 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// EntityTransactionVersion identifies the current semantic transaction format.
+// EntityTransactionVersion identifies the portable semantic transaction format.
 // Version 3 stores MessagePack timestamps, preserving unset and Unix epoch as
 // distinct values without the range limit of version 2's Unix nanoseconds.
 // Author: NOR-303 lane (Codex), 2026-10-29; codec change allocated by the user.
 const EntityTransactionVersion uint16 = 3
 
 const semanticTransactionUnixNanoVersion uint16 = 2
+
+// WAL-local references have a distinct version; ordinary portable records stay v3.
+const semanticTransactionManagedReferenceVersion uint16 = 7
 
 // A pointer encoder avoids reflection boxing the two time.Time values in each
 // entity. EncodeTime keeps exactly the same v3 timestamp bytes and range.
@@ -139,11 +142,12 @@ type semanticTransactionChange[T int64 | semanticTransactionTimestamp] struct {
 }
 
 type semanticTransactionWire[T int64 | semanticTransactionTimestamp] struct {
-	Mode        EntityCommitMode
-	Version     uint16
-	Namespace   string
-	LogicalTxID string
-	Changes     []semanticTransactionChange[T]
+	Mode              EntityCommitMode
+	Version           uint16
+	Namespace         string
+	LogicalTxID       string
+	Changes           []semanticTransactionChange[T]
+	ManagedReferences []managedVectorReference `msgpack:",omitempty"`
 }
 
 // EntityTransactionRequest selects raw decoded operations or one immutable
@@ -155,6 +159,8 @@ type EntityTransactionRequest struct {
 	Operations []Operation
 	Mode       EntityCommitMode
 	Prepared   *PreparedEntityCommit
+	// VectorReferences carries validated WAL-local image references; zero keeps full images.
+	VectorReferences ManagedVectorReferences
 }
 
 // EncodeEntityTransaction encodes the current semantic transaction format.
@@ -171,7 +177,7 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 }
 
 // semanticTransactionScratch belongs to the existing encoder lease. It holds
-// only transient version-3 write images; release clears every graph reference
+// only transient timestamp-backed write images; release clears every graph reference
 // before pool reuse and drops unusually large backing arrays rather than
 // retaining them.
 const maxRetainedSemanticChanges = 256
@@ -295,7 +301,18 @@ func (encoder *valueEncoder) entityTransaction(request EntityTransactionRequest)
 			changes[i] = semanticTransactionChange[semanticTransactionTimestamp]{Type: EntityDeleteEdge, EdgeID: string(op.EdgeID)}
 		}
 	}
-	scratch.wire = semanticTransactionWire[semanticTransactionTimestamp]{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes}
+	version := EntityTransactionVersion
+	previous := -1
+	for _, reference := range request.VectorReferences.entries {
+		index := int(reference.Change)
+		if index <= previous || index >= len(ops) || ops[index].Type != OpUpdateNode || changes[index].Node == nil {
+			return nil, ErrInvalidData
+		}
+		changes[index].Node.ChunkEmbeddings = nil
+		previous = index
+		version = semanticTransactionManagedReferenceVersion
+	}
+	scratch.wire = semanticTransactionWire[semanticTransactionTimestamp]{Mode: mode, Version: version, Namespace: namespace, LogicalTxID: logicalID, Changes: changes, ManagedReferences: request.VectorReferences.entries}
 	return encoder.encode(&scratch.wire, rawMessagePackFraming)
 }
 
@@ -332,7 +349,7 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 					}
 					return time.Unix(0, nanos)
 				})
-			case EntityTransactionVersion:
+			case EntityTransactionVersion, semanticTransactionManagedReferenceVersion:
 				return decodeSemanticTransaction(data, version, func(at semanticTransactionTimestamp) time.Time { return time.Time(at) })
 			default:
 				return envelope, nil, ErrInvalidData
@@ -406,6 +423,22 @@ func decodeSemanticTransaction[T int64 | semanticTransactionTimestamp](data []by
 		default:
 			return envelope, nil, ErrInvalidData
 		}
+	}
+	if len(wire.ManagedReferences) != 0 {
+		if version != semanticTransactionManagedReferenceVersion {
+			return envelope, nil, ErrInvalidData
+		}
+		previous := -1
+		for _, reference := range wire.ManagedReferences {
+			index := int(reference.Change)
+			if index <= previous || index >= len(ops) || ops[index].Type != OpUpdateNode || ops[index].Node == nil || ops[index].Node.ChunkEmbeddings != nil {
+				return envelope, nil, ErrInvalidData
+			}
+			previous = index
+		}
+		envelope.VectorReferences = ManagedVectorReferences{entries: wire.ManagedReferences}
+	} else if version == semanticTransactionManagedReferenceVersion {
+		return envelope, nil, ErrInvalidData
 	}
 	return envelope, ops, nil
 }

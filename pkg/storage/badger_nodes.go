@@ -540,7 +540,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode}}
+		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode, nodeAnchorEligible: true}}
 		if wasInsert {
 			publicationOps[0].Type = OpCreateNode
 		}

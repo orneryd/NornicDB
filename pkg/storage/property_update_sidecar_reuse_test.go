@@ -12,6 +12,11 @@ import (
 
 const propertyUpdateVectorDims = 256
 
+// propertyUpdateNamedVector is the name of the fixture node's user-provided
+// vector. Unlike the managed chunk vectors it never leaves the node body, so it
+// travels with every body write, journal records included.
+const propertyUpdateNamedVector = "title"
+
 func newPropertyUpdateVectorEngine(t testing.TB, records WALRecordPolicy) (*BadgerEngine, *WALEngine) {
 	t.Helper()
 	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{
@@ -27,15 +32,30 @@ func newPropertyUpdateVectorEngine(t testing.TB, records WALRecordPolicy) (*Badg
 	return b, NewWALEngine(b, b.bufferedCommitWAL)
 }
 
-// seedPropertyUpdateVectorNode stores id with text "alpha" and then chunks
-// deterministic 256-dimensional vectors through the public sidecar route.
+// propertyUpdateNamedVectorValues returns the fixture's deterministic named
+// vector, computed on demand so a check never holds a second copy of it.
+func propertyUpdateNamedVectorValues() []float32 {
+	vector := make([]float32, propertyUpdateVectorDims)
+	for j := range vector {
+		vector[j] = float32(2) + float32(j)/7
+	}
+	return vector
+}
+
+// seedPropertyUpdateVectorNode stores id with text "alpha", the fixture named
+// vector and then chunks deterministic 256-dimensional managed vectors through
+// the public sidecar route.
 func seedPropertyUpdateVectorNode(t testing.TB, b *BadgerEngine, w *WALEngine, id NodeID, chunks int) {
 	t.Helper()
 	ctx := context.Background()
-	_, err := w.CreateNode(ctx, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "alpha"}})
+	_, err := w.CreateNode(ctx, &Node{
+		ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "alpha"},
+		NamedEmbeddings: map[string][]float32{propertyUpdateNamedVector: propertyUpdateNamedVectorValues()},
+	})
 	require.NoError(t, err)
 	stored, err := w.GetNode(ctx, id)
 	require.NoError(t, err)
+	require.Len(t, stored.NamedEmbeddings[propertyUpdateNamedVector], propertyUpdateVectorDims, "the seeded named vector must be stored")
 	embedded := CopyNode(stored)
 	embedded.ChunkEmbeddings = largeRecordVectors(chunks, 1)
 	embedded.EmbedMeta = map[string]any{
@@ -63,6 +83,14 @@ func requirePropertyUpdateVectors(t testing.TB, node *Node, chunks int) {
 			if got != want {
 				t.Fatalf("vector[%d][%d] = %v, want %v", i, j, got, want)
 			}
+		}
+	}
+	named := node.NamedEmbeddings[propertyUpdateNamedVector]
+	require.Len(t, named, propertyUpdateVectorDims, "named vector of %s", node.ID)
+	for j, got := range named {
+		want := float32(2) + float32(j)/7
+		if got != want {
+			t.Fatalf("named vector[%d] = %v, want %v", j, got, want)
 		}
 	}
 	require.Equal(t, true, node.EmbedMeta["has_embedding"])
