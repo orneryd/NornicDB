@@ -52,13 +52,6 @@ func transactionSnapshotCountScalar(t *testing.T, exec *StorageExecutor, ctx con
 	return value
 }
 
-func transactionSnapshotCountRows(t *testing.T, exec *StorageExecutor, ctx context.Context, statement string) int64 {
-	t.Helper()
-	result, err := exec.Execute(ctx, statement, nil)
-	require.NoError(t, err, statement)
-	return int64(len(result.Rows))
-}
-
 // newTransactionSnapshotCountFixture seeds the committed state every case
 // starts from: one (:A)-[:T]->(:B) relationship and one unconnected :A node.
 func newTransactionSnapshotCountFixture(t *testing.T) (*storage.NamespacedEngine, *StorageExecutor, *StorageExecutor) {
@@ -140,12 +133,12 @@ func TestTransactionSnapshotCountsAgreeWithPeerRelationshipCommits(t *testing.T)
 				transactionSnapshotCountScalar(t, outside, ctx, transactionSnapshotCountTyped),
 				"the peer's committed change must be visible outside the transaction")
 			require.Equal(t, scenario.committedRelationships,
-				transactionSnapshotCountRows(t, outside, ctx, transactionSnapshotCountTypedRows),
+				rowCount(t, outside, ctx, transactionSnapshotCountTypedRows),
 				"the peer's committed change must be visible outside the transaction")
 
 			for i, c := range cases {
 				t.Run(c.count, func(t *testing.T) {
-					rows := transactionSnapshotCountRows(t, writer, ctx, c.listing)
+					rows := rowCount(t, writer, ctx, c.listing)
 					require.Equal(t, atBegin[i], rows, "the listing reads the pinned snapshot")
 					require.Equal(t, rows, transactionSnapshotCountScalar(t, writer, ctx, c.count),
 						"the count must count the rows this transaction reads")
@@ -157,7 +150,7 @@ func TestTransactionSnapshotCountsAgreeWithPeerRelationshipCommits(t *testing.T)
 			_, err = writer.Execute(ctx, `CREATE (:A {k: 'own'})-[:T]->(:B {k: 'ownb'})`, nil)
 			require.NoError(t, err)
 			ownCount := transactionSnapshotCountScalar(t, writer, ctx, transactionSnapshotCountTyped)
-			require.Equal(t, transactionSnapshotCountRows(t, writer, ctx, transactionSnapshotCountTypedRows), ownCount)
+			require.Equal(t, rowCount(t, writer, ctx, transactionSnapshotCountTypedRows), ownCount)
 			require.Equal(t, typedAtBegin+1, ownCount, "snapshot rows plus the transaction's own write")
 
 			_, err = writer.Execute(ctx, "COMMIT", nil)
@@ -192,7 +185,7 @@ func TestTransactionSnapshotCountsPreserveGenuineRelationshipConflicts(t *testin
 	// The transaction still reads the relationship (pinned snapshot) and its
 	// count agrees with that read.
 	require.EqualValues(t, 1, transactionSnapshotCountScalar(t, writer, ctx, transactionSnapshotCountTyped))
-	require.EqualValues(t, 1, transactionSnapshotCountRows(t, writer, ctx, transactionSnapshotCountTypedRows))
+	require.EqualValues(t, 1, rowCount(t, writer, ctx, transactionSnapshotCountTypedRows))
 
 	// Writing that relationship is the genuine conflict the peer's commit
 	// causes, and it is still reported as one.
@@ -362,8 +355,8 @@ func TestTransactionCountsRejectPeerCommitPublishedDuringCounterRead(t *testing.
 
 			// The rows the transaction reads, before the peer publishes: the same
 			// rows a reader outside the transaction lists before it begins.
-			atBegin := transactionSnapshotCountRows(t, seed, ctx, scenario.listing)
-			rows := transactionSnapshotCountRows(t, writer, ctx, scenario.listing)
+			atBegin := rowCount(t, seed, ctx, scenario.listing)
+			rows := rowCount(t, writer, ctx, scenario.listing)
 			require.Equal(t, atBegin, rows, "the listing reads the pinned snapshot")
 
 			probe.armed = true
@@ -377,12 +370,12 @@ func TestTransactionCountsRejectPeerCommitPublishedDuringCounterRead(t *testing.
 			outside := NewStorageExecutor(store)
 			require.Equal(t, rows+1, transactionSnapshotCountScalar(t, outside, ctx, scenario.count),
 				"the peer's committed row is counted outside the transaction")
-			require.Equal(t, rows+1, transactionSnapshotCountRows(t, outside, ctx, scenario.listing),
+			require.Equal(t, rows+1, rowCount(t, outside, ctx, scenario.listing),
 				"the peer's committed row is listed outside the transaction")
 
 			require.Equal(t, rows, count,
 				"the count must count the rows this transaction reads, not the peer's committed counter")
-			require.Equal(t, rows, transactionSnapshotCountRows(t, writer, ctx, scenario.listing),
+			require.Equal(t, rows, rowCount(t, writer, ctx, scenario.listing),
 				"the pinned listing is unchanged")
 		})
 	}
@@ -557,29 +550,6 @@ func TestTransactionCountFamiliesRejectPeerCommitPublishedDuringCounterRead(t *t
 	}
 }
 
-// transactionFastPathCounterReads counts the committed counter reads one count
-// statement makes through the store it reads, so a case can tell a
-// counter-served count from one that materialized the rows instead.
-type transactionFastPathCounterReads struct {
-	*storage.NamespacedEngine
-	countStoreReads int
-}
-
-// GetInnerEngine is this decorator's inner engine: the namespaced engine it
-// wraps, not the engine beneath that. The promoted accessor would skip the
-// namespaced layer, and BEGIN discovers the transaction's namespace from the
-// *storage.NamespacedEngine it meets while unwrapping. Without this method the
-// transaction opens unpinned to its namespace, keeps no per-namespace counter
-// deltas, and so no committed counter can describe the rows it reads - the
-// decorator would be measuring a missing capability of its own rather than the
-// fast path.
-func (p *transactionFastPathCounterReads) GetInnerEngine() storage.Engine { return p.NamespacedEngine }
-
-func (p *transactionFastPathCounterReads) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
-	p.countStoreReads++
-	return p.NamespacedEngine.ReadCountStore(ctx, request)
-}
-
 // TestTransactionCountFastPathStaysCounterServed is the non-concurrent control
 // for the before/read/after certification: while no peer commit moves the
 // namespace past the transaction's read version, the committed counters still
@@ -588,7 +558,7 @@ func (p *transactionFastPathCounterReads) ReadCountStore(ctx context.Context, re
 func TestTransactionCountFastPathStaysCounterServed(t *testing.T) {
 	store, _, _ := newTransactionSnapshotCountFixture(t)
 	ctx := context.Background()
-	probe := &transactionFastPathCounterReads{NamespacedEngine: store}
+	probe := &transactionScopedCountProbe{NamespacedEngine: store}
 	writer := NewStorageExecutor(probe)
 
 	_, err := writer.Execute(ctx, "BEGIN", nil)
@@ -604,7 +574,7 @@ func TestTransactionCountFastPathStaysCounterServed(t *testing.T) {
 	result, err := writer.Execute(withProfileRuntimeCollector(ctx, collector), `MATCH (n:A) RETURN count(n)`, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
-	require.Equal(t, 1, probe.countStoreReads, "the count reads the committed label counter once")
+	require.Equal(t, 1, probe.countReads, "the count reads the committed label counter once")
 	require.Len(t, profileAccessesOfKind(collector, profileKindNodeCountFromCountStore), 1,
 		"the committed counter answers the count, so no row is materialized")
 
@@ -613,12 +583,12 @@ func TestTransactionCountFastPathStaysCounterServed(t *testing.T) {
 		`MATCH ()-[r:T]->() RETURN count(r)`:    1,
 		`MATCH (a:A)-[r:T]->() RETURN count(r)`: 1,
 	} {
-		probe.countStoreReads = 0
+		probe.countReads = 0
 		collector = newProfileRuntimeCollector()
 		result, err = writer.Execute(withProfileRuntimeCollector(ctx, collector), query, nil)
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
-		require.Equal(t, 1, probe.countStoreReads, query)
+		require.Equal(t, 1, probe.countReads, query)
 		require.Len(t, profileAccessesOfKind(collector, profileKindRelationshipCountFromCountStore), 1, query)
 	}
 
@@ -648,7 +618,7 @@ func TestWriteBehindTransactionCountFastPathStaysCounterServed(t *testing.T) {
 		_, err := exec.Execute(ctx, statement, nil)
 		require.NoError(t, err, statement)
 	}
-	probe := &transactionFastPathCounterReads{NamespacedEngine: store}
+	probe := &transactionScopedCountProbe{NamespacedEngine: store}
 	writer := NewStorageExecutor(probe)
 
 	_, err = writer.Execute(ctx, "BEGIN", nil)
@@ -664,7 +634,7 @@ func TestWriteBehindTransactionCountFastPathStaysCounterServed(t *testing.T) {
 	result, err := writer.Execute(withProfileRuntimeCollector(ctx, collector), `MATCH (n:A) RETURN count(n)`, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
-	require.Equal(t, 1, probe.countStoreReads, "the count reads the committed label counter once")
+	require.Equal(t, 1, probe.countReads, "the count reads the committed label counter once")
 	require.Len(t, profileAccessesOfKind(collector, profileKindNodeCountFromCountStore), 1,
 		"the write-behind reader is read-committed, so the counter answers it")
 

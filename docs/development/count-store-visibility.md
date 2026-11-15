@@ -176,3 +176,6 @@ Cypher MERGE uses `CurrentEdgeMatch` to resolve a currently committed
 relationship before its mutation owner locks and updates that relationship.
 This lookup does not itself acquire endpoint locks or relax commit-conflict
 checks. Decorators preserve the requested policy and namespace boundaries.
+Native entry points reject invalid policies and nil predicates with
+`ErrInvalidData`, including empty composites; canceled reads return their
+context error before invoking the predicate.

@@ -31,12 +31,11 @@ func (tx *BadgerTransaction) readsLockedAdjacencyLatestLocked(nodeID NodeID) boo
 	if tx.entityLocks.find(entityWriteLockKey(bufferedNodeEntity, string(nodeID))) == nil {
 		return false
 	}
-	// The same "no commit followed the snapshot" test the lock's property
-	// refresh makes (entityCommittedAfterSnapshot); saturated sequences and
-	// in-flight begin frames count as a later commit.
-	current := tx.readTS.CommitSequence < maxMVCCCommitSequence && tx.inflightAtBegin == nil && tx.namespace != "" &&
-		tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence == tx.readTS.CommitSequence
-	return !current
+	// The same "no commit followed the snapshot" proof the lock's property
+	// refresh makes (entityCommittedAfterSnapshot): saturated sequences and
+	// in-flight begin frames count as a later commit. The snapshot guarded
+	// above is known non-zero, so that proof is this function's proof exactly.
+	return !tx.namespaceSnapshotCurrentLocked()
 }
 
 // recordLatestEndpointsLocked records the relationships a read of locked node

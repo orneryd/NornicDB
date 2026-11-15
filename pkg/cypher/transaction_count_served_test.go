@@ -176,14 +176,14 @@ func TestTransactionCountsAfterPeerCommitStayCounterServed(t *testing.T) {
 			t.Run(peer.name+"/"+c.count, func(t *testing.T) {
 				fixture := newTransactionScopedCountFixture(t)
 				ctx := context.Background()
-				atBegin := transactionSnapshotCountRows(t, fixture.writer, ctx, c.listing)
+				atBegin := rowCount(t, fixture.writer, ctx, c.listing)
 				commit := fixture.beginInTransaction(t, ctx)
 				_, err := fixture.seed.Execute(ctx, peer.statement, nil)
 				require.NoError(t, err)
 
 				fixture.probe.countReads, fixture.probe.consumed = 0, 0
 				count, accesses := transactionScopedCountReads(t, fixture.writer, ctx, c.count)
-				rows := transactionSnapshotCountRows(t, fixture.writer, ctx, c.listing)
+				rows := rowCount(t, fixture.writer, ctx, c.listing)
 
 				require.Equal(t, atBegin, rows, "the listing reads the pinned snapshot")
 				require.Equal(t, rows, count, "the count must count the rows this transaction reads")
@@ -214,7 +214,7 @@ func TestTransactionOwnWriteCountsStayCounterServed(t *testing.T) {
 		`MATCH (n:A) RETURN n`,
 		`MATCH (a:A)-[r:T]->() RETURN r`,
 	} {
-		atBegin[listing] = transactionSnapshotCountRows(t, fixture.seed, ctx, listing)
+		atBegin[listing] = rowCount(t, fixture.seed, ctx, listing)
 	}
 	commit := fixture.beginInTransaction(t, ctx)
 	_, err := fixture.writer.Execute(ctx, `CREATE (:A {k: 'own'})-[:T]->(:B {k: 'ownb'})`, nil)
@@ -227,7 +227,7 @@ func TestTransactionOwnWriteCountsStayCounterServed(t *testing.T) {
 		t.Run(c.count, func(t *testing.T) {
 			fixture.probe.countReads, fixture.probe.consumed = 0, 0
 			count, accesses := transactionScopedCountReads(t, fixture.writer, ctx, c.count)
-			rows := transactionSnapshotCountRows(t, fixture.writer, ctx, c.listing)
+			rows := rowCount(t, fixture.writer, ctx, c.listing)
 			require.Equal(t, atBegin[c.listing]+1, rows, "the transaction reads its snapshot plus its own write")
 			require.Equal(t, rows, count)
 			require.Equal(t, 1, fixture.probe.countReads)
@@ -245,7 +245,7 @@ func TestTransactionOwnWriteCountsStayCounterServed(t *testing.T) {
 	// a regression of this correction.
 	t.Run("positional count after an own write counts the rows", func(t *testing.T) {
 		count := transactionSnapshotCountScalar(t, fixture.writer, ctx, `MATCH (a:A)-[r:T]->() RETURN count(r)`)
-		rows := transactionSnapshotCountRows(t, fixture.writer, ctx, `MATCH (a:A)-[r:T]->() RETURN r`)
+		rows := rowCount(t, fixture.writer, ctx, `MATCH (a:A)-[r:T]->() RETURN r`)
 		require.Equal(t, atBegin[`MATCH (a:A)-[r:T]->() RETURN r`]+1, rows)
 		require.Equal(t, rows, count)
 	})
@@ -287,7 +287,7 @@ func TestTransactionHiddenLabelCountsStayRowBacked(t *testing.T) {
 	require.EqualValues(t, 2, committed)
 
 	count := transactionSnapshotCountScalar(t, writer, ctx, `MATCH (n:A) RETURN count(n)`)
-	rows := transactionSnapshotCountRows(t, writer, ctx, `MATCH (n:A) RETURN n`)
+	rows := rowCount(t, writer, ctx, `MATCH (n:A) RETURN n`)
 	require.EqualValues(t, 1, rows)
 	require.Equal(t, rows, count, "the hidden node is not a row of this read")
 
@@ -305,12 +305,12 @@ func TestTransactionCountIsNotCertifiedByAReaderThatIgnoresTheScope(t *testing.T
 	fixture.probe.dropScope = true
 	ctx := context.Background()
 	commit := fixture.beginInTransaction(t, ctx)
-	atBegin := transactionSnapshotCountRows(t, fixture.writer, ctx, `MATCH ()-[r:T]->() RETURN r`)
+	atBegin := rowCount(t, fixture.writer, ctx, `MATCH ()-[r:T]->() RETURN r`)
 	_, err := fixture.seed.Execute(ctx, `CREATE (:A {k: 'peer'})-[:T]->(:B {k: 'peerb'})`, nil)
 	require.NoError(t, err)
 
 	count := transactionSnapshotCountScalar(t, fixture.writer, ctx, `MATCH ()-[r:T]->() RETURN count(r)`)
-	rows := transactionSnapshotCountRows(t, fixture.writer, ctx, `MATCH ()-[r:T]->() RETURN r`)
+	rows := rowCount(t, fixture.writer, ctx, `MATCH ()-[r:T]->() RETURN r`)
 	require.True(t, fixture.probe.dropped, "the reader must have seen the capability it ignored")
 	require.Equal(t, 0, fixture.probe.consumed, "an ignored capability certifies nothing")
 	require.Equal(t, atBegin, rows)

@@ -41,11 +41,11 @@ func TestTransactionCountReaderDeclineIsTheAnswer(t *testing.T) {
 	fixture.probe.decline = true
 	ctx := context.Background()
 	commit := fixture.beginInTransaction(t, ctx)
-	atBegin := transactionSnapshotCountRows(t, fixture.writer, ctx, `MATCH (n:A) RETURN n`)
+	atBegin := rowCount(t, fixture.writer, ctx, `MATCH (n:A) RETURN n`)
 
 	fixture.probe.countReads = 0
 	count := transactionSnapshotCountScalar(t, fixture.writer, ctx, `MATCH (n:A) RETURN count(n)`)
-	rows := transactionSnapshotCountRows(t, fixture.writer, ctx, `MATCH (n:A) RETURN n`)
+	rows := rowCount(t, fixture.writer, ctx, `MATCH (n:A) RETURN n`)
 	require.Equal(t, 1, fixture.probe.countReads, "an explicit decline is the answer, not a step to re-ask")
 	require.Equal(t, atBegin, rows)
 	require.Equal(t, rows, count, "the declined read is answered from the rows the transaction reads")

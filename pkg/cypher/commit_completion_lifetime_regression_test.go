@@ -71,9 +71,11 @@ func newAdmittedCommitCanceler(t *testing.T, namespace string) (*StorageExecutor
 	return exec, engine, store
 }
 
-func rowCount(t *testing.T, exec *StorageExecutor, query string) int64 {
+// rowCount is one statement's row count through the executor's read path, so a
+// caller's context decides the read.
+func rowCount(t *testing.T, exec *StorageExecutor, ctx context.Context, query string) int64 {
 	t.Helper()
-	result, err := exec.Execute(context.Background(), query, nil)
+	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err, query)
 	return int64(len(result.Rows))
 }
@@ -101,7 +103,7 @@ func TestAcceptedCommitCompletionKeepsImplicitSuppression(t *testing.T) {
 			observer := NewStorageExecutor(store)
 			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'implicit'}) RETURN count(n)"),
 				"the accepted suppression hides the node")
-			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'implicit'}) RETURN reveal(n).touched"),
+			require.EqualValues(t, 1, rowCount(t, observer, context.Background(), "MATCH (n:Document {id: 'implicit'}) RETURN reveal(n).touched"),
 				"the graph write of the same transaction stays committed")
 		})
 	}
@@ -137,7 +139,7 @@ func TestAcceptedCommitCompletionKeepsExplicitSuppression(t *testing.T) {
 			observer := NewStorageExecutor(store)
 			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN count(n)"),
 				"the accepted suppression hides the node")
-			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'explicit'}) RETURN reveal(n).touched"),
+			require.EqualValues(t, 1, rowCount(t, observer, context.Background(), "MATCH (n:Document {id: 'explicit'}) RETURN reveal(n).touched"),
 				"the graph write of the same transaction stays committed")
 
 			// A healthy retry is its own transaction: one more application, and no
@@ -187,7 +189,7 @@ func TestAcceptedCommitCompletionIsDurable(t *testing.T) {
 			observer := NewStorageExecutor(storage.NewNamespacedEngine(reopened, "completion-durable"))
 			require.Zero(t, singleQueryValue[int64](t, observer, "MATCH (n:Document {id: 'durable'}) RETURN count(n)"),
 				"the accepted suppression is durable")
-			require.EqualValues(t, 1, rowCount(t, observer, "MATCH (n:Document {id: 'durable'}) RETURN reveal(n).id"),
+			require.EqualValues(t, 1, rowCount(t, observer, context.Background(), "MATCH (n:Document {id: 'durable'}) RETURN reveal(n).id"),
 				"only the visibility changed; the committed data remains")
 		})
 	}

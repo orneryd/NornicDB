@@ -8,3 +8,6 @@
 - [x] Document Go callers and scope limits.
 - [ ] Rebase and independently rerun focused/race checks.
 - [ ] Publish draft and resolve exact-head CI and duplicate findings.
+
+- [x] Consolidate count-row/probe fixtures and exact-reader rejection controls; preserve supplied read contexts.
+- [x] Share native match admission; fail-first direct-engine, namespace and empty-composite validation controls plus focused race checks.
