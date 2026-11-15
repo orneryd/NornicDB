@@ -12,21 +12,14 @@ import (
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-// newCallImportExecutor is the empty database one case runs on.
-func newCallImportExecutor(t *testing.T) *StorageExecutor {
-	t.Helper()
-	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_import_foreach"))
-}
 
 // runCallImportCase executes setup, then query, then check (against the same
 // store) on an empty database of its own.
 func runCallImportCase(t *testing.T, setup []string, query string, check func(t *testing.T, exec *StorageExecutor, result *ExecuteResult)) {
 	t.Helper()
-	exec := newCallImportExecutor(t)
+	exec := newCallScopeExecutor(t)
 	for _, statement := range setup {
 		_, err := exec.Execute(context.Background(), statement, nil)
 		require.NoError(t, err, statement)
@@ -40,7 +33,7 @@ func runCallImportCase(t *testing.T, setup []string, query string, check func(t 
 // variable named variable, before it stores anything.
 func requireCallImportError(t *testing.T, setup []string, query, variable, stored string, wantStored [][]interface{}) {
 	t.Helper()
-	exec := newCallImportExecutor(t)
+	exec := newCallScopeExecutor(t)
 	for _, statement := range setup {
 		_, err := exec.Execute(context.Background(), statement, nil)
 		require.NoError(t, err, statement)
@@ -50,15 +43,7 @@ func requireCallImportError(t *testing.T, setup []string, query, variable, store
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
 	require.Contains(t, err.Error(), "`"+variable+"` not defined", query)
-	require.Equal(t, wantStored, storedRows(t, exec, stored), query)
-}
-
-// storedRows reads the values a statement stored.
-func storedRows(t *testing.T, exec *StorageExecutor, query string) [][]interface{} {
-	t.Helper()
-	stored, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err, query)
-	return stored.Rows
+	require.Equal(t, wantStored, refreshedReadRows(t, exec, t.Context(), stored), query)
 }
 
 // A FOREACH in a scoped CALL body sets the variable its scope clause imports,
@@ -104,7 +89,7 @@ func TestCallImportForeachKeepsScopedImport(t *testing.T) {
 				runCallImportCase(t, tc.setup, tc.query, func(t *testing.T, exec *StorageExecutor, result *ExecuteResult) {
 					require.Equal(t, []string{"v"}, result.Columns, tc.query)
 					require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows, tc.query)
-					require.Equal(t, [][]interface{}{{int64(2)}}, storedRows(t, exec, "MATCH (n:ZZForeach) RETURN n.v AS v"), tc.query)
+					require.Equal(t, [][]interface{}{{int64(2)}}, refreshedReadRows(t, exec, t.Context(), "MATCH (n:ZZForeach) RETURN n.v AS v"), tc.query)
 				})
 			})
 		}
@@ -122,7 +107,7 @@ func TestCallImportForeachControls(t *testing.T) {
 				"MATCH (n:ZZForeach) CALL (n) { SET n.v = 2 } RETURN n.v AS v",
 				func(t *testing.T, exec *StorageExecutor, result *ExecuteResult) {
 					require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
-					require.Equal(t, [][]interface{}{{int64(2)}}, storedRows(t, exec, "MATCH (n:ZZForeach) RETURN n.v AS v"))
+					require.Equal(t, [][]interface{}{{int64(2)}}, refreshedReadRows(t, exec, t.Context(), "MATCH (n:ZZForeach) RETURN n.v AS v"))
 				})
 		})
 		t.Run("foreach-body-creates-without-import", func(t *testing.T) {
@@ -131,7 +116,7 @@ func TestCallImportForeachControls(t *testing.T) {
 				func(t *testing.T, exec *StorageExecutor, result *ExecuteResult) {
 					require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 					require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}},
-						storedRows(t, exec, "MATCH (o:ZZOther) RETURN o.v AS v ORDER BY v"))
+						refreshedReadRows(t, exec, t.Context(), "MATCH (o:ZZOther) RETURN o.v AS v ORDER BY v"))
 				})
 		})
 		t.Run("foreach-body-cannot-write-unimported-variable", func(t *testing.T) {
@@ -149,7 +134,7 @@ func TestCallImportForeachControls(t *testing.T) {
 				"MATCH (n:ZZForeach) CALL (n) { FOREACH (n IN [1,2] | CREATE (:ZZOther {v:n})) } RETURN n.v AS v",
 				func(t *testing.T, exec *StorageExecutor, result *ExecuteResult) {
 					require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-					require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, storedRows(t, exec, "MATCH (m:ZZOther) RETURN m.v AS v ORDER BY v"))
+					require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, refreshedReadRows(t, exec, t.Context(), "MATCH (m:ZZOther) RETURN m.v AS v ORDER BY v"))
 				})
 		})
 		t.Run("nested-loop-retains-call-import", func(t *testing.T) {
@@ -157,7 +142,7 @@ func TestCallImportForeachControls(t *testing.T) {
 				"MATCH (n:ZZForeach) CALL (n) { FOREACH (i IN [1,2] | FOREACH (j IN [1,2] | SET n.v = i * 10 + j)) } RETURN n.v AS v",
 				func(t *testing.T, exec *StorageExecutor, result *ExecuteResult) {
 					require.Equal(t, [][]interface{}{{int64(22)}}, result.Rows)
-					require.Equal(t, [][]interface{}{{int64(22)}}, storedRows(t, exec, "MATCH (n:ZZForeach) RETURN n.v AS v"))
+					require.Equal(t, [][]interface{}{{int64(22)}}, refreshedReadRows(t, exec, t.Context(), "MATCH (n:ZZForeach) RETURN n.v AS v"))
 				})
 		})
 		t.Run("scope-clause-names-a-missing-variable", func(t *testing.T) {
@@ -201,7 +186,7 @@ func TestTransactionalCallWildcardImportKeepsOuterVariable(t *testing.T) {
 					require.Equal(t, []string{"value"}, result.Columns, tc.query)
 					require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows, tc.query)
 					require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}},
-						storedRows(t, exec, "MATCH (n:ZZB) RETURN n.v AS v ORDER BY v"), tc.query)
+						refreshedReadRows(t, exec, t.Context(), "MATCH (n:ZZB) RETURN n.v AS v ORDER BY v"), tc.query)
 				})
 			})
 		}
