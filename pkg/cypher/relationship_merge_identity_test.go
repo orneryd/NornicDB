@@ -19,11 +19,11 @@ type relationshipLookupErrorEngine struct {
 
 // MatchEdgesBetween keeps the typed candidate read (storage.EdgesBetweenMatcher)
 // while an untyped scan of the pair fails.
-func (e *relationshipLookupErrorEngine) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, relType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+func (e *relationshipLookupErrorEngine) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, relType string, properties []string, match func(*storage.Edge) bool, policy storage.EdgeMatchReadPolicy) ([]*storage.Edge, error) {
 	if e.failMatch {
 		return nil, e.err
 	}
-	return storage.MatchEdgesBetween(ctx, e.Engine, startID, endID, relType, properties, match)
+	return storage.MatchEdgesBetween(ctx, e.Engine, startID, endID, relType, properties, match, policy)
 }
 
 func (e *relationshipLookupErrorEngine) GetEdgesBetween(ctx context.Context,

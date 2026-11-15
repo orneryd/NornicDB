@@ -166,3 +166,13 @@ materializes all 5,000 visible nodes. Relevant hidden populations still use the
 existing visible-row path when a raw counter cannot answer them. CPU profiles
 were captured for both candidates; they also include benchmark fixture setup.
 Buffered correctness is covered separately by the count regressions.
+
+### Relationship matching read policy
+
+Go callers of `MatchEdgesBetween` must supply an `EdgeMatchReadPolicy` after
+its predicate. Use `SnapshotEdgeMatch` for ordinary reads: native transaction
+rows remain at the transaction's pinned view, including its staged changes.
+Cypher MERGE uses `CurrentEdgeMatch` to resolve a currently committed
+relationship before its mutation owner locks and updates that relationship.
+This lookup does not itself acquire endpoint locks or relax commit-conflict
+checks. Decorators preserve the requested policy and namespace boundaries.

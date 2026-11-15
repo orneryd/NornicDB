@@ -61,7 +61,7 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 				case "all":
 					edges, err = w.AllEdges(ctx)
 				case "matched":
-					edges, err = w.MatchEdgesBetween(ctx, "a", "b", "COHELD", []string{"v"}, func(*storage.Edge) bool { return true })
+					edges, err = w.MatchEdgesBetween(ctx, "a", "b", "COHELD", []string{"v"}, func(*storage.Edge) bool { return true }, storage.SnapshotEdgeMatch)
 				case "outgoing-header":
 					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "a", Headers: true})
 				case "incoming-header":

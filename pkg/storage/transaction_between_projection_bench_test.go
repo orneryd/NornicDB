@@ -32,7 +32,7 @@ func BenchmarkTransactionBetweenPropertyRejection(b *testing.B) {
 	}
 	match := func(edge *Edge) bool { return edge.Properties["key"] == int64(-1) }
 	read := func() {
-		rows, err := tx.MatchEdgesBetween(ctx, "test:a", "test:b", "LINK", []string{"key"}, match)
+		rows, err := tx.MatchEdgesBetween(ctx, "test:a", "test:b", "LINK", []string{"key"}, match, SnapshotEdgeMatch)
 		if err != nil || len(rows) != 0 {
 			b.Fatalf("rows=%d err=%v", len(rows), err)
 		}

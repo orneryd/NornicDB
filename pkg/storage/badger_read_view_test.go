@@ -157,7 +157,7 @@ func TestSnapshotOverlayPublicReaderClasses(t *testing.T) {
 		edge, err := b.GetEdgeBetween(t.Context(), "test:a", "test:b", "REL")
 		require.NoError(t, err)
 		require.NotNil(t, edge)
-		edges, err := b.MatchEdgesBetween(context.Background(), "test:a", "test:b", "REL", []string{"v"}, func(e *Edge) bool { return e.Properties["v"] == int64(2) })
+		edges, err := b.MatchEdgesBetween(context.Background(), "test:a", "test:b", "REL", []string{"v"}, func(e *Edge) bool { return e.Properties["v"] == int64(2) }, SnapshotEdgeMatch)
 		require.NoError(t, err)
 		require.Len(t, edges, 1)
 		out, err := b.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a"})

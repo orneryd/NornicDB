@@ -109,10 +109,10 @@ func TestMatchEdgesBetween_OtherTypeBetweenThePair(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"}))
 	all := func(*Edge) bool { return true }
 
-	edges, err := engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LIKES", nil, all)
+	edges, err := engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LIKES", nil, all, SnapshotEdgeMatch)
 	require.NoError(t, err)
 	require.Empty(t, edges)
-	edges, err = engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "KNOWS", nil, all)
+	edges, err = engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "KNOWS", nil, all, SnapshotEdgeMatch)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 }

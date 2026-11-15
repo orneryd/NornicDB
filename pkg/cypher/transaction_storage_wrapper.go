@@ -700,9 +700,9 @@ func (w *transactionStorageWrapper) ReadStoredAdjacentEdges(ctx context.Context,
 // MatchEdgesBetween matches the transaction's edges of one type between two
 // nodes, reading only the listed properties to match
 // (storage.EdgesBetweenMatcher).
-func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool, policy storage.EdgeMatchReadPolicy) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		edges, err := w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+		edges, err := w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match, policy)
 		profileRelationshipBetweenRead(ctx, edges, err)
 		return edges, err
 	}
@@ -712,7 +712,7 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, start
 		candidate.ID = w.unprefixEdgeID(edge.ID)
 		candidate.StartNode, candidate.EndNode = startID, endID
 		return match(&candidate)
-	})
+	}, policy)
 	// Matching and projection share the caller lifetime.
 	edges, err = projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 	profileRelationshipBetweenRead(ctx, edges, err)

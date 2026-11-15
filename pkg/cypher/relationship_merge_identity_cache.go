@@ -51,7 +51,7 @@ func (c *relationshipMergeIdentityCache) relationships(ctx context.Context, stor
 	entryKey := relationshipMergeIdentityEntryKey(startID, endID, relType, keys)
 	entry, ok := c.entries[entryKey]
 	if !ok {
-		edges, err := storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(*storage.Edge) bool { return true })
+		edges, err := storage.MatchEdgesBetween(ctx, store, startID, endID, relType, keys, func(*storage.Edge) bool { return true }, storage.CurrentEdgeMatch)
 		if err != nil {
 			return nil, err
 		}

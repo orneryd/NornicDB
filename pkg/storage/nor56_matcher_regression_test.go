@@ -14,9 +14,9 @@ type nor56MatcherProbe struct {
 	calls   int
 }
 
-func (p *nor56MatcherProbe) MatchEdgesBetween(ctx context.Context, start, end NodeID, typ string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (p *nor56MatcherProbe) MatchEdgesBetween(ctx context.Context, start, end NodeID, typ string, properties []string, match func(*Edge) bool, policy EdgeMatchReadPolicy) ([]*Edge, error) {
 	p.calls++
-	return p.matcher.MatchEdgesBetween(ctx, start, end, typ, properties, match)
+	return p.matcher.MatchEdgesBetween(ctx, start, end, typ, properties, match, policy)
 }
 func TestNOR56NamespacedMatcherForwarding(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed))
@@ -41,7 +41,7 @@ func TestNOR56NamespacedMatcherForwarding(t *testing.T) {
 		probe.calls = 0
 		edges, err := MatchEdgesBetween(t.Context(), view, "x", "y", "R", []string{"value"}, func(edge *Edge) bool {
 			return edge.ID == "e" && edge.StartNode == "x" && edge.EndNode == "y" && edge.Properties["value"] == "a"
-		})
+		}, SnapshotEdgeMatch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,17 +55,17 @@ func TestNOR56NamespacedMatcherForwarding(t *testing.T) {
 	// An engine that hides the optional interface retains its ordinary
 	// namespaced GetEdgesBetween fallback through tracing.
 	withoutMatcher := struct{ Engine }{NewNamespacedEngine(base, "a")}
-	rows, err := MatchEdgesBetween(t.Context(), NewTracedEngine(withoutMatcher), "x", "y", "R", []string{"value"}, func(edge *Edge) bool { return edge.Properties["value"] == "a" })
+	rows, err := MatchEdgesBetween(t.Context(), NewTracedEngine(withoutMatcher), "x", "y", "R", []string{"value"}, func(edge *Edge) bool { return edge.Properties["value"] == "a" }, SnapshotEdgeMatch)
 	if err != nil || len(rows) != 1 || rows[0].ID != "e" {
 		t.Fatalf("unsupported matcher fallback: rows=%v err=%v", rows, err)
 	}
 	view := views[len(views)-1]
-	if _, err := MatchEdgesBetween(t.Context(), view, "x", "y", "R", nil, nil); !errors.Is(err, ErrInvalidData) {
+	if _, err := MatchEdgesBetween(t.Context(), view, "x", "y", "R", nil, nil, SnapshotEdgeMatch); !errors.Is(err, ErrInvalidData) {
 		t.Fatalf("nil predicate error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := MatchEdgesBetween(ctx, view, "x", "y", "R", nil, func(*Edge) bool { t.Fatal("visited after cancellation"); return false }); !errors.Is(err, context.Canceled) {
+	if _, err := MatchEdgesBetween(ctx, view, "x", "y", "R", nil, func(*Edge) bool { t.Fatal("visited after cancellation"); return false }, SnapshotEdgeMatch); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error = %v", err)
 	}
 }

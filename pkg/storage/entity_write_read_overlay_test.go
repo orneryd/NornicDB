@@ -217,7 +217,7 @@ func warmRefreshedReadRoutes(t *testing.T, f *refreshedReadFixture) {
 
 	matched, err := tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", []string{"peer"}, func(edge *Edge) bool {
 		return edge.Properties["peer"] == int64(1)
-	})
+	}, SnapshotEdgeMatch)
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(matched))
 
@@ -545,7 +545,7 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 
 		matched, err := f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", []string{"peer"}, func(edge *Edge) bool {
 			return edge.Properties["peer"] == int64(2)
-		})
+		}, SnapshotEdgeMatch)
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(matched))
 	})
@@ -859,7 +859,7 @@ func TestWriteOwnedReadImagesApplyLiveVisibility(t *testing.T) {
 	for name, read := range map[string]func() ([]*Edge, error){
 		"all_edges": func() ([]*Edge, error) { return f.tx.AllEdges(ctx) },
 		"matcher": func() ([]*Edge, error) {
-			return f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", nil, func(*Edge) bool { return true })
+			return f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", nil, func(*Edge) bool { return true }, SnapshotEdgeMatch)
 		},
 		"type": func() ([]*Edge, error) { return f.tx.GetEdgesByType(ctx, "HAS") },
 		"outgoing": func() ([]*Edge, error) {

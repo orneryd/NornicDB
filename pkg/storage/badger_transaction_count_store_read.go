@@ -167,7 +167,17 @@ func (scope *CountStoreReadScope) readCountStore(ctx context.Context, engine *Ba
 	if err := ctx.Err(); err != nil {
 		return CountStoreRead{}, err
 	}
-	answer, err := engine.readCountStoreAt(ctx, request, tx.withSnapshotViewLocked)
+	// A count reads no entity image. Keep its exact pinned cut without marking
+	// an entity observation: MERGE may still advance an otherwise unobserved
+	// transaction, as it could after the preexisting count-store route.
+	answer, err := engine.readCountStoreAt(ctx, request, func(read func(*badger.Txn) error) error {
+		if tx.namespace != "" {
+			if err := engine.pendingNamespaceConflict(tx.namespace); err != nil {
+				return err
+			}
+		}
+		return read(scope.cut.snapshot)
+	})
 	if err != nil {
 		if errors.Is(err, errMalformedDerivedCount) {
 			// A malformed persisted count has no repair at a pinned snapshot:
