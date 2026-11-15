@@ -3553,10 +3553,52 @@
       "pos": "pkg/storage/bulk_read_cancellation.go:46"
     },
     {
+      "field": "pkg/storage.callerCopyIndex.count",
+      "class": "caller-copy traversal progress",
+      "func": "pkg/storage.callerCopyIndex.insert",
+      "pos": "pkg/storage/property_copy_index.go:74"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.count",
+      "class": "caller-copy traversal progress",
+      "func": "pkg/storage.callerCopyIndex.clear",
+      "pos": "pkg/storage/property_copy_index.go:96"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.current",
+      "class": "caller-copy traversal progress",
+      "func": "pkg/storage.callerCopyIndex.insert",
+      "pos": "pkg/storage/property_copy_index.go:67"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.current",
+      "class": "caller-copy traversal progress",
+      "func": "pkg/storage.callerCopyIndex.clear",
+      "pos": "pkg/storage/property_copy_index.go:95"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.slots",
+      "class": "caller-copy identity lookup scratch",
+      "func": "pkg/storage.callerCopyIndex.insert",
+      "pos": "pkg/storage/property_copy_index.go:75"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.slots",
+      "class": "caller-copy identity lookup scratch",
+      "func": "pkg/storage.callerCopyIndex.grow",
+      "pos": "pkg/storage/property_copy_index.go:80"
+    },
+    {
+      "field": "pkg/storage.callerCopyIndex.slots",
+      "class": "caller-copy identity lookup scratch",
+      "func": "pkg/storage.callerCopyIndex.grow",
+      "pos": "pkg/storage/property_copy_index.go:84"
+    },
+    {
       "field": "pkg/storage.callerCopyWalker.count",
       "class": "caller-copy traversal progress",
       "func": "pkg/storage.callerCopyWalker.remember",
-      "pos": "pkg/storage/property_copy.go:123"
+      "pos": "pkg/storage/property_copy.go:122"
     },
     {
       "field": "pkg/storage.commitPublication.ts",
