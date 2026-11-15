@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync"
 
 	forkcodec "github.com/dgraph-io/badger/v4/experimental/nornic"
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -19,52 +20,139 @@ const experimentalPropertyExtension int8 = 60
 
 type storedExperimentalProperty struct{ value any }
 
+const maxExperimentalPropertyScratchBytes = 128 << 10
+
+type experimentalPropertyScratch struct{ bytes []byte }
+
+var experimentalPropertyScratchPool = sync.Pool{New: func() any { return new(experimentalPropertyScratch) }}
+
+func experimentalPropertyLength(length int) error {
+	if length > forkcodec.MaxPayloadBytes+64 {
+		return fmt.Errorf("experimental property: frame exceeds codec bound")
+	}
+	if length < 1 {
+		return fmt.Errorf("experimental property: empty frame")
+	}
+	return nil
+}
+
 func init() {
 	msgpack.RegisterExtDecoder(experimentalPropertyExtension, storedExperimentalProperty{}, func(dec *msgpack.Decoder, target reflect.Value, length int) error {
-		if length > forkcodec.MaxPayloadBytes+64 {
-			return fmt.Errorf("experimental property: frame exceeds codec bound")
-		}
-		if length < 1 {
-			return fmt.Errorf("experimental property: empty frame")
+		if err := experimentalPropertyLength(length); err != nil {
+			return err
 		}
 		payload := make([]byte, length)
 		if err := dec.ReadFull(payload); err != nil {
 			return err
 		}
-		var value any
-		switch payload[0] {
-		case 1:
-			raw, err := forkcodec.DecodePayload(payload)
-			if err != nil {
-				return fmt.Errorf("experimental property: %w", err)
-			}
-			reader := bytes.NewReader(raw)
-			nested := msgpack.GetDecoder()
-			nested.Reset(reader)
-			defer msgpack.PutDecoder(nested)
-			value, err = decodeStrictTypedValue(nested)
-			if err != nil {
-				return err
-			}
-			if reader.Len() != 0 {
-				return fmt.Errorf("experimental property: trailing value bytes")
-			}
-		case 2:
-			column, err := forkcodec.OpenInt64(payload[1:])
-			if err != nil {
-				return err
-			}
-			values := make([]int64, column.Len())
-			if err = column.DecodeInto(values); err != nil {
-				return err
-			}
-			value = values
-		default:
-			return fmt.Errorf("experimental property: unsupported codec %d", payload[0])
+		value, err := decodeExperimentalProperty(payload)
+		if err != nil {
+			return err
 		}
 		target.Set(reflect.ValueOf(storedExperimentalProperty{value: value}))
 		return nil
 	})
+}
+
+// decodeExperimentalProperty owns the typed payload semantics for both generic
+// MessagePack callers and borrowed record spans. Every returned value is owned.
+func decodeExperimentalProperty(payload []byte) (any, error) {
+	if err := experimentalPropertyLength(len(payload)); err != nil {
+		return nil, err
+	}
+	switch payload[0] {
+	case 1, 3:
+		// Typed decoding below detaches strings, bytes and containers. Keep the
+		// decompression buffer only until that owned value has been produced.
+		var raw []byte
+		var err error
+		experimental := config.IsExperimentalPropertyStorageEnabled()
+		if experimental {
+			scratch := experimentalPropertyScratchPool.Get().(*experimentalPropertyScratch)
+			defer experimentalPropertyScratchPool.Put(scratch)
+			raw, err = forkcodec.DecodePayloadInto(scratch.bytes, payload)
+			if err == nil && cap(raw) > cap(scratch.bytes) && cap(raw) <= maxExperimentalPropertyScratchBytes {
+				scratch.bytes = raw[:0]
+			}
+		} else {
+			raw, err = forkcodec.DecodePayload(payload)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("experimental property: %w", err)
+		}
+		if experimental {
+			if text, consumed, ok := msgpackStringPayload(raw); ok && consumed == len(raw) {
+				return string(text), nil
+			}
+		}
+		reader := bytes.NewReader(raw)
+		nested := msgpack.GetDecoder()
+		nested.Reset(reader)
+		defer msgpack.PutDecoder(nested)
+		value, err := decodeStrictTypedValue(nested)
+		if err != nil {
+			return nil, err
+		}
+		if reader.Len() != 0 {
+			return nil, fmt.Errorf("experimental property: trailing value bytes")
+		}
+		return value, nil
+	case 2:
+		column, err := forkcodec.OpenInt64(payload[1:])
+		if err != nil {
+			return nil, err
+		}
+		values := make([]int64, column.Len())
+		if err = column.DecodeInto(values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	default:
+		return nil, fmt.Errorf("experimental property: unsupported codec %d", payload[0])
+	}
+}
+
+// decodeStoredPropertyValue borrows an experimental extension only for the
+// duration of decoding. bytes.Reader is unbuffered; advancing it leaves the
+// canonical decoder positioned at the next token without a payload copy.
+func decodeStoredPropertyValue(dec *msgpack.Decoder, reader *bytes.Reader, raw []byte) (any, error) {
+	if !isExperimentalProperty(raw) || !config.IsExperimentalPropertyStorageEnabled() {
+		return decodeStrictTypedValue(dec)
+	}
+	var length uint64
+	var header int
+	switch raw[0] {
+	case msgpcode.Ext8:
+		header = 2
+		length = uint64(raw[1])
+	case msgpcode.Ext16:
+		header = 3
+		length = uint64(binary.BigEndian.Uint16(raw[1:3]))
+	case msgpcode.Ext32:
+		header = 5
+		length = uint64(binary.BigEndian.Uint32(raw[1:5]))
+	}
+	if length > uint64(forkcodec.MaxPayloadBytes+64) {
+		return nil, fmt.Errorf("experimental property: frame exceeds codec bound")
+	}
+	if err := experimentalPropertyLength(int(length)); err != nil {
+		return nil, err
+	}
+	end := uint64(header+1) + length
+	if end > uint64(len(raw)) {
+		if len(raw) == header+1 {
+			return nil, io.EOF
+		}
+		return nil, io.ErrUnexpectedEOF
+	}
+	value, err := decodeExperimentalProperty(raw[header+1 : int(end)])
+	if err != nil {
+		return nil, err
+	}
+	if _, err = reader.Seek(int64(end), io.SeekCurrent); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 // encodeExperimentalProperty preserves the caller's typed value and only

@@ -1,0 +1,26 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-direct-property",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "borrowed-property-payload-and-owned-string-decoding",
+  "clients": [
+    8,
+    16,
+    32
+  ],
+  "trials": [
+    1,
+    2,
+    3
+  ],
+  "warmup": 8192,
+  "phase": "mixed_projection",
+  "queries": 120000,
+  "old_experimental": false,
+  "query_cache_size": 0,
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-k07abpu0",
+  "source_stores_unchanged": true
+}

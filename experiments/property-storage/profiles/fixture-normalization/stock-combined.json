@@ -1,0 +1,30 @@
+{
+  "after": {
+    "6": {
+      "Tables": 107,
+      "Keys": 3943161,
+      "Disk": 219255225,
+      "Raw": 367639291,
+      "Stale": 10840
+    }
+  },
+  "before": {
+    "0": {
+      "Tables": 1,
+      "Keys": 2,
+      "Disk": 170,
+      "Raw": 48,
+      "Stale": 0
+    },
+    "6": {
+      "Tables": 107,
+      "Keys": 3943159,
+      "Disk": 219255209,
+      "Raw": 367639283,
+      "Stale": 10822
+    }
+  },
+  "closed_file_bytes": 458432607,
+  "data": "/lab-data/settled-comparison-0jswgod6/stock-combined",
+  "experimental_env": "false"
+}

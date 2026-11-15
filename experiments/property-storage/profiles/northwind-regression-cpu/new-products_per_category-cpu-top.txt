@@ -1,0 +1,44 @@
+File: nornicdb-regression-fixed
+Build ID: 9c62a3d2bc45d100b232fe07d1ba4f1a205f9f5b
+Type: cpu
+Time: 2026-11-15 01:01:59 UTC
+Duration: 12s, Total samples = 4.07s (33.91%)
+Showing nodes accounting for 2.19s, 53.81% of 4.07s total
+Dropped 218 nodes (cum <= 0.02s)
+Showing top 35 nodes out of 294
+      flat  flat%   sum%        cum   cum%
+     0.18s  4.42%  4.42%      0.34s  8.35%  internal/runtime/maps.(*Iter).Next
+     0.16s  3.93%  8.35%      0.16s  3.93%  internal/runtime/maps.ctrlGroup.matchFull (inline)
+     0.16s  3.93% 12.29%      0.16s  3.93%  internal/runtime/maps.memHashAES
+     0.15s  3.69% 15.97%      0.15s  3.69%  github.com/dgraph-io/badger/v4/y.Filter.MayContain
+     0.13s  3.19% 19.16%      0.13s  3.19%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     0.13s  3.19% 22.36%      0.13s  3.19%  runtime.futex
+     0.13s  3.19% 25.55%      0.13s  3.19%  runtime.memclrNoHeapPointers
+     0.09s  2.21% 27.76%      0.10s  2.46%  github.com/google/flatbuffers/go.(*Table).Offset
+     0.08s  1.97% 29.73%      0.08s  1.97%  runtime.madvise
+     0.08s  1.97% 31.70%      0.08s  1.97%  runtime.memmove
+     0.06s  1.47% 33.17%      0.06s  1.47%  github.com/orneryd/nornicdb/pkg/util.EstimateValueBytes
+     0.06s  1.47% 34.64%      0.06s  1.47%  runtime.write1
+     0.05s  1.23% 35.87%      0.53s 13.02%  runtime.mallocgc
+     0.05s  1.23% 37.10%      0.05s  1.23%  sync/atomic.(*Int32).Add (inline)
+     0.04s  0.98% 38.08%      0.04s  0.98%  github.com/dgraph-io/badger/v4/fb.(*BlockOffset).Init (inline)
+     0.04s  0.98% 39.07%      0.11s  2.70%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+     0.04s  0.98% 40.05%      0.27s  6.63%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+     0.04s  0.98% 41.03%      0.04s  0.98%  memeqbody
+     0.04s  0.98% 42.01%      0.04s  0.98%  runtime.(*mspan).init
+     0.04s  0.98% 43.00%      0.06s  1.47%  runtime.mallocgcTinySC2
+     0.04s  0.98% 43.98%      0.04s  0.98%  runtime.nextFreeFast (inline)
+     0.03s  0.74% 44.72%      0.03s  0.74%  context.(*valueCtx).Err
+     0.03s  0.74% 45.45%      0.04s  0.98%  context.value
+     0.03s  0.74% 46.19%      0.89s 21.87%  github.com/dgraph-io/badger/v4.(*levelHandler).get
+     0.03s  0.74% 46.93%      0.92s 22.60%  github.com/dgraph-io/badger/v4.(*levelsController).get
+     0.03s  0.74% 47.67%      0.03s  0.74%  github.com/dgraph-io/badger/v4/table.(*header).Decode (inline)
+     0.03s  0.74% 48.40%      0.06s  1.47%  github.com/dgraph-io/ristretto/v2.(*tinyLFU).Increment
+     0.03s  0.74% 49.14%      3.40s 83.54%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+     0.03s  0.74% 49.88%      0.05s  1.23%  github.com/orneryd/nornicdb/pkg/cypher.(*statementContext).Err
+     0.03s  0.74% 50.61%      0.20s  4.91%  github.com/orneryd/nornicdb/pkg/storage.(*Node).DecodeMsgpack
+     0.03s  0.74% 51.35%      0.21s  5.16%  github.com/vmihailenco/msgpack/v5.(*Decoder).Decode
+     0.03s  0.74% 52.09%      0.04s  0.98%  runtime.mallocgcSmallNoScanSC5
+     0.03s  0.74% 52.83%      0.03s  0.74%  runtime.step
+     0.02s  0.49% 53.32%      0.04s  0.98%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+     0.02s  0.49% 53.81%      3.02s 74.20%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).GetQueryNode

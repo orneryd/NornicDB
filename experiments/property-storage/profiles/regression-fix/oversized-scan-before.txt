@@ -1,0 +1,16 @@
+--- FAIL: TestExperimentalOversizedProjectionScanRetainsExistingCoverage (0.64s)
+    --- FAIL: TestExperimentalOversizedProjectionScanRetainsExistingCoverage/snapshot=false (0.29s)
+        experimental_scan_admission_test.go:37: 
+            	Error Trace:	/src/pkg/storage/experimental_scan_admission_test.go:37
+            	Error:      	"1124" is not less than or equal to "1025"
+            	Test:       	TestExperimentalOversizedProjectionScanRetainsExistingCoverage/snapshot=false
+            	Messages:   	a known oversized label must stop admitting new scan images
+    --- FAIL: TestExperimentalOversizedProjectionScanRetainsExistingCoverage/snapshot=true (0.35s)
+        experimental_scan_admission_test.go:37: 
+            	Error Trace:	/src/pkg/storage/experimental_scan_admission_test.go:37
+            	Error:      	"1124" is not less than or equal to "1025"
+            	Test:       	TestExperimentalOversizedProjectionScanRetainsExistingCoverage/snapshot=true
+            	Messages:   	a known oversized label must stop admitting new scan images
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.673s
+FAIL

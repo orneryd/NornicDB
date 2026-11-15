@@ -1,0 +1,25 @@
+{
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-regression-fixed",
+  "old_source": "ddc59dc20 (stock upstream Badger)",
+  "new_source": "borrowed-properties-and-cache-source-bound-once",
+  "clients": [
+    1
+  ],
+  "trials": [
+    1,
+    2,
+    3
+  ],
+  "warmup": 5,
+  "phase": "",
+  "queries": 30,
+  "old_experimental": false,
+  "query_cache_size": 1000,
+  "workload": "northwind",
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "work_directory_retained": "/tmp/combined-projection-gex1r9xi",
+  "source_stores_unchanged": true
+}

@@ -1,0 +1,43 @@
+File: nornicdb-profile-fixes
+Build ID: 51d92b2d62bfcb6a1ff64462bc6989c5bd440e81
+Type: alloc_space
+Time: 2026-11-15 01:08:54 UTC
+Showing nodes accounting for 1032.02MB, 95.49% of 1080.71MB total
+Dropped 52 nodes (cum <= 5.40MB)
+Showing top 35 nodes out of 150
+      flat  flat%   sum%        cum   cum%
+   83.02MB  7.68%  7.68%    99.52MB  9.21%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+   72.54MB  6.71% 14.39%    72.54MB  6.71%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+   59.53MB  5.51% 19.90%    59.53MB  5.51%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+   59.01MB  5.46% 25.36%    59.01MB  5.46%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   58.53MB  5.42% 30.78%    58.53MB  5.42%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+   56.26MB  5.21% 35.98%   946.67MB 87.60%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphSequential
+   56.20MB  5.20% 41.18%  1064.04MB 98.46%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+   50.51MB  4.67% 45.86%   150.03MB 13.88%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+   47.01MB  4.35% 50.21%    47.01MB  4.35%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+   44.01MB  4.07% 54.28%   102.52MB  9.49%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+   39.51MB  3.66% 57.94%    39.51MB  3.66%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+   36.51MB  3.38% 61.31%   270.08MB 24.99%  github.com/dgraph-io/badger/v4.(*Txn).Get
+   32.50MB  3.01% 64.32%    32.50MB  3.01%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+   28.91MB  2.67% 67.00%   890.41MB 82.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+      27MB  2.50% 69.49%       29MB  2.68%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeAdjacencyHeader
+      23MB  2.13% 71.62%   156.52MB 14.48%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+   22.50MB  2.08% 73.71%    39.01MB  3.61%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+   21.50MB  1.99% 75.69%    21.50MB  1.99%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+   21.50MB  1.99% 77.68%    21.50MB  1.99%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+   20.50MB  1.90% 79.58%    20.50MB  1.90%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+   20.50MB  1.90% 81.48%    20.50MB  1.90%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+      19MB  1.76% 83.24%       19MB  1.76%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)
+   17.81MB  1.65% 84.88%   806.99MB 74.67%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).loadTraversalEndpointNode
+   17.16MB  1.59% 86.47%    17.16MB  1.59%  github.com/orneryd/nornicdb/pkg/cypher.(*traversalResultCollector).appendRow
+   11.50MB  1.06% 87.54%    33.50MB  3.10%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).captureReadView
+      11MB  1.02% 88.55%       11MB  1.02%  slices.Clone[go.shape.[]string,go.shape.string] (inline)
+   10.50MB  0.97% 89.53%    10.50MB  0.97%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+      10MB  0.93% 90.45%    81.51MB  7.54%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+    9.50MB  0.88% 91.33%       12MB  1.11%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedArray
+       9MB  0.83% 92.16%        9MB  0.83%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+    8.50MB  0.79% 92.95%     8.50MB  0.79%  github.com/orneryd/nornicdb/pkg/storage.nodeKey (inline)
+    8.50MB  0.79% 93.74%    39.01MB  3.61%  github.com/vmihailenco/msgpack/v5.(*Decoder).DecodeInterface
+       7MB  0.65% 94.38%        7MB  0.65%  github.com/orneryd/nornicdb/pkg/storage.qualifyEntityID (inline)
+    6.50MB   0.6% 94.99%     6.50MB   0.6%  bytes.NewReader (inline)
+    5.50MB  0.51% 95.49%    16.50MB  1.53%  github.com/orneryd/nornicdb/pkg/storage.(*callerCopyWalker).value

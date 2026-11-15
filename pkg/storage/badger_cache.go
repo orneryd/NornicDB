@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -192,17 +193,25 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 	}
 	// Evict individual immutable images instead of clearing every hot node
 	// when one large vector payload reaches the budget.
-	for id := range b.nodeCache {
-		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
-			break
+	// Starting a map iterator can scan a large, sparsely populated cache even
+	// when the first loop body immediately breaks. Prove room before entering
+	// either iterator; eviction and its accounting remain owned by this path.
+	experimental := config.IsExperimentalPropertyStorageEnabled()
+	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.nodeCache) >= b.nodeCacheMaxEntries && mode != nodeReadCacheQuery) {
+		for id := range b.nodeCache {
+			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+				break
+			}
+			b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 		}
-		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 	}
-	for id := range b.queryNodeCache {
-		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
-			break
+	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) >= b.nodeCacheMaxEntries && mode == nodeReadCacheQuery) {
+		for id := range b.queryNodeCache {
+			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+				break
+			}
+			b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 		}
-		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 	}
 	if mode == nodeReadCacheQuery {
 		if b.queryNodeCache == nil {
@@ -379,6 +388,13 @@ func nodeBodyCacheable(node *Node) bool {
 	return len(node.ChunkEmbeddings) == 0 || node.RuntimeMetadata().EmbeddingsStoredSeparately
 }
 
+// projectedLabelBodyAdmission shares the scan's existing population decision.
+// Unknown counts keep normal admission; a known oversized population must not
+// churn the body cache on each full walk.
+func (b *BadgerEngine) projectedLabelBodyAdmission(labelled int64) bool {
+	return labelled < 0 || b.nodeCacheMaxEntries <= 0 || labelled <= int64(b.nodeCacheMaxEntries)
+}
+
 func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node, source uint64, projection ...[]string) {
 	if id == "" || node == nil {
 		return
@@ -394,6 +410,9 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 	cached := copyNodeWithoutEmbeddings(node)
 	var coverage map[string]struct{}
 	if len(projection) > 0 && projection[0] != nil {
+		// The physical identity belongs to the immutable cached image. Bind it
+		// once here rather than rebuilding runtime records on every cache hit.
+		b.bindNodeReadSource(cached, id, itemVersion)
 		coverage = make(map[string]struct{}, len(projection[0]))
 		for _, name := range projection[0] {
 			coverage[strings.Clone(name)] = struct{}{}

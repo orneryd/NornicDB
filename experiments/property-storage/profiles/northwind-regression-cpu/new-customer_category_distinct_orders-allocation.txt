@@ -1,0 +1,43 @@
+File: nornicdb-regression-fixed
+Build ID: 9c62a3d2bc45d100b232fe07d1ba4f1a205f9f5b
+Type: alloc_space
+Time: 2026-11-15 01:02:21 UTC
+Showing nodes accounting for 6.96GB, 88.80% of 7.83GB total
+Dropped 107 nodes (cum <= 0.04GB)
+Showing top 35 nodes out of 166
+      flat  flat%   sum%        cum   cum%
+    0.55GB  6.96%  6.96%     0.55GB  6.96%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+    0.54GB  6.89% 13.85%     0.59GB  7.56%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+    0.47GB  5.97% 19.82%     5.92GB 75.61%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseChainedGraph
+    0.41GB  5.27% 25.09%     5.87GB 74.87%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+    0.32GB  4.12% 29.21%     0.32GB  4.12%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    0.31GB  3.96% 33.17%     0.31GB  3.96%  github.com/dgraph-io/badger/v4/table.NewMergeIterator
+    0.26GB  3.37% 36.54%     0.72GB  9.13%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyReturnPlan
+    0.26GB  3.35% 39.90%     0.26GB  3.35%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).newTraversalContext
+    0.26GB  3.27% 43.16%     0.85GB 10.82%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+    0.25GB  3.20% 46.36%     0.25GB  3.20%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+    0.25GB  3.18% 49.54%     0.25GB  3.18%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+    0.21GB  2.64% 52.18%     0.21GB  2.64%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+    0.19GB  2.45% 54.63%     0.19GB  2.45%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineAggregateGroups.func1
+    0.19GB  2.41% 57.04%     0.19GB  2.41%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+    0.18GB  2.26% 59.30%     0.31GB  4.01%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+    0.18GB  2.24% 61.55%     0.18GB  2.24%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+    0.17GB  2.23% 63.78%     6.29GB 80.32%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+    0.16GB  2.09% 65.87%     0.17GB  2.23%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeAdjacencyHeader
+    0.16GB  1.99% 67.86%     0.32GB  4.06%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+    0.16GB  1.99% 69.86%     1.04GB 13.27%  github.com/dgraph-io/badger/v4.(*Txn).Get
+    0.15GB  1.91% 71.77%     0.15GB  1.91%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+    0.14GB  1.76% 73.53%     3.43GB 43.84%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).loadTraversalEndpointNode
+    0.13GB  1.71% 75.24%     0.96GB 12.21%  github.com/dgraph-io/badger/v4.(*Txn).NewIterator
+    0.13GB  1.68% 76.92%     0.13GB  1.68%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+    0.12GB  1.52% 78.45%     0.12GB  1.52%  github.com/dgraph-io/badger/v4.(*Iterator).newItem (inline)
+    0.11GB  1.38% 79.83%     0.11GB  1.38%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+    0.11GB  1.37% 81.20%     1.80GB 22.96%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).adjacentEdgeHeadersCommitted
+    0.08GB  1.05% 82.25%     0.09GB  1.09%  github.com/orneryd/nornicdb/pkg/cypher.(*pipelineAggregateGroup).value
+    0.08GB     1% 83.25%     0.08GB     1%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+    0.08GB  0.99% 84.24%     0.08GB  0.99%  github.com/orneryd/nornicdb/pkg/storage.qualifyEntityID (inline)
+    0.08GB  0.97% 85.21%     0.08GB  0.97%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+    0.07GB  0.95% 86.16%     0.52GB  6.65%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+    0.07GB  0.89% 87.04%     0.07GB  0.89%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+    0.07GB  0.88% 87.92%     0.07GB  0.88%  github.com/orneryd/nornicdb/pkg/cypher.(*cypherValueIndex).addComparable (inline)
+    0.07GB  0.88% 88.80%     0.07GB  0.88%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)

@@ -65,7 +65,7 @@ func TestExperimentalCompressedNumericTypes(t *testing.T) {
 				}
 				modes[mode] = true
 			}
-			require.True(t, modes[1], "float values exercise independently compressed typed MessagePack")
+			require.True(t, modes[3], "float values exercise independently compressed typed MessagePack")
 			require.True(t, modes[2], "integer values exercise the fork's packed column reader")
 			node, e := engine.decodeNodeProjected(tx, "test", body, nil)
 			if e != nil {

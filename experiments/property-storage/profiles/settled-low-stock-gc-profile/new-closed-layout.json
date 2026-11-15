@@ -1,0 +1,18 @@
+{
+  "after": null,
+  "before": {
+    "0": {
+      "Tables": 5,
+      "Keys": 3921203,
+      "Disk": 101329436,
+      "Raw": 281074343,
+      "Stale": 0,
+      "IndexBytes": 7848688,
+      "BloomFilterBytes": 3431066
+    }
+  },
+  "closed_file_bytes": 254435700,
+  "data": "/tmp/combined-projection-b2fkkxh0/new",
+  "experimental_env": "",
+  "mode": "inspect"
+}

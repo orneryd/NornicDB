@@ -308,6 +308,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	// benchmark).
 	var covers bool
 	coversDecided := false
+	admitProjectionBodies := true
 	return view(func(txn *badger.Txn) error {
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
@@ -315,7 +316,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if queryNodes {
 				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, false, nil)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
@@ -361,11 +362,13 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if !coversDecided && lookups >= labelScanPointLookups {
 				// Author: storage-format-owners lane (Codex), 1 November 2026.
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {

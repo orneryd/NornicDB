@@ -58,7 +58,7 @@ flowchart TD
     App["Node or relationship<br/>with its own property map"]
     Choose["Choose an encoding for each property"]
     Plain["Ordinary typed bytes<br/>small or poorly compressing values"]
-    Text["Compressed typed bytes<br/>Zstd property frame"]
+    Text["Compressed typed bytes<br/>checked S2 property frame"]
     Numbers["Exact int64 column<br/>constant, packed differences, or raw values"]
     Record["Existing Nornic record envelope<br/>metadata + token/value list"]
     Tx["Same transaction and durability owners"]
@@ -85,6 +85,10 @@ flowchart TD
 A long, repetitive document can take fewer bytes after compression. Random bytes
 often cannot, so the encoder keeps their ordinary representation when compression
 fails its savings check.
+
+New compressed properties use the faster S2 codec with a checksum. Older Zstd
+property frames remain readable. Badger's table-block compression is separate and
+can still use Zstd.
 
 A suitable integer list can also be packed exactly:
 
@@ -192,6 +196,8 @@ Compression and cache work can increase latency for some workloads. The
 [measured point-read correction](POINT-PROJECTION-FIX.md) includes the remaining
 mixed-query and cold full-body regressions. Further profiling is in progress;
 those costs have not been declared acceptable without evidence.
+The [regression follow-up](REGRESSION-FOLLOWUP.md) records the subsequent CPU and
+allocation findings and corrections.
 
 ## What was removed
 

@@ -1,0 +1,34 @@
+Total: 13.49s
+ROUTINE ======================== github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putNodeLocked in /baseline/pkg/storage/badger_cache.go
+         0      690ms (flat, cum)  5.11% of Total
+         .          .    182:func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
+         .       10ms    183:	b.deleteNodeReadCacheLocked(copied.ID, mode)
+         .       10ms    184:	bytes := estimateNodeReadCacheBytes(copied)
+         .          .    185:	limit := b.nodeReadCacheLimit()
+         .          .    186:	if bytes > limit {
+         .          .    187:		return
+         .          .    188:	}
+         .          .    189:	// Evict individual immutable images instead of clearing every hot node
+         .          .    190:	// when one large vector payload reaches the budget.
+         .      430ms    191:	for id := range b.nodeCache {
+         .          .    192:		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+         .          .    193:			break
+         .          .    194:		}
+         .          .    195:		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+         .          .    196:	}
+         .       20ms    197:	for id := range b.queryNodeCache {
+         .          .    198:		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+         .          .    199:			break
+         .          .    200:		}
+         .      210ms    201:		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+         .          .    202:	}
+         .          .    203:	if mode == nodeReadCacheQuery {
+         .          .    204:		if b.queryNodeCache == nil {
+         .          .    205:			b.queryNodeCache = make(map[NodeID]*Node)
+         .          .    206:		}
+         .       10ms    207:		b.queryNodeCache[copied.ID] = copied
+         .          .    208:		b.nodeCacheBytes += bytes
+         .          .    209:		return
+         .          .    210:	}
+         .          .    211:	if b.nodeCache == nil {
+         .          .    212:		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)

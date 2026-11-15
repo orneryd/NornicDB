@@ -1,0 +1,3 @@
+ok  	github.com/orneryd/nornicdb/pkg/storage	1.297s
+ok  	github.com/orneryd/nornicdb/pkg/cypher	0.509s
+ok  	github.com/orneryd/nornicdb/pkg/multidb	0.059s

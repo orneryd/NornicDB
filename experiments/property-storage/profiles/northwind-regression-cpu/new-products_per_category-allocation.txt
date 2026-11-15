@@ -1,0 +1,43 @@
+File: nornicdb-regression-fixed
+Build ID: 9c62a3d2bc45d100b232fe07d1ba4f1a205f9f5b
+Type: alloc_space
+Time: 2026-11-15 01:01:59 UTC
+Showing nodes accounting for 1007.75MB, 95.06% of 1060.13MB total
+Dropped 92 nodes (cum <= 5.30MB)
+Showing top 35 nodes out of 151
+      flat  flat%   sum%        cum   cum%
+   79.52MB  7.50%  7.50%    95.52MB  9.01%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+   66.03MB  6.23% 13.73%    66.03MB  6.23%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+   62.53MB  5.90% 19.63%    62.53MB  5.90%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+   60.98MB  5.75% 25.38%  1046.28MB 98.69%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+   59.22MB  5.59% 30.97%   923.46MB 87.11%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphSequential
+   57.03MB  5.38% 36.35%    57.03MB  5.38%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+   54.01MB  5.09% 41.44%   149.53MB 14.10%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+   53.51MB  5.05% 46.49%    53.51MB  5.05%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+   45.51MB  4.29% 50.78%   100.52MB  9.48%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+   40.01MB  3.77% 54.55%    40.01MB  3.77%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+   36.01MB  3.40% 57.95%   264.08MB 24.91%  github.com/dgraph-io/badger/v4.(*Txn).Get
+      35MB  3.30% 61.25%       35MB  3.30%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+   34.01MB  3.21% 64.46%    34.01MB  3.21%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+   29.78MB  2.81% 67.27%   864.23MB 81.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+   29.50MB  2.78% 70.05%    29.50MB  2.78%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+      23MB  2.17% 72.22%       23MB  2.17%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeAdjacencyHeader
+      22MB  2.08% 74.30%    38.51MB  3.63%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+   21.50MB  2.03% 76.33%   151.52MB 14.29%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+   18.83MB  1.78% 78.10%    18.83MB  1.78%  github.com/orneryd/nornicdb/pkg/cypher.(*traversalResultCollector).appendRow
+      18MB  1.70% 79.80%       18MB  1.70%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)
+      16MB  1.51% 81.31%       16MB  1.51%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+   14.50MB  1.37% 82.68%    14.50MB  1.37%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+   14.25MB  1.34% 84.02%   775.93MB 73.19%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).loadTraversalEndpointNode
+      14MB  1.32% 85.34%       14MB  1.32%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+   13.50MB  1.27% 86.62%    13.50MB  1.27%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+   12.50MB  1.18% 87.80%       27MB  2.55%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).captureReadView
+   12.50MB  1.18% 88.97%    12.50MB  1.18%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+   10.50MB  0.99% 89.97%    81.01MB  7.64%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+   10.50MB  0.99% 90.96%    39.50MB  3.73%  github.com/vmihailenco/msgpack/v5.(*Decoder).DecodeInterface
+    8.50MB   0.8% 91.76%     8.50MB   0.8%  slices.Clone[go.shape.[]string,go.shape.string] (inline)
+    8.50MB   0.8% 92.56%     8.50MB   0.8%  github.com/orneryd/nornicdb/pkg/storage.qualifyEntityID (inline)
+    7.50MB  0.71% 93.27%       16MB  1.51%  github.com/orneryd/nornicdb/pkg/storage.(*callerCopyWalker).value
+       7MB  0.66% 93.93%    59.84MB  5.64%  github.com/orneryd/nornicdb/pkg/cypher.(*traversalResultCollector).appendPathRows
+    6.50MB  0.61% 94.54%     6.50MB  0.61%  github.com/orneryd/nornicdb/pkg/storage.nodeKey (inline)
+    5.50MB  0.52% 95.06%     5.50MB  0.52%  bytes.NewReader (inline)

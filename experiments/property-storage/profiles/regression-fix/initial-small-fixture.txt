@@ -1,0 +1,8 @@
+--- FAIL: TestExperimentalStoredPropertySpanParityAndOwnership (0.00s)
+    experimental_property_span_test.go:23: 
+        	Error Trace:	/src/pkg/storage/experimental_property_span_test.go:23
+        	Error:      	Expected value not to be nil.
+        	Test:       	TestExperimentalStoredPropertySpanParityAndOwnership
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	4.237s
+FAIL

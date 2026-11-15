@@ -210,7 +210,7 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, names
 				continue
 			}
 		}
-		val, err := decodeStrictTypedValue(dec)
+		val, err := decodeStoredPropertyValue(dec, reader, rest[consumedSoFar+n:])
 		if err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, err)
 		}

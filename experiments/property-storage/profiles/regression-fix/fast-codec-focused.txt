@@ -1,0 +1,16 @@
+--- FAIL: TestExperimentalCompressedNumericTypes (0.01s)
+    experimental_numeric_types_test.go:68: 
+        	Error Trace:	/src/pkg/storage/experimental_numeric_types_test.go:68
+        	            				/fork-regression/iterator.go:99
+        	            				/src/pkg/storage/experimental_numeric_types_test.go:35
+        	            				/src/pkg/storage/badger_managed.go:117
+        	            				/src/pkg/storage/badger_txn_helpers.go:104
+        	            				/src/pkg/storage/badger_txn_helpers.go:276
+        	            				/src/pkg/storage/badger_txn_helpers.go:103
+        	            				/src/pkg/storage/experimental_numeric_types_test.go:30
+        	Error:      	Should be true
+        	Test:       	TestExperimentalCompressedNumericTypes
+        	Messages:   	float values exercise independently compressed typed MessagePack
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	1.877s
+FAIL

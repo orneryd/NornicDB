@@ -322,7 +322,7 @@ func (d *projectedNodeDecoder) decodePropertyValue(dec *msgpack.Decoder, propert
 	if property.hasEquals && !compressed && !msgpackStringEquals(raw, property.equals) {
 		return false, nil
 	}
-	value, err := decodeStrictTypedValue(dec)
+	value, err := decodeStoredPropertyValue(dec, &d.reader, raw)
 	if err != nil {
 		return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
 	}
@@ -366,23 +366,35 @@ func (d *projectedNodeDecoder) releaseDeferred() {
 // equal: msgpack's str family decodes only to Go strings, and temporal and
 // point values are extension types.
 func msgpackStringEquals(raw []byte, s string) bool {
+	payload, _, ok := msgpackStringPayload(raw)
+	return ok && len(payload) == len(s) && string(payload) == s
+}
+
+// msgpackStringPayload locates one complete string without copying it. Trailing
+// bytes belong to subsequent fields unless an enclosing frame requires exhaustion.
+func msgpackStringPayload(raw []byte) ([]byte, int, bool) {
 	if len(raw) == 0 {
-		return false
+		return nil, 0, false
 	}
-	var size, header int
+	var size uint64
+	var header int
 	switch code := raw[0]; {
 	case msgpcode.IsFixedString(code):
-		size, header = int(code&msgpcode.FixedStrMask), 1
+		size, header = uint64(code&msgpcode.FixedStrMask), 1
 	case code == msgpcode.Str8 && len(raw) >= 2:
-		size, header = int(raw[1]), 2
+		size, header = uint64(raw[1]), 2
 	case code == msgpcode.Str16 && len(raw) >= 3:
-		size, header = int(binary.BigEndian.Uint16(raw[1:])), 3
+		size, header = uint64(binary.BigEndian.Uint16(raw[1:3])), 3
 	case code == msgpcode.Str32 && len(raw) >= 5:
-		size, header = int(binary.BigEndian.Uint32(raw[1:])), 5
+		size, header = uint64(binary.BigEndian.Uint32(raw[1:5])), 5
 	default:
-		return false
+		return nil, 0, false
 	}
-	return size == len(s) && len(raw)-header >= size && string(raw[header:header+size]) == s
+	if size > uint64(len(raw)-header) {
+		return nil, 0, false
+	}
+	end := header + int(size)
+	return raw[header:end], end, true
 }
 
 // NodeEnvelope contains borrowed V2 property and metadata payloads. Keep the

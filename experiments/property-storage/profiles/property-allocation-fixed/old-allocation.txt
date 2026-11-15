@@ -1,0 +1,58 @@
+File: nornicdb-point-public
+Build ID: 5de3c069449c2c2b0eb75b7663651afdef2540ad
+Type: alloc_space
+Time: 2026-11-15 01:11:11 UTC
+Showing nodes accounting for 720.35MB, 88.25% of 816.26MB total
+Dropped 255 nodes (cum <= 4.08MB)
+Showing top 50 nodes out of 167
+      flat  flat%   sum%        cum   cum%
+  178.27MB 21.84% 21.84%   178.27MB 21.84%  bytes.growSlice
+  149.87MB 18.36% 40.20%   570.82MB 69.93%  github.com/orneryd/nornicdb/internal/jsontext.(*Encoder).Encode
+  118.59MB 14.53% 54.73%   294.14MB 36.04%  github.com/orneryd/go-json.marshal
+  112.04MB 13.73% 68.46%   172.17MB 21.09%  github.com/orneryd/nornicdb/pkg/convert.marshalJSON
+   66.21MB  8.11% 76.57%    73.71MB  9.03%  github.com/orneryd/nornicdb/pkg/server.(*Server).transactionHTTPValue
+   15.57MB  1.91% 78.47%    89.28MB 10.94%  github.com/orneryd/nornicdb/pkg/server.(*Server).appendStatementResult
+   15.56MB  1.91% 80.38%    15.56MB  1.91%  slices.Clone[go.shape.[]uint8,go.shape.uint8] (inline)
+       8MB  0.98% 81.36%        8MB  0.98%  reflect.unsafe_New
+    7.51MB  0.92% 82.28%     7.51MB  0.92%  slices.Clone[go.shape.[]go.shape.int64,go.shape.int64] (inline)
+    5.71MB   0.7% 82.98%     5.71MB   0.7%  encoding/json.appendHTMLEscape
+    5.50MB  0.67% 83.65%     5.50MB  0.67%  context.WithValue
+    4.50MB  0.55% 84.21%     6.51MB   0.8%  github.com/orneryd/nornicdb/pkg/storage/lifecycle.(*LifecycleMetrics).ToMap
+    4.50MB  0.55% 84.76%     4.50MB  0.55%  net/http.(*Request).WithContext (partial-inline)
+    4.50MB  0.55% 85.31%     4.50MB  0.55%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries
+       3MB  0.37% 85.68%     4.50MB  0.55%  context.(*cancelCtx).propagateCancel
+       3MB  0.37% 86.04%     7.50MB  0.92%  github.com/orneryd/nornicdb/pkg/server.(*Server).serveTransactionRequest
+    2.50MB  0.31% 86.35%    29.08MB  3.56%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readNodeIndexCandidatePlan
+       2MB  0.25% 86.60%        6MB  0.74%  net/http.readRequestLimit
+       2MB  0.25% 86.84%    26.08MB  3.19%  github.com/orneryd/nornicdb/pkg/storage.projectCachedNodeForRead
+       2MB  0.25% 87.09%   760.21MB 93.13%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleImplicitTransaction
+    1.50MB  0.18% 87.27%    39.08MB  4.79%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1.1
+    1.50MB  0.18% 87.45%    10.50MB  1.29%  net/http.(*conn).readRequest
+       1MB  0.12% 87.58%    40.58MB  4.97%  github.com/orneryd/nornicdb/pkg/cypher.materializePipelineSource
+       1MB  0.12% 87.70%    25.50MB  3.12%  github.com/orneryd/nornicdb/pkg/server.instrumentedMux.func1
+       1MB  0.12% 87.82%     7.50MB  0.92%  github.com/orneryd/go-json/internal/decoder.(*unmarshalJSONDecoder).Decode
+       1MB  0.12% 87.94%        5MB  0.61%  encoding/json.NewDecoder
+       1MB  0.12% 88.07%    19.50MB  2.39%  github.com/orneryd/nornicdb/pkg/server.continuationDeliveryMiddleware.func1
+    0.50MB 0.061% 88.13%    39.58MB  4.85%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1
+    0.50MB 0.061% 88.19%    45.58MB  5.58%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+    0.50MB 0.061% 88.25%    45.94MB  5.63%  net/http.(*conn).serve
+         0     0% 88.25%    42.84MB  5.25%  bytes.(*Buffer).Grow (inline)
+         0     0% 88.25%   135.43MB 16.59%  bytes.(*Buffer).Write
+         0     0% 88.25%   178.27MB 21.84%  bytes.(*Buffer).grow
+         0     0% 88.25%        5MB  0.61%  encoding/json.(*Decoder).Decode
+         0     0% 88.25%    57.17MB  7.00%  encoding/json.HTMLEscape
+         0     0% 88.25%     6.51MB   0.8%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).AdaptivePredict
+         0     0% 88.25%     5.01MB  0.61%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).closure (inline)
+         0     0% 88.25%     5.01MB  0.61%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).closureCheckingStopState
+         0     0% 88.25%     5.01MB  0.61%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).closureWork
+         0     0% 88.25%     4.50MB  0.55%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).computeReachSet
+         0     0% 88.25%     6.01MB  0.74%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).computeTargetState
+         0     0% 88.25%     6.01MB  0.74%  github.com/antlr4-go/antlr/v4.(*ParserATNSimulator).execATN
+         0     0% 88.25%     8.50MB  1.04%  github.com/orneryd/go-json.(*Decoder).DecodeWithOption
+         0     0% 88.25%   294.14MB 36.04%  github.com/orneryd/go-json.MarshalWithOption (inline)
+         0     0% 88.25%   175.55MB 21.51%  github.com/orneryd/go-json.encode
+         0     0% 88.25%   175.55MB 21.51%  github.com/orneryd/go-json.encodeRunCode
+         0     0% 88.25%     8.50MB  1.04%  github.com/orneryd/go-json/internal/decoder.(*Stream).Decode
+         0     0% 88.25%     8.50MB  1.04%  github.com/orneryd/go-json/internal/decoder.(*sliceDecoder).Decode
+         0     0% 88.25%     8.50MB  1.04%  github.com/orneryd/go-json/internal/decoder.(*structDecoder).Decode
+         0     0% 88.25%   172.17MB 21.09%  github.com/orneryd/go-json/internal/encoder.(*MarshalerCall).call (inline)

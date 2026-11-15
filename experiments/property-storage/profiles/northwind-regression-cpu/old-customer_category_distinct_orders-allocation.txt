@@ -1,0 +1,43 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: alloc_space
+Time: 2026-11-15 01:00:21 UTC
+Showing nodes accounting for 6.93GB, 88.48% of 7.83GB total
+Dropped 101 nodes (cum <= 0.04GB)
+Showing top 35 nodes out of 165
+      flat  flat%   sum%        cum   cum%
+    0.57GB  7.27%  7.27%     0.57GB  7.27%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+    0.53GB  6.70% 13.97%     0.57GB  7.33%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+    0.46GB  5.83% 19.80%     5.85GB 74.72%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseChainedGraph
+    0.41GB  5.20% 25.00%     5.85GB 74.65%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+    0.32GB  4.10% 29.10%     0.32GB  4.10%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    0.32GB  4.08% 33.18%     0.32GB  4.08%  github.com/dgraph-io/badger/v4/table.NewMergeIterator
+    0.30GB  3.80% 36.98%     0.73GB  9.27%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyReturnPlan
+    0.27GB  3.42% 40.40%     0.27GB  3.42%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+    0.26GB  3.29% 43.70%     0.26GB  3.29%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).newTraversalContext
+    0.24GB  3.07% 46.77%     0.24GB  3.07%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+    0.24GB  3.04% 49.81%     0.81GB 10.37%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+    0.20GB  2.57% 52.38%     0.20GB  2.57%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+    0.19GB  2.44% 54.82%     0.19GB  2.44%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+    0.18GB  2.26% 57.08%     0.18GB  2.26%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineAggregateGroups.func1
+    0.17GB  2.12% 59.20%     6.23GB 79.55%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+    0.16GB  2.03% 61.23%     0.16GB  2.03%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+    0.16GB  1.98% 63.21%     1.05GB 13.35%  github.com/dgraph-io/badger/v4.(*Txn).Get
+    0.15GB  1.97% 65.18%     0.33GB  4.15%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+    0.15GB  1.97% 67.15%     0.17GB  2.11%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeAdjacencyHeader
+    0.15GB  1.92% 69.07%     0.15GB  1.92%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+    0.15GB  1.91% 70.98%     3.40GB 43.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).loadTraversalEndpointNode
+    0.15GB  1.90% 72.88%     0.15GB  1.90%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+    0.14GB  1.77% 74.65%     0.27GB  3.48%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+    0.13GB  1.65% 76.31%     0.97GB 12.36%  github.com/dgraph-io/badger/v4.(*Txn).NewIterator
+    0.13GB  1.65% 77.96%     0.13GB  1.65%  github.com/dgraph-io/badger/v4.(*Iterator).newItem (inline)
+    0.13GB  1.60% 79.55%     0.13GB  1.60%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+    0.10GB  1.32% 80.88%     1.84GB 23.52%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).adjacentEdgeHeadersCommitted
+    0.09GB  1.14% 82.02%     0.09GB  1.18%  github.com/orneryd/nornicdb/pkg/cypher.(*pipelineAggregateGroup).value
+    0.08GB  1.08% 83.10%     0.08GB  1.08%  github.com/orneryd/nornicdb/pkg/storage.qualifyEntityID (inline)
+    0.08GB  1.05% 84.15%     0.08GB  1.05%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+    0.07GB  0.94% 85.09%     0.52GB  6.63%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+    0.07GB   0.9% 85.99%     0.07GB   0.9%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)
+    0.07GB  0.87% 86.86%     0.07GB  0.87%  github.com/dgraph-io/badger/v4/table.(*MergeIterator).setCurrent (inline)
+    0.07GB  0.85% 87.71%     0.07GB  0.85%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+    0.06GB  0.77% 88.48%     0.06GB  0.77%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey

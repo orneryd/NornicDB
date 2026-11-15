@@ -1,5 +1,8 @@
 # Indexed document-point projection correction
 
+These measurements precede the [profile-driven follow-up](REGRESSION-FOLLOWUP.md).
+Keep their remaining regressions as the before evidence for that correction.
+
 The indexed document-point regression is fixed in the measured workload. At eight
 clients, median per-run p95 is 0.698 ms versus stock's 0.901 ms, and throughput is
 13,672 versus 11,801 queries/s. This is not a claim that every experimental query

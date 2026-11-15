@@ -1,0 +1,34 @@
+Total: 14.58s
+ROUTINE ======================== github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putNodeLocked in /src/pkg/storage/badger_cache.go
+      10ms      1.15s (flat, cum)  7.89% of Total
+         .          .    186:// image; a write invalidates that image before entering this owner.
+         .       20ms    187:func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
+         .       30ms    188:	b.deleteNodeReadCacheLocked(copied.ID, mode)
+         .          .    189:	bytes := estimateNodeReadCacheBytes(copied)
+         .          .    190:	limit := b.nodeReadCacheLimit()
+         .          .    191:	if bytes > limit {
+         .          .    192:		return
+         .          .    193:	}
+         .          .    194:	// Evict individual immutable images instead of clearing every hot node
+         .      740ms    195:	// when one large vector payload reaches the budget.
+         .          .    196:	// Starting a map iterator can scan a large, sparsely populated cache even
+         .          .    197:	// when the first loop body immediately breaks. Prove room before entering
+         .          .    198:	// either iterator; eviction and its accounting remain owned by this path.
+         .          .    199:	experimental := config.IsExperimentalPropertyStorageEnabled()
+         .          .    200:	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.nodeCache) >= b.nodeCacheMaxEntries && mode != nodeReadCacheQuery) {
+         .       90ms    201:		for id := range b.nodeCache {
+      10ms       10ms    202:			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+         .          .    203:				break
+         .          .    204:			}
+         .      220ms    205:			b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
+         .          .    206:		}
+         .          .    207:	}
+         .          .    208:	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) >= b.nodeCacheMaxEntries && mode == nodeReadCacheQuery) {
+         .          .    209:		for id := range b.queryNodeCache {
+         .          .    210:			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+         .       40ms    211:				break
+         .          .    212:			}
+         .          .    213:			b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
+         .          .    214:		}
+         .          .    215:	}
+         .          .    216:	if mode == nodeReadCacheQuery {

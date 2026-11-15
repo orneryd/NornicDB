@@ -1,0 +1,9 @@
+{
+  "purpose": "profile remaining low-stock tails against GC intervals, not a benchmark",
+  "queries_per_side": 100,
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-scan-fixed",
+  "godebug": "gctrace=1",
+  "query_cache_size": 0,
+  "result_sha256": "2fe97887fdaf8b985fe6b4ca2e126b4b031e8da47ff3e119b6ee5d1de2dc7fca"
+}

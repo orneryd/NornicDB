@@ -1,0 +1,44 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: cpu
+Time: 2026-11-15 01:00:00 UTC
+Duration: 12s, Total samples = 4.07s (33.91%)
+Showing nodes accounting for 2.32s, 57.00% of 4.07s total
+Dropped 220 nodes (cum <= 0.02s)
+Showing top 35 nodes out of 285
+      flat  flat%   sum%        cum   cum%
+     0.37s  9.09%  9.09%      0.47s 11.55%  internal/runtime/maps.(*Iter).Next
+     0.22s  5.41% 14.50%      0.22s  5.41%  runtime.futex
+     0.17s  4.18% 18.67%      0.17s  4.18%  internal/runtime/maps.memHashAES
+     0.12s  2.95% 21.62%      0.12s  2.95%  github.com/dgraph-io/badger/v4/y.Filter.MayContain
+     0.10s  2.46% 24.08%      0.10s  2.46%  runtime.memmove
+     0.09s  2.21% 26.29%      0.09s  2.21%  sync/atomic.(*Int32).Add (inline)
+     0.08s  1.97% 28.26%      0.08s  1.97%  runtime.madvise
+     0.07s  1.72% 29.98%      0.07s  1.72%  internal/runtime/maps.ctrlGroup.matchFull (inline)
+     0.07s  1.72% 31.70%      0.07s  1.72%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     0.07s  1.72% 33.42%      0.08s  1.97%  runtime.mallocgcSmallScanNoHeaderSC5
+     0.06s  1.47% 34.89%      0.06s  1.47%  cmpbody
+     0.06s  1.47% 36.36%      0.06s  1.47%  internal/runtime/maps.(*Iter).Init
+     0.06s  1.47% 37.84%      0.06s  1.47%  runtime.memclrNoHeapPointers
+     0.06s  1.47% 39.31%      0.06s  1.47%  runtime.nextFreeFast (inline)
+     0.05s  1.23% 40.54%      0.05s  1.23%  github.com/dgraph-io/badger/v4/table.(*header).Decode (inline)
+     0.05s  1.23% 41.77%      0.05s  1.23%  github.com/orneryd/nornicdb/pkg/util.EstimateValueBytes
+     0.05s  1.23% 43.00%      0.05s  1.23%  runtime.write1
+     0.04s  0.98% 43.98%      0.05s  1.23%  github.com/orneryd/nornicdb/pkg/storage.CompositeDatabaseOf
+     0.04s  0.98% 44.96%      0.15s  3.69%  github.com/orneryd/nornicdb/pkg/storage.estimateEntityPropertyBytes
+     0.04s  0.98% 45.95%      0.19s  4.67%  github.com/orneryd/nornicdb/pkg/storage.estimateNodeBodyCacheBytes
+     0.04s  0.98% 46.93%      0.25s  6.14%  github.com/vmihailenco/msgpack/v5.(*Decoder).Decode
+     0.04s  0.98% 47.91%      0.04s  0.98%  internal/runtime/maps.h1 (inline)
+     0.04s  0.98% 48.89%      0.05s  1.23%  runtime.mallocgcTinySC2
+     0.04s  0.98% 49.88%      0.17s  4.18%  runtime.mapaccess2_faststr
+     0.03s  0.74% 50.61%      0.10s  2.46%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+     0.03s  0.74% 51.35%      0.03s  0.74%  internal/runtime/maps.(*groupReference).key (inline)
+     0.03s  0.74% 52.09%      0.03s  0.74%  internal/runtime/syscall/linux.Syscall6
+     0.03s  0.74% 52.83%      0.03s  0.74%  memeqbody
+     0.03s  0.74% 53.56%      0.44s 10.81%  runtime.mallocgc
+     0.03s  0.74% 54.30%      0.04s  0.98%  runtime.mallocgcSmallScanNoHeaderSC2
+     0.03s  0.74% 55.04%      0.03s  0.74%  runtime.step
+     0.02s  0.49% 55.53%      0.05s  1.23%  context.value
+     0.02s  0.49% 56.02%      0.80s 19.66%  github.com/dgraph-io/badger/v4.(*levelHandler).get
+     0.02s  0.49% 56.51%      0.06s  1.47%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+     0.02s  0.49% 57.00%      0.83s 20.39%  github.com/dgraph-io/badger/v4.(*levelsController).get

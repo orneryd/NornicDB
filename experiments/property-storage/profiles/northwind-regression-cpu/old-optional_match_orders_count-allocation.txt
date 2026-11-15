@@ -1,0 +1,43 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: alloc_space
+Time: 2026-11-15 01:00:56 UTC
+Showing nodes accounting for 5.17GB, 84.84% of 6.09GB total
+Dropped 103 nodes (cum <= 0.03GB)
+Showing top 35 nodes out of 184
+      flat  flat%   sum%        cum   cum%
+    0.49GB  8.03%  8.03%     0.50GB  8.18%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+    0.33GB  5.40% 13.44%     0.33GB  5.40%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+    0.31GB  5.15% 18.58%     0.44GB  7.26%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+    0.28GB  4.56% 23.15%     0.28GB  4.56%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    0.25GB  4.16% 27.31%     1.37GB 22.54%  github.com/dgraph-io/badger/v4.(*Txn).Get
+    0.24GB  3.99% 31.29%     0.24GB  3.99%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+    0.23GB  3.76% 35.05%     0.23GB  3.76%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+    0.21GB  3.53% 38.58%     5.06GB 83.06%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyOptionalMatch
+    0.20GB  3.21% 41.79%     4.85GB 79.53%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).applyGeneralOptionalClause
+    0.19GB  3.15% 44.94%     4.45GB 73.12%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+    0.17GB  2.73% 47.67%     3.64GB 59.73%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+    0.16GB  2.68% 50.35%     0.50GB  8.15%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+    0.15GB  2.40% 52.75%     0.15GB  2.40%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+    0.14GB  2.25% 55.00%     0.14GB  2.25%  github.com/orneryd/nornicdb/pkg/cypher.extendTraversalRowMulti
+    0.14GB  2.24% 57.24%     0.14GB  2.24%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+    0.13GB  2.18% 59.42%     0.13GB  2.18%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+    0.12GB  1.97% 61.40%     0.12GB  1.97%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindRelationship (inline)
+    0.11GB  1.80% 63.20%     0.11GB  1.80%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+    0.10GB  1.69% 64.88%     0.27GB  4.48%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyReturnPlan
+    0.10GB  1.60% 66.49%     0.10GB  1.60%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+    0.10GB  1.59% 68.08%     0.16GB  2.65%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readTraversalPatternStateMachine
+    0.10GB  1.56% 69.64%     0.10GB  1.56%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineAggregateGroups.func1
+    0.09GB  1.55% 71.19%     0.09GB  1.55%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+    0.09GB  1.53% 72.71%     0.32GB  5.29%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putEdgeLocked
+    0.09GB  1.43% 74.14%     0.17GB  2.73%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+    0.08GB  1.31% 75.45%     0.27GB  4.45%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+    0.08GB  1.30% 76.75%     0.08GB  1.30%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+    0.08GB  1.23% 77.98%     0.08GB  1.23%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)
+    0.06GB  1.06% 79.04%     0.06GB  1.06%  github.com/dgraph-io/badger/v4/table.NewMergeIterator
+    0.06GB  1.05% 80.09%     0.23GB  3.76%  github.com/orneryd/nornicdb/pkg/storage.copyEdge
+    0.06GB  1.03% 81.12%     0.06GB  1.03%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+    0.06GB  1.03% 82.15%     0.06GB  1.03%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+    0.06GB  0.97% 83.12%     0.42GB  6.85%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+    0.05GB  0.87% 83.99%     3.69GB 60.60%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphSequential
+    0.05GB  0.84% 84.84%     0.12GB  1.91%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).captureReadView

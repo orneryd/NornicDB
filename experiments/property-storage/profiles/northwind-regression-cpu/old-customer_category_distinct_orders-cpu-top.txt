@@ -1,0 +1,44 @@
+File: nornicdb
+Build ID: 103d70ec1c12784758f2c206f2ee484544fc026c
+Type: cpu
+Time: 2026-11-15 01:00:21 UTC
+Duration: 12s, Total samples = 14.62s (121.83%)
+Showing nodes accounting for 6.97s, 47.67% of 14.62s total
+Dropped 487 nodes (cum <= 0.07s)
+Showing top 35 nodes out of 330
+      flat  flat%   sum%        cum   cum%
+     0.93s  6.36%  6.36%      0.93s  6.36%  runtime.futex
+     0.56s  3.83% 10.19%      0.93s  6.36%  internal/runtime/maps.(*Iter).Next
+     0.35s  2.39% 12.59%      0.35s  2.39%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     0.35s  2.39% 14.98%      0.35s  2.39%  runtime.memclrNoHeapPointers
+     0.33s  2.26% 17.24%      0.33s  2.26%  internal/runtime/maps.ctrlGroup.matchFull (inline)
+     0.32s  2.19% 19.43%      0.32s  2.19%  github.com/dgraph-io/badger/v4/y.Filter.MayContain
+     0.32s  2.19% 21.61%      0.32s  2.19%  memeqbody
+     0.29s  1.98% 23.60%      0.29s  1.98%  internal/runtime/maps.memHashAES
+     0.28s  1.92% 25.51%      0.45s  3.08%  github.com/google/flatbuffers/go.(*Table).Offset
+     0.26s  1.78% 27.29%      0.39s  2.67%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+     0.24s  1.64% 28.93%      0.24s  1.64%  sync/atomic.(*Int32).Add (inline)
+     0.23s  1.57% 30.51%      0.23s  1.57%  runtime.memmove
+     0.19s  1.30% 31.81%      0.19s  1.30%  runtime.madvise
+     0.17s  1.16% 32.97%      0.24s  1.64%  context.value
+     0.17s  1.16% 34.13%      0.17s  1.16%  github.com/orneryd/nornicdb/pkg/util.EstimateValueBytes
+     0.15s  1.03% 35.16%      0.15s  1.03%  runtime.usleep
+     0.14s  0.96% 36.11%      0.14s  0.96%  runtime.(*spanInlineMarkBits).init
+     0.14s  0.96% 37.07%      0.14s  0.96%  runtime.spanClass.sizeclass (inline)
+     0.13s  0.89% 37.96%      0.65s  4.45%  runtime.mapaccess2_faststr
+     0.12s  0.82% 38.78%      1.82s 12.45%  runtime.mallocgc
+     0.12s  0.82% 39.60%      0.29s  1.98%  runtime.tryDeferToSpanScan
+     0.11s  0.75% 40.36%      0.13s  0.89%  github.com/google/flatbuffers/go.(*Table).ByteVector
+     0.11s  0.75% 41.11%      0.11s  0.75%  runtime.(*mspan).writeHeapBitsSmall
+     0.11s  0.75% 41.86%      0.45s  3.08%  runtime.mapaccess2_fast64
+     0.10s  0.68% 42.54%      0.45s  3.08%  github.com/orneryd/nornicdb/pkg/storage.estimateNodeBodyCacheBytes
+     0.10s  0.68% 43.23%      0.13s  0.89%  runtime.mallocgcTinySC2
+     0.09s  0.62% 43.84%      0.66s  4.51%  runtime.(*mcentral).cacheSpan
+     0.08s  0.55% 44.39%      8.78s 60.05%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseChainedGraph
+     0.08s  0.55% 44.94%      0.08s  0.55%  internal/runtime/maps.h1 (inline)
+     0.07s  0.48% 45.42%      0.08s  0.55%  github.com/dgraph-io/badger/v4/table.(*Block).incrRef (inline)
+     0.07s  0.48% 45.90%      0.55s  3.76%  github.com/vmihailenco/msgpack/v5.(*Decoder).Decode
+     0.07s  0.48% 46.37%      0.09s  0.62%  runtime.mallocgcSmallScanNoHeaderSC4
+     0.07s  0.48% 46.85%      0.74s  5.06%  runtime.newobject
+     0.06s  0.41% 47.26%      2.48s 16.96%  github.com/dgraph-io/badger/v4.(*DB).get
+     0.06s  0.41% 47.67%      0.13s  0.89%  github.com/google/flatbuffers/go.(*Table).GetVOffsetT (inline)

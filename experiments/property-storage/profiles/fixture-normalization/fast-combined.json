@@ -1,0 +1,23 @@
+{
+  "after": {
+    "6": {
+      "Tables": 77,
+      "Keys": 3943149,
+      "Disk": 157719298,
+      "Raw": 333288728,
+      "Stale": 10773
+    }
+  },
+  "before": {
+    "6": {
+      "Tables": 77,
+      "Keys": 3943149,
+      "Disk": 157719298,
+      "Raw": 333288728,
+      "Stale": 10773
+    }
+  },
+  "closed_file_bytes": 396895881,
+  "data": "/lab-data/settled-comparison-0jswgod6/fast-combined",
+  "experimental_env": "true"
+}

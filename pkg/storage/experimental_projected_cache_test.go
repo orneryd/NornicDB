@@ -24,6 +24,9 @@ func TestExperimentalProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
 	entry := b.nodeBodyCache[id]
 	b.nodeBodyCacheMu.RUnlock()
 	require.NotNil(t, entry, "projected reads must retain their requested fields")
+	require.Same(t, b, entry.node.runtime.embeddingOwner)
+	require.Equal(t, id, entry.node.runtime.embeddingOwnerID)
+	require.Equal(t, entry.itemVersion, entry.node.runtime.embeddingRevision.physical)
 	require.NotContains(t, entry.node.Properties, "body")
 	first.Properties["key"] = "changed"
 	first.Properties["bytes"].([]byte)[0] = 99

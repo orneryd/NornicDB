@@ -1,0 +1,43 @@
+File: nornicdb-profile-fixes
+Build ID: 51d92b2d62bfcb6a1ff64462bc6989c5bd440e81
+Type: alloc_space
+Time: 2026-11-15 01:09:48 UTC
+Showing nodes accounting for 5.19GB, 84.21% of 6.17GB total
+Dropped 106 nodes (cum <= 0.03GB)
+Showing top 35 nodes out of 184
+      flat  flat%   sum%        cum   cum%
+    0.50GB  8.13%  8.13%     0.51GB  8.23%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+    0.36GB  5.90% 14.03%     0.36GB  5.90%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+    0.32GB  5.15% 19.18%     0.47GB  7.55%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+    0.26GB  4.26% 23.44%     0.26GB  4.26%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+    0.24GB  3.94% 27.38%     1.34GB 21.78%  github.com/dgraph-io/badger/v4.(*Txn).Get
+    0.24GB  3.84% 31.22%     0.24GB  3.84%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+    0.23GB  3.72% 34.94%     0.23GB  3.72%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+    0.21GB  3.41% 38.36%     5.11GB 82.87%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyOptionalMatch
+    0.18GB  2.92% 41.28%     4.90GB 79.46%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).applyGeneralOptionalClause
+    0.18GB  2.89% 44.17%     4.51GB 73.08%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+    0.16GB  2.62% 46.79%     0.16GB  2.62%  github.com/orneryd/nornicdb/pkg/cypher.extendTraversalRowMulti
+    0.16GB  2.60% 49.40%     0.16GB  2.60%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+    0.16GB  2.53% 51.93%     0.49GB  7.97%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+    0.14GB  2.28% 54.21%     3.74GB 60.61%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+    0.14GB  2.23% 56.44%     0.14GB  2.23%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+    0.12GB  1.95% 58.39%     0.12GB  1.95%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+    0.12GB  1.94% 60.33%     0.12GB  1.94%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindRelationship (inline)
+    0.11GB  1.82% 62.15%     0.36GB  5.79%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putEdgeLocked
+    0.11GB  1.78% 63.93%     0.11GB  1.78%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+    0.11GB  1.77% 65.70%     0.11GB  1.77%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineAggregateGroups.func1
+    0.10GB  1.67% 67.37%     0.28GB  4.54%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyReturnPlan
+    0.10GB  1.61% 68.98%     0.17GB  2.77%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readTraversalPatternStateMachine
+    0.09GB  1.50% 70.48%     0.09GB  1.50%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+    0.09GB  1.40% 71.88%     0.09GB  1.40%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+    0.09GB  1.39% 73.28%     0.16GB  2.64%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+    0.08GB  1.22% 74.50%     0.08GB  1.22%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+    0.07GB  1.21% 75.71%     0.07GB  1.21%  github.com/orneryd/nornicdb/pkg/storage.embeddingKey (inline)
+    0.07GB  1.20% 76.91%     0.07GB  1.20%  github.com/dgraph-io/badger/v4/table.NewMergeIterator
+    0.07GB  1.17% 78.08%     0.24GB  3.97%  github.com/orneryd/nornicdb/pkg/storage.copyEdge
+    0.07GB  1.16% 79.25%     0.26GB  4.22%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+    0.07GB  1.15% 80.40%     0.48GB  7.78%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeNodeProjected
+    0.06GB  1.05% 81.45%     0.06GB  1.05%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+    0.06GB  1.04% 82.49%     0.06GB  1.04%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+    0.05GB  0.88% 83.38%     0.05GB  0.88%  github.com/orneryd/nornicdb/pkg/cypher.materializePipelineSource.func1
+    0.05GB  0.83% 84.21%     0.05GB  0.83%  github.com/dgraph-io/badger/v4.(*Iterator).newItem (inline)

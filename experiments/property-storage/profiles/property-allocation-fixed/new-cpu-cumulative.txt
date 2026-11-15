@@ -1,0 +1,109 @@
+File: nornicdb-profile-fixes
+Build ID: 51d92b2d62bfcb6a1ff64462bc6989c5bd440e81
+Type: cpu
+Time: 2026-11-15 01:11:32 UTC
+Duration: 12s, Total samples = 4.28s (35.66%)
+Showing nodes accounting for 1.65s, 38.55% of 4.28s total
+Dropped 374 nodes (cum <= 0.02s)
+Showing top 100 nodes out of 332
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%         3s 70.09%  net/http.HandlerFunc.ServeHTTP
+         0     0%     0%      2.44s 57.01%  github.com/orneryd/nornicdb/pkg/server.(*Server).serveTransactionRequest.func1
+         0     0%     0%      2.34s 54.67%  github.com/orneryd/nornicdb/pkg/lifecycle.(*WorkLifetime).RetainHandler.func1
+         0     0%     0%      2.33s 54.44%  github.com/orneryd/nornicdb/pkg/server.(*Server).corsMiddleware.func1
+         0     0%     0%      2.33s 54.44%  github.com/orneryd/nornicdb/pkg/server.(*Server).rateLimitMiddleware.func1
+         0     0%     0%      2.33s 54.44%  github.com/orneryd/nornicdb/pkg/server.(*Server).requestTimeoutMiddleware.func1.1
+         0     0%     0%      2.32s 54.21%  github.com/orneryd/nornicdb/pkg/security.(*SecurityMiddleware).ValidateRequest.func1
+         0     0%     0%      2.32s 54.21%  github.com/orneryd/nornicdb/pkg/server.(*Server).bodyAdmissionMiddleware.func1
+         0     0%     0%      2.32s 54.21%  github.com/orneryd/nornicdb/pkg/server.(*Server).withAuth.func1
+         0     0%     0%      2.32s 54.21%  net/http.(*ServeMux).ServeHTTP
+     0.01s  0.23%  0.23%      2.31s 53.97%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleDatabaseEndpoint
+         0     0%  0.23%      2.30s 53.74%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleImplicitTransaction
+         0     0%  0.23%      2.30s 53.74%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleTransactionEndpoint
+         0     0%  0.23%      1.09s 25.47%  net/http.(*conn).serve
+         0     0%  0.23%      1.02s 23.83%  github.com/orneryd/nornicdb/pkg/server.(*Server).runRequestStatements
+         0     0%  0.23%      1.02s 23.83%  github.com/orneryd/nornicdb/pkg/server.(*Server).runRequestStatements.func1
+         0     0%  0.23%      1.01s 23.60%  github.com/orneryd/nornicdb/internal/httpresponse.WriteJSON
+         0     0%  0.23%      1.01s 23.60%  github.com/orneryd/nornicdb/internal/httpresponse.WritePropertyJSON (inline)
+         0     0%  0.23%      1.01s 23.60%  github.com/orneryd/nornicdb/internal/jsontext.(*Encoder).Encode
+         0     0%  0.23%      0.94s 21.96%  github.com/orneryd/go-json.MarshalWithOption (inline)
+         0     0%  0.23%      0.94s 21.96%  github.com/orneryd/go-json.marshal
+         0     0%  0.23%      0.94s 21.96%  github.com/orneryd/nornicdb/internal/jsontext.marshal
+         0     0%  0.23%      0.92s 21.50%  github.com/orneryd/go-json.encode
+         0     0%  0.23%      0.92s 21.50%  github.com/orneryd/go-json.encodeRunCode
+         0     0%  0.23%      0.92s 21.50%  github.com/orneryd/go-json/internal/encoder.AppendMarshalJSON
+         0     0%  0.23%      0.92s 21.50%  github.com/orneryd/go-json/internal/encoder/vm.Run
+         0     0%  0.23%      0.92s 21.50%  github.com/orneryd/go-json/internal/encoder/vm.appendMarshalJSON
+         0     0%  0.23%      0.89s 20.79%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).Execute
+         0     0%  0.23%      0.89s 20.79%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).execute
+         0     0%  0.23%      0.89s 20.79%  github.com/orneryd/nornicdb/pkg/server.(*Server).autoCommitStatementRunner.func1
+         0     0%  0.23%      0.71s 16.59%  github.com/orneryd/go-json/internal/encoder.(*MarshalerCall).call (inline)
+         0     0%  0.23%      0.71s 16.59%  github.com/orneryd/nornicdb/pkg/convert.marshalJSON
+         0     0%  0.23%      0.71s 16.59%  github.com/orneryd/nornicdb/pkg/convert.preparedJSON.MarshalJSON
+     0.71s 16.59% 16.82%      0.71s 16.59%  internal/runtime/syscall/linux.Syscall6
+         0     0% 16.82%      0.66s 15.42%  github.com/orneryd/nornicdb/pkg/lifecycle.(*WorkLifetime).Handler.func1
+         0     0% 16.82%      0.66s 15.42%  github.com/orneryd/nornicdb/pkg/server.newCleartextHTTPHandler.func1
+         0     0% 16.82%      0.66s 15.42%  golang.org/x/net/http2/h2c.h2cHandler.ServeHTTP
+         0     0% 16.82%      0.66s 15.42%  net/http.serverHandler.ServeHTTP
+         0     0% 16.82%      0.65s 15.19%  github.com/orneryd/nornicdb/pkg/convert.(*jsonWriterState).any
+     0.06s  1.40% 18.22%      0.65s 15.19%  github.com/orneryd/nornicdb/pkg/convert.(*jsonWriterState).value
+         0     0% 18.22%      0.65s 15.19%  github.com/orneryd/nornicdb/pkg/server.(*Server).metadataAdmissionMiddleware.func1
+         0     0% 18.22%      0.65s 15.19%  github.com/orneryd/nornicdb/pkg/server.instrumentedMux.func1
+         0     0% 18.22%      0.63s 14.72%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeImplicitAsync
+         0     0% 18.22%      0.62s 14.49%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeWithoutTransaction
+         0     0% 18.22%      0.60s 14.02%  github.com/orneryd/nornicdb/pkg/server.(*Server).trustedProxyMiddleware.func1
+         0     0% 18.22%      0.57s 13.32%  github.com/orneryd/nornicdb/pkg/server.(*Server).basePathMiddleware.func1
+         0     0% 18.22%      0.57s 13.32%  github.com/orneryd/nornicdb/pkg/server.(*Server).localizationMiddleware.func1
+         0     0% 18.22%      0.57s 13.32%  github.com/orneryd/nornicdb/pkg/server.(*Server).loggingMiddleware.func1
+         0     0% 18.22%      0.57s 13.32%  github.com/orneryd/nornicdb/pkg/server.(*Server).metricsMiddleware.func1
+         0     0% 18.22%      0.57s 13.32%  github.com/orneryd/nornicdb/pkg/server.(*Server).recoveryMiddleware.func1
+         0     0% 18.22%      0.53s 12.38%  syscall.RawSyscall6
+     0.50s 11.68% 29.91%      0.50s 11.68%  runtime.futex
+         0     0% 29.91%      0.48s 11.21%  syscall.Syscall
+         0     0% 29.91%      0.47s 10.98%  runtime.mcall
+         0     0% 29.91%      0.47s 10.98%  runtime.systemstack
+     0.01s  0.23% 30.14%      0.46s 10.75%  runtime.schedule
+         0     0% 30.14%      0.44s 10.28%  github.com/orneryd/nornicdb/pkg/server.continuationDeliveryMiddleware.func1
+         0     0% 30.14%      0.43s 10.05%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executePipeline
+         0     0% 30.14%      0.43s 10.05%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeRequiredPipeline
+         0     0% 30.14%      0.43s 10.05%  github.com/orneryd/nornicdb/pkg/server.(*Server).requestTimeoutMiddleware.func1
+         0     0% 30.14%      0.42s  9.81%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+         0     0% 30.14%      0.42s  9.81%  github.com/orneryd/nornicdb/pkg/server.(*Server).serveTransactionRequest
+         0     0% 30.14%      0.40s  9.35%  runtime.futexwakeup
+         0     0% 30.14%      0.40s  9.35%  runtime.notewakeup
+         0     0% 30.14%      0.38s  8.88%  internal/poll.ignoringEINTRIO (inline)
+     0.01s  0.23% 30.37%      0.37s  8.64%  runtime.findRunnable
+         0     0% 30.37%      0.36s  8.41%  runtime.startm
+         0     0% 30.37%      0.35s  8.18%  runtime.park_m
+         0     0% 30.37%      0.35s  8.18%  runtime.wakep
+         0     0% 30.37%      0.34s  7.94%  github.com/orneryd/nornicdb/pkg/server.(*Server).serveTransactionRequest.func2 (inline)
+         0     0% 30.37%      0.34s  7.94%  github.com/orneryd/nornicdb/pkg/server.(*transactionResponseWriter).writeTo
+     0.01s  0.23% 30.61%      0.33s  7.71%  internal/poll.(*FD).Write
+         0     0% 30.61%      0.32s  7.48%  bufio.(*Writer).Write
+         0     0% 30.61%      0.32s  7.48%  github.com/orneryd/nornicdb/pkg/server.(*searchDeliveryWriter).Write
+         0     0% 30.61%      0.32s  7.48%  net/http.(*chunkWriter).Write
+         0     0% 30.61%      0.32s  7.48%  net/http.(*response).Write
+         0     0% 30.61%      0.32s  7.48%  net/http.(*response).write
+         0     0% 30.61%      0.31s  7.24%  net.(*conn).Write
+         0     0% 30.61%      0.31s  7.24%  net.(*netFD).Write
+         0     0% 30.61%      0.31s  7.24%  net/http.checkConnErrorWriter.Write
+         0     0% 30.61%      0.31s  7.24%  runtime.newstack
+         0     0% 30.61%      0.31s  7.24%  syscall.Write (inline)
+         0     0% 30.61%      0.31s  7.24%  syscall.write
+     0.05s  1.17% 31.78%      0.28s  6.54%  github.com/orneryd/nornicdb/pkg/convert.jsonWriteInt
+     0.01s  0.23% 32.01%      0.28s  6.54%  runtime.copystack
+         0     0% 32.01%      0.27s  6.31%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1
+         0     0% 32.01%      0.27s  6.31%  github.com/orneryd/nornicdb/pkg/cypher.materializePipelineSource
+         0     0% 32.01%      0.25s  5.84%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1.1
+         0     0% 32.01%      0.25s  5.84%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1.1.1
+         0     0% 32.01%      0.25s  5.84%  github.com/orneryd/nornicdb/pkg/cypher.pipelineRowsSource.func1
+     0.07s  1.64% 33.64%      0.24s  5.61%  internal/strconv.AppendInt
+         0     0% 33.64%      0.24s  5.61%  strconv.AppendInt (inline)
+         0     0% 33.64%      0.22s  5.14%  bufio.(*Writer).Flush
+     0.11s  2.57% 36.21%      0.22s  5.14%  github.com/orneryd/nornicdb/pkg/cypher.keywordIndexFrom
+         0     0% 36.21%      0.21s  4.91%  github.com/orneryd/go-json/internal/encoder.appendCompactOutput
+         0     0% 36.21%      0.21s  4.91%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).collectPipelineIndexedNodeCandidates
+         0     0% 36.21%      0.21s  4.91%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).collectPipelineInitialNodeCandidates
+         0     0% 36.21%      0.20s  4.67%  github.com/orneryd/nornicdb/pkg/server.decodeTransactionRequest
+     0.03s   0.7% 36.92%      0.20s  4.67%  runtime.mallocgc
+     0.07s  1.64% 38.55%      0.19s  4.44%  github.com/orneryd/go-json/internal/encoder.isCompactJSON[go.shape.struct { github.com/orneryd/go-json/internal/encoder._ uint8 }]

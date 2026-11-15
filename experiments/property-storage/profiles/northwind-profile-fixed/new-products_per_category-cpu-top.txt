@@ -1,0 +1,44 @@
+File: nornicdb-profile-fixes
+Build ID: 51d92b2d62bfcb6a1ff64462bc6989c5bd440e81
+Type: cpu
+Time: 2026-11-15 01:08:54 UTC
+Duration: 12s, Total samples = 3.46s (28.83%)
+Showing nodes accounting for 1.71s, 49.42% of 3.46s total
+Dropped 145 nodes (cum <= 0.02s)
+Showing top 35 nodes out of 326
+      flat  flat%   sum%        cum   cum%
+     0.19s  5.49%  5.49%      0.19s  5.49%  github.com/dgraph-io/badger/v4/y.Filter.MayContain
+     0.13s  3.76%  9.25%      0.13s  3.76%  internal/runtime/maps.memHashAES
+     0.13s  3.76% 13.01%      0.13s  3.76%  runtime.futex
+     0.10s  2.89% 15.90%      0.10s  2.89%  memeqbody
+     0.10s  2.89% 18.79%      0.10s  2.89%  runtime.madvise
+     0.08s  2.31% 21.10%      0.08s  2.31%  internal/runtime/maps.ctrlGroup.matchH2 (inline)
+     0.07s  2.02% 23.12%      0.10s  2.89%  github.com/google/flatbuffers/go.(*Table).Offset
+     0.07s  2.02% 25.14%      0.26s  7.51%  runtime.mapaccess2_faststr
+     0.06s  1.73% 26.88%      0.44s 12.72%  runtime.mallocgc
+     0.05s  1.45% 28.32%      0.09s  2.60%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+     0.05s  1.45% 29.77%      0.05s  1.45%  internal/runtime/syscall/linux.Syscall6
+     0.05s  1.45% 31.21%      0.05s  1.45%  runtime.memmove
+     0.04s  1.16% 32.37%      1.07s 30.92%  github.com/dgraph-io/badger/v4.(*levelHandler).get
+     0.04s  1.16% 33.53%      0.04s  1.16%  github.com/dgraph-io/badger/v4/table.(*header).Decode (inline)
+     0.04s  1.16% 34.68%      0.04s  1.16%  internal/runtime/maps.(*Iter).Next
+     0.04s  1.16% 35.84%      0.04s  1.16%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr
+     0.04s  1.16% 36.99%      0.04s  1.16%  runtime.usleep
+     0.03s  0.87% 37.86%      0.06s  1.73%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+     0.03s  0.87% 38.73%      0.03s  0.87%  github.com/dgraph-io/badger/v4/y.Hash
+     0.03s  0.87% 39.60%      0.03s  0.87%  github.com/orneryd/nornicdb/pkg/util.EstimateValueBytes
+     0.03s  0.87% 40.46%      0.12s  3.47%  internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Load
+     0.03s  0.87% 41.33%      0.16s  4.62%  runtime.mallocgcSmallScanNoHeader
+     0.03s  0.87% 42.20%      0.04s  1.16%  runtime.mallocgcSmallScanNoHeaderSC2
+     0.03s  0.87% 43.06%      0.03s  0.87%  runtime.nextFreeFast (inline)
+     0.02s  0.58% 43.64%      0.02s  0.58%  bytes.(*Reader).Read
+     0.02s  0.58% 44.22%      0.02s  0.58%  bytes.(*Reader).ReadByte
+     0.02s  0.58% 44.80%      0.02s  0.58%  context.(*valueCtx).Err
+     0.02s  0.58% 45.38%      0.02s  0.58%  github.com/dgraph-io/badger/v4/fb.(*BlockOffset).Init (inline)
+     0.02s  0.58% 45.95%      0.05s  1.45%  github.com/dgraph-io/badger/v4/fb.(*TableIndex).BloomFilterBytes
+     0.02s  0.58% 46.53%      0.44s 12.72%  github.com/dgraph-io/badger/v4/table.(*Iterator).seekFrom
+     0.02s  0.58% 47.11%      0.35s 10.12%  github.com/dgraph-io/badger/v4/table.(*Table).DoesNotHave
+     0.02s  0.58% 47.69%      0.12s  3.47%  github.com/dgraph-io/badger/v4/table.(*blockIterator).seek
+     0.02s  0.58% 48.27%      0.02s  0.58%  github.com/dgraph-io/badger/v4/y.CompareKeys
+     0.02s  0.58% 48.84%      0.02s  0.58%  github.com/google/flatbuffers/go.(*Table).ByteVector
+     0.02s  0.58% 49.42%      0.02s  0.58%  github.com/google/flatbuffers/go.(*Table).Vector (inline)

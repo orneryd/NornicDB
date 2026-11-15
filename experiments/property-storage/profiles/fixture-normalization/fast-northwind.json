@@ -1,0 +1,23 @@
+{
+  "after": {
+    "0": {
+      "Tables": 4,
+      "Keys": 3921201,
+      "Disk": 101329267,
+      "Raw": 281074295,
+      "Stale": 0
+    }
+  },
+  "before": {
+    "0": {
+      "Tables": 4,
+      "Keys": 3921201,
+      "Disk": 101329267,
+      "Raw": 281074295,
+      "Stale": 0
+    }
+  },
+  "closed_file_bytes": 254435503,
+  "data": "/lab-data/settled-comparison-0jswgod6/fast-northwind",
+  "experimental_env": "true"
+}

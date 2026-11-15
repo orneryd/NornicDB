@@ -1,0 +1,30 @@
+[
+  {
+    "query": "customer_category_distinct_orders",
+    "rows": 10,
+    "equal_at_12_significant_digits": true,
+    "byte_equal_before": true,
+    "byte_equal_after": true
+  },
+  {
+    "query": "optional_match_orders_count",
+    "rows": 100,
+    "equal_at_12_significant_digits": true,
+    "byte_equal_before": true,
+    "byte_equal_after": true
+  },
+  {
+    "query": "products_per_category",
+    "rows": 96,
+    "equal_at_12_significant_digits": true,
+    "byte_equal_before": true,
+    "byte_equal_after": true
+  },
+  {
+    "query": "revenue_by_supplier",
+    "rows": 25,
+    "equal_at_12_significant_digits": true,
+    "byte_equal_before": false,
+    "byte_equal_after": false
+  }
+]

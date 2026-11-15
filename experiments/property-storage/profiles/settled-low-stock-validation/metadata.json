@@ -1,0 +1,87 @@
+{
+  "protocol": "HTTP transaction commit",
+  "query_definitions": "testing/benchmarks/northwind_power/main.go",
+  "old_binary": "/baseline/nornicdb",
+  "new_binary": "/src/nornicdb-scan-fixed",
+  "trials": 4,
+  "order": "alternating",
+  "warmup": 2,
+  "reference": 1,
+  "samples": 30,
+  "query_cache_size": 0,
+  "fixture_receipt": {
+    "prepared": {
+      "stock-combined": {
+        "source": "/tmp/combined-projection-rxg7ihvs/old",
+        "prepared": "/lab-data/settled-comparison-0jswgod6/stock-combined",
+        "normalizer": "/tmp/normalize-stock-fixture",
+        "experimental": false,
+        "after_levels": {
+          "6": {
+            "Tables": 107,
+            "Keys": 3943161,
+            "Disk": 219255225,
+            "Raw": 367639291,
+            "Stale": 10840
+          }
+        },
+        "closed_file_bytes": 458432607
+      },
+      "fast-combined": {
+        "source": "/tmp/combined-projection-5p5zugq1/new",
+        "prepared": "/lab-data/settled-comparison-0jswgod6/fast-combined",
+        "normalizer": "/tmp/normalize-fast-fixture",
+        "experimental": true,
+        "after_levels": {
+          "6": {
+            "Tables": 77,
+            "Keys": 3943149,
+            "Disk": 157719298,
+            "Raw": 333288728,
+            "Stale": 10773
+          }
+        },
+        "closed_file_bytes": 396895881
+      },
+      "stock-northwind": {
+        "source": "/lab-data/profile-selected-false",
+        "prepared": "/lab-data/settled-comparison-0jswgod6/stock-northwind",
+        "normalizer": "/tmp/normalize-stock-fixture",
+        "experimental": false,
+        "after_levels": {
+          "0": {
+            "Tables": 4,
+            "Keys": 3921201,
+            "Disk": 162511204,
+            "Raw": 281075512,
+            "Stale": 0
+          }
+        },
+        "closed_file_bytes": 315617431
+      },
+      "fast-northwind": {
+        "source": "/lab-data/profile-selected-true",
+        "prepared": "/lab-data/settled-comparison-0jswgod6/fast-northwind",
+        "normalizer": "/tmp/normalize-fast-fixture",
+        "experimental": true,
+        "after_levels": {
+          "0": {
+            "Tables": 4,
+            "Keys": 3921201,
+            "Disk": 101329267,
+            "Raw": 281074295,
+            "Stale": 0
+          }
+        },
+        "closed_file_bytes": 254435503
+      }
+    },
+    "original_sources_unchanged": true,
+    "purpose": "equal settled compaction state before read-only performance comparisons"
+  },
+  "query_hashes": {
+    "low_stock_products": "2fe97887fdaf8b985fe6b4ca2e126b4b031e8da47ff3e119b6ee5d1de2dc7fca",
+    "products_in_category": "4dd6a35df829091bf6e02edc2ee8faa7f099069b929f48c1ceb699e57174f91e"
+  },
+  "note": "HTTP totals include response parsing and hashing; not comparable to Bolt-only timings."
+}

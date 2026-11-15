@@ -1,0 +1,37 @@
+File: nornicdb-proof-fixed
+Build ID: f8bbc120113afec6f5396099a3e91f7b64981d49
+Type: cpu
+Time: 2026-11-15 03:39:51 UTC
+Duration: 12s, Total samples = 13.72s (114.33%)
+Showing nodes accounting for 0.01s, 0.073% of 13.72s total
+Dropped 405 nodes (cum <= 0.07s)
+Showing top 28 nodes out of 283
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     12.03s 87.68%  net/http.HandlerFunc.ServeHTTP
+         0     0%     0%     12.01s 87.54%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleDatabaseEndpoint
+         0     0%     0%     12.01s 87.54%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleImplicitTransaction
+         0     0%     0%     12.01s 87.54%  github.com/orneryd/nornicdb/pkg/server.(*Server).handleTransactionEndpoint
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).Execute
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).execute
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/server.(*Server).autoCommitStatementRunner.func1
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/server.(*Server).runRequestStatements
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/server.(*Server).runRequestStatements.func1
+         0     0%     0%        12s 87.46%  github.com/orneryd/nornicdb/pkg/server.(*Server).withAuth.func1
+         0     0%     0%        12s 87.46%  net/http.(*ServeMux).ServeHTTP
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeImplicitAsync
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executePipeline
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeRequiredPipeline
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeWithoutTransaction
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+         0     0%     0%     11.99s 87.39%  github.com/orneryd/nornicdb/pkg/server.(*Server).bodyAdmissionMiddleware.func1
+         0     0%     0%     11.98s 87.32%  github.com/orneryd/nornicdb/pkg/security.(*SecurityMiddleware).ValidateRequest.func1
+     0.01s 0.073% 0.073%     11.79s 85.93%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyInitialNodeMatch
+         0     0% 0.073%     11.79s 85.93%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyMatchWithHint
+         0     0% 0.073%     11.53s 84.04%  github.com/orneryd/nornicdb/pkg/server.(*Server).corsMiddleware.func1
+         0     0% 0.073%     11.50s 83.82%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).collectPipelineInitialNodeCandidates
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).collectNodesWithStreamingProjection
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).visitNodesWithStreamingProjection
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/multidb.(*sizeTrackingEngine).StreamNodesByLabelProjected
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).StreamNodesByLabelProjectedInScope
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).streamNodesByLabelProjectedInScope
+         0     0% 0.073%     11.49s 83.75%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).streamNodesByLabelProjectedInScope.func2

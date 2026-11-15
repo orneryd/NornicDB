@@ -95,12 +95,16 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess, admitNew ...bool) (*Node, error) {
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
 	}
 	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
 	node := read.node
+	// A label scan whose population exceeds the cache cannot retain its scan
+	// images. It still widens any version-matched entry already held; point
+	// reads retain their usual admission and eviction behavior.
+	admit := len(admitNew) == 0 || admitNew[0] || node != nil
 	if !read.complete {
 		decodeInclude := include
 		if node != nil {
@@ -129,7 +133,7 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		if err != nil {
 			return node, err
 		}
-		if config.IsExperimentalPropertyStorageEnabled() {
+		if config.IsExperimentalPropertyStorageEnabled() && admit {
 			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs(), properties)
 		}
 	}
