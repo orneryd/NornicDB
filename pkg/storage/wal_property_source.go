@@ -188,7 +188,12 @@ func decodeBufferedWALRecord(entry WALEntry) (WALBufferedCommitData, error) {
 	var data WALBufferedCommitData
 	payload, err := decompressWALBufferedCommitPayload(entry.Data)
 	if err == nil {
-		data.namedPropertiesAuthoritative, err = decodeRecoveryPayloadAuthority(payload, &data)
+		// The typed recovery envelope preserves physical key bytes exactly, and a
+		// historical JSON record does not. Named property authority is a separate
+		// fact: a repaired record carries authoritative physical images whose Ops
+		// property values are still the lossy historical ones.
+		data.losslessPhysicalKeys, err = decodeRecoveryPayloadAuthority(payload, &data)
+		data.namedPropertiesAuthoritative = data.losslessPhysicalKeys && !data.PhysicalPropertyImages
 	}
 	if err != nil {
 		return data, fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)

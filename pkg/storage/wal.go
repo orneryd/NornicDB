@@ -271,8 +271,18 @@ type WALBufferedCommitData struct {
 
 	// PropertyBindings binds every property token referenced by Writes,
 	// including persisted names. Import remaps tokens into the destination.
-	PropertyBindings             []byte `json:"property_bindings,omitempty"`
-	PropertyDictionaryID         string `json:"property_dictionary_id,omitempty"`
+	PropertyBindings     []byte `json:"property_bindings,omitempty"`
+	PropertyDictionaryID string `json:"property_dictionary_id,omitempty"`
+	// PhysicalPropertyImages marks a record whose Writes and Deletes are
+	// authoritative physical images while the named property values in its Ops
+	// are the lossy projection an older encoding wrote. The V4 upgrade sets it
+	// when it repairs a legacy record into the lossless encoding: the typed
+	// encoding preserves the physical keys, and this marker keeps the
+	// historical named properties from becoming authority.
+	PhysicalPropertyImages bool `json:"physical_property_images,omitempty"`
+	// losslessPhysicalKeys reports whether the encoding that produced the
+	// payload preserved physical key bytes exactly. It is decoded, not carried.
+	losslessPhysicalKeys         bool
 	namedPropertiesAuthoritative bool
 	propertyEpoch                *walPropertyEpochState
 	// numericAliases exists only during the original store's historical WAL replay.
