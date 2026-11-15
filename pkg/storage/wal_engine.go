@@ -51,9 +51,10 @@ type WALEngine struct {
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
 	wal         *WAL
-	// mutationMu serializes auto-compaction snapshots against in-flight mutating
-	// operations to avoid WAL/engine state skew during snapshot truncation.
-	mutationMu trackedRWMutex
+	// mutationMu joins the snapshot cut and pinned read view to settled
+	// mutations. Native snapshot serialization runs outside this barrier.
+	mutationMu   trackedRWMutex
+	compactionMu trackedRWMutex // serializes snapshot files without holding up entity writes
 
 	// Automatic snapshot and compaction
 	snapshotDir    string
@@ -396,7 +397,7 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := w.createSnapshotAndCompact(ctx); err != nil {
+			if err := w.createSnapshotAndCompact(ctx, saveCompactionSnapshot); err != nil {
 				// Log error but continue - don't crash on snapshot failure.
 				// Pre-bound subsystem=wal logger from the WAL config keeps
 				// per-failure emission allocation-free in the steady path.
@@ -415,7 +416,14 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 // The auto-compaction loop calls it with its worker context, rooted at the
 // engine owner: the snapshot stops when the owner closes or compaction is
 // disabled.
-func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
+func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactionSnapshotWriter) error {
+	if err := w.compactionMu.LockContext(ctx); err != nil {
+		if w.work.Closing() || w.wal.work.Closing() {
+			return ErrWALClosed
+		}
+		return err
+	}
+	defer w.compactionMu.Unlock()
 	if err := w.mutationMu.LockContext(ctx); err != nil {
 		// Owner shutdown or a sealed journal is terminal regardless of
 		// whether cancellation or barrier admission wakes the snapshot.
@@ -424,7 +432,12 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 		}
 		return err
 	}
-	defer w.mutationMu.Unlock()
+	mutationLocked := true
+	defer func() {
+		if mutationLocked {
+			w.mutationMu.Unlock()
+		}
+	}()
 
 	if w.work.Closing() || w.wal.work.Closing() {
 		return ErrWALClosed
@@ -443,6 +456,8 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 		return fmt.Errorf("failed to create snapshot checkpoint: %w", err)
 	}
 
+	checkpointSequence := w.wal.sequence.Load()
+
 	// Save snapshot with high-resolution timestamp to avoid filename collisions
 	// when snapshots happen multiple times within the same second.
 	snapshotPath := filepath.Join(w.snapshotDir, time.Now().Format(autoSnapshotNameLayout))
@@ -458,7 +473,18 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 		}
 	}
 
-	if err := SaveStreamingSnapshot(ctx, w.engine, snapshotPath, SnapshotOptions{Sequence: snapshotSequence}); err != nil {
+	source, err := openStoredSnapshotSource(ctx, w.engine)
+	if err != nil && !errors.Is(err, errStoredSnapshotUnsupported) {
+		return err
+	}
+	if source != nil {
+		defer source.Close()
+		// The pin fixes every stored entity and sidecar at this cut. File
+		// encoding and fsync no longer need to exclude accepted mutations.
+		mutationLocked = false
+		w.mutationMu.Unlock()
+	}
+	if err := save(ctx, compactionSnapshot{engine: w.engine, source: source, sequence: snapshotSequence}, snapshotPath); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
 	}
 
@@ -482,7 +508,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context) error {
 	// Update stats
 	w.totalSnapshots.Add(1)
 	w.lastSnapshotTime.Store(time.Now().UnixNano())
-	w.compactedSequence.Store(w.wal.sequence.Load())
+	w.compactedSequence.Store(checkpointSequence)
 	w.hasCompacted.Store(true)
 
 	return nil

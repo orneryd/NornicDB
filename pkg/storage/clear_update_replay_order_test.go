@@ -91,7 +91,7 @@ func (l *cruLab) snapshotPeriodic(t *testing.T) string {
 	t.Helper()
 	l.journal.snapshotDir = filepath.Join(l.dir, "snapshots")
 	require.NoError(t, os.MkdirAll(l.journal.snapshotDir, 0o755))
-	require.NoError(t, l.journal.createSnapshotAndCompact(context.Background()))
+	require.NoError(t, l.journal.createSnapshotAndCompact(context.Background(), saveCompactionSnapshot))
 	entries, err := os.ReadDir(l.journal.snapshotDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)

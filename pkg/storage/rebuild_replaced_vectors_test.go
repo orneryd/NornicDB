@@ -109,7 +109,7 @@ func (l *rrvLab) snapshotPeriodic() string {
 	l.t.Helper()
 	l.journal.snapshotDir = filepath.Join(l.dir, "snapshots")
 	require.NoError(l.t, os.MkdirAll(l.journal.snapshotDir, 0o755))
-	require.NoError(l.t, l.journal.createSnapshotAndCompact(context.Background()))
+	require.NoError(l.t, l.journal.createSnapshotAndCompact(context.Background(), saveCompactionSnapshot))
 	entries, err := os.ReadDir(l.journal.snapshotDir)
 	require.NoError(l.t, err)
 	require.Len(l.t, entries, 1)

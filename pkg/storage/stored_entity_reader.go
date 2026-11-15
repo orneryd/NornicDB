@@ -65,6 +65,49 @@ func StoredReader(engine Engine) (reader StoredEntityReader, ok bool) {
 	return nil, false
 }
 
+// storedReadResolution is where a stored read enumerates: the native store,
+// namespace translation and scope it reads, or, when the stored read is an
+// override or a non-native database, the engine and scope the general interface
+// enumerates. snapshotStoredEdgeWriter and the pinned stored snapshot source
+// settle a stored read here, so a custom reader keeps its own semantics.
+type storedReadResolution struct {
+	native *BadgerEngine
+	ids    *NamespacedEngine
+	engine Engine
+	scope  string
+}
+
+// resolveStoredRead is the one classification of a stored read. It walks the
+// same stored-reader chain snapshotStoredEdgeWriter always walked: the stored
+// reader of engine (StoredReader), the WAL engine it writes through, and one
+// database namespace, until it reaches the canonical physical store that can
+// expose stored bodies. Everything else, including a decorator that overrides a
+// stored stream, keeps the general interface enumeration it declares.
+func resolveStoredRead(engine Engine, scope string, ids *NamespacedEngine) storedReadResolution {
+	for {
+		reader, ok := StoredReader(engine)
+		if !ok {
+			return storedReadResolution{engine: engine, scope: scope, ids: ids}
+		}
+		switch source := reader.(type) {
+		case *BadgerEngine:
+			return storedReadResolution{native: source, scope: scope, ids: ids}
+		case *MemoryEngine:
+			return storedReadResolution{native: source.BadgerEngine, scope: scope, ids: ids}
+		case *WALEngine:
+			engine = source.engine
+		case *NamespacedEngine:
+			if scope != "" || ids != nil {
+				return storedReadResolution{engine: engine, scope: scope, ids: ids}
+			}
+			ids, scope = source, source.nodeScope()
+			engine = source.inner
+		default:
+			return storedReadResolution{engine: engine, scope: scope, ids: ids}
+		}
+	}
+}
+
 // GetStoredNode reads node id for integrity work: the stored node when engine
 // can read hidden entities (StoredReader), else engine.GetNode.
 func GetStoredNode(ctx context.Context, engine Engine, id NodeID) (*Node, error) {
