@@ -37,36 +37,38 @@ const unwindRangeFilterQuery = "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 R
 // an explicit transaction's executeInTransaction in the other.
 func requireUnwindRangeFiltersBeforeMaterializingRows(t *testing.T, run func() (*ExecuteResult, error)) {
 	t.Helper()
+	prepareRangeGrammarForAllocationMeasurement(t, unwindRangeFilterQuery)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	result, err := run()
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+	t.Logf("first query execution allocated %d bytes after grammar preparation", after.TotalAlloc-before.TotalAlloc)
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(4*1024*1024))
 }
 
-func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
-	query := unwindRangeFilterQuery
-	// Isolate row materialization from process-global recognizer initialization.
-	// In a fresh process the first Validate reports the cold parser cost; in a
-	// full suite earlier tests may already have initialized the recognizer.
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	err := cypherantlr.Validate(query)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	t.Logf("parser initialization evidence: first Validate allocated %d bytes (cold in a fresh focused process)", after.TotalAlloc-before.TotalAlloc)
-	runtime.ReadMemStats(&before)
-	err = cypherantlr.Validate(query)
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	t.Logf("parser initialization evidence: warm Validate allocated %d bytes", after.TotalAlloc-before.TotalAlloc)
+// prepareRangeGrammarForAllocationMeasurement reports syntax preparation
+// separately from the row-materialization budget. It does not execute a query
+// or populate an executor's result cache. The first call is cold only when this
+// test runs first in a fresh process.
+func prepareRangeGrammarForAllocationMeasurement(t *testing.T, query string) {
+	t.Helper()
+	for _, phase := range []string{"first", "warm"} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		err := cypherantlr.Validate(query)
+		runtime.ReadMemStats(&after)
+		require.NoError(t, err)
+		t.Logf("%s grammar preparation allocated %d bytes outside the row-materialization budget", phase, after.TotalAlloc-before.TotalAlloc)
+	}
+}
 
+func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
 	// Use a fresh executor and measure its first real Execute, never a cached result.
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	requireUnwindRangeFiltersBeforeMaterializingRows(t, func() (*ExecuteResult, error) {
-		return executor.Execute(context.Background(), query, nil)
+		return executor.Execute(context.Background(), unwindRangeFilterQuery, nil)
 	})
 }
 
@@ -85,11 +87,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				// This budget detects retained input rows, independently of the
 				// process-global grammar's cold prediction initialization. Only
 				// syntax is prepared; the executor and its first result stay fresh.
-				var parserBefore, parserAfter runtime.MemStats
-				runtime.ReadMemStats(&parserBefore)
-				require.NoError(t, cypherantlr.Validate(test.query))
-				runtime.ReadMemStats(&parserAfter)
-				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
+				prepareRangeGrammarForAllocationMeasurement(t, test.query)
 				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
 					_, err := executor.handleBegin(t.Context())
