@@ -1,19 +1,36 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
-// traversalSafeArgumentFunctions are the functions whose node argument needs
-// no property values: identity, labels and row existence. count(v), id(v),
-// elementId(v) and labels(v) are answered from ID + labels alone, so a
-// labels-only projected read can satisfy them (#1110).
-var traversalSafeArgumentFunctions = map[string]bool{
-	"count":     true,
-	"id":        true,
-	"elementid": true,
-	"labels":    true,
+// traversalAggregateHeaderArguments are the aggregates whose argument the
+// aggregate path reads as a row rather than as a value: count(v) asks whether
+// the row exists, so the projection needs the image's header alone (#1110).
+// An aggregate is implemented by the aggregate owner, not by a scalar
+// registration, so this planner names it here and a scalar registration of the
+// same name never changes an aggregate's demand.
+var traversalAggregateHeaderArguments = map[string]bool{
+	"count": true,
+}
+
+// traversalCallReadsHeaderOnly reports whether a call of name reads only
+// identity, labels and existence from each argument value: a registered
+// function whose input-image demand is HeaderInputImage (id, elementId, labels,
+// type), or an aggregate whose argument the aggregate path reads as a row. The
+// declaration, not the name, is the promise: a custom implementation that keeps
+// a header scalar's name but declares another demand reads its arguments'
+// values or any visible binding, so it is not header-only here either.
+func traversalCallReadsHeaderOnly(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if traversalAggregateHeaderArguments[name] {
+		return true
+	}
+	image, registered := cypherfn.InputImageOf(name)
+	return registered && image == cypherfn.HeaderInputImage
 }
 
 // traversalUnusedPropertyVariables computes, for every named node variable of
@@ -33,20 +50,44 @@ func (e *StorageExecutor) traversalUnusedPropertyVariables(match *TraversalMatch
 }
 
 // traversalUnusedPropertyVariablesForTail is the pipeline form of the same
-// analysis: the MATCH clause materialises every binding as a bare variable,
-// so the real property reads live in the read-only clauses after it
-// (readTail) and the MATCH's own pushed-down WHERE. A nil readTail means the
-// tail is not read-only, so every variable is conservatively treated as read.
-func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *TraversalMatch, whereClause string, readTail []string) map[string]bool {
+// decision: the MATCH clause materialises every binding as a bare variable, so
+// the real property reads live in the read-only clauses after it (readTail) and
+// the MATCH's own pushed-down WHERE. A variable is unused when the demand the
+// shared owner computes for it is complete and names no property, which is the
+// same decision the endpoint reads that follow it are given. A nil readTail
+// means the tail is not read-only, so every variable is conservatively treated
+// as read.
+func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *TraversalMatch, whereClause string, readTail []pipelineClause) map[string]bool {
 	if readTail == nil {
 		return nil
 	}
-	expressions := make([]string, 0, len(readTail)+1)
-	expressions = append(expressions, readTail...)
-	if whereClause != "" {
-		expressions = append(expressions, whereClause)
+	names := make(map[string]struct{}, 4)
+	add := func(v string) {
+		if v != "" {
+			names[v] = struct{}{}
+		}
 	}
-	return e.traversalUnusedPropertyVariablesForExpressions(match, expressions)
+	add(match.StartNode.variable)
+	add(match.EndNode.variable)
+	add(match.Relationship.Variable)
+	for _, seg := range match.Segments {
+		add(seg.FromNode.variable)
+		add(seg.ToNode.variable)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	unused := make(map[string]bool, len(names))
+	for name := range names {
+		properties, complete := pipelineNodePropertyDemand(name, whereClause, nil, readTail)
+		if complete && len(properties) == 0 {
+			unused[name] = true
+		}
+	}
+	if len(unused) == 0 {
+		return nil
+	}
+	return unused
 }
 
 // traversalUnusedPropertyVariablesForExpressions returns, for every named node
@@ -66,6 +107,13 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(match *
 		add(seg.ToNode.variable)
 	}
 	if len(names) == 0 {
+		return nil
+	}
+
+	if pipelineConsumersReadWholeVisibleScope(expressions) {
+		// A full-scope callback reads the row, not only its arguments, so no
+		// binding this MATCH materialises is header-only-safe while one of the
+		// expressions holds such a call.
 		return nil
 	}
 
@@ -149,8 +197,8 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 }
 
 // traversalBareVariableInSafeCall reports whether the bare variable occurrence
-// starting at nameStart is the direct argument of a property-agnostic function:
-// fn(v) or fn(DISTINCT v).
+// starting at nameStart is the direct argument of a call that reads only its
+// argument's header: fn(v) or fn(DISTINCT v).
 func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 	pos := nameStart
 	for pos > 0 && cyphertext.IsWhitespaceAt(expression, pos-1) {
@@ -175,7 +223,7 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 }
 
 // traversalCallNameIsSafe reports whether the function whose opening paren is
-// at openParen is property-agnostic for a node argument.
+// at openParen declares a header-only read of its argument.
 func traversalCallNameIsSafe(expression string, openParen int) bool {
 	end := openParen
 	for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
@@ -192,5 +240,5 @@ func traversalCallNameIsSafe(expression string, openParen int) bool {
 	if start == end {
 		return false
 	}
-	return traversalSafeArgumentFunctions[strings.ToLower(expression[start:end])]
+	return traversalCallReadsHeaderOnly(expression[start:end])
 }

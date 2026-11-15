@@ -1,8 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -75,4 +77,27 @@ func TestTraversalUnusedPropertyVariables(t *testing.T) {
 	unused = e.traversalUnusedPropertyVariables(chained, items, "c.id = 3")
 	require.False(t, unused["c"])
 	require.True(t, unused["l"])
+}
+
+// A full-scope registration anywhere in the statement's consumers keeps every
+// binding this MATCH materialises: the callback reads the row, not only the
+// arguments it is given, so no variable is header-only-safe even when nothing
+// names its properties. The registration is a name of its own, so the suite's
+// other registrations stay untouched.
+func TestTraversalUnusedPropertyVariablesKeepsEveryBindingForFullScopeCallback(t *testing.T) {
+	cypherfn.Register("traversal_scope_probe", func(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) {
+		return nil, nil
+	}, cypherfn.OpaqueReads, cypherfn.FullInputImage)
+	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	match := &TraversalMatch{
+		StartNode: nodePatternInfo{variable: "a", labels: []string{"P"}},
+		EndNode:   nodePatternInfo{variable: "l", labels: []string{"Q"}},
+	}
+	items := []returnItem{{expr: "count(l)", alias: "c"}}
+	require.True(t, e.traversalUnusedPropertyVariables(match, items, "")["l"],
+		"a header aggregate narrows the binding it counts")
+
+	items = append(items, returnItem{expr: "traversal_scope_probe('x')", alias: "p"})
+	require.Nil(t, e.traversalUnusedPropertyVariables(match, items, ""),
+		"a full-scope callback keeps every visible binding's whole body")
 }

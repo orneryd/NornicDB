@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
 // statementNodeImagePolicy belongs to one admitted execution, not an executor
@@ -31,8 +32,15 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 				}
 				call := effect.functions.Function(index)
 				name := call.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
+				image, registered := cypherfn.InputImageOf(name)
+				if registered && image == cypherfn.FullInputImage {
+					// A registered callback can read bindings its arguments never
+					// name, including their stored vector payloads.
+					policy.images = FullNodeImages
+					break
+				}
 				handler, found := pluginFunctionHandler(name)
-				if !found || !nativePluginFunction(handler) {
+				if !(registered && image == cypherfn.ArgumentInputImage) && (!found || !nativePluginFunction(handler)) {
 					continue
 				}
 				if !loaded {

@@ -112,7 +112,7 @@ type pipelineMatchPhysicalHint struct {
 	// readTail holds the clauses after the MATCH when every one of them only
 	// reads; nil otherwise. A label scan uses it to read only the properties
 	// those clauses use (pipelineLabelScanProjection).
-	readTail []string
+	readTail []pipelineClause
 	// streamScan lets the MATCH hand its candidates on as the scan reads
 	// them: the statement only reads and streams its result to the client,
 	// and the MATCH runs once (#939).
@@ -125,16 +125,16 @@ type pipelineMatchPhysicalHint struct {
 	statistics *traversalSeedStatistics
 }
 
-// pipelineReadOnlyTail returns the texts of remaining when every clause only
+// pipelineReadOnlyTail returns the clauses of remaining when every clause only
 // reads and the last one is a RETURN, and nil otherwise. Clauses that don't
 // end in RETURN may be one part of a larger statement whose later clauses can
 // use any property. RETURN * and WITH * carry every variable on whole: a CALL
 // subquery runs its outer MATCH as MATCH ... RETURN *.
-func pipelineReadOnlyTail(remaining []pipelineClause) []string {
+func pipelineReadOnlyTail(remaining []pipelineClause) []pipelineClause {
 	if len(remaining) == 0 || remaining[len(remaining)-1].kind != pipelineClauseReturn {
 		return nil
 	}
-	tail := make([]string, 0, len(remaining))
+	tail := make([]pipelineClause, 0, len(remaining))
 	for _, clause := range remaining {
 		switch clause.kind {
 		case pipelineClauseWith, pipelineClauseReturn:
@@ -146,9 +146,9 @@ func pipelineReadOnlyTail(remaining []pipelineClause) []string {
 			if strings.HasPrefix(strings.TrimSpace(body), "*") {
 				return nil
 			}
-			tail = append(tail, clause.text)
+			tail = append(tail, clause)
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseUnwind:
-			tail = append(tail, clause.text)
+			tail = append(tail, clause)
 		default:
 			return nil
 		}
@@ -158,29 +158,197 @@ func pipelineReadOnlyTail(remaining []pipelineClause) []string {
 
 // pipelineLabelScanProjection returns the properties a label scan for
 // nodePattern must read: those its inline map, its WHERE and the read-only
-// clauses after it use through the pattern's variable. It reports false, and
-// the scan reads whole nodes, when a later clause can write, when the variable
-// is used other than as variable.property (returned, passed on, compared,
-// used in a later pattern), or when a temporal viewport needs the node's own
-// validity properties.
-func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []string) ([]string, bool) {
+// clauses after it read through the pattern's variable. It reports false, and
+// the scan reads whole nodes, when a later clause can write, when a clause
+// reads the variable as a value (returned, passed on, compared, used in a later
+// pattern), or when a temporal viewport needs the node's own validity
+// properties.
+//
+// The read-only clauses are read from their retained syntax, so the scan
+// decodes only the property bodies their projection items and ORDER BY, SKIP
+// and LIMIT expressions read. A WITH that projects the variable on its own
+// carries it to the clauses after it under the item's own name, so a later
+// rename is followed by name; a WITH that binds it to anything else ends the
+// demand, and the item that read it is read as a consumer of the whole value.
+func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []pipelineClause) ([]string, bool) {
 	if len(nodePattern.labels) == 0 || readTail == nil {
 		return nil, false
 	}
 	if _, viewport := TemporalViewportFromContext(ctx); viewport {
 		return nil, false
 	}
-	properties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	return pipelineNodePropertyDemand(nodePattern.variable, whereClause, nodePattern.properties, readTail)
+}
+
+// pipelineNodePropertyDemand returns the stored property bodies a MATCH must
+// decode for one of its variables: those its inline property map and its WHERE
+// read, plus those the read-only clauses after it read through the variable. It
+// reports false when a consumer can read more than the properties it names, and
+// the read must keep every body.
+//
+// It is the one owner of a MATCH variable's property demand. A label scan's
+// projection, a traversal endpoint's projection and the traversal's
+// labels-only decision all describe the same clauses and the same variable, so
+// they ask this function instead of each deriving the demand from clause text.
+func pipelineNodePropertyDemand(variable, whereClause string, inline map[string]interface{}, readTail []pipelineClause) ([]string, bool) {
+	consumers := make([]string, 0, len(readTail)+1)
+	consumers = append(consumers, whereClause)
+	for _, clause := range readTail {
+		consumers = append(consumers, clause.text)
+	}
+	if pipelineConsumersReadWholeVisibleScope(consumers) {
+		// A full-scope callback reads the row, not only its arguments: every
+		// visible binding keeps its whole image for it, whichever of them this
+		// variable is.
+		return nil, false
+	}
+	properties := pipelineNodePredicateProperties(variable, whereClause, inline)
 	if properties == nil {
 		return nil, false
 	}
-	for _, text := range readTail {
-		used := pipelineNodePredicateProperties(nodePattern.variable, text, nil)
-		if used == nil {
-			return nil, false
-		}
-		properties = append(properties, used...)
+	tail, complete := pipelineTailDemand(variable, readTail)
+	if !complete {
+		return nil, false
 	}
+	properties = append(properties, tail...)
+	sort.Strings(properties)
+	return slices.Compact(properties), true
+}
+
+// pipelineTailDemand returns the properties the read-only clauses after a MATCH
+// read through variable, and whether that demand is complete.
+//
+// The clauses are read from their retained syntax, so only the property bodies
+// their projection items and ORDER BY, SKIP and LIMIT expressions read are
+// demanded. A WITH that projects the variable on its own carries it to the
+// clauses after it under the item's own name, so a later rename is followed by
+// name; a WITH that binds it to anything else ends the demand, and the item that
+// read it is read as a consumer of the whole value.
+func pipelineTailDemand(variable string, readTail []pipelineClause) ([]string, bool) {
+	properties := make([]string, 0, len(readTail))
+	// names[i] is the name the variable has entering clause i; carried[i] is
+	// the item of a WITH that hands it on, or -1 when that clause drops it.
+	names := make([]string, len(readTail))
+	carried := make([]int, len(readTail))
+	name := normalizeProjectionColumnName(variable)
+	for index, clause := range readTail {
+		names[index], carried[index] = name, -1
+		if clause.kind != pipelineClauseWith || name == "" {
+			continue
+		}
+		items := projectionItemsFromSyntax(clause.syntax)
+		if len(items) == 0 {
+			name = ""
+			continue
+		}
+		for itemIndex, item := range items {
+			expression := strings.TrimSpace(item.expression)
+			for {
+				inner, enclosed := stripEnclosingExpressionParentheses(expression)
+				if !enclosed {
+					break
+				}
+				expression = strings.TrimSpace(inner)
+			}
+			if simpleSemanticIdentifier(expression) != name {
+				continue
+			}
+			if carried[index] >= 0 {
+				// A second item projects the same variable on its own; it is
+				// read as a whole value below.
+				continue
+			}
+			carried[index] = itemIndex
+			if item.as >= 0 {
+				name = normalizeProjectionColumnName(item.alias)
+			}
+		}
+		if carried[index] < 0 {
+			name = ""
+		}
+	}
+	// A clause's own modifiers, ORDER BY, SKIP, LIMIT and a WITH's attached
+	// WHERE, read the row the clause produced: a WITH's rename renames the
+	// variable they see. The name the clause read before that rename is read
+	// too, so a consumer this model cannot place stays a consumer.
+	consume := func(index int, expression string) bool {
+		output := [2]string{names[index], names[index]}
+		if index+1 < len(names) {
+			output[1] = names[index+1]
+		}
+		for position, name := range output {
+			if name == "" || (position == 1 && name == output[0]) {
+				continue
+			}
+			used := pipelineNodePredicateProperties(name, expression, nil)
+			if used == nil {
+				return false
+			}
+			properties = append(properties, used...)
+		}
+		return true
+	}
+	for index := len(readTail) - 1; index >= 0; index-- {
+		clause := readTail[index]
+		switch clause.kind {
+		case pipelineClauseReturn, pipelineClauseWith:
+			items := projectionItemsFromSyntax(clause.syntax)
+			if len(items) == 0 {
+				return nil, false
+			}
+			for itemIndex, item := range items {
+				if itemIndex == carried[index] {
+					// The variable passes on with nothing read; the clauses
+					// after this one hold the demand, read under this item's
+					// name.
+					continue
+				}
+				used := pipelineNodePredicateProperties(names[index], item.expression, nil)
+				if used == nil {
+					return nil, false
+				}
+				properties = append(properties, used...)
+			}
+			body := clause.syntax.ChildRule(cypherantlr.CypherParserRULE_projectionBody)
+			for part := 0; part < body.ChildCount(); part++ {
+				modifier := body.Child(part)
+				switch modifier.Rule() {
+				case cypherantlr.CypherParserRULE_orderSt:
+					for term := 0; term < modifier.ChildCount(); term++ {
+						item := modifier.Child(term)
+						if item.Rule() != cypherantlr.CypherParserRULE_orderItem {
+							continue
+						}
+						if !consume(index, item.ChildRule(cypherantlr.CypherParserRULE_expression).Code()) {
+							return nil, false
+						}
+					}
+				case cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
+					if !consume(index, modifier.ChildRule(cypherantlr.CypherParserRULE_expression).Code()) {
+						return nil, false
+					}
+				}
+			}
+			// A WITH's attached WHERE filters the rows this clause produced, so
+			// it reads the same row its modifiers do.
+			for part := 0; part < clause.syntax.ChildCount(); part++ {
+				where := clause.syntax.Child(part)
+				if where.Rule() != cypherantlr.CypherParserRULE_where {
+					continue
+				}
+				if !consume(index, where.ChildRule(cypherantlr.CypherParserRULE_expression).Code()) {
+					return nil, false
+				}
+			}
+		default:
+			used := pipelineNodePredicateProperties(names[index], clause.text, nil)
+			if used == nil {
+				return nil, false
+			}
+			properties = append(properties, used...)
+		}
+	}
+
 	sort.Strings(properties)
 	return slices.Compact(properties), true
 }

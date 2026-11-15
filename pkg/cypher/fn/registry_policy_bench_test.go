@@ -22,7 +22,7 @@ func BenchmarkReadObservationPolicy(b *testing.B) {
 		{name: "canonical", reads: CanonicalReads},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			Register("policy_benchmark_value", implementation, tc.reads)
+			Register("policy_benchmark_value", implementation, tc.reads, FullInputImage)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
