@@ -322,3 +322,31 @@ func TestStoredSnapshotSourceReportsUnsupportedStoredReaderOverride(t *testing.T
 
 var _ Engine = (*overriddenStoredEdgeEngine)(nil)
 var _ StoredEntityReader = (*overriddenStoredEdgeEngine)(nil)
+
+// A generic Engine decorator may override the node stream without implementing
+// StoredEntityReader. Its edge reader can unwrap, but its node stream cannot.
+type snapshotNodeStreamOverride struct {
+	StreamingEngine
+	calls int
+}
+
+func (s *snapshotNodeStreamOverride) GetInnerEngine() Engine { return s.StreamingEngine }
+func (s *snapshotNodeStreamOverride) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
+	s.calls++
+	return visit(&Node{ID: "custom:node", Properties: map[string]any{"owner": "override"}})
+}
+
+func TestStoredSnapshotSourcePreservesCustomNodeStream(t *testing.T) {
+	ctx := t.Context()
+	wrapped := &snapshotNodeStreamOverride{StreamingEngine: newTestEngine(t)}
+	path := t.TempDir() + "/custom.snapshot"
+	require.NoError(t, SaveStreamingSnapshot(ctx, wrapped, path, SnapshotOptions{}))
+	require.Equal(t, 1, wrapped.calls)
+	source, err := openStoredSnapshotSource(ctx, wrapped)
+	if source != nil {
+		source.Close()
+	}
+	require.ErrorIs(t, err, errStoredSnapshotUnsupported,
+		"native pinning must not bypass an engine's custom node enumeration")
+	require.Nil(t, source)
+}

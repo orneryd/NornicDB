@@ -7,6 +7,7 @@
 - [x] Retain custom stored-reader override behavior under its existing barrier.
 - [x] Reproduce live-dictionary lookup failure after namespace recreation; resolve bindings in the pinned physical view.
 - [x] Parent integrated snapshot/source/dictionary race controls pass (4.431s).
+- [x] Reproduce and preserve custom node-stream overrides; integrated race controls pass after correction (4.037s).
 - [ ] Qualify workload-specific snapshot/write latency and allocation costs without competing local tests.
 - [ ] Publish candidate and complete exact-head CI and duplicate review.
 

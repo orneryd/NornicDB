@@ -30,7 +30,7 @@ type storedSnapshotSource struct {
 // uses for that engine.
 func openStoredSnapshotSource(ctx context.Context, engine Engine) (*storedSnapshotSource, error) {
 	target := resolveStoredRead(engine, "", nil)
-	if target.native == nil {
+	if target.native == nil || !target.pinNodes {
 		return nil, errStoredSnapshotUnsupported
 	}
 	b := target.native

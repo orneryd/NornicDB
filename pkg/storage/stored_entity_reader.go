@@ -72,9 +72,12 @@ func StoredReader(engine Engine) (reader StoredEntityReader, ok bool) {
 // settle a stored read here, so a custom reader keeps its own semantics.
 type storedReadResolution struct {
 	native *BadgerEngine
-	ids    *NamespacedEngine
-	engine Engine
-	scope  string
+	// pinNodes is true only when node enumeration also follows known owners.
+	// StoredReader alone proves edge ownership, not Engine node overrides.
+	pinNodes bool
+	ids      *NamespacedEngine
+	engine   Engine
+	scope    string
 }
 
 // resolveStoredRead is the one classification of a stored read. It walks the
@@ -84,16 +87,24 @@ type storedReadResolution struct {
 // expose stored bodies. Everything else, including a decorator that overrides a
 // stored stream, keeps the general interface enumeration it declares.
 func resolveStoredRead(engine Engine, scope string, ids *NamespacedEngine) storedReadResolution {
+	pinNodes := true
 	for {
+		switch engine.(type) {
+		case *BadgerEngine, *MemoryEngine, *WALEngine, *NamespacedEngine:
+		default:
+			// An arbitrary decorator can override StreamNodesWithOptions even
+			// when its stored edge reader transparently unwraps to native.
+			pinNodes = false
+		}
 		reader, ok := StoredReader(engine)
 		if !ok {
 			return storedReadResolution{engine: engine, scope: scope, ids: ids}
 		}
 		switch source := reader.(type) {
 		case *BadgerEngine:
-			return storedReadResolution{native: source, scope: scope, ids: ids}
+			return storedReadResolution{native: source, pinNodes: pinNodes, scope: scope, ids: ids}
 		case *MemoryEngine:
-			return storedReadResolution{native: source.BadgerEngine, scope: scope, ids: ids}
+			return storedReadResolution{native: source.BadgerEngine, pinNodes: pinNodes, scope: scope, ids: ids}
 		case *WALEngine:
 			engine = source.engine
 		case *NamespacedEngine:
