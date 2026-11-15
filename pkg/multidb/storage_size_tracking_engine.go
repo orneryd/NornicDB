@@ -33,6 +33,7 @@ var _ storage.MVCCVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCIndexedVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCHeadEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCLifecycleEngine = (*sizeTrackingEngine)(nil)
+var _ storage.ProjectedNodeReader = (*sizeTrackingEngine)(nil)
 var _ storage.ProjectedLabelNodeReader = (*sizeTrackingEngine)(nil)
 var _ storage.PropertyKeyLookup = (*sizeTrackingEngine)(nil)
 
@@ -92,6 +93,13 @@ func (t *sizeTrackingEngine) GetQueryNode(ctx context.Context, id storage.NodeID
 		return reader.GetQueryNode(ctx, id)
 	}
 	return t.Engine.GetNode(ctx, id)
+}
+
+// GetNodeProjected preserves the wrapped database's point projection capability.
+// Use storage's canonical delegation so engines without it retain the same
+// full-read projection and error semantics as the other engine wrappers.
+func (t *sizeTrackingEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
+	return storage.GetNodeProjectedThrough(ctx, t.Engine, id, properties)
 }
 
 // RecordMaterializedAccess preserves result-access accounting across the

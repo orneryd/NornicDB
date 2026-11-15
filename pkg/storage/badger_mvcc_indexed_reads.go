@@ -312,6 +312,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	// snapshot answers its range question once instead of paying one missing
 	// sidecar and chunk lookup per hydrated node (snapshotEmbeddingAbsence).
 	var absence snapshotEmbeddingAbsence
+	admitProjectionBodies := true
 	return view(func(txn *badger.Txn) error {
 		// readHydrated reads one candidate with the embedding hydration the
 		// scan asks of it. A row that settles embedding state takes this
@@ -335,7 +336,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
@@ -381,11 +382,13 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if !coversDecided && lookups >= labelScanPointLookups {
 				// Author: storage-format-owners lane (Codex), 1 November 2026.
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {
