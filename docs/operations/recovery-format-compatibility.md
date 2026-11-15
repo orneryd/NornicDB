@@ -224,3 +224,13 @@ here by restoring previously omitted timestamps, vectors, metadata and flags,
 plus exact integer properties in that historical release. The tiny
 metadata-heavy fixture exaggerates fixed overhead.
 These are storage/allocation measurements, not latency improvement claims.
+
+### Managed-vector journal references
+
+The local journal may contain complete `managed_vector_anchor` records and
+semantic version-7 updates that reference their exact vector images. Anchors use
+the existing multi-frame encoding even in standard mode. Ordinary transaction
+and replication limits remain unchanged; portable replication records stay at
+semantic version 3. Older binaries that do not understand these records cannot
+read this journal. Restore with the matching v1.5.0 build. This changes journal
+records, not Badger keys, stored node payloads, or the storage version.

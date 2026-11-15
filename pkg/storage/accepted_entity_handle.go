@@ -43,14 +43,18 @@ type AcceptedEntityCommitHandle struct {
 // AcceptEntityCommit encodes the prepared snapshot once and retains its
 // accepted authority for the returned owner. On error nothing is retained and
 // the caller still owns the unaccepted prepared frame.
-func AcceptEntityCommit(ctx context.Context, engine Engine, prepared *PreparedEntityCommit) (*AcceptedEntityCommitHandle, []byte, error) {
+func AcceptEntityCommit(ctx context.Context, engine Engine, request EntityTransactionRequest) (*AcceptedEntityCommitHandle, []byte, error) {
+	prepared := request.Prepared
+	if prepared == nil {
+		return nil, nil, ErrInvalidData
+	}
 	inner, found := EntityCommitSubmitterFor(engine)
 	if !found {
 		return nil, nil, ErrInvalidData
 	}
 	// Preparation owns an immutable private operation snapshot; encoding only
 	// reads it rather than duplicating a detached public Operations copy.
-	payload, err := EncodeEntityTransaction(EntityTransactionRequest{Prepared: prepared})
+	payload, err := EncodeEntityTransaction(request)
 	if err != nil {
 		return nil, nil, err
 	}

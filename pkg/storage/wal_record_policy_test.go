@@ -180,10 +180,10 @@ func TestWALFramesWrittenUnderEachPolicy(t *testing.T) {
 
 // What an engine journals for an update that keeps a node's vectors, through a
 // transaction's prepared commit and through the WAL engine's UpdateNode, under
-// each policy: the records are version 3, the record of the node with 8 chunk
-// vectors carries them value for value, and the record of the node with a named
-// vector carries it.
-func TestEngineJournalsWholeImagesUnderEachPolicy(t *testing.T) {
+// each policy: portable prepared encoding carries full images; local accessor
+// updates carry exact managed vectors in an anchor and a validated reference.
+// Named vectors remain complete in either client record.
+func TestEngineJournalsExactVectorImagesUnderEachPolicy(t *testing.T) {
 	flag := func(n *Node) { n.Properties["flag"] = true }
 	for policy, name := range map[WALRecordPolicy]string{WALRecordsStandard: "standard", WALRecordsLarge: "large"} {
 		for _, path := range []string{"prepared", "accessor"} {
@@ -229,8 +229,16 @@ func TestEngineJournalsWholeImagesUnderEachPolicy(t *testing.T) {
 					}
 				}
 				require.Len(t, images, 2)
-				require.Equal(t, map[NodeID]uint16{"test:managed": 3, "test:named": 3}, versions)
-				require.Equal(t, largeRecordVectors(8, 1), images["test:managed"].ChunkEmbeddings, "the record carries the managed vectors")
+				managedVersion := EntityTransactionVersion
+				if path == "accessor" {
+					managedVersion = semanticTransactionManagedReferenceVersion
+					_, anchor := managedAnchorEntry(t, w.config.Dir)
+					require.Equal(t, largeRecordVectors(8, 1), anchor.SourceNode.ChunkEmbeddings, "the anchor carries exact managed vectors")
+					require.Nil(t, images["test:managed"].ChunkEmbeddings, "the client record references its complete anchor")
+				} else {
+					require.Equal(t, largeRecordVectors(8, 1), images["test:managed"].ChunkEmbeddings, "portable prepared encoding carries complete vectors")
+				}
+				require.Equal(t, map[NodeID]uint16{"test:managed": managedVersion, "test:named": EntityTransactionVersion}, versions)
 				require.Equal(t, true, images["test:managed"].EmbedMeta["has_embedding"])
 				require.Equal(t, map[string][]float32{"title": {1, 2, 3}}, images["test:named"].NamedEmbeddings, "the record carries the named vectors")
 			})
