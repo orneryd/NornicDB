@@ -168,6 +168,12 @@ var fieldClasses = map[string]fieldRow{
 	// A fresh walker owns this bounded cursor for one caller-copy traversal;
 	// it is neither retained engine state nor a stored entity/accounting count.
 	"pkg/storage.callerCopyWalker.count": {class: "caller-copy traversal progress"},
+	// The overflow identity index belongs exclusively to that same walk. These
+	// exact fields track its append cursor and lookup handles; release clears
+	// all source/destination references before pooling the scratch.
+	"pkg/storage.callerCopyIndex.count":   {class: "caller-copy traversal progress"},
+	"pkg/storage.callerCopyIndex.current": {class: "caller-copy traversal progress"},
+	"pkg/storage.callerCopyIndex.slots":   {class: "caller-copy identity lookup scratch"},
 	// These offsets delimit equal-value groups in the privately owned ID result
 	// of readPropertyIndexSnapshot. They are query-result metadata, created by
 	// snapshotPropertyIndexLocked and consumed after the source leases end; they
