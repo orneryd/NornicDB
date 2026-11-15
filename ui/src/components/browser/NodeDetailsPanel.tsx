@@ -1,3 +1,6 @@
+import {InspectorSimilarView} from "./InspectorSimilarView";
+import {useUrlState} from "../../utils/useUrlState";
+import {useEffect,useState} from "react";
 /**
  * NodeDetailsPanel - Node details view with properties, labels, embedding
  * Extracted from Browser.tsx for reusability
@@ -10,12 +13,11 @@ import {
   Edit,
   ChevronRight,
   Database,
-  Loader2,
 } from "lucide-react";
 import { EmbeddingStatus } from "../common/EmbeddingStatus";
 import { PropertyEditor } from "../common/PropertyEditor";
 import { JsonPreview } from "../common/JsonPreview";
-import { isReadOnlyProperty, getNodePreview } from "../../utils/nodeUtils";
+import { isReadOnlyProperty } from "../../utils/nodeUtils";
 import type { GraphEdgePayload, SearchResult } from "../../utils/api";
 
 interface NodeDetailsPanelProps {
@@ -25,14 +27,15 @@ interface NodeDetailsPanelProps {
     nodeId: string;
     results: SearchResult[];
     loading: boolean;
+    error?: string;
   } | null;
   onClose: () => void;
   onFindSimilar: (nodeId: string) => void;
-  onCollapseSimilar: () => void;
   onNodeSelect: (result: SearchResult) => void;
   onUpdateProperties: (
     nodeId: string,
     props: Record<string, unknown>,
+    removedProperties?: string[],
   ) => Promise<{ success: boolean; error?: string }>;
   onRefresh: () => void;
 }
@@ -43,11 +46,13 @@ export function NodeDetailsPanel({
   expandedSimilar,
   onClose,
   onFindSimilar,
-  onCollapseSimilar,
   onNodeSelect,
   onUpdateProperties,
   onRefresh,
 }: NodeDetailsPanelProps) {
+  const {params,patch}=useUrlState();
+  const [saveNotice,setSaveNotice]=useState('');
+  useEffect(()=>setSaveNotice(''),[selectedNode?.node.id]);
   const location=useLocation();
   const navigate=useNavigate();
   const editingNodeId=location.pathname.replace(/\/$/,'').endsWith('/edit') ? selectedNode?.node.id ?? null : null;
@@ -173,7 +178,10 @@ export function NodeDetailsPanel({
     return null;
   }
 
-  const isExpanded = expandedSimilar?.nodeId === selectedNode.node.id;
+  if(params.get('inspectorView')==='similar')return <>
+    <div className="flex items-center justify-between p-4 border-b border-norse-rune"><h2 className="font-medium text-white">Similar records</h2><button type="button" aria-label="Close details" onClick={onClose} className="p-1 text-norse-silver"><X size={16}/></button></div>
+    <div className="flex-1 overflow-auto p-4"><InspectorSimilarView selected={selectedNode} result={expandedSimilar} onBack={()=>patch({inspectorView:null,similar:null})} onRetry={()=>onFindSimilar(selectedNode.node.id)} onSelect={onNodeSelect}/></div>
+  </>;
 
   return (
     <>
@@ -182,22 +190,9 @@ export function NodeDetailsPanel({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              if (isExpanded) {
-                onCollapseSimilar();
-              } else {
-                onFindSimilar(selectedNode.node.id);
-              }
-            }}
-            className={`flex items-center gap-1 px-3 py-1 text-sm rounded transition-colors ${
-              isExpanded
-                ? "bg-frost-ice text-norse-night hover:bg-frost-ice/90"
-                : "bg-frost-ice/20 text-frost-ice hover:bg-frost-ice/30"
-            }`}
-          >
-            <Sparkles className="w-3 h-3" />
-            {isExpanded ? "Hide Similar" : "Find Similar"}
-          </button>
+            onClick={()=>{const next=new URLSearchParams(location.search);next.set('inspectorView','similar');next.set('similar',selectedNode.node.id);navigate({pathname:location.pathname.replace(/\/edit\/?$/,''),search:next.toString()});}}
+            className="flex items-center gap-1 px-3 py-1 text-sm border border-norse-rune text-norse-silver hover:text-white"
+          ><Sparkles className="w-3 h-3"/> Find similar</button>
           <button
             type="button"
             aria-label="Close details"
@@ -355,6 +350,7 @@ export function NodeDetailsPanel({
               <button
                 type="button"
                 onClick={() => {
+                  setSaveNotice('');
                   setEditingNodeId(selectedNode.node.id);
                 }}
                 className="flex items-center gap-1 px-2 py-1 text-xs bg-nornic-primary/20 hover:bg-nornic-primary/30 text-nornic-primary rounded"
@@ -365,6 +361,7 @@ export function NodeDetailsPanel({
             )}
           </div>
 
+          {saveNotice && <p role="status" className="text-sm text-nornic-primary mb-3">{saveNotice}</p>}
           {editingNodeId === selectedNode.node.id ? (
             <PropertyEditor
               properties={selectedNode.node.properties} key={selectedNode.node.id}
@@ -372,14 +369,11 @@ export function NodeDetailsPanel({
                 const result = await onUpdateProperties(
                   selectedNode.node.id,
                   updatedProps,
+                  Object.keys(selectedNode.node.properties).filter(key=>!isReadOnlyProperty(key)&&!Object.prototype.hasOwnProperty.call(updatedProps,key)),
                 );
-                if (result.success) {
-                  setEditingNodeId(null);
-                  onRefresh();
-                } else {
-                  alert(`Failed to update: ${result.error}`);
-                }
+                if (!result.success) throw new Error(result.error || 'Could not save changes.');
               }}
+              onSaved={()=>{setSaveNotice('Changes saved.');setEditingNodeId(null);onRefresh();}}
               onCancel={() => {
                 setEditingNodeId(null);
               }}
@@ -418,67 +412,7 @@ export function NodeDetailsPanel({
           )}
         </div>
 
-        {/* Inline Similar Items Expansion - matches search page style */}
-        {isExpanded && expandedSimilar && (
-          <div className="ml-4 mt-2 mb-3 border-l-2 border-frost-ice/30 pl-3 animate-in slide-in-from-top-2 duration-200">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-frost-ice flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                Similar Items ({expandedSimilar.results.length})
-              </span>
-              {onCollapseSimilar && (
-                <button
-                  type="button"
-                  onClick={onCollapseSimilar}
-                  className="text-xs text-norse-fog hover:text-white transition-colors"
-                >
-                  Close
-                </button>
-              )}
-            </div>
 
-            {expandedSimilar.loading ? (
-              <div className="flex items-center gap-2 text-norse-fog text-sm py-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Finding similar...
-              </div>
-            ) : expandedSimilar.results.length === 0 ? (
-              <p className="text-xs text-norse-fog py-2">
-                No similar items found
-              </p>
-            ) : (
-              <div className="space-y-1">
-                {expandedSimilar.results.map((similar) => (
-                  <button
-                    type="button"
-                    key={similar.node.id}
-                    onClick={() => onNodeSelect(similar)}
-                    className="w-full text-left p-2 rounded bg-norse-shadow/50 hover:bg-norse-shadow border border-transparent hover:border-frost-ice/20 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1 flex-wrap min-w-0">
-                        {similar.node.labels.slice(0, 2).map((label) => (
-                          <span
-                            key={label}
-                            className="px-1.5 py-0.5 text-xs bg-frost-ice/10 text-frost-ice/80 rounded flex-shrink-0"
-                          >
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                      <span className="text-xs text-valhalla-gold/70 flex-shrink-0">
-                        {similar.score.toFixed(2)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-norse-silver/80 break-words overflow-wrap-anywhere mt-1 min-w-0">
-                      {getNodePreview(similar.node.properties)}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </>
   );

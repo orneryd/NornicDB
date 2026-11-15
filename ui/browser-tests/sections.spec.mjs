@@ -4,7 +4,7 @@ import {mkdir} from 'node:fs/promises';
 import {fixture} from './fixture.mjs';
 
 const sections=[
- ['workspace','/workspace/catalog','NornicDB'],
+ ['workspace','/workspace/catalog','Workspace'],
  ['databases','/databases','Databases'],
  ['embeddings','/embeddings?database=catalog&maintenance=open','Embeddings'],
  ['users','/security/admin','User Management'],

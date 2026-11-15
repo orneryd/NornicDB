@@ -119,3 +119,10 @@ npm run inventory
 ```
 
 Browser tests use API fixtures and synthetic records. CI uses bundled Chromium; local tests use Chrome. Set `CI=true` to use bundled Chromium locally. For a running development server, set `VITE_PROXY_TARGET` to the database origin in an untracked `.env.local` file. Do not place credentials in Vite environment variables or URLs.
+
+
+## Workspace interaction checks
+
+`npm test` runs UI unit checks. `npm run test:browser` builds the UI, starts a local static preview, and runs Playwright against fixture APIs; it does not write to a running NornicDB instance. Install Playwright Chromium first with `npx playwright install chromium` (CI uses `--with-deps`). The local default uses Chrome; CI uses bundled Chromium.
+
+See [the workspace intent and interaction map](review/workspace-layout.md) for the layout decisions, routed editing/creation flows, screenshot gallery and known upstream grid accessibility limitations.
