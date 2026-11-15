@@ -13,7 +13,7 @@ import type {
   GridRecord,
   UiGridApi,
 } from "@ornery/ui-grid-core";
-import { ExpandableCell } from "../common/ExpandableCell";
+
 import { extractNodeFromResult } from "../../utils/nodeUtils";
 
 type QueryResultNodeData = {
@@ -93,9 +93,12 @@ function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChan
     const nextColumnDefs: GridColumnDef[] = [
       {
         name: "nornicSelect",
-        displayName: "Select",
+        displayName: "Inspect",
+        pinnedLeft: true,
+        enablePinning: false,
+        enableColumnMoving: false,
         field: "nornicSelect",
-        width: "96px",
+        width: "144px",
         headerRenderer: () => "",
         sortable: false,
         filterable: false,
@@ -124,6 +127,7 @@ function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChan
       columnDefs,
       rowIdentity: (row) => String(row.__gridId),
       enableSorting: true,
+      enablePinning: true,
       enableFiltering: false,
       enableExpandable: true,
       expandableRowHeight: 220,
@@ -227,9 +231,9 @@ function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChan
           <button
             type="button"
             onClick={() => onNodeSelect(nodeData)}
-            className="inline-flex items-center rounded-full border border-nornic-primary/40 bg-nornic-primary/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-nornic-primary hover:border-nornic-primary hover:bg-nornic-primary/20 hover:text-white"
+            className="inline-flex items-center rounded-full border border-nornic-primary/40 bg-nornic-primary/10 px-2.5 py-1 text-xs font-medium text-nornic-primary hover:border-nornic-primary hover:bg-nornic-primary/20 hover:text-white"
           >
-            Select
+            Inspect
           </button>
         </div>
       );
@@ -241,11 +245,9 @@ function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChan
     const value = ctx.value;
 
     if (value && typeof value === "object") {
-      return (
-        <div className="font-mono text-xs py-1">
-          <ExpandableCell data={value} stateKey={`${String(ctx.row.__gridId)}.${ctx.column.name}`} />
-        </div>
-      );
+      const node=extractNodeFromResult(value as Record<string,unknown>);
+      const title=node?['title','name'].map(key=>node.properties[key]).find(candidate=>typeof candidate==='string'&&!/^[\s]*[\[{]/.test(candidate)):null;
+      return node ? <div className="query-node-summary"><span>{node.labels.join(', ')}</span><span className="text-valhalla-gold">{node.id}</span><span>{title?String(title):`${Object.keys(node.properties).length} ${Object.keys(node.properties).length===1?"property":"properties"}`}</span></div> : <span className="query-cell-value font-mono text-xs" title="Expand row details to see the full value">{Array.isArray(value)?`[${value.length} items]`:`{${Object.keys(value).length} properties}`}</span>;
     }
 
     const displayValue =
@@ -256,7 +258,7 @@ function ResultsGrid({cypherResult, selectedNodeIds,onNodeSelect,onSelectionChan
           : String(value);
 
     return (
-      <div className="w-full text-left font-mono text-xs py-1">
+      <div className="query-cell-value text-left font-mono text-xs py-1">
         {displayValue}
       </div>
     );

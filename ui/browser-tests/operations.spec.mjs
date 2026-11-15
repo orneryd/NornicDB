@@ -7,7 +7,7 @@ test('schema creates and drops a named constraint only after explicit review',as
  const state=await fixture(page);await page.goto('/schema/catalog?tab=constraints');
  await expect(page.getByRole('grid',{name:'Constraints',exact:true})).toContainText('document_id');
  await page.getByRole('button',{name:'Create constraint',exact:true}).click();await expect(page).toHaveURL(/schema\/catalog\/constraints\/new/);
- const dialog=page.getByRole('dialog');await dialog.getByLabel('Schema name').fill('email_unique');await dialog.getByLabel('Node label').fill('Person');await dialog.getByRole('textbox',{name:'Properties',exact:true}).fill('email');
+ const dialog=page.getByRole('region',{name:/Create (constraint|index)/});await dialog.getByLabel('Schema name').fill('email_unique');await dialog.getByLabel('Node label').fill('Person');await dialog.getByRole('textbox',{name:'Properties',exact:true}).fill('email');
  await expect(dialog).toContainText('REQUIRE (n.`email`) IS UNIQUE');expect(state.schema.constraints).toHaveLength(1);
  await dialog.getByRole('button',{name:'Create constraint',exact:true}).click();await expect(dialog).not.toBeVisible();
  await expect(page.getByRole('grid',{name:'Constraints',exact:true})).toContainText('email_unique');
@@ -20,7 +20,7 @@ test('schema creates and drops a named constraint only after explicit review',as
 
 test('schema permission failure preserves the creation form',async({page})=>{
  const state=await fixture(page);state.denySchema=true;await page.goto('/schema/research/indexes/new');
- const dialog=page.getByRole('dialog');await dialog.getByLabel('Schema name').fill('by_title');await dialog.getByLabel('Node label').fill('Document');await dialog.getByRole('textbox',{name:'Properties',exact:true}).fill('title');
+ const dialog=page.getByRole('region',{name:/Create (constraint|index)/});await dialog.getByLabel('Schema name').fill('by_title');await dialog.getByLabel('Node label').fill('Document');await dialog.getByRole('textbox',{name:'Properties',exact:true}).fill('title');
  await dialog.getByRole('button',{name:'Create index',exact:true}).click();await expect(dialog.getByRole('alert')).toContainText('Schema permission denied');await expect(dialog.getByLabel('Schema name')).toHaveValue('by_title');
 });
 
@@ -60,8 +60,8 @@ test('guided policy setup previews targets, shows inverse curves and resumes a f
 
 test('mobile schema creation stays within the viewport and navigation identifies the current area',async({page},testInfo)=>{
  await fixture(page);await page.setViewportSize({width:390,height:844});await page.goto('/schema/catalog/indexes/new');
- await expect(page.getByRole('dialog')).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- const bounds=await page.getByRole('dialog').boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(390);
+ await expect(page.getByRole('region',{name:'Create index',exact:true})).toBeVisible();await expect(page.getByRole('dialog')).not.toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ const bounds=await page.getByRole('region',{name:'Create index',exact:true}).boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(390);
  await checkAccessibility(page,testInfo);await page.screenshot({path:'review/screenshots/schema-mobile-create.png',fullPage:false});
 });
 
