@@ -268,7 +268,7 @@
       "Reason": "Existing post-durable-publication derived-count completion. Candidate 986ae1044c297dba9ed954a569281b5f92d02eb4 retains the successful cw.finish guard, retained count lock and both canonical count/repair consumers. Only its occurrence moved from +526 to +545. The preparation completion site is transferred separately to the shared local continuation; there are still two approved roots overall. No new lifetime or analyzer rule is proposed. Existing accepted-preparation completion transferred from PublishCommit +291 into its shared continuePrepared closure at +6. This closure returns the fresh context only after prepare(preparationContext) succeeds; the error branch returns the original context and aborts. Direct and buffered callers both reuse it after acceptance; native buffered accounting explicitly receives that accepted context. Current parent refusal/discard/accepted-cancellation controls and race checks pass. This transfers the existing phase review, not a new cancellation exception. Source: 986ae1044c297dba9ed954a569281b5f92d02eb4; census function fingerprint 015731d7420e0ba9598734be18b7c822bbaef315cffab5d6df368aeef21c6142. The census indexes closure occurrences under the enclosing source function; both exact occurrences therefore belong to this parent entry.",
       "Approver": "orneryd (14 November 2026; exact re-pin approved)",
       "Occurrences": [
-        "call context.Background (+545 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
+        "call context.Background (+549 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit)",
         "call context.Background (+6 in (*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).PublishCommit$4)"
       ]
     },
