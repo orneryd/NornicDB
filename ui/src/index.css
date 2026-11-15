@@ -391,3 +391,53 @@ textarea.property-value { resize: vertical; }
 /* Size custom slotted renderers against the actual cell, not their text's intrinsic width. */
 .workspace-prototype ui-grid-element::part(body-cell) { container-type: inline-size; overflow: hidden; }
 .query-cell-value,.query-node-summary { max-inline-size: 100cqi; }
+
+/* Shared compact data surface. Grid typography is 25% below the 1rem host default;
+   touch controls retain a 24px minimum, without scaling the rest of the app. */
+.nornic-grid {
+  display: flex; flex-direction: column; font-size: .75rem;
+  --ui-grid-radius: 3px;
+  --ui-grid-row-height: 2.75rem;
+  --ui-grid-control-radius: 3px;
+  --ui-grid-body-cell-padding-block: .375rem;
+  --ui-grid-body-cell-padding-inline: .625rem;
+  --ui-grid-header-cell-padding-block: .375rem;
+  --ui-grid-header-cell-padding-inline: .625rem;
+  --ui-grid-filter-cell-padding-block-start: .25rem;
+  --ui-grid-filter-cell-padding-block-end: .5rem;
+  --ui-grid-filter-cell-padding-inline: .5rem;
+  --ui-grid-filter-input-padding-block: .375rem;
+  --ui-grid-filter-input-padding-inline: .5rem;
+  --ui-grid-filter-input-focus-outline: 2px solid #10b981;
+  --ui-grid-status-pill-font-size: .75rem;
+}
+.grid-surface { flex: 1; min-height: 0; min-width: 0; }
+.grid-surface > ui-grid-element { width: 100%; height: 100%; }
+.grid-filter-summary { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem 1rem; padding: .5rem .625rem; border: 1px solid #2a3247; border-bottom: 0; color: #c6cbd5; }
+.grid-filter-summary > span:first-child { font-weight: 600; }
+.grid-filter-hint { color: #9ca3af; }
+.grid-filter-values { flex: 1; overflow-wrap: anywhere; }
+.grid-filter-summary button { color: #34d399; min-height: 24px; padding: 0 .25rem; }
+.nornic-grid ui-grid-element::part(body-cell),
+.nornic-grid ui-grid-element::part(header-cell) { font-size: .75rem; }
+@media (pointer: coarse) {
+ .grid-filter-summary button { min-height: 44px; }
+ .nornic-grid { --ui-grid-filter-input-padding-block: .75rem; }
+}
+
+.nornic-grid .text-sm { font-size: .75rem; }
+
+.nornic-grid ui-grid-element::part(body-cell) { display: grid; align-items: center; }
+.database-list-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; padding-bottom: 1.25rem; border-bottom: 1px solid #2a3247; font-size: .8125rem; color: #c6cbd5; }
+.database-name-filter { display: flex; flex-direction: column; gap: .5rem; flex: 1 1 16rem; max-width: 32rem; }
+.database-name-filter input { width: 100%; background: #141824; border: 1px solid #2a3247; border-radius: 3px; padding: .625rem .75rem; color: #f3f4f6; }
+.database-name-filter input:focus-visible { outline: 2px solid #10b981; outline-offset: 0; }
+.database-favorites-filter { display: flex; align-items: center; gap: .5rem; min-height: 40px; }
+.database-list-tools > span,.database-list-tools > button { min-height: 40px; display: flex; align-items: center; }
+.database-list-tools > button { color: #34d399; }
+.database-list-tools > p { flex-basis: 100%; color: #9ca3af; font-size: .75rem; }
+.database-name-heading { display: flex; align-items: center; gap: .5rem; }
+.database-name-heading > button { display: inline-flex; justify-content: center; align-items: center; min-width: 32px; min-height: 32px; color: #9ca3af; }
+.database-name-heading > button[aria-pressed=true] { color: #fbbf24; }
+.database-name-heading > button:disabled { opacity: .5; }
+@media (pointer: coarse) { .database-name-heading > button { min-width: 44px; min-height: 44px; } }

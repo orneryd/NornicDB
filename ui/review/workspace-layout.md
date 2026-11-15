@@ -115,3 +115,44 @@ Modal policy follows [NN/g's modal and nonmodal dialog guidance](https://www.nng
 The shared native dialog explicitly uses viewport-fixed insets and automatic margins. Width limits belong to the dialog itself; its inner panel has no asymmetric horizontal margin. Geometry checks cover unsaved record, schema and database edits at desktop and mobile viewports, including safe initial focus and Escape preserving the draft. All six positioning cases and 15 related editing/operation checks passed (`npm run test:browser --prefix ui -- modal-position.spec.mjs workspace-editing-prototype.spec.mjs operations.spec.mjs --workers=1`).
 
 ![Centered mobile unsaved-change dialog](prototype/22-mobile-unsaved-warning.png)
+
+
+## Compact grids and wide-screen layout
+
+One theme in `index.css` sets grid text to .75rem (12px at the default root size, 25% below the 1rem host default), tighter supported cell/filter padding, flat corners and the existing palette. Custom small-text renderers use the same scale. Page typography is unchanged. Filters retain visible focus; coarse-pointer filter padding and the clear action retain larger targets. Headers and data-heavy pages use available width; backup/account forms and explanatory text retain readable limits.
+
+The shared `StatefulGrid` owns filter summaries and the clear action. The summary reads the same saved URL state as the grid, including the SDK's actual `activeFilters` runtime field. A narrow viewport keeps identifying left pins but releases right pins so actions do not hide all other columns. Desktop saved views remain the input to that responsive presentation.
+
+| Area | User intent | Presentation decision |
+| --- | --- | --- |
+| Query results | Compare values, select records, inspect full values | Compact grid; record editing stays in the inspector form |
+| Users | Compare identity, roles, status; edit an account | Pinned identity grid; explicit edit controls and save feedback |
+| Database access | Compare grants and entitlements | Grid with column filters |
+| Database configuration | Find settings and compare overrides with defaults | Filterable key/value grid with typed controls |
+| Schema | Compare indexes/constraints; create a definition | Grid for inventory; routed form for creation |
+| Lifecycle | Compare reclamation debt and readers | Read-only grids for structured diagnostics |
+| Retention | Compare policies and act on a policy | Filterable grid with explicit actions |
+| Knowledge policies | Compare profiles/bindings; define targeting rules | Grids for comparison; existing guided forms for authoring |
+| Pivot demo | Compare aggregates and inspect underlying orders | Grid and detail sub-grids |
+| Database catalog and record details | Choose a database/task; inspect/edit one record | Existing list and forms retained; no grid added |
+
+This applies [NN/g's data-table task guidance](https://www.nngroup.com/articles/data-tables/): support finding, comparing, editing and acting on records, and make filtered state apparent. The particular density and breakpoint are our design choices.
+
+Upstream issues filed during this iteration: [saved-state runtime/declaration mismatch #7413](https://github.com/orneryd/ui-grid/issues/7413) and [column filter accessible names #7414](https://github.com/orneryd/ui-grid/issues/7414). Existing [virtualization #7410](https://github.com/orneryd/ui-grid/issues/7410) and [grid semantics #7411](https://github.com/orneryd/ui-grid/issues/7411) remain tracked. No third-party code was patched. Default column filter names remain an upstream accessibility limitation.
+
+![Wide compact users grid](prototype/23-compact-users-wide.png)
+![Mobile compact grid](prototype/24-compact-users-mobile.png)
+![Active filters](prototype/25-active-grid-filters.png)
+
+
+### Database filters and browser favorites
+
+The catalog filters names case-insensitively and exposes the filter and Favorites only selection in URL query parameters. Star buttons have pressed states and explicit database names. Favorites sort first and persist only in this browser's local storage, scoped by application base path and authenticated username; they do not change database metadata or permissions. Storage failures appear in the catalog. An empty filtered list explains how to recover.
+
+All body cells use the exported grid part to center their content vertically, including custom renderers. The grid's own cell shell retains horizontal alignment and row controls.
+
+![Database favorites](prototype/26-database-favorites.png)
+![Mobile database filtering](prototype/27-database-filter-mobile.png)
+
+
+Compact-layout verification: the full 56-case browser suite passed before the catalog additions. After adding favorites and vertical alignment, 22 focused checks passed; the final cell-layout revision passed all 15 catalog/grid/management/pivot checks. The shared production build passed with each run. The unit suite passed all 26 checks. These use fixture APIs in Chrome; no production database writes were performed by these checks.

@@ -173,7 +173,7 @@ export function Schema() {
   return (
     <PageLayout className="management-prototype schema-page">
       <PageHeader title="Schema" />
-      <div className="max-w-7xl mx-auto p-6 space-y-5">
+      <div className="w-full min-w-0 mx-auto p-6 space-y-5">
         <p className="text-norse-silver">
           Inspect indexes and constraints for one database. Indexes help queries
           find data; constraints enforce valid writes. The server checks your
