@@ -173,7 +173,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 			continue
 		}
 		if staged != nil {
-			if err := badgerEngine.stageTemporalBackfillForLabel(context.Background(), staged, engine, c.Label); err != nil {
+			if err := stageTemporalBackfillForLabel(context.Background(), staged, engine, c.Label); err != nil {
 				return err
 			}
 			schema.markTemporalIndexCreated(c, true)
@@ -243,13 +243,12 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(ctx context.Context, engine
 	for start := 0; start < len(ids); start += chunk {
 		part := ids[start:min(start+chunk, len(ids))]
 		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
-			view := b.physicalTemporalRebuild(txn)
 			for _, id := range part {
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {
 					return err
 				}
-				if err := b.rebuildTemporalNodeInTxn(ctx, view, node, asOf); err != nil {
+				if err := b.rebuildTemporalNodeInTxn(ctx, txn, node, asOf); err != nil {
 					return err
 				}
 			}

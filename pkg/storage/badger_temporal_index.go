@@ -660,33 +660,23 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 	return wb.Flush()
 }
 
-// temporalRebuildView is the private input of one temporal rebuild pass: the
-// writer its derived history and current-version keys go to, and the reads
-// that choose each key's current version. A physical pass (RebuildTemporalIndexes
-// and the label backfill) writes the engine's maintenance transaction; a schema
-// statement's pass writes its own transaction's buffered writes, so the entries
-// a new constraint needs publish with the constraint and roll back with it.
-// The pass's key construction, target choice and current-version choice are the
-// same in both, because they are this view's only difference.
+// temporalRebuildView is the read side of one temporal rebuild pass: the schema
+// the pass derives from, the stored node it reads, and the current-version
+// pointer it decodes. It owns no write. A pass reads through this view and
+// hands each derived entry to its own write owner -- the engine's maintenance
+// transaction (rebuildTemporalNodeInTxn) or a schema statement's buffered
+// writes (stageTemporalRebuildNodeInTxn) -- so the key construction, target
+// choice and current-version choice exist once, while physical write effects
+// are unreachable from the schema-staging path.
 type temporalRebuildView struct {
 	engine      *BadgerEngine
 	physical    *badger.Txn
 	transaction *BadgerTransaction
 }
 
-// physicalTemporalRebuild keeps the physical read and write handles together.
+// physicalTemporalRebuild reads through the maintenance transaction txn.
 func (b *BadgerEngine) physicalTemporalRebuild(txn *badger.Txn) temporalRebuildView {
 	return temporalRebuildView{engine: b, physical: txn}
-}
-
-// Set writes a derived key through this view's actual transaction owner. The
-// concrete view makes both ownership and static write reachability explicit;
-// no callback can substitute a foreign writer or outlive its staged frame.
-func (view temporalRebuildView) Set(key, value []byte) error {
-	if view.transaction != nil {
-		return view.transaction.stageTemporalRebuildKey(key, value)
-	}
-	return view.physical.Set(key, value)
 }
 
 func (view temporalRebuildView) schema(namespace string) *SchemaManager {
@@ -730,63 +720,128 @@ func readTemporalCurrentPointer(txn *badger.Txn, key []byte) (NodeID, bool, erro
 	return current, true, nil
 }
 
-// rebuildTemporalNodeInTxn indexes one stored node for a temporal rebuild or a
-// label backfill through view. For a physical pass it runs inside the chunk
-// transaction before that chunk commits, on the maintenance write's own
-// lifetime: ctx is the rebuild context its caller passed to
-// RebuildTemporalIndexes or the backfill (backfillTemporalIndexForLabel), so a
-// canceled rebuild stops at the schema admission this discovery waits on
-// instead of continuing on a lifetime nobody can cancel. For a staged pass the
-// same ctx bounds the statement's own reads, and every write joins that
-// statement's buffered writes.
-func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, view temporalRebuildView, node *Node, asOf time.Time) error {
+// temporalRebuildEntry is one constraint's derived writes for one node: the
+// history key the node gains and, when the node is that key's current version,
+// the current-version key and the value it takes. A node of any number of
+// temporal constraints yields these one at a time, so the constraint count
+// costs no per-node slice of entries.
+type temporalRebuildEntry struct {
+	history   []byte
+	current   []byte
+	currentID []byte
+}
+
+// temporalRebuildPlan derives one node's entries through a view, one constraint
+// at a time: the caller writes the entry it was handed before asking for the
+// next, so the derivation holds at most one constraint's keys.
+type temporalRebuildPlan struct {
+	view        temporalRebuildView
+	constraints []Constraint
+	namespace   string
+	node        *Node
+	asOf        time.Time
+	next        int
+}
+
+// plan reads the node's temporal constraints once and keeps the derivation
+// state of the entries that follow. A node the pass cannot index (nil, an
+// unprefixed ID, no temporal constraint) yields an empty plan.
+func (view temporalRebuildView) plan(ctx context.Context, node *Node, asOf time.Time) (temporalRebuildPlan, error) {
 	if node == nil {
-		return nil
+		return temporalRebuildPlan{}, nil
 	}
 	namespace, _, ok := ParseDatabasePrefix(string(node.ID))
 	if !ok {
-		return nil
+		return temporalRebuildPlan{}, nil
 	}
 	constraints, discoveryErr := temporalConstraintsForLabels(ctx, view.schema(namespace), node.Labels)
 	if discoveryErr != nil {
-		return discoveryErr
+		return temporalRebuildPlan{}, discoveryErr
 	}
-	if len(constraints) == 0 {
-		return nil
-	}
-	for _, constraint := range constraints {
-		target, start, ok := temporalTargetForNode(namespace, node, constraint)
+	return temporalRebuildPlan{
+		view:        view,
+		constraints: constraints,
+		namespace:   namespace,
+		node:        node,
+		asOf:        asOf,
+	}, nil
+}
+
+// nextEntry derives the next constraint's entry; ok is false once the node's
+// constraints are exhausted. It reads the key's recorded current version and,
+// when one is recorded, the stored node that holds it, and hands the entry back
+// with a current-version write only when the node replaces it: a recorded
+// version that starts at least as late stays current.
+func (p *temporalRebuildPlan) nextEntry(ctx context.Context) (temporalRebuildEntry, bool, error) {
+	for p.next < len(p.constraints) {
+		if err := ctx.Err(); err != nil {
+			return temporalRebuildEntry{}, false, err
+		}
+		constraint := p.constraints[p.next]
+		p.next++
+		target, start, ok := temporalTargetForNode(p.namespace, p.node, constraint)
 		if !ok {
 			continue
 		}
-		if err := view.Set(temporalHistoryKey(target.desc, start, node.ID), []byte{}); err != nil {
-			return err
-		}
-		if !nodeMatchesTemporalLookup(node, constraint, target.keyValue, asOf) {
-			continue
+		entry := temporalRebuildEntry{history: temporalHistoryKey(target.desc, start, p.node.ID)}
+		if !nodeMatchesTemporalLookup(p.node, constraint, target.keyValue, p.asOf) {
+			return entry, true, nil
 		}
 		currentKey := temporalCurrentKey(target.desc)
-		existingID, hasCurrent, err := view.current(currentKey)
+		existingID, hasCurrent, err := p.view.current(currentKey)
 		if err != nil {
-			return err
+			return temporalRebuildEntry{}, false, err
 		}
 		if hasCurrent {
-			existingNode, err := view.stored(ctx, existingID)
+			existingNode, err := p.view.stored(ctx, existingID)
 			if err != nil {
-				return err
+				return temporalRebuildEntry{}, false, err
 			}
 			if existingNode != nil {
 				_, existingStart, _, _, ok := temporalNodeState(existingNode, constraint)
 				if ok && !start.After(existingStart) {
-					continue
+					return entry, true, nil
 				}
 			}
 		}
-		if err := view.Set(currentKey, []byte(node.ID)); err != nil {
+		entry.current = currentKey
+		entry.currentID = []byte(p.node.ID)
+		return entry, true, nil
+	}
+	return temporalRebuildEntry{}, false, nil
+}
+
+// rebuildTemporalNodeInTxn indexes one stored node for a temporal rebuild or a
+// label backfill, writing the entries the plan derives to the maintenance
+// transaction txn. Its writes are this maintenance pass's own: the physical key
+// writes below are reachable only from the callers that hold the maintenance
+// acquisition, RebuildTemporalIndexes and backfillTemporalIndexForLabel. ctx is
+// that write's own lifetime, the rebuild context its caller passed, so a
+// canceled rebuild stops at the schema admission this discovery waits on
+// instead of continuing on a lifetime nobody can cancel.
+func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger.Txn, node *Node, asOf time.Time) error {
+	plan, err := b.physicalTemporalRebuild(txn).plan(ctx, node, asOf)
+	if err != nil {
+		return err
+	}
+	for {
+		entry, ok, err := plan.nextEntry(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := txn.Set(entry.history, []byte{}); err != nil {
+			return err
+		}
+		if entry.current == nil {
+			continue
+		}
+		if err := txn.Set(entry.current, entry.currentID); err != nil {
 			return err
 		}
 	}
-	return nil
 }
 
 // RebuildTemporalIndexes recreates the temporal history and current-pointer indexes from stored nodes.
@@ -827,7 +882,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		}
 		maintenancePause(pauseTemporalRebuildNode)
 		return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
-			return b.rebuildTemporalNodeInTxn(ctx, b.physicalTemporalRebuild(txn), node, asOf)
+			return b.rebuildTemporalNodeInTxn(ctx, txn, node, asOf)
 		})
 	}); err != nil {
 		return err
