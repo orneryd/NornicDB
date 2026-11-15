@@ -92,7 +92,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				t.Cleanup(func() { queueCtx.once.Do(func() { close(queueCtx.release) }) })
 				queued := make(chan error, 1)
 				go func() {
-					accepted, _, err := storage.AcceptEntityCommit(context.Background(), engine, prepared)
+					accepted, _, err := storage.AcceptEntityCommit(context.Background(), engine, storage.EntityTransactionRequest{Prepared: prepared})
 					if err != nil {
 						queued <- err
 						return

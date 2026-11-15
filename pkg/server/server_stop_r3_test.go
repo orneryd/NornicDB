@@ -156,26 +156,33 @@ func stopR3Result(t *testing.T, s *Server) error {
 	defer cancel()
 	return s.WaitStopped(ctx)
 }
-func stopR3DBClose(t *testing.T, s *Server) {
-	t.Helper()
-	done := make(chan error, 1)
-	go func() { done <- s.db.Close() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("DB.Close after lifecycle completion: %v", err)
-		}
-	case <-time.After(400 * time.Millisecond):
-		t.Error("DB.Close waited on a completion cycle")
-	}
-}
 func TestServerStopR3PluginSignal(t *testing.T) {
 	for _, cancelDriven := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hostCancel=%t", cancelDriven), func(t *testing.T) {
 			s, _ := stopR2Server(t)
+			// Retirement must release the server's DB ticket before reporting
+			// completion, independently of physical DB shutdown latency.
+			releaseDB := s.shutdown.dbRelease
+			require.NotNil(t, releaseDB)
+			t.Cleanup(releaseDB) // Also releases a deliberately broken red run.
+			dbReleased := make(chan struct{})
+			actionDone := make(chan struct{})
+			var dbReleaseCalls atomic.Int32
+			var releasedBeforeAction atomic.Bool
+			s.shutdown.dbRelease = func() {
+				select {
+				case <-actionDone:
+				default:
+					releasedBeforeAction.Store(true)
+				}
+				releaseDB()
+				if dbReleaseCalls.Add(1) == 1 {
+					close(dbReleased)
+				}
+			}
 			held := newStopR2Gate(t)
 			signal := newStopR2Gate(t)
-			p := &stopR3Plugin{name: "r3_signal", held: held, actionDone: make(chan struct{}), cancelDriven: cancelDriven}
+			p := &stopR3Plugin{name: "r3_signal", held: held, actionDone: actionDone, cancelDriven: cancelDriven}
 			if !cancelDriven {
 				p.signal = signal
 			}
@@ -188,7 +195,34 @@ func TestServerStopR3PluginSignal(t *testing.T) {
 			if err := stopR3Result(t, s); err != nil {
 				t.Errorf("shutdown did not signal accepted plugin work before joining it: %v", err)
 			}
-			stopR3DBClose(t, s)
+			select {
+			case <-dbReleased:
+			default:
+				t.Fatal("server completed shutdown without releasing its DB ticket")
+			}
+			require.EqualValues(t, 1, dbReleaseCalls.Load())
+			require.False(t, releasedBeforeAction.Load(), "server released storage before accepted plugin work completed")
+			stopR2Await(t, p.actionDone)
+			require.EqualValues(t, 1, p.stops.Load())
+			require.EqualValues(t, 1, p.shutdowns.Load())
+
+			// The DB may still own independent work. Its close must wait for
+			// that ticket; such a wait is not a server/plugin completion cycle.
+			_, releaseIndependent, admitted := s.db.RetainBackground()
+			require.True(t, admitted)
+			t.Cleanup(releaseIndependent)
+			dbClosed := make(chan struct{})
+			var closeErr error
+			go func() { closeErr = s.db.Close(); close(dbClosed) }()
+			stopR2Await(t, s.db.LifetimeContext().Done())
+			select {
+			case <-dbClosed:
+				t.Fatal("DB.Close completed before its independent work released its ticket")
+			default:
+			}
+			releaseIndependent()
+			stopR2Await(t, dbClosed)
+			require.NoError(t, closeErr)
 			// Escape is solely red-run cleanup; success above must come from host/plugin stop.
 			signal.open()
 			held.open()

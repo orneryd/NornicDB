@@ -138,6 +138,8 @@ var errPreparedEntityDiscarded = errors.New("prepared entity commit discarded")
 type EntityCommitRequest struct {
 	LogicalID  string
 	Operations []Operation
+	// VectorReferences is copied from a decoded envelope; zero stages complete images.
+	VectorReferences ManagedVectorReferences
 }
 
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
@@ -196,7 +198,11 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		done <- nil
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
-	for _, op := range request.Operations {
+	operations, err := request.VectorReferences.resolve(ctx, tx, request.Operations)
+	if err != nil {
+		return nil, err
+	}
+	for _, op := range operations {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

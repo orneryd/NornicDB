@@ -34,7 +34,7 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	}
 	// The storage accepted owner encodes the prepared snapshot once and
 	// retains its authority; every transport settles through that owner.
-	accepted, payload, err := storage.AcceptEntityCommit(ctx, e.Engine, prepared)
+	accepted, payload, err := storage.AcceptEntityCommit(ctx, e.Engine, storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,8 @@ type EntityTransactionEnvelope struct {
 	Namespace   string
 	LogicalTxID string
 	capture     changeCaptureDecision
+	// VectorReferences must accompany Operations when restaging this decoded command.
+	VectorReferences ManagedVectorReferences
 }
 
 type entityWriter interface {
@@ -260,8 +262,9 @@ func prepareAcceptedEntityApplication(ctx context.Context, engine Engine, envelo
 		return nil, nil, err
 	}
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{
-		LogicalID:  envelope.LogicalTxID,
-		Operations: ops,
+		LogicalID:        envelope.LogicalTxID,
+		Operations:       ops,
+		VectorReferences: envelope.VectorReferences,
 	})
 	if err != nil {
 		return nil, nil, err

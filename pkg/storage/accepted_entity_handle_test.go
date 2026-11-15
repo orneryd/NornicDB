@@ -20,7 +20,7 @@ func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
-	h, _, err := AcceptEntityCommit(context.Background(), b, p)
+	h, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: p})
 	require.NoError(t, err)
 	require.NoError(t, h.ApplyContext(context.Background(), nil))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -171,7 +171,7 @@ func TestAcceptedHandleSubmitsOutsideArbitration(t *testing.T) {
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
-	h, _, err := AcceptEntityCommit(context.Background(), b, p)
+	h, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: p})
 	require.NoError(t, err)
 	h.inner = &arbitrationProbeSubmitter{inner: h.inner, handle: h, t: t}
 	require.NoError(t, h.ApplyContext(context.Background(), nil))

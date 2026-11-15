@@ -9,7 +9,9 @@ import "bytes"
 // The copy is read by encodeNewRecord, where it decides whether a record that
 // does not fit one frame is refused or written in parts, and by
 // journalsLargeRecords. The readers do not consult it, and maintenance that
-// rewrites a stored record keeps the form the record was stored in.
+// rewrites a stored record keeps the form the record was stored in. One
+// operation, the managed vector anchor, spans frames whatever the policy
+// (walRecordMaySpan).
 type WALRecordPolicy uint8
 
 const (
@@ -31,9 +33,22 @@ const (
 )
 
 // encodeNewRecord encodes a record this WAL creates now, under the policy it
-// was constructed with.
+// was constructed with, for every operation whose framing that policy alone
+// decides (walRecordMaySpan).
 func (w *WAL) encodeNewRecord(buf *bytes.Buffer, entry *WALEntry) (walRecordFrames, error) {
-	return encodeWALRecord(buf, entry, w.recordPolicy == WALRecordsLarge)
+	return encodeWALRecord(buf, entry, w.recordPolicy == WALRecordsLarge || walRecordMaySpan(entry.Operation))
+}
+
+// walRecordMaySpan reports whether a record of op is written in parts whatever
+// record policy this WAL was constructed with. It is the one exception to the
+// policy, and it belongs to the record's own approved capability rather than to
+// the journal: the managed vector anchor carries an acknowledged node's managed
+// embedding state (B30), which no record policy bounds, so the standard policy's
+// 16 MiB one-frame limit cannot hold it. Every other operation keeps that
+// limit: an ordinary OpCreateNode or OpUpdateNode record that does not fit one
+// frame is still refused by encodeWALEntryPayload under WALRecordsStandard.
+func walRecordMaySpan(op OperationType) bool {
+	return op == opManagedVectorAnchor
 }
 
 // encodeStoredRecord re-encodes a record a WAL already holds, for maintenance

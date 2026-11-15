@@ -23,7 +23,7 @@ func TestAcceptedIdentitySurvivesPreparedRetirement(t *testing.T) {
 	require.NoError(t, err)
 	defer prepared.Abort()
 
-	accepted, _, err := AcceptEntityCommit(context.Background(), b, prepared)
+	accepted, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: prepared})
 	require.NoError(t, err)
 	namespace, logicalID := accepted.Identity()
 	require.Equal(t, "identity", namespace)

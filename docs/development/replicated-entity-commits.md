@@ -331,3 +331,39 @@ Use `BadgerEngine.SetIndexTombstones(keys, true)` to hide index entries and
 `SetIndexTombstones(keys, false)` to remove those visibility markers. This replaces
 `WriteIndexTombstones` and `DeleteIndexTombstones`; empty batches remain no-ops.
 These Go API changes do not change Badger keys, payloads, WAL, or storage version.
+
+### Exact managed-vector references in the local journal
+
+A property update can retain managed chunk vectors through an exact local WAL
+reference. Before emitting that reference, the journal records a complete anchor
+of an already committed predecessor. Replay validates the anchor's node body,
+then restores its managed vectors through the existing sidecar owner. Missing or
+mismatched predecessors fail recovery; vectors are never regenerated or replaced
+with another image to make a reference succeed.
+
+The first anchor includes the complete managed vector payload. Later updates can
+reuse it through a bounded proof cache; cache eviction, embedding audits and
+journal retirement require another anchor. Report first-anchor and steady-state
+costs separately. Named vectors and embedding metadata remain complete in each
+semantic update. Changed managed vectors also remain complete.
+
+Anchors may span existing WAL frames under either record policy. This exception
+does not lift ordinary transaction or replication capacity limits. WAL-local
+reference records use semantic version 7; ordinary portable records keep version
+3. Peer replication continues to send complete images because a local anchor does
+not prove peer availability. Badger keys, node payload layout and storage version
+are unchanged.
+
+Go embedding callers now pass the encoding request explicitly:
+
+```go
+accepted, payload, err := storage.AcceptEntityCommit(ctx, engine,
+    storage.EntityTransactionRequest{Prepared: prepared})
+```
+
+`ManagedVectorReferences` is opaque. Its zero value requests complete images.
+Consumers that decode and stage an existing envelope must pass its
+`VectorReferences` into `EntityCommitRequest`; canonical
+`SubmitAcceptedEntityTransaction` does this automatically. A receipt is checked
+before resolving references, so duplicate replay can succeed after its original
+predecessor image has been replaced.

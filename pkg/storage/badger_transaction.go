@@ -1068,6 +1068,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 
 	// Check if node exists
 	var oldNode *Node
+	anchorEligible := false
 	createOpIdx := -1
 	if pending, exists := tx.pendingNodes[node.ID]; exists {
 		oldNode = copyNode(pending)
@@ -1090,6 +1091,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
 		}
+		anchorEligible = true
 		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
 			return err
 		}
@@ -1214,6 +1216,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		Node:               nodeCopy,
 		OldNode:            oldNode,
 		nodeObservedBefore: updateRequest.Before,
+		nodeAnchorEligible: anchorEligible,
 	})
 
 	return nil
