@@ -423,7 +423,7 @@ func TestJournaledMergeAdmissionCancellationReleasesKey(t *testing.T) {
 	defer cancel()
 	begin := func(ctx context.Context) *storage.BadgerTransaction {
 		t.Helper()
-		tx, err := f.native.BeginTransaction(ctx)
+		tx, err := f.native.BeginTransaction(ctx, storage.OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace(f.database))
 		require.NoError(t, tx.PrepareMergeNodeForWrite(ctx, []string{"Review"}, map[string]any{"id": "canceled-admission"}))

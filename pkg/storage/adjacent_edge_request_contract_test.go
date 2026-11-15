@@ -36,7 +36,7 @@ func TestAdjacentEdgeRequestDirectionsTypesAndSelfLoops(t *testing.T) {
 					require.NoError(t, engine.FlushWriteBehind(t.Context()))
 				}
 				t.Run(fmt.Sprintf("flushed-%v", flushed), func(t *testing.T) {
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 					for _, read := range []struct {
@@ -82,7 +82,7 @@ func TestTypedAdjacentHeadersKeepHistoricalTypeAndEndpoints(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:edge", StartNode: "test:a", EndNode: "test:b", Type: "old"}))
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Rollback()) })
 	request := AdjacentEdgeRead{Node: "test:a", Types: []string{"old"}, Headers: true}
@@ -119,7 +119,7 @@ func TestVersionedAdjacentReadKeepsHistoricalCutAcrossBufferedUpdate(t *testing.
 	head, err := engine.GetEdgeCurrentHead(t.Context(), "test:edge")
 	require.NoError(t, err)
 	require.False(t, head.Version.IsZero())
-	writer, err := engine.BeginTransaction(t.Context())
+	writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = writer.Rollback() }()
 	require.NoError(t, writer.SetNamespace("test"))

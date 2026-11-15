@@ -132,8 +132,8 @@ var fieldClasses = map[string]fieldRow{
 	// The synchronous read snapshot fills it before returning it by value.
 	"pkg/storage.CountStoreRead.Count": {class: "count-store read answer (detached result value)"},
 	// Derived counts a transaction stages until it commits.
-	"pkg/storage.BadgerTransaction.pendingLabelCountDeltas":         {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
-	"pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas":      {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
+	"pkg/storage.BadgerTransaction.pendingLabelCountDeltas":         {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta", "pkg/storage.BadgerTransaction.pendingCountStoreContributionLocked"}},
+	"pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas":      {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta", "pkg/storage.BadgerTransaction.pendingCountStoreContributionLocked"}},
 	"pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas": {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.storeKeyLimitErrorLocked", "pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.PublishCommit", "pkg/storage.BadgerTransaction.acquireCommitPublicationLocked", "pkg/storage.BadgerTransaction.PendingCountStoreDelta"}},
 	// Suppression: whether reads must consult manual suppression at all.
 	"pkg/storage.BadgerEngine.manualSuppressionCount": {class: "suppression", owners: []string{
@@ -174,6 +174,11 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.callerCopyIndex.count":   {class: "caller-copy traversal progress"},
 	"pkg/storage.callerCopyIndex.current": {class: "caller-copy traversal progress"},
 	"pkg/storage.callerCopyIndex.slots":   {class: "caller-copy identity lookup scratch"},
+	// These fields belong to transient wire/proof-reuse state, not stored
+	// entities: references omit coordinates from the borrowed encoding image,
+	// and the fixed WAL proof cache advances only its replacement cursor.
+	"pkg/storage.semanticTransactionNode.ChunkEmbeddings": {class: "WAL reference encoding scratch"},
+	"pkg/storage.walManagedAnchorCache.next":              {class: "WAL proof-cache replacement cursor"},
 	// These offsets delimit equal-value groups in the privately owned ID result
 	// of readPropertyIndexSnapshot. They are query-result metadata, created by
 	// snapshotPropertyIndexLocked and consumed after the source leases end; they

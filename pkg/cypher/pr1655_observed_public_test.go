@@ -74,7 +74,7 @@ func TestObservedTargetDeletedBeforeMutationReturnsConflict(t *testing.T) {
 							return func(observed interface{}) (interface{}, error) {
 								deleted++
 								require.Equal(t, 1, deleted)
-								peer, err := base.BeginTransaction(t.Context())
+								peer, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 								if err != nil {
 									return nil, err
 								}

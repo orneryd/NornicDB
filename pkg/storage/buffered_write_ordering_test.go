@@ -27,7 +27,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 	}
 	explicit := func(t *testing.T, b *BadgerEngine, apply func(*BadgerTransaction) error) error {
 		t.Helper()
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		if err := apply(tx); err != nil {
 			_ = tx.Rollback()
@@ -131,7 +131,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 							}
 						}
 						// An acknowledged, unflushed commit of the entity.
-						tx, err := b.BeginTransaction(t.Context())
+						tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						if kind == "node" {
@@ -201,7 +201,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:s", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
@@ -212,7 +212,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 			case "bulk":
 				require.NoError(t, b.BulkDeleteNodes(t.Context(), []NodeID{"test:a"}))
 			default:
-				del, err := b.BeginTransaction(t.Context())
+				del, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, del.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 				require.NoError(t, del.Commit())

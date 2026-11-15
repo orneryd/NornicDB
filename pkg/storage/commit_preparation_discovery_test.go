@@ -94,7 +94,7 @@ func TestCommitPreparationPublicMetadataAdmissionCancellation(t *testing.T) {
 			require.NoError(t, schema.AddUniqueConstraint("key", "Doc", "key"))
 			_, err := b.CreateNode(t.Context(), &Node{ID: "metadata:n", Labels: []string{"Doc"}, Properties: map[string]any{"key": "n", "payload": "before"}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			node, err := tx.GetNode(t.Context(), "metadata:n")

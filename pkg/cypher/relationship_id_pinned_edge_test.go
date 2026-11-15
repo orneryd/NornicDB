@@ -327,7 +327,7 @@ func TestRelationshipIDPinnedEdgeUsesTransactionLocalWrites(t *testing.T) {
 	namespaced := storage.NewNamespacedEngine(base, "pinned")
 	ctx := context.Background()
 
-	tx, err := base.BeginTransaction(ctx)
+	tx, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{tx: tx, underlying: namespaced, namespace: "pinned", separator: ":"}

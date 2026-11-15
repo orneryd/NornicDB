@@ -83,8 +83,31 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 			staged.mu.RUnlock()
 		}
 	}
+	// A new temporal constraint's history entries are staged in this transaction
+	// (MarkNewTemporalConstraintsForEngine), and the statement's view records the
+	// index complete once they are. The snapshot that publishes the runtime
+	// values carries those marks as the statement's own: an index whose entries
+	// are complete must stay trusted after publication, or every later write to
+	// the label validates by scanning it instead (#1126). The view holds no mark
+	// of a constraint the statement did not touch, so publication keeps the live
+	// one (installSchemaLocked).
+	snapshot.temporalIndexCompleteKeys = cloneTemporalIndexMarkSet(view.temporalIndexCompleteKeys)
+	snapshot.temporalIndexIncompleteKeys = cloneTemporalIndexMarkSet(view.temporalIndexIncompleteKeys)
 	tx.schemaRuntime = snapshot
 	return nil
+}
+
+// cloneTemporalIndexMarkSet copies one set of runtime temporal-index
+// completeness marks, so the published snapshot owns its own set.
+func cloneTemporalIndexMarkSet(marks map[string]struct{}) map[string]struct{} {
+	if len(marks) == 0 {
+		return nil
+	}
+	cloned := make(map[string]struct{}, len(marks))
+	for key := range marks {
+		cloned[key] = struct{}{}
+	}
+	return cloned
 }
 
 func cloneSchemaIndexValues[Key comparable](values map[Key][]NodeID) map[Key][]NodeID {
@@ -139,6 +162,18 @@ func (sm *SchemaManager) installSchemaLocked(snapshot *SchemaManager, installati
 	sm.vectorIndexes = snapshot.vectorIndexes
 	sm.rangeIndexes = snapshot.rangeIndexes
 	sm.lookupIndexes = snapshot.lookupIndexes
+	if installation == transactionSchemaInstallation {
+		// A temporal history index's runtime completeness marks are runtime
+		// state of the same schema, not part of the definition a statement
+		// stages: its isolated view is built from that definition and records
+		// only the marks the statement itself established. Publication
+		// therefore leaves each mark with its own constraint: a constraint the
+		// statement created or re-created owns the mark it staged, an unchanged
+		// one keeps its live mark, and a dropped one keeps none (#1126). A full
+		// definition replacement carries no runtime index state, so it leaves
+		// the live marks as they are.
+		sm.temporalIndexCompleteKeys, sm.temporalIndexIncompleteKeys = sm.transferTemporalIndexMarksLocked(snapshot)
+	}
 	if installation == acceptedDefinitionInstallation {
 		// A replacement carries the knowledge layer too. Its bindings were
 		// compiled while the accepted definition loaded and are reused as that
@@ -150,6 +185,52 @@ func (sm *SchemaManager) installSchemaLocked(snapshot *SchemaManager, installati
 		sm.promotionPolicies = snapshot.promotionPolicies
 		sm.bindingTable = snapshot.bindingTable
 	}
+}
+
+// transferTemporalIndexMarksLocked returns the runtime temporal-index
+// completeness marks one schema transaction's publication leaves, merging the
+// snapshot's staged marks with the live ones the statement did not touch. The
+// staged marks are the statement's own (the constraints its view created); the
+// live marks belong to the constraints it left alone. A mark therefore stays
+// with its own constraint identity: a staged mark wins over an older mark of
+// the same label and properties, an unchanged identity keeps its live mark, and
+// an identity the statement dropped is absent from the snapshot and keeps none.
+// REQUIRES: caller holds sm.mu.
+func (sm *SchemaManager) transferTemporalIndexMarksLocked(staged *SchemaManager) (map[string]struct{}, map[string]struct{}) {
+	complete := cloneTemporalIndexMarkSet(staged.temporalIndexCompleteKeys)
+	incomplete := cloneTemporalIndexMarkSet(staged.temporalIndexIncompleteKeys)
+	stagedKeys := make(map[string]struct{}, len(complete)+len(incomplete))
+	for key := range complete {
+		stagedKeys[key] = struct{}{}
+	}
+	for key := range incomplete {
+		stagedKeys[key] = struct{}{}
+	}
+	// The identities the publication keeps: a temporal constraint the statement
+	// still registers. Its own mark decides for the constraint it created or
+	// re-created; otherwise the live mark of that identity carries over.
+	published := make(map[string]struct{}, len(staged.constraints))
+	for _, constraint := range staged.constraints {
+		if constraint.Type == ConstraintTemporal {
+			published[temporalIndexCompletenessKey(constraint)] = struct{}{}
+		}
+	}
+	carry := func(live map[string]struct{}, into map[string]struct{}) map[string]struct{} {
+		for key := range live {
+			if _, own := stagedKeys[key]; own {
+				continue
+			}
+			if _, kept := published[key]; !kept {
+				continue
+			}
+			if into == nil {
+				into = make(map[string]struct{}, len(live))
+			}
+			into[key] = struct{}{}
+		}
+		return into
+	}
+	return carry(sm.temporalIndexCompleteKeys, complete), carry(sm.temporalIndexIncompleteKeys, incomplete)
 }
 
 func sameRangeIndexDefinition(first, second *RangeIndex) bool {

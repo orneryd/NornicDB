@@ -42,7 +42,7 @@ func TestNOR291RaftPendingProjection(t *testing.T) {
 			return func() {}, nil
 		}, nil
 	}, nil))
-	tx, err := base.BeginTransaction(context.Background())
+	tx, err := base.BeginTransaction(context.Background(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(context.Background(), &storage.Node{ID: "test:accepted"})
 	require.NoError(t, err)

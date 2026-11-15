@@ -46,7 +46,7 @@ func TestBadgerTemporal_AsOfAndCurrentPointer(t *testing.T) {
 			require.NoError(t, err)
 			current := makeVersion(currentID, currentStart, nil)
 			if transactional {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				_, err = tx.CreateNode(t.Context(), current)
@@ -80,7 +80,7 @@ func TestBadgerTemporal_AsOfAndCurrentPointer(t *testing.T) {
 				require.Equal(t, currentID, gotID)
 			}
 			if transactional {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.DeleteGraphNode(t.Context(), currentID, CascadeEdges))
@@ -127,7 +127,7 @@ func TestBadgerEngine_TemporalAdjacentOverlapChecks(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), makeNode("acct-v2", "acct", base.Add(3*time.Hour), base.Add(5*time.Hour)))
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	err = tx.checkTemporalConstraint(context.Background(), makeNode("acct-middle-ok", "acct", base.Add(2*time.Hour), base.Add(3*time.Hour)), constraint)
 	require.NoError(t, err)

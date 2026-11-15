@@ -33,7 +33,7 @@ func TestConcurrentTransactionsSharingLabelCountCommitIndependently(t *testing.T
 			for round := 0; round < tc.rounds; round++ {
 				transactions := make([]*BadgerTransaction, 2)
 				for writer := range transactions {
-					transactions[writer], err = engine.BeginTransaction(t.Context())
+					transactions[writer], err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					defer transactions[writer].Rollback()
 					if tc.relabel {
@@ -68,7 +68,7 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 
 	transactions := make([]*BadgerTransaction, 2)
 	for writer := range transactions {
-		transactions[writer], err = engine.BeginTransaction(t.Context())
+		transactions[writer], err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, transactions[writer].UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "db1:same-node", Labels: []string{"Complete"}}, Policy: ClientNodeEdits}))
 	}
@@ -100,7 +100,7 @@ func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
 		return txn.Set(labelCountKey("db1", "Work"), malformed)
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:repair-count", Labels: []string{"Work"}})
 	require.NoError(t, err)
@@ -116,7 +116,7 @@ func TestRolledBackTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:rolled-back", Labels: []string{"Work"}})
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func BenchmarkConcurrentTransactionsCreatingSameLabel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			tx, beginErr := engine.BeginTransaction(b.Context())
+			tx, beginErr := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if beginErr != nil {
 				b.Error(beginErr)
 				continue

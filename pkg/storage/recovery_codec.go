@@ -60,6 +60,19 @@ func prepareRecoveryPayload(value any) (any, bool) {
 		return prepareRecoveryPayload(&payload)
 	case WALBufferedCommitData:
 		return prepareRecoveryPayload(&payload)
+	case walManagedVectorAnchorPayload:
+		return prepareRecoveryPayload(&payload)
+	case *walManagedVectorAnchorPayload:
+		if payload == nil {
+			return value, false
+		}
+		preparedSource := prepareRecoveryNode(payload.SourceNode)
+		if preparedSource == payload.SourceNode {
+			return value, true
+		}
+		result := *payload
+		result.SourceNode = preparedSource
+		return &result, true
 	case *Node:
 		if payload == nil {
 			return value, false
@@ -382,5 +395,7 @@ func transformRecoveryEntities(value any, node func(*Node) *Node, edge func(*Edg
 	case *WALBulkDeleteEdgesData:
 		value.OldEdges, _ = mapRecoveryEntities(value.OldEdges, edge)
 
+	case *walManagedVectorAnchorPayload:
+		value.SourceNode = node(value.SourceNode)
 	}
 }

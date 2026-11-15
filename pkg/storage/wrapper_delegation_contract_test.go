@@ -274,9 +274,9 @@ func (s *delegationSpyEngine) DeleteByPrefix(prefix string) (int64, int64, error
 
 // --- Optional capabilities ---------------------------------------------------
 
-func (s *delegationSpyEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (s *delegationSpyEngine) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool, policy EdgeMatchReadPolicy) ([]*Edge, error) {
 	s.record("MatchEdgesBetween")
-	return s.MemoryEngine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+	return s.MemoryEngine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match, policy)
 }
 
 func (s *delegationSpyEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
@@ -615,7 +615,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			check("ReadAdjacentEdges/incoming", err)
 			_, err = engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: id("n1"), Other: id("n2")})
 			check("ReadAdjacentEdges/between", err)
-			matched, err := engine.MatchEdgesBetween(context.Background(), id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true })
+			matched, err := engine.MatchEdgesBetween(context.Background(), id("n1"), id("n2"), "KNOWS", []string{}, func(*Edge) bool { return true }, SnapshotEdgeMatch)
 			check("MatchEdgesBetween", err)
 			require.Lenf(t, matched, 1, "%s.MatchEdgesBetween must find the seeded edge", stack)
 			edge, err := engine.GetEdgeBetween(t.Context(), id("n1"), id("n2"), "KNOWS")

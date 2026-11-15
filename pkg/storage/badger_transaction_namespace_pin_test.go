@@ -32,7 +32,7 @@ func newPrefixedEdge(id, edgeType string, start, end string) *Edge {
 
 func TestBadgerTransaction_FirstNodeWritePinsNamespace(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestBadgerTransaction_FirstNodeWritePinsNamespace(t *testing.T) {
 
 func TestBadgerTransaction_SecondWriteSameNamespaceSucceeds(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestBadgerTransaction_SecondWriteSameNamespaceSucceeds(t *testing.T) {
 
 func TestBadgerTransaction_CreateNodeCrossNamespaceRejected(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			if err != nil {
 				t.Fatalf("BeginTransaction: %v", err)
 			}
@@ -130,7 +130,7 @@ func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
 
 func TestBadgerTransaction_UnprefixedNodeRejected(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestBadgerTransaction_CreateEdgeCrossNamespaceEndpointsRejected(t *testing.
 		t.Fatalf("create tenant_b:end: %v", err)
 	}
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestBadgerTransaction_CreateEdgeIDInDifferentNamespaceRejected(t *testing.T
 		t.Fatalf("create tenant_a:end: %v", err)
 	}
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestBadgerTransaction_BulkCreateEdgesMixedNamespaceRejected(t *testing.T) {
 		}
 	}
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestBadgerTransaction_BulkCreateEdgesMixedNamespaceRejected(t *testing.T) {
 
 func TestBadgerTransaction_SetNamespacePinsExplicitly(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestBadgerTransaction_SetNamespacePinsExplicitly(t *testing.T) {
 
 func TestBadgerTransaction_SetNamespaceRejectsEmpty(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestBadgerTransaction_PinSurvivesRollbackOfFailedWrite(t *testing.T) {
 	// so a subsequent same-namespace write still succeeds. This exercises
 	// the "pin only on success" property of pinNamespaceFromIDLocked.
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
 	}

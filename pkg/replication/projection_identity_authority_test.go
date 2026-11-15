@@ -51,7 +51,7 @@ type acceptedEntityFixture struct {
 
 func newAcceptedEntityCommand(t *testing.T, engine *storage.BadgerEngine, database, nodeID, requestID string) acceptedEntityFixture {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace(database))
@@ -60,7 +60,7 @@ func newAcceptedEntityCommand(t *testing.T, engine *storage.BadgerEngine, databa
 	prepared, err := tx.PrepareEntityCommit(context.Background(), storage.EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	t.Cleanup(prepared.Abort)
-	accepted, payload, err := storage.AcceptEntityCommit(context.Background(), engine, prepared)
+	accepted, payload, err := storage.AcceptEntityCommit(context.Background(), engine, storage.EntityTransactionRequest{Prepared: prepared})
 	require.NoError(t, err)
 	return acceptedEntityFixture{
 		command:   &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: requestID, accepted: accepted},

@@ -48,7 +48,7 @@ func TestNodeKeyIndex_ValidationUsesFilledIndex(t *testing.T) {
 	commitNodes(t, engine, nodes...)
 	scans := countNodeKeyScans(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), factNode("dup", 5, "name", 2))
 	require.Error(t, err, "the full key of a committed node is taken")
@@ -61,7 +61,7 @@ func TestNodeKeyIndex_ValidationUsesFilledIndex(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	// A committed node the transaction rewrites or deletes frees its key.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: factNode("f-7-1", 7, "name", 99), Policy: ClientNodeEdits}))
 	_, err = tx.CreateNode(t.Context(), factNode("reuse-7", 7, "name", 1))
@@ -84,7 +84,7 @@ func TestNodeKeyIndex_UnfilledIndexScans(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(factKey))
 	scans := countNodeKeyScans(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), factNode("dup", 1, "name", 1))
 	require.Error(t, err, "a collision with a node written before the constraint")
@@ -127,7 +127,7 @@ func TestNodeKeyIndex_FilledAfterReopen(t *testing.T) {
 	sm = reopened.GetSchemaForNamespace("test")
 	require.NotNil(t, checkedIndexRead[*CompositeIndex](t)(sm.filledKeyIndex(t.Context(), "Fact", factKey.Properties)), "the owned key index is filled on reopen")
 	scans := countNodeKeyScans(t)
-	tx, err := reopened.BeginTransaction(t.Context())
+	tx, err := reopened.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), factNode("dup", 1, "name", 1))
 	require.Error(t, err, "a key stored before the restart is still taken")

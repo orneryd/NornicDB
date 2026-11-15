@@ -23,7 +23,7 @@ func TestNodeUpsertResolvesStoredPredecessorBeforeAccounting(t *testing.T) {
 				created = stored.CreatedAt
 				require.NoError(t, engine.SetManualSuppression(t.Context(), StoredEntityNodeKind, "test:catalog", true))
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			calls := 0
@@ -57,7 +57,7 @@ func TestNodeUpsertResolvesStoredPredecessorBeforeAccounting(t *testing.T) {
 
 func TestNodeUpsertRefusalAndCancellationStageNothing(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	refusal := errors.New("accounting refused")

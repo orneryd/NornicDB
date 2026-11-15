@@ -127,7 +127,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				reopenedNS := NewNamespacedEngine(reopened, "test")
 				_, err = reopenedNS.CreateNode(t.Context(), &Node{ID: "direct", Labels: []string{c.Label}, Properties: probe})
 				require.Error(t, err, "full retained history rejects an overlap hidden behind a later closed holder")
-				tx, err := reopened.BeginTransaction(t.Context())
+				tx, err := reopened.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
@@ -230,7 +230,7 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 
 func tlfStageMixedTx(t *testing.T, inner *BadgerEngine, c Constraint, id string, properties map[string]interface{}) *BadgerTransaction {
 	t.Helper()
-	tx, err := inner.BeginTransaction(t.Context())
+	tx, err := inner.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))

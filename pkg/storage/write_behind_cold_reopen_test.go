@@ -34,7 +34,7 @@ func TestColdBufferedWriteAfterReopen(t *testing.T) {
 	b.SetBufferedCommitWAL(wal)
 	done := make(chan error, 1)
 	go func() {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err == nil {
 			err = tx.SetNamespace("cold")
 		}

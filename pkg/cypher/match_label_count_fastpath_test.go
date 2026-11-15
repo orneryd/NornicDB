@@ -84,7 +84,7 @@ func TestMatchCountUsesLabelCountFastPathInsideTransaction(t *testing.T) {
 	_, err = eng.CreateNode(t.Context(), &storage.Node{ID: "nornic:other", Labels: []string{"Other"}})
 	require.NoError(t, err)
 
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{

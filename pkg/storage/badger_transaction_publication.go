@@ -76,20 +76,24 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		// entities are validated at the snapshot again.
 		tx.releaseEntityWriteLocksLocked()
 	}
-	if tx.commitReleaseWrite != nil && tx.schemaRuntime != nil {
-		// A read-only MERGE may precede DDL; release its key admission before
-		// acquiring the schema-exclusive lifecycle lease. Schema snapshot validation
-		// below still rejects intervening graph changes.
+	if tx.commitLease != nil && tx.schemaRuntime != nil && !tx.commitLease.exclusive {
+		// A read-only MERGE may precede DDL; release its shared key admission
+		// and shared lifecycle lease before acquiring the schema-exclusive one.
+		// Schema snapshot validation below still rejects intervening graph
+		// changes.
 		tx.releaseMergeAdmissionLocked()
 		tx.releaseWriteBarrierLocked()
 	}
-	if tx.commitReleaseWrite == nil {
+	if tx.commitLease == nil {
+		// An autocommit schema statement reaches this commit already holding the
+		// exclusive lease its begin took before the snapshot, and publishes under
+		// it: the window it validated covers the whole statement.
 		lease, writeErr := tx.engine.beginBarrierWrite(ctx, tx.schemaRuntime != nil, false)
 		if writeErr != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return writeErr
 		}
-		tx.commitReleaseWrite = lease.releaseCallback()
+		tx.commitLease = &lease
 	}
 
 	if tx.namespace != "" && (len(tx.pendingWrites) > 0 || len(tx.operations) > 0 || tx.schemaRuntime != nil) {

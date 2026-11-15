@@ -13,7 +13,7 @@ func TestPreparedTransactionsWithSharedLogicalIDReplicateBothDatabases(t *testin
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	leader := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	for _, namespace := range []string{"alpha", "beta"} {
-		tx, err := base.BeginTransaction(t.Context())
+		tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace(namespace))
 		_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(namespace + ":n"), Properties: map[string]any{"database": namespace}})

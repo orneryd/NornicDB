@@ -35,7 +35,7 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 					require.NoError(t, tx.Commit())
 				}
 				synchronous := func(write func(*BadgerTransaction) error) {
-					tx, err := b.BeginTransaction(t.Context())
+					tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, write(tx))
 					require.NoError(t, tx.Commit())
@@ -92,7 +92,7 @@ func TestPR1655BeginPresenceSnapshotModel(t *testing.T) {
 						if len(open) >= 4 {
 							continue
 						}
-						tx, err := b.BeginTransaction(t.Context())
+						tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						require.NoError(t, tx.SetNamespace("test"))

@@ -31,7 +31,7 @@ func TestTransactionWritesReuseNodesFromCompletedLabelStream(t *testing.T) {
 	// n2 has worker-sidecar embedding state, so it is read again.
 	require.NoError(t, eng.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, eng, "test:n2", [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()
@@ -73,7 +73,7 @@ func TestTransactionLabelStreamNotReusedWithDecay(t *testing.T) {
 	_, err := eng.CreateNode(t.Context(), &Node{ID: "test:n0", Labels: []string{"V"}})
 	require.NoError(t, err)
 	eng.SetDecayEnabled(true)
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()

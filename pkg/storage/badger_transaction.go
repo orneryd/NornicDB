@@ -134,10 +134,14 @@ type BadgerTransaction struct {
 
 	// commitW is the commit writer while Commit writes (see commitWriter).
 	commitW *commitWriter
-	// commitReleaseWrite releases the write barrier Commit holds until it
-	// returns. commitCountsHeld and commitEdgeTypeCounts record the count
-	// locks it holds while publishing (acquireCommitPublicationLocked).
-	commitReleaseWrite   func()
+	// commitLease is the write-barrier lease Commit holds until it returns,
+	// with the mode it was acquired in. An autocommit schema begin acquires it
+	// exclusively before its snapshot and Commit keeps it through publication;
+	// a read-only MERGE's shared lease escalates to the schema-exclusive lease
+	// at a schema commit; an ordinary commit takes it in Commit.
+	// commitCountsHeld and commitEdgeTypeCounts record the count locks it holds
+	// while publishing (acquireCommitPublicationLocked).
+	commitLease          *writeBarrierLease
 	commitCountsHeld     bool
 	commitEdgeTypeCounts bool
 
@@ -310,14 +314,23 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 	}
 }
 
-// BeginTransaction starts a new Badger transaction with ACID guarantees.
+// BeginTransaction starts a new Badger transaction with ACID guarantees for
+// the admission its request selects.
 //
 // At begin time the namespace is unknown. The unpinned scan boundary includes
 // the captured namespaces' logical high-water marks as well as wall time, so
 // coarse or backward clocks cannot hide rows in the physical snapshot. The
 // first prefixed write, point read, or SetNamespace rebinds this boundary to
 // that namespace's exact begin-time version.
-func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
+//
+// OrdinaryBegin states that the snapshot needs no lifecycle admission: an
+// explicit BEGIN keeps its own snapshot and its commit-time conflict guards.
+// AutocommitSchemaBegin states that an autocommit schema statement publishes a
+// schema definition built from this snapshot. The engine admits that statement
+// exclusively before capturing the snapshot (admitTransactionBegin), and the
+// returned transaction owns that lease until its single release at publication
+// or rollback.
+func (b *BadgerEngine) BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error) {
 	// Admission is request-owned: a canceled or expired request must not start
 	// a transaction. Once begun, the handle keeps its own captured snapshot
 	// lifetime and never retains this request context; each later statement
@@ -325,6 +338,18 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	lease, err := b.admitTransactionBegin(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	// Every failure below returns the begin's admission to the engine; the
+	// successful begin transfers it to the transaction instead, so it is
+	// released exactly once.
+	defer func() {
+		if lease != nil {
+			lease.release()
+		}
+	}()
 	b.mu.RLock()
 	if b.ensureOpenLocked(false) != nil {
 		b.mu.RUnlock()
@@ -406,6 +431,10 @@ func (b *BadgerEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction
 		pendingEdgeTypeLabelCountDeltas: make(map[edgeTypeLabelDelta]int64),
 		Metadata:                        make(map[string]interface{}),
 		snapshotReaderInfo:              SnapshotReaderInfo{ReaderID: txID, SnapshotVersion: readTS, StartTime: startTime},
+	}
+	if lease != nil {
+		tx.commitLease = lease
+		lease = nil
 	}
 	return tx, nil
 }
@@ -1039,6 +1068,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 
 	// Check if node exists
 	var oldNode *Node
+	anchorEligible := false
 	createOpIdx := -1
 	if pending, exists := tx.pendingNodes[node.ID]; exists {
 		oldNode = copyNode(pending)
@@ -1061,6 +1091,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
 		}
+		anchorEligible = true
 		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
 			return err
 		}
@@ -1185,6 +1216,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		Node:               nodeCopy,
 		OldNode:            oldNode,
 		nodeObservedBefore: updateRequest.Before,
+		nodeAnchorEligible: anchorEligible,
 	})
 
 	return nil

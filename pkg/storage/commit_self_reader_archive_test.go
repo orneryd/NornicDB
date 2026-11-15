@@ -18,7 +18,7 @@ func TestCommitArchivesSupersededVersionOnlyForOtherReaders(t *testing.T) {
 
 	update := func(v int64) {
 		t.Helper()
-		tx, err := eng.BeginTransaction(t.Context())
+		tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		node, err := tx.GetNode(t.Context(), "test:a")
 		require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestCommitArchivesSupersededVersionOnlyForOtherReaders(t *testing.T) {
 	require.Equal(t, base, countKeysWithPrefix(t, eng, prefixMVCCNode), "no other reader: nothing archived")
 	require.Zero(t, eng.activeMVCCSnapshotReaders.Load())
 
-	reader, err := eng.BeginTransaction(t.Context())
+	reader, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = reader.Rollback() }()
 	before, err := reader.GetNode(t.Context(), "test:a")

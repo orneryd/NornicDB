@@ -36,7 +36,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 				require.Equal(t, embeddingRangeManifestBound, item.UserMeta(), "only the new range owner binds its freshly derived layout")
 				return nil
 			}))
-			held, err := engine.BeginTransaction(t.Context())
+			held, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, held.Rollback()) })
 
@@ -90,7 +90,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 				retained, err := engine.GetNode(t.Context(), body.ID)
 				require.NoError(t, err)
 				retained.Properties["views"] = int64(1)
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: retained, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())

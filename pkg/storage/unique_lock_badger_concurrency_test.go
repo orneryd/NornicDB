@@ -36,7 +36,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 
 	transactions := make([]*BadgerTransaction, badgerUniqueLockWriters)
 	for writer := range badgerUniqueLockWriters {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction writer %d: %v", writer, err)
 		}
@@ -145,7 +145,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	}
 	transactions := make([]*BadgerTransaction, 2)
 	for index := range transactions {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction revision %d: %v", index+1, err)
 		}
@@ -203,7 +203,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		t.Fatalf("same-UID loser error = %v, want ErrConflict cause", loser.err)
 	}
 
-	retry, err := engine.BeginTransaction(t.Context())
+	retry, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction retry: %v", err)
 	}
@@ -259,7 +259,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 		b.StopTimer()
 		transactions := make([]*BadgerTransaction, badgerUniqueLockWriters)
 		for writer := range badgerUniqueLockWriters {
-			tx, err := engine.BeginTransaction(b.Context())
+			tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if err != nil {
 				b.Fatalf("BeginTransaction writer %d: %v", writer, err)
 			}
@@ -301,7 +301,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 
 func seedBadgerUniqueFunctions(t testing.TB, engine *BadgerEngine) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction seed: %v", err)
 	}

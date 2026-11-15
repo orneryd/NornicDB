@@ -19,7 +19,7 @@ func TestTransactionRevealLabelCacheKeyDoesNotAliasStoredLabels(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:other", Labels: []string{unusualLabel}, Properties: map[string]interface{}{"name": "other"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:hidden", true))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	collect := func(label string, reveal bool) []NodeID {

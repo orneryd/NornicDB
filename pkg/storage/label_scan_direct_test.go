@@ -142,7 +142,7 @@ func TestStreamNodesByLabelProjectedSkipsMissingRecords(t *testing.T) {
 		for _, node := range nodes {
 			require.NotContains(t, gone, node.ID)
 		}
-		tx, err := eng.BeginTransaction(t.Context())
+		tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		var txNodes []*Node
@@ -188,7 +188,7 @@ func TestStreamNodesByLabelProjectedRejectsCorruptRecords(t *testing.T) {
 					require.Error(t, eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, func(*Node) error {
 						return nil
 					}))
-					tx, err := eng.BeginTransaction(t.Context())
+					tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace("test"))
 					defer func() { _ = tx.Rollback() }()
@@ -205,7 +205,7 @@ func TestTransactionLabelScanReadsRemainingNodesInOnePass(t *testing.T) {
 	const count = labelScanPointLookups + 200
 	eng, created := labelScanFixture(t, count)
 	for _, properties := range [][]string{nil, {"i"}} {
-		tx, err := eng.BeginTransaction(t.Context())
+		tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NotNil(t, tx.snapshotTx)
@@ -252,7 +252,7 @@ func TestLabelScanReportsCorruptionInVisitOrder(t *testing.T) {
 						return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 					}
 					if transaction {
-						tx, err := eng.BeginTransaction(t.Context())
+						tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						require.NoError(t, tx.SetNamespace("test"))
 						defer func() { _ = tx.Rollback() }()

@@ -54,7 +54,7 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 							require.NoError(b, err)
 							require.Equal(b, NodeID("a:n00000"), node.ID)
 						case "snapshot_first":
-							tx, err := engine.BeginTransaction(b.Context())
+							tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("a"))
 							err = tx.StreamNodesByLabelProjected(context.Background(), "Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })

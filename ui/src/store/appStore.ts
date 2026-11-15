@@ -7,6 +7,7 @@ let workspaceGeneration=0;
 
 // Similar results for inline expansion
 interface SimilarExpansion {
+  error?: string;
   nodeId: string;
   results: SearchResult[];
   loading: boolean;
@@ -298,8 +299,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         selectedDatabase ?? undefined
       );
       if(get().selectedDatabase===selectedDatabase && get().expandedSimilar?.nodeId===nodeId)set({ expandedSimilar: { nodeId, results, loading: false } });
-    } catch {
-      if(get().selectedDatabase===selectedDatabase && get().expandedSimilar?.nodeId===nodeId)set({ expandedSimilar: null });
+    } catch (error) {
+      if(get().selectedDatabase===selectedDatabase && get().expandedSimilar?.nodeId===nodeId)set({ expandedSimilar: {nodeId,results:[],loading:false,error:error instanceof Error?error.message:"Similar records could not be loaded."} });
     }
   },
 

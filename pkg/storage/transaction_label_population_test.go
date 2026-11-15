@@ -27,7 +27,7 @@ func TestTransactionLabelPopulationSurvivesSuppressionDuringScan(t *testing.T) {
 						_, err := engine.CreateNode(ctx, &Node{ID: id, Labels: []string{"Population"}, Properties: map[string]any{"value": int64(1)}})
 						require.NoError(t, err)
 					}
-					tx, err := engine.BeginTransaction(ctx)
+					tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetNamespace("test"))
@@ -73,7 +73,7 @@ func TestTransactionEqualityCandidatesFollowLiveSuppression(t *testing.T) {
 			if initiallyHidden {
 				require.NoError(t, engine.SetManualSuppression(ctx, StoredEntityNodeKind, string(id), true))
 			}
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))

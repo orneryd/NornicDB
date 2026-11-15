@@ -18,7 +18,7 @@ func TestCommitEndpointPointReadRetainsCancellationAtCapture(t *testing.T) {
 		bufferedCreate(t, b, &Node{ID: id})
 	}
 	require.Positive(t, b.writeBehind.PendingOps(), "real buffered state must require retirement admission")
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetImplicit(true))
@@ -107,7 +107,7 @@ func TestCommitEndpointPointReadRetainsCancellationAtCapture(t *testing.T) {
 	}
 	_, err = b.GetStoredEdge(t.Context(), edge.ID)
 	require.ErrorIs(t, err, ErrNotFound, "cancelled preacceptance must not publish edge")
-	retry, err := b.BeginTransaction(t.Context())
+	retry, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = retry.Rollback() })
 	require.NoError(t, retry.SetImplicit(true))
@@ -128,7 +128,7 @@ func TestNativeTransactionPointShapesRetainCaptureContext(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 			bufferedCreate(t, b, &Node{ID: "test:point-shape", Labels: []string{"Shape"}, Properties: map[string]any{"payload": "retained"}})
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			type outcome struct {

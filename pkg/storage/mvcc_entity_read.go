@@ -96,7 +96,7 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, request 
 		}
 		var headers map[EdgeID]*Edge
 		var decided map[EdgeID]struct{}
-		if request.Headers || len(request.Types) > 0 {
+		if request.Headers || len(request.Types) > 0 || request.Direction == AdjacentBetween {
 			headers, decided, err = b.adjacentSnapshotHeadersInTxn(ctx, txn, request, version)
 			if err != nil {
 				return err

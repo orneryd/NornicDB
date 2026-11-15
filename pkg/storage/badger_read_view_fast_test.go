@@ -17,7 +17,7 @@ func TestSnapshotOverlayIdleEpochAndNamespace(t *testing.T) {
 	require.True(t, idle)
 	_, err := b.CreateNode(t.Context(), &Node{ID: "other:seed"})
 	require.NoError(t, err)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("other"))
@@ -48,7 +48,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 	view, err := b.captureReadView(t.Context(), nil, readViewOptions{scope: "test", cached: func(w *WriteBehindBuffer) (bool, error) {
 		calls++
 		if calls == 1 {
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))

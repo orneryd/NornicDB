@@ -48,11 +48,15 @@ export function StatefulGrid({height,...props}:UiGridProps & {height?:number}) {
     if (!api || !initial.current) return;
     restoring.current = true;
     try {
-      api.saveState.restore(view ?? initial.current);
+      const state=view ?? initial.current;
+      const fixedPins=Object.fromEntries(props.options.columnDefs.filter(column=>column.enablePinning===false&&(column.pinnedLeft||column.pinnedRight)).map(column=>[column.name,column.pinnedLeft?'left':'right'])) as Record<string,'left'|'right'>;
+      const runtime=state as GridSavedState & {pinnedColumns?:Record<string,'left'|'right'>};
+      const restored=Object.keys(fixedPins).length?{...state,pinning:{...state.pinning,...fixedPins},pinnedColumns:{...runtime.pinnedColumns,...fixedPins}}:state;
+      api.saveState.restore(restored);
     } finally {
       restoring.current = false;
     }
-  }, [api, viewJson]);
+  }, [api, viewJson, props.options.columnDefs]);
   // Approved SDK workaround: expanded heights are omitted from its virtual window.
   // https://github.com/orneryd/ui-grid/issues/7410
   // SDK runtime save() uses expandedRows; its published declaration still says expandable.

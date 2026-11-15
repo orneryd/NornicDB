@@ -118,7 +118,7 @@ func (l *rrvLab) snapshotFull() string {
 func rrvRead(t *testing.T, engine *BadgerEngine) *Node {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

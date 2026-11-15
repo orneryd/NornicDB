@@ -29,7 +29,7 @@ func newVectorImageIdentityGraph(t *testing.T, mode string) *largeEmbeddingGraph
 	var staged *storage.BadgerTransaction
 	if mode == "pending" || mode == "write-behind" {
 		var err error
-		staged, err = engine.BeginTransaction(t.Context())
+		staged, err = engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = staged.Rollback() })
 		require.NoError(t, staged.SetNamespace("test"))

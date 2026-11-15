@@ -24,7 +24,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		return b, w
 	}
 	b, w := open()
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
@@ -37,7 +37,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	require.NoError(t, err)
 	versions := []MVCCVersion{h.Version}
 	for _, v := range []int64{2, 3} {
-		tx, err = b.BeginTransaction(t.Context())
+		tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(true))

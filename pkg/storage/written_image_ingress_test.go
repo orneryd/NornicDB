@@ -39,7 +39,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 	}
 	inTx := func(t *testing.T, engine *BadgerEngine, implicit bool, apply func(*BadgerTransaction) error) {
 		t.Helper()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.SetImplicit(implicit))

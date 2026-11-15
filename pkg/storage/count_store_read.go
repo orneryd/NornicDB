@@ -21,6 +21,13 @@ import "context"
 // A store that cannot establish the answer (a custom view with no counter
 // implementation, a transaction whose staged writes it cannot attribute) reports
 // DescribesRows false, and the read falls back to the rows themselves.
+//
+// An explicit transaction reads its counters at its own pinned snapshot
+// (CountStoreReadScope): the rows such a read returns are the ones its begin
+// boundary holds, not the current ones, so the current counters describe them
+// only until a peer commits into the transaction's namespace. The capability
+// keeps the count in the counter keyspace across such a commit instead of
+// materializing the counted population.
 
 // CountStoreReadKind selects the counter family a count-store read asks for.
 type CountStoreReadKind uint8
@@ -56,6 +63,16 @@ type CountStoreReadRequest struct {
 	// no relevant node carrying such a label. An empty prefix hides none, as
 	// the system database's reads do, and the counters answer directly.
 	HiddenLabelPrefix string
+	// Scope is the snapshot capability of the explicit transaction this read
+	// belongs to: when set, the native engine answers Count at that
+	// transaction's own snapshot, plus the contribution the transaction's
+	// staged writes hold when the capability is consumed, instead of from the
+	// current counters. Only BadgerTransaction.ScopeCountStoreRead issues one;
+	// it is opaque, it is valid only for the originating engine and for this
+	// exact read, and it certifies nothing unless the native counter kernel
+	// consumed it (CountStoreReadScope.DescribesSnapshot). A reader that does
+	// not consume it returns an answer this field cannot certify.
+	Scope *CountStoreReadScope
 }
 
 // CountStoreRead is the answer to one count-store read.
@@ -74,6 +91,14 @@ type CountStoreRead struct {
 // Implementations answer Count from one persisted snapshot and one buffered
 // view. Endpoints, reads with a decay filter or a temporal viewport, and scopes
 // the store cannot prove are the caller's to decline.
+//
+// A request carrying a Scope belongs to one explicit transaction: the native
+// implementation answers it at that transaction's snapshot, through the same
+// reader chain a caller reads everything else through. An implementation that
+// forwards the request unchanged lets the native engine answer it; an
+// implementation that builds its own answer, or changes the request, leaves the
+// capability unconsumed, and the caller must not treat the answer as the
+// transaction's.
 //
 // Example:
 //

@@ -14,7 +14,7 @@ func TestBadgerTransaction_SetNamespace_ClosedBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
 	t.Run("returns closedErr when present", func(t *testing.T) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		want := errors.New("synthetic-close")
 		tx.mu.Lock()
@@ -26,7 +26,7 @@ func TestBadgerTransaction_SetNamespace_ClosedBranches(t *testing.T) {
 	})
 
 	t.Run("returns ErrTransactionClosed when closedErr nil", func(t *testing.T) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		tx.mu.Lock()
 		tx.Status = TxStatusRolledBack
@@ -53,7 +53,7 @@ func TestBadgerTransaction_UpdateAndDelete_ReadCommittedDecodeErrors(t *testing.
 		return txn.Set(edgeKey("test:e1"), []byte("corrupt-edge"))
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -80,7 +80,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 		AllowedValues: []interface{}{"active", "pending"},
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -95,7 +95,7 @@ func TestBadgerTransaction_ValidateNodeConstraints_DomainBranch(t *testing.T) {
 func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsPropagated(t *testing.T) {
 	engine := newTestEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -120,7 +120,7 @@ func TestBadgerTransaction_ValidatePolicyOnNodeLabelChange_UsesPendingEdges(t *t
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n2", Labels: []string{"B"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

@@ -414,7 +414,7 @@ func TestRetainedSnapshotDropPrefixRevokesOnceAtFinalBatch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	ctx := context.Background()
 	const dropped = 25000
-	seed, err := b.BeginTransaction(ctx)
+	seed, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < dropped; i++ {
 		_, err := seed.CreateNode(ctx, &Node{ID: NodeID(fmt.Sprintf("drop:n-%d", i)), Labels: []string{"Dropped"}, Properties: map[string]any{"v": int64(1)}})
@@ -426,7 +426,7 @@ func TestRetainedSnapshotDropPrefixRevokesOnceAtFinalBatch(t *testing.T) {
 	keep := captureFinalScopeCaches(b, []NodeID{finalScopeKeepA()}, []EdgeID{finalScopeKeepE()}, finalScopeKeepLabel, finalScopeKeepType)
 	require.NotNil(t, keep.nodes[finalScopeKeepA()])
 
-	reader, err := b.BeginTransaction(ctx)
+	reader, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	_, err = reader.GetNode(ctx, "drop:n-0")

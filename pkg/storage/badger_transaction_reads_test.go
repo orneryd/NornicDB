@@ -39,7 +39,7 @@ func txReadFixture(t *testing.T) *MemoryEngine {
 	engine := newTestMemoryEngine(t)
 
 	commitNamespace := func(nodes []*Node, edges []*Edge) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		for _, n := range nodes {
 			_, err := tx.CreateNode(t.Context(), n)
@@ -96,7 +96,7 @@ func nodeIDs(nodes []*Node) []string {
 
 func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -131,7 +131,7 @@ func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *t
 
 func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:pending", Labels: []string{"Person"}})
@@ -172,7 +172,7 @@ func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B)
 		_, err := engine.CreateNode(b.Context(), &Node{ID: NodeID("bench:" + name), Labels: []string{"Person"}, Properties: map[string]any{"name": name}})
 		require.NoError(b, err)
 	}
-	tx, err := engine.BeginTransaction(b.Context())
+	tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = tx.Rollback() })
 	_, err = tx.CreateNode(b.Context(), &Node{ID: "bench:pending", Labels: []string{"Person"}})
@@ -197,7 +197,7 @@ func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B)
 
 func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -213,7 +213,7 @@ func TestTxReads_StreamNodesByLabelProjected_StopsWithoutMaterializingRemainder(
 
 func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -255,7 +255,7 @@ func TestTxReads_StreamNodesByLabel_UnprojectedPrefixAndLargePayloadGuard(t *tes
 	alice.Properties["large"] = strings.Repeat("x", maxSnapshotLabelPrefixNodeBytes+1)
 	require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: alice}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -306,7 +306,7 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 
 func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	writer, err := engine.BeginTransaction(t.Context())
+	writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for index := 0; index < maxSnapshotNodeLabelCacheNodes+2; index++ {
 		_, err = writer.CreateNode(t.Context(), &Node{
@@ -315,7 +315,7 @@ func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, writer.Commit())
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("test"))
 	t.Cleanup(func() { _ = reader.Rollback() })
@@ -377,7 +377,7 @@ func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 	require.NoError(t, err)
 	embeddings := [][]float32{{0.1, 0.2}}
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, embeddings, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})))
-	transaction, err := engine.BeginTransaction(t.Context())
+	transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, snapshotLabelCacheKey{projectionKey: "Person"}, []*Node{node}, true)
@@ -392,7 +392,7 @@ func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 
 func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -425,12 +425,12 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 
 func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *testing.T) {
 	engine := txReadFixture(t)
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("test"))
 	t.Cleanup(func() { _ = reader.Rollback() })
 
-	writer, err := engine.BeginTransaction(t.Context())
+	writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, writer.SetNamespace("test"))
 	bob, err := writer.GetNode(t.Context(), "test:bob")
@@ -457,7 +457,7 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 
 func TestTxReads_GetEdge_Committed(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -473,7 +473,7 @@ func TestTxReads_GetEdge_Committed(t *testing.T) {
 
 func TestTxReads_GetEdge_PendingWriteVisible(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -497,7 +497,7 @@ func TestTxReads_GetEdge_PendingWriteVisible(t *testing.T) {
 
 func TestTxReads_GetEdge_DeletedReturnsNotFound(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -593,7 +593,7 @@ func TestTxReads_GetEdgesBetween(t *testing.T) {
 
 func TestTxReads_GetEdgeBetween(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -628,7 +628,7 @@ func TestTxReads_GetEdgeBetween(t *testing.T) {
 
 func TestTxReads_GetEdgesByType(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -670,7 +670,7 @@ func TestTxReads_GetEdgesByType(t *testing.T) {
 
 func TestTxReads_GetNodesByLabel(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -689,7 +689,7 @@ func TestTxReads_GetNodesByLabel(t *testing.T) {
 // committed nodes must drop out, unknown labels return empty.
 func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -723,7 +723,7 @@ func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 
 func TestTxReads_GetFirstNodeByLabel(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -746,7 +746,7 @@ func TestTxReads_GetFirstNodeByLabel(t *testing.T) {
 
 func TestTxReads_AllNodes(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -926,7 +926,7 @@ func BenchmarkTxReads_MergePendingEdgesLocked_WithOverlay(b *testing.B) {
 
 func TestTxReads_BulkCreateEdges_Success(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -964,7 +964,7 @@ func TestTxReads_BulkCreateEdges_Success(t *testing.T) {
 
 func TestTxReads_BulkCreateEdges_FailsOnMissingEndpoint(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -984,7 +984,7 @@ func TestTxReads_BulkCreateEdges_FailsOnMissingEndpoint(t *testing.T) {
 
 func TestTxReads_BulkCreateEdges_RejectsDuplicate(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -998,7 +998,7 @@ func TestTxReads_BulkCreateEdges_RejectsDuplicate(t *testing.T) {
 
 func TestTxReads_BulkCreateEdges_RejectsInvalidInput(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -1014,7 +1014,7 @@ func TestTxReads_BulkCreateEdges_RejectsInvalidInput(t *testing.T) {
 
 func TestTxReads_SetImplicit(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -1036,7 +1036,7 @@ func TestTxReads_SetImplicit(t *testing.T) {
 // batch, and a rejected edge leaves the batch's earlier edges unbuffered.
 func TestTxReads_CreateEdgeSingleAndBulkAgree(t *testing.T) {
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -1072,7 +1072,7 @@ func readDirectionalEdges(t *testing.T, tx *BadgerTransaction, request AdjacentE
 func beginDirectionalReadFixture(t *testing.T) *BadgerTransaction {
 	t.Helper()
 	engine := txReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx

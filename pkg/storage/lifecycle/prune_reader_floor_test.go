@@ -47,7 +47,7 @@ func TestManagerPrunesPastLongLivedReader(t *testing.T) {
 	require.NoError(t, err)
 
 	// A long-lived transaction in dba sees v=4.
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("dba"))

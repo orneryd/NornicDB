@@ -63,7 +63,7 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					}
 					mutate := func(key, value string) {
 						for _, id := range ids {
-							tx, e := disk.BeginTransaction(t.Context())
+							tx, e := disk.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 							require.NoError(t, e)
 							require.NoError(t, tx.SetNamespace("contract"))
 							n, e := tx.GetNode(t.Context(), storage.NodeID("contract:"+string(id)))

@@ -76,7 +76,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				require.EqualValues(t, 1, r.lastApplied)
 				return
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("wire"))
 			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "wire:accepted", Properties: map[string]any{"value": "once"}})
@@ -92,7 +92,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				t.Cleanup(func() { queueCtx.once.Do(func() { close(queueCtx.release) }) })
 				queued := make(chan error, 1)
 				go func() {
-					accepted, _, err := storage.AcceptEntityCommit(context.Background(), engine, prepared)
+					accepted, _, err := storage.AcceptEntityCommit(context.Background(), engine, storage.EntityTransactionRequest{Prepared: prepared})
 					if err != nil {
 						queued <- err
 						return

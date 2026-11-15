@@ -64,7 +64,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-			writer, err := engine.BeginTransaction(t.Context())
+			writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = writer.Rollback() })
 			edge, err := writer.GetEdge(t.Context(), edgeID)
@@ -85,7 +85,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("writer did not reach post-validation metadata barrier")
 			}
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			if scenario == "peer_updates_edge" {
@@ -104,7 +104,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("writer did not finish after peer publication")
 			}
-			reader, err := engine.BeginTransaction(t.Context())
+			reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reader.Rollback() })
 			_, err = reader.GetNode(t.Context(), source)
@@ -126,7 +126,7 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-	writer, err := engine.BeginTransaction(t.Context())
+	writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
 	require.NoError(t, writer.DeleteGraphNode(t.Context(), source, CascadeEdges))
@@ -144,7 +144,7 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer did not reach post-validation metadata barrier")
 	}
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	edge, err := peer.GetEdge(t.Context(), edgeID)
@@ -159,7 +159,7 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	case <-time.After(5 * time.Second):
 		t.Fatal("writer did not finish after peer publication")
 	}
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	_, err = reader.GetNode(t.Context(), source)

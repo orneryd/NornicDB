@@ -64,6 +64,7 @@ func requireSeedRequestOnce(t *testing.T, requests []storage.CountStoreReadReque
 	t.Helper()
 	reads := 0
 	for _, request := range requests {
+		request.Scope = nil // Compare logical counter identity, not its opaque snapshot capability.
 		if reflect.DeepEqual(request, want) {
 			reads++
 		}

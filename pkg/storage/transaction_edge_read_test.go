@@ -14,7 +14,7 @@ func TestTransactionReadEdgesPreservesViewsAndPendingOverlay(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:old", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	outgoing := AdjacentEdgeRead{Node: "test:a"}
@@ -25,21 +25,18 @@ func TestTransactionReadEdgesPreservesViewsAndPendingOverlay(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:old"}, sortedEdgeIDStrings(edges))
 	}
-	writer, err := engine.BeginTransaction(t.Context())
+	writer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
 	require.NoError(t, writer.CreateEdge(t.Context(), &Edge{ID: "test:later", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 	require.NoError(t, writer.Commit())
 	require.NoError(t, reader.CreateEdge(t.Context(), &Edge{ID: "test:pending", StartNode: "test:a", EndNode: "test:b", Type: "P"}))
 	require.NoError(t, reader.DeleteEdge(t.Context(), "test:old"))
-	for _, request := range []AdjacentEdgeRead{outgoing, incoming} {
+	for _, request := range []AdjacentEdgeRead{outgoing, incoming, between} {
 		edges, err := reader.ReadEdges(context.Background(), request)
 		require.NoError(t, err)
-		require.Equal(t, []string{"test:pending"}, sortedEdgeIDStrings(edges), "directional reads retain their pinned view and overlay")
+		require.Equal(t, []string{"test:pending"}, sortedEdgeIDStrings(edges), "every adjacency direction retains its pinned view and overlay")
 	}
-	edges, err := reader.ReadEdges(context.Background(), between)
-	require.NoError(t, err)
-	require.Equal(t, []string{"test:later", "test:pending"}, sortedEdgeIDStrings(edges), "between reads retain the engine view and overlay")
 	edge, err := reader.GetEdgeBetween(t.Context(), "test:a", "test:b", "P")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:pending"), edge.ID)
@@ -52,7 +49,7 @@ func TestTransactionReadEdgesRequestAdmission(t *testing.T) {
 		{Direction: AdjacentIncoming, Node: "other:b"},
 		{Direction: AdjacentBetween, Node: "test:a", Other: "other:b"},
 	} {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		_, err = tx.ReadEdges(context.Background(), request)
@@ -61,7 +58,7 @@ func TestTransactionReadEdgesRequestAdmission(t *testing.T) {
 		_, err = tx.ReadEdges(context.Background(), request)
 		require.ErrorIs(t, err, ErrTransactionClosed)
 	}
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: 255, Node: "test:a"})
 	require.ErrorIs(t, err, ErrInvalidData)

@@ -217,7 +217,7 @@ func seedPR1655AcceptanceGraph(t *testing.T, b *BadgerEngine, nodes [2]NodeID) {
 // snapshot in every producer path.
 func beginPR1655AcceptanceWriter(t *testing.T, b *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	writer, err := b.BeginTransaction(t.Context())
+	writer, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
 	require.NoError(t, writer.SetNamespace("test"))
@@ -236,7 +236,7 @@ func peerPR1655Acceptance(t *testing.T, b *BadgerEngine, scenario pr1655Acceptan
 			return b.DeleteNode(t.Context(), "test:pr1655-a")
 		}
 	}
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(peer.implicit))

@@ -24,7 +24,7 @@ func TestResidualPublicationDecisionRoutes(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: route == "large", WriteBehind: route == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))

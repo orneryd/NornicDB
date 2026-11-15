@@ -16,7 +16,7 @@ func TestReplayedBufferedCommitReconcilesLabelCountsWithRestoredBody(t *testing.
 	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true})
 	_, err := source.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Old"}})
 	require.NoError(t, err)
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -81,7 +81,7 @@ func TestRecoveredRelabelThenDeletedNodeLeavesNoStaleLabelCount(t *testing.T) {
 		Nodes:     []*Node{{ID: "test:a", Labels: []string{"Old"}}},
 	}, snapshotPath))
 
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace(namespace))

@@ -70,6 +70,8 @@ export function QueryPanel({
   const editorId=useId();
   const [showHistory, setShowHistory] = useViewState('history', false);
   const [autocompleteEnabled, setAutocompleteEnabled] = useViewState('autocomplete', true);
+  const [sampleLoaded,setSampleLoaded] = useViewState('sampleLoaded',false);
+  const [optionsOpen,setOptionsOpen] = useViewState('executionOptions',false);
   const [continueOnError, setContinueOnError] = useViewState('continueOnError', false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const runningIndex = cypherResults.findIndex((r) => r.status === "running");
@@ -96,56 +98,25 @@ export function QueryPanel({
   };
 
   return (
-    <div className="flex-1 flex flex-col p-4 gap-4">
+    <div className="workspace-query flex-1 flex flex-col p-4 gap-4">
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <label htmlFor={editorId} className="text-sm text-norse-silver">Cypher query</label>
+        <div className="editor-heading"><label htmlFor={editorId} className="text-sm text-norse-silver">Cypher query</label>
+            <div className="editor-tools">
+              <button type="button" onClick={() => setShowHistory(!showHistory)} aria-expanded={showHistory}><History className="w-4 h-4" /> History</button>
+              <button type="button" onClick={() => setAutocompleteEnabled(!autocompleteEnabled)} aria-pressed={autocompleteEnabled}>AI autocomplete {autocompleteEnabled ? 'on' : 'off'}</button>
+            </div>
+          </div>
         <div className="relative">
           <textarea
             id={editorId}
             ref={textareaRef}
             value={cypherQuery}
-            onChange={(e) => setCypherQuery(e.target.value)}
+            onChange={(e) => {setSampleLoaded(false);setCypherQuery(e.target.value);}}
             className="cypher-editor w-full h-32 p-3 resize-none"
             placeholder="MATCH (n) RETURN n LIMIT 25"
             spellCheck={false}
+            onKeyDown={event => {if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {event.preventDefault(); if (!queryLoading) onExecute(continueOnError);}}}
           />
-          <div className="absolute top-2 right-2 flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setShowHistory(!showHistory)}
-              aria-expanded={showHistory}
-              aria-label="Query history"
-              className="p-1.5 rounded hover:bg-norse-rune transition-colors"
-              title="Query History"
-            >
-              <History className="w-4 h-4 text-norse-silver" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setAutocompleteEnabled(!autocompleteEnabled)}
-              aria-pressed={autocompleteEnabled}
-              className={`p-1.5 rounded transition-colors ${
-                autocompleteEnabled
-                  ? "bg-nornic-primary/20 hover:bg-nornic-primary/30"
-                  : "hover:bg-norse-rune"
-              }`}
-              title={autocompleteEnabled ? "Disable AI Autocomplete" : "Enable AI Autocomplete"}
-            >
-              <svg
-                className="w-4 h-4 text-norse-silver"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-            </button>
-          </div>
           <QueryAutocomplete
             query={cypherQuery}
             onSuggestionSelect={handleSuggestionSelect}
@@ -173,6 +144,7 @@ export function QueryPanel({
           </div>
         )}
 
+        <div className="query-command-bar">
         <button
           type="submit"
           disabled={queryLoading}
@@ -181,6 +153,8 @@ export function QueryPanel({
           <Play className="w-4 h-4" />
           {queryLoading ? "Executing..." : "Run Query"}
         </button>
+        <span className="shortcut-hint">Ctrl / ⌘ + Enter</span>
+        <details className="query-options" open={optionsOpen} onToggle={event => {if(event.currentTarget.open !== optionsOpen) setOptionsOpen(event.currentTarget.open);}}><summary>Execution options</summary>
         <label className="flex items-center gap-2 text-xs text-norse-silver select-none">
           <input
             type="checkbox"
@@ -190,6 +164,8 @@ export function QueryPanel({
           />
           Continue on error
         </label>
+        </details>
+        </div>
       </form>
 
       {queryError && (
@@ -207,15 +183,20 @@ export function QueryPanel({
         </div>
       )}
 
+      {!(cypherResults.length > 0 || cypherResult?.results[0]) && !queryLoading && !queryError && <section className="workspace-ready" aria-label="Query guidance">
+        <h2>Ready when you are</h2><p>Run a Cypher query to see rows here. Select a result to inspect its properties or explore it in the graph.</p>
+        <button type="button" onClick={() => {handleSuggestionSelect('MATCH (n) RETURN n LIMIT 25');setSampleLoaded(true);}}>Use a sample query <span aria-hidden="true">→</span></button>{sampleLoaded&&<p role="status" className="sample-loaded">Sample query loaded. Review it in the editor, then choose Run Query.</p>}
+      </section>}
+      {(cypherResults.length > 0 || cypherResult?.results[0]) && <div className="results-heading"><h2>Results</h2><span>Select a node to inspect its properties</span></div>}
       {/* Query Results */}
       {((cypherResults.length > 0) || cypherResult?.results[0]) && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          <SelectionToolbar
+          {selectedNodeIds.size > 0 && <SelectionToolbar
             selectedCount={selectedNodeIds.size}
             onDelete={onDeleteClick}
             onClear={onClearSelection}
             deleting={deleting}
-          />
+          />}
 
           {/* Delete Error Display */}
           {deleteError && (

@@ -32,7 +32,7 @@ func (e *relationshipMergeCreateEngine) MatchEdgesBetween(ctx context.Context,
 	endID storage.NodeID,
 	relType string,
 	_ []string,
-	match func(*storage.Edge) bool,
+	match func(*storage.Edge) bool, policy storage.EdgeMatchReadPolicy,
 ) ([]*storage.Edge, error) {
 	edges, err := e.getEdgesBetween(startID, endID)
 	if err != nil {

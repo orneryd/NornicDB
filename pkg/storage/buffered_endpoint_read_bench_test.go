@@ -45,7 +45,7 @@ func BenchmarkEndpointStoredNodeExistenceReadBuffered(b *testing.B) {
 			id := NodeID("test:product-12345")
 			node := &Node{ID: id, Labels: []string{"Product"}, Properties: map[string]any{"name": "product 12345", "category": "hardware", "sku": "SKU-12345", "price": 12.5, "stock": int64(25)}}
 			if pending {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -27,7 +27,7 @@ func reservedPublicationPeer(t *testing.T, b *BadgerEngine, write func(*BadgerTr
 			return nil, nil
 		}, nil
 	}, nil))
-	older, err := b.BeginTransaction(t.Context())
+	older, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = older.Rollback() })
 	require.NoError(t, older.SetImplicit(true))
@@ -178,7 +178,7 @@ func TestReservedPublicationConflictMatrix(t *testing.T) {
 						unblock, wait := reservedPublicationPeer(t, b, peer)
 						// BEGIN while the peer holds its reserved MVCC version
 						// but is not acknowledged into the buffer yet.
-						staleTx, err := b.BeginTransaction(t.Context())
+						staleTx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						t.Cleanup(func() { _ = staleTx.Rollback() })
 						require.NoError(t, staleTx.SetImplicit(implicit))
@@ -237,7 +237,7 @@ func TestReservedCreationStableUUIDConflicts(t *testing.T) {
 						return tx.CreateEdge(t.Context(), edge(v))
 					}
 					unblock, wait := reservedPublicationPeer(t, b, func(tx *BadgerTransaction) error { return create(tx, 1) })
-					stale, err := b.BeginTransaction(t.Context())
+					stale, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = stale.Rollback() })
 					require.NoError(t, stale.SetImplicit(implicit))
@@ -277,7 +277,7 @@ func TestMintedCreationKeepsCommitFastPath(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.FlushWriteBehind(ctx))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetValidationSetting(SkipCreateCommitHeadReload, true))
@@ -313,7 +313,7 @@ func TestFrameRemovedIdentityCanBeCreatedAgain(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
 			ctx := context.Background()
 			reservedPublicationFixture(t, b, "update", "relationship")
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			if route == "relationship-cascade" {
@@ -417,7 +417,7 @@ func reservedCutDuringAllocationCase(t *testing.T, op, kind string, implicit, re
 			return nil, nil
 		}, nil
 	}, nil))
-	peer, err := b.BeginTransaction(ctx)
+	peer, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	require.NoError(t, peer.SetImplicit(true))
@@ -440,7 +440,7 @@ func reservedCutDuringAllocationCase(t *testing.T, op, kind string, implicit, re
 	}
 	readerDone := make(chan begun, 1)
 	go func() {
-		tx, err := b.BeginTransaction(ctx)
+		tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 		readerDone <- begun{tx, err}
 	}()
 	deadline := time.Now().Add(10 * time.Second)

@@ -45,7 +45,7 @@ func TestTransactionSnapshotPhysicalStateDoesNotAdvancePastLogicalBoundary(t *te
 
 	physicalAdvancedPastLogical := false
 	for attempt := 0; attempt < 256 && !physicalAdvancedPastLogical; attempt++ {
-		tx, beginErr := engine.BeginTransaction(t.Context())
+		tx, beginErr := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, beginErr)
 		require.NoError(t, tx.SetNamespace("test"))
 

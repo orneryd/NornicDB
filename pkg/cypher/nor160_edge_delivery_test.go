@@ -17,7 +17,7 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, ns.CreateEdge(ctx, &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "COHELD", Properties: map[string]any{"v": []int64{7}}}))
-	tx, err := base.BeginTransaction(ctx)
+	tx, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("delivery"))
@@ -61,7 +61,7 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 				case "all":
 					edges, err = w.AllEdges(ctx)
 				case "matched":
-					edges, err = w.MatchEdgesBetween(ctx, "a", "b", "COHELD", []string{"v"}, func(*storage.Edge) bool { return true })
+					edges, err = w.MatchEdgesBetween(ctx, "a", "b", "COHELD", []string{"v"}, func(*storage.Edge) bool { return true }, storage.SnapshotEdgeMatch)
 				case "outgoing-header":
 					edges, err = w.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentOutgoing, Node: "a", Headers: true})
 				case "incoming-header":

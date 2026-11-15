@@ -11,7 +11,7 @@ import (
 
 func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -20,7 +20,7 @@ func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
-	h, _, err := AcceptEntityCommit(context.Background(), b, p)
+	h, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: p})
 	require.NoError(t, err)
 	require.NoError(t, h.ApplyContext(context.Background(), nil))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -65,7 +65,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	w := NewWALEngine(inner, wal)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -162,7 +162,7 @@ func (s *arbitrationProbeSubmitter) SubmitEntityCommit(ctx context.Context, prep
 // transport with the owner: foreign submission runs outside arbitration.
 func TestAcceptedHandleSubmitsOutsideArbitration(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -171,7 +171,7 @@ func TestAcceptedHandleSubmitsOutsideArbitration(t *testing.T) {
 	p, err := tx.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: tx.ID})
 	require.NoError(t, err)
 	defer p.Abort()
-	h, _, err := AcceptEntityCommit(context.Background(), b, p)
+	h, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: p})
 	require.NoError(t, err)
 	h.inner = &arbitrationProbeSubmitter{inner: h.inner, handle: h, t: t}
 	require.NoError(t, h.ApplyContext(context.Background(), nil))

@@ -36,7 +36,7 @@ func TestPreparedCountDeltaIncludesCascadeAndHiddenStoredEntities(t *testing.T) 
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINK", VisibilitySuppressed: true}))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

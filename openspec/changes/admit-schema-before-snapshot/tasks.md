@@ -1,0 +1,10 @@
+- [x] Reproduce CREATE/DROP INDEX conflict with a concurrent data writer.
+- [x] Migrate native begin requests and canonical callers.
+- [x] Preserve explicit snapshot conflicts and terminal lease release.
+- [x] Stage temporal derived keys atomically with their schema statement.
+- [x] Reject wrong engine/schema/namespace authority and post-rollback writes.
+- [x] Keep foreign identity callbacks outside the transaction mutex.
+- [x] Preserve completeness marks across unrelated DDL, drop/recreate and rollback.
+- [x] Run focused storage/public/race checks; report native-inference exclusion.
+- [ ] Rebase onto current release and rerun affected checks.
+- [ ] Publish draft and run exact-head CI; resolve findings before readiness.

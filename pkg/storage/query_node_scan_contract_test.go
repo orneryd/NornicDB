@@ -43,7 +43,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 			}
 			scan := b.StreamNodesWithOptions
 			if view != "storage" && view != "buffered-storage" {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				if view == "logical" || view == "current" {
@@ -98,7 +98,7 @@ func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
 	})
 	resident, ok := b.writeBehind.LookupNode("test:buffered")
 	require.True(t, ok, "the regression must exercise an unflushed overlay")
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for name, scan := range map[string]func(context.Context, StreamNodesOptions, func(*Node) error) error{
@@ -154,7 +154,7 @@ func TestQueryNodeScanNestedVisitorsKeepTheirOptions(t *testing.T) {
 		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2}}})
 		require.NoError(t, err)
 	}
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -199,7 +199,7 @@ func TestQueryNodeScanLogicalSnapshotsSkipStoredVectors(t *testing.T) {
 				b := newSidecarTestBadger(t)
 				tc.create(t, b, "test:lazy")
 				corruptFirstEmbeddingChunk(t, b, "test:lazy")
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				tx.snapshotTx.Discard()

@@ -27,7 +27,7 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 				}
 				return node
 			}
-			seed, err := b.BeginTransaction(t.Context())
+			seed, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, seed.SetNamespace("test"))
 			_, err = seed.CreateNode(t.Context(), doc("a"))
@@ -35,7 +35,7 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 			require.NoError(t, seed.Commit())
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
 
-			rename, err := b.BeginTransaction(t.Context())
+			rename, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, rename.SetNamespace("test"))
 			require.NoError(t, rename.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: doc("b"), Policy: ClientNodeEdits}))
@@ -47,7 +47,7 @@ func TestPR1655StaleCachedBodyIsReadAgainAtCommit(t *testing.T) {
 			b.nodeCache["test:x"] = doc("a")
 			b.nodeCacheMu.Unlock()
 
-			blind, err := b.BeginTransaction(t.Context())
+			blind, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer blind.Rollback()
 			require.NoError(t, blind.SetImplicit(implicit))

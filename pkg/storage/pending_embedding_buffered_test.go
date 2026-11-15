@@ -14,7 +14,7 @@ func TestPendingCandidatesBufferedFlush(t *testing.T) {
 	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
 	e.SetEmbeddingsEnabled(true)
 	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

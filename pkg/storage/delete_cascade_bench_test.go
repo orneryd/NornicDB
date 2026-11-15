@@ -44,7 +44,7 @@ func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
 		b.StopTimer()
 		hub := seed(i)
 		b.StartTimer()
-		tx, err := engine.BeginTransaction(b.Context())
+		tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}

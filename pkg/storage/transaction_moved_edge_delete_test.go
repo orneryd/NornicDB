@@ -40,7 +40,7 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				}
 				require.NoError(t, engine.CreateEdge(t.Context(), edge))
 				require.NoError(t, engine.FlushWriteBehind(context.Background()))
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))

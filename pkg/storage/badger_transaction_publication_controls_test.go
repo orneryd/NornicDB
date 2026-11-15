@@ -29,7 +29,7 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	_, err := engine.CreateNode(t.Context(), &Node{ID: keepID, Labels: []string{"Keep"}, Properties: map[string]interface{}{"value": "original"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), keepID, CascadeEdges))
 	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("staged-0")), Labels: []string{"Staged"}})
@@ -97,7 +97,7 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := createTestBadgerEngine(t)
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			switch {
@@ -112,7 +112,7 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 				require.NoError(t, peer.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 			}
 			stageReservedPublication(t, peer)
-			reader, err := engine.BeginTransaction(t.Context())
+			reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = reader.Rollback() })
 			require.NoError(t, reader.SetNamespace(peer.namespace))
@@ -144,7 +144,7 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 				if tc.node {
 					// Native bytes are published before normal cache maintenance.
 					// Each observation needs its own fresh durable snapshot.
-					fresh, err := engine.BeginTransaction(t.Context())
+					fresh, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = fresh.Rollback() })
 					_, err = fresh.GetNode(t.Context(), source)
@@ -172,13 +172,13 @@ func TestTransactionSnapshotReservedPeerMutation(t *testing.T) {
 func TestTransactionPinnedSnapshotDiscardedOnRollbackAndCommit(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	rolledBack, err := engine.BeginTransaction(t.Context())
+	rolledBack, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, rolledBack.snapshotTx)
 	require.NoError(t, rolledBack.Rollback())
 	require.Nil(t, rolledBack.snapshotTx)
 
-	committed, err := engine.BeginTransaction(t.Context())
+	committed, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, committed.snapshotTx)
 	require.NoError(t, committed.Commit())

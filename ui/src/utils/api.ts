@@ -1,3 +1,4 @@
+import {extractNodeFromResult} from "./nodeUtils";
 // NornicDB API Client
 
 // neo4j-driver ships a `browser` field in its package.json that swaps
@@ -1207,6 +1208,7 @@ class NornicDBClient {
       credentials: "include",
       body: JSON.stringify(body),
     });
+    if(!res.ok)throw new Error(await this.parseErrorMessage(res, `Similar search failed (${res.status})`));
     return await res.json();
   }
 
@@ -1584,29 +1586,33 @@ class NornicDBClient {
     nodeId: string,
     properties: Record<string, unknown>,
     database?: string,
-  ): Promise<{ success: boolean; error?: string }> {
+    removedProperties: string[] = [],
+  ): Promise<{ success: boolean; error?: string; node?: GraphNodePayload }> {
     const dbName =
       database != null && database !== ""
         ? database
         : await this.getDefaultDatabase();
 
-    // Build SET clause
+    const quoteProperty = (key: string) => "`" + key.replace(/`/g, "``") + "`";
+    // Build SET and REMOVE clauses for this explicit edit session.
     const setParts: string[] = [];
     const parameters: Record<string, unknown> = { nodeId };
     let paramIndex = 0;
 
     for (const [key, value] of Object.entries(properties)) {
       const paramName = `p${paramIndex}`;
-      setParts.push(`n.${key} = $${paramName}`);
+      setParts.push(`n.${quoteProperty(key)} = $${paramName}`);
       parameters[paramName] = value;
       paramIndex++;
     }
 
-    if (setParts.length === 0) {
+    if (setParts.length === 0 && removedProperties.length === 0) {
       return { success: true };
     }
 
-    const statement = `MATCH (n) WHERE id(n) = $nodeId OR n.id = $nodeId SET ${setParts.join(", ")} RETURN n`;
+    const setClause = setParts.length ? ` SET ${setParts.join(", ")}` : "";
+    const removeClause = removedProperties.length ? ` REMOVE ${removedProperties.map(key=>`n.${quoteProperty(key)}`).join(", ")}` : "";
+    const statement = `MATCH (n) WHERE id(n) = $nodeId OR n.id = $nodeId${setClause}${removeClause} RETURN n`;
 
     try {
       const result = await this.runCypher(
@@ -1622,7 +1628,10 @@ class NornicDBClient {
         };
       }
 
-      return { success: true };
+      const cells = result.results?.[0]?.data?.[0]?.row ?? [];
+      const node = cells.map(cell=>cell && typeof cell === 'object' ? extractNodeFromResult(cell as Record<string,unknown>) : null).find(value=>value!==null);
+      if(!node)return {success:false,error:'The record was not found. Refresh the workspace before trying again.'};
+      return { success: true, node };
     } catch (err) {
       return {
         success: false,

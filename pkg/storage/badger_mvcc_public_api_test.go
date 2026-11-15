@@ -23,7 +23,7 @@ func mvccPublicAPIFixture(t *testing.T) (*MemoryEngine, NodeID, NodeID, EdgeID) 
 	t.Helper()
 	engine := newTestMemoryEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	const aliceID = NodeID("test:mvcc-alice")

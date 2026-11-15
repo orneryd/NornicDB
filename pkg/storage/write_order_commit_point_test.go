@@ -27,7 +27,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	update := func(implicit bool, v string) error {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			return err
 		}

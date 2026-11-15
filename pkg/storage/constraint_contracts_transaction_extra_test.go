@@ -20,7 +20,7 @@ func TestBadgerTransaction_ConstraintContractsCountPendingEdges(t *testing.T) {
 	}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraintContractBundle(contract, nil, nil, false))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{}})
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestBadgerTransaction_ConstraintContractsRejectPendingRelationship(t *testi
 	}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraintContractBundle(contract, nil, nil, false))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:left", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)

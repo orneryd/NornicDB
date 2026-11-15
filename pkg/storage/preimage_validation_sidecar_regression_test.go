@@ -116,7 +116,7 @@ func TestWriteBehindPreimageValidationSkipsSeparateEmbeddingChunks(t *testing.T)
 			engine, id, chunks := preimageFixture(t, true)
 			physical := preimagePhysicalBody(t, engine, id)
 
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetImplicit(true))
@@ -163,7 +163,7 @@ func TestWriteBehindPreimageValidationStillRejectsStaleImages(t *testing.T) {
 			engine, id, chunks := preimageFixture(t, true)
 			physical := preimagePhysicalBody(t, engine, id)
 
-			staleTx, err := engine.BeginTransaction(t.Context())
+			staleTx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer staleTx.Rollback()
 			require.NoError(t, staleTx.SetImplicit(true))
@@ -173,7 +173,7 @@ func TestWriteBehindPreimageValidationStillRejectsStaleImages(t *testing.T) {
 			require.NoError(t, staleTx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: physical, After: after, Policy: ClientNodeEdits}))
 
 			// A peer replaces the predecessor after the stale frame observed it.
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, peer.SetImplicit(true))
 			require.NoError(t, peer.SetNamespace("test"))
@@ -218,7 +218,7 @@ func TestConstraintOnlyPreimageValidationStillRejectsStaleKey(t *testing.T) {
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "doc_n", Type: ConstraintUnique, Label: "Doc", Properties: []string{"n"}}))
 
 	physical := preimagePhysicalBody(t, engine, id)
-	staleTx, err := engine.BeginTransaction(t.Context())
+	staleTx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer staleTx.Rollback()
 	require.NoError(t, staleTx.SetImplicit(true))
@@ -227,7 +227,7 @@ func TestConstraintOnlyPreimageValidationStillRejectsStaleKey(t *testing.T) {
 	after.Properties["n"] = int64(2)
 	require.NoError(t, staleTx.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: physical, After: after, Policy: ClientNodeEdits}))
 
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, peer.SetImplicit(true))
 	require.NoError(t, peer.SetNamespace("test"))

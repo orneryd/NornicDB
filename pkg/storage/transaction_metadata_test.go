@@ -7,7 +7,7 @@ import (
 
 func TestTransaction_SetMetadata(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Set metadata
 	metadata := map[string]interface{}{
@@ -37,7 +37,7 @@ func TestTransaction_SetMetadata(t *testing.T) {
 
 func TestTransaction_SetMetadata_Merge(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Set initial metadata
 	tx.SetMetadata(map[string]interface{}{
@@ -65,7 +65,7 @@ func TestTransaction_SetMetadata_Merge(t *testing.T) {
 
 func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Create metadata > 2048 chars
 	largeString := strings.Repeat("x", 2100)
@@ -85,7 +85,7 @@ func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
 
 func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Commit transaction
 	tx.Commit()
@@ -99,7 +99,7 @@ func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
 
 func TestTransaction_GetMetadata_Copy(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	tx.SetMetadata(map[string]interface{}{
 		"app": "test",
@@ -118,7 +118,7 @@ func TestTransaction_GetMetadata_Copy(t *testing.T) {
 
 func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Set metadata
 	tx.SetMetadata(map[string]interface{}{
@@ -151,7 +151,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 
 func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	metadata := tx.GetMetadata()
 	if len(metadata) != 0 {
@@ -161,7 +161,7 @@ func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
 
 func TestTransaction_Metadata_WithOperations(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Set metadata before operations
 	tx.SetMetadata(map[string]interface{}{

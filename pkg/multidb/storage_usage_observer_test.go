@@ -183,7 +183,7 @@ func TestManagedUsageBufferedPublicationRetiresReservationOnce(t *testing.T) {
 	info := &DatabaseInfo{}
 	manager := &DatabaseManager{inner: engine, databases: map[string]*DatabaseInfo{"test": info}}
 	require.NoError(t, manager.initializeStorageUsage("test", engine, true, nil))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -235,7 +235,7 @@ func TestManagedUsageActualReadBoundaryFailures(t *testing.T) {
 			if pointRead {
 				require.NoError(t, manager.initializeStorageUsage("test", engine, false, faults))
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))

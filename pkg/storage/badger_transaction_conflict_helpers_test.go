@@ -11,7 +11,7 @@ import (
 
 func TestBadgerTransaction_PendingCreateNodeOperationIndexLocked(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -37,7 +37,7 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -64,7 +64,7 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx2.SetNamespace("test"))
 	tx2.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
@@ -93,7 +93,7 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -133,7 +133,7 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 
 func beginAdjacencyConflict(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -228,7 +228,7 @@ func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(
 		Properties: map[string]any{"k1": "v1", "k2": "v2"},
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -261,7 +261,7 @@ func TestBadgerTransaction_CheckEdgeUniqueness_CompositeMissingPropertyBranches(
 
 func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -305,7 +305,7 @@ func TestBadgerTransaction_NodeConstraintExtraBranches(t *testing.T) {
 
 func TestBadgerTransaction_BulkCreateEdges_NodeVisibleDeletedBranch(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -327,7 +327,7 @@ func TestBadgerTransaction_PinNamespaceFromIDLocked_RefreshFailureBranch(t *test
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	defer tx.Rollback()
@@ -354,7 +354,7 @@ func TestBadgerTransaction_Commit_OperationCallbacksMatrix(t *testing.T) {
 		Type:      "REL",
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -416,7 +416,7 @@ func TestBadgerTransaction_Commit_OperationCallbacksMatrix(t *testing.T) {
 
 func TestBadgerTransaction_Commit_WritesWithoutNamespaceBranch(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 

@@ -89,7 +89,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 			if updated {
 				current, err := disk.GetNode(t.Context(), "test:doc")
 				require.NoError(t, err)
-				tx, err := disk.BeginTransaction(t.Context())
+				tx, err := disk.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))

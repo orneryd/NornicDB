@@ -17,7 +17,7 @@ func TestLargeCommitRepairOwnsCompletionAfterRequestCancellation(t *testing.T) {
 			engine := openLargeCommitTestEngine(t, t.TempDir())
 			_, err := engine.CreateNode(t.Context(), &Node{ID: "test:repair-base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				err := tx.Rollback()

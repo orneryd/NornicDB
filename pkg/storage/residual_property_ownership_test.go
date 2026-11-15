@@ -33,7 +33,7 @@ func TestResidualPropertyOwnership(t *testing.T) {
 				_, err := b.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			} else {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(route == "buffered"))
 				_, err = tx.CreateNode(t.Context(), node)

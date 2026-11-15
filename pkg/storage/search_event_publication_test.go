@@ -90,7 +90,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), stored))
 	requirePublished(t, events, "node updated test:a", "UpdateNodeEmbeddingSidecar")
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": 2}}, Policy: ClientNodeEdits}))
@@ -139,7 +139,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:tx-delete"})
 		require.NoError(t, err)
 		events.reset()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:tx-delete", mode))

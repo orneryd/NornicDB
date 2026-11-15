@@ -105,7 +105,7 @@ func newForeignNumericReplayFixture(t *testing.T) *foreignNumericReplayFixture {
 // transaction on the source and returns the resulting OpBufferedCommit entry.
 func (f *foreignNumericReplayFixture) bufferedEdgeCommit(t *testing.T, mutate func(tx *BadgerTransaction) error) WALEntry {
 	t.Helper()
-	tx, err := f.source.BeginTransaction(t.Context())
+	tx, err := f.source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

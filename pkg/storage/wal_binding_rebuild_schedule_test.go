@@ -23,7 +23,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	require.NoError(t, err)
 	journal := fixtureowner.Own(t, NewWALEngine(source, w))
 	for _, item := range []struct{ id, name string }{{"rebuild:a", "alpha"}, {"rebuild:b", "beta"}} {
-		tx, e := source.BeginTransaction(t.Context())
+		tx, e := source.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, e)
 		require.NoError(t, tx.SetNamespace("rebuild"))
 		require.NoError(t, tx.SetImplicit(true))
@@ -61,7 +61,7 @@ func TestReviewR2RebuildWriteRebuildSameWAL(t *testing.T) {
 	continuation, err := NewWAL(walDir, DefaultWALConfig())
 	require.NoError(t, err)
 	continuedJournal := fixtureowner.Own(t, NewWALEngine(rebuilt, continuation))
-	tx, err := rebuilt.BeginTransaction(t.Context())
+	tx, err := rebuilt.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("rebuild"))
 	require.NoError(t, tx.SetImplicit(true))

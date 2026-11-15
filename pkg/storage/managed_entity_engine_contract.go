@@ -15,7 +15,7 @@ import "context"
 // EntityWriteBoundary so staged writes retain that policy on the same store.
 type ManagedEntityEngine interface {
 	Engine
-	BeginTransaction(ctx context.Context) (*BadgerTransaction, error)
+	BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error)
 	InitializeStoredEntityObserver(string, func(StoredEntitySnapshot) (StoredEntityObserver, error), StoredEntityReadBoundary) error
 	EntityCommitSubmitter
 	ManagedEntityRuntimeRegistry

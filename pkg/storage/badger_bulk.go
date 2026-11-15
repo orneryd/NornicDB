@@ -38,7 +38,7 @@ func (b *BadgerEngine) inBulkTransaction(ctx context.Context, namespace string, 
 	if err := b.EnsureNamespaceMVCC(namespace); err != nil {
 		return err
 	}
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	if err != nil {
 		return err
 	}

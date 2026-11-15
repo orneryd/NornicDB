@@ -37,7 +37,7 @@ func TestRelatedAckedOrderedGroupPopulationMatchesScalarRange(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []NodeID{"test:peer"}, before, "committed range control before the acknowledged update")
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

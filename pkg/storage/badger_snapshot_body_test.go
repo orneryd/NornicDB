@@ -21,7 +21,7 @@ func TestSnapshotOverlayVersionedBodyCaches(t *testing.T) {
 	require.NoError(t, err)
 	defer view.Close()
 
-	writer, err := b.BeginTransaction(t.Context())
+	writer, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, writer.SetNamespace("test"))
 	require.NoError(t, writer.SetImplicit(true))

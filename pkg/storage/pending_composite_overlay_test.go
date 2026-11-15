@@ -22,7 +22,7 @@ func TestTransactionPendingCompositeReadMatchesFullPass(t *testing.T) {
 	for _, pending := range []int{pendingIndexMinNodes - 2, 60} {
 		t.Run(fmt.Sprintf("pending=%d", pending), func(t *testing.T) {
 			engine := createTestBadgerEngine(t)
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			for i := 0; i < pending; i++ {

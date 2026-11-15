@@ -86,7 +86,7 @@ func finalScopeMissIndex(nodes int) int {
 // Badger batch.
 func seedFinalScopeGeneration(t *testing.T, b *BadgerEngine, nodes int) {
 	t.Helper()
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < nodes; i++ {
 		_, err := tx.CreateNode(t.Context(), &Node{
@@ -123,7 +123,7 @@ func seedFinalScopeUnrelated(t *testing.T, b *BadgerEngine) {
 // preparation batch carries affected facts.
 func finalScopeUpdateCommit(t *testing.T, b *BadgerEngine, nodes int, prefix string) error {
 	t.Helper()
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	for i := 0; i < nodes; i++ {
@@ -372,7 +372,7 @@ func TestLargeCommitPrepBatchesKeepPublishedPreimages(t *testing.T) {
 	keepEdges := []EdgeID{finalScopeKeepE()}
 	keep := captureFinalScopeCaches(b, keepIDs, keepEdges, finalScopeKeepLabel, finalScopeKeepType)
 
-	pinned, err := b.BeginTransaction(t.Context())
+	pinned, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
 
@@ -473,7 +473,7 @@ func TestLargeCommitPrepBatchesKeepPublishedPreimages(t *testing.T) {
 func finalScopeSupersedeCommit(t *testing.T, b *BadgerEngine, bulk int) error {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.UpdateGraphNode(ctx, NodeUpdateRequest{

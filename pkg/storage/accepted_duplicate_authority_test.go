@@ -17,7 +17,7 @@ func TestAcceptedDuplicateReplayReleasesBothPreparedAuthorities(t *testing.T) {
 	t.Cleanup(func() { _ = base.Close() })
 	_, err := base.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "before"}})
 	require.NoError(t, err)
-	blocker, err := base.BeginTransaction(t.Context())
+	blocker, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, blocker.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "blocker"}}, Policy: ClientNodeEdits}))
 	held, err := blocker.PrepareEntityCommit(context.Background(), EntityCommitRequest{LogicalID: blocker.ID})
@@ -81,7 +81,7 @@ func TestAcceptedDuplicateReplayReleasesBothPreparedAuthorities(t *testing.T) {
 	require.EqualValues(t, 1, events.Load(), "duplicate preparation never publishes another entity image")
 	// The losing prepared frame also retained authority. A fresh public
 	// transaction must acquire it after the shared terminal outcome.
-	next, err := base.BeginTransaction(t.Context())
+	next, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer next.Rollback()
 	require.NoError(t, next.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "writable"}}, Policy: ClientNodeEdits}))

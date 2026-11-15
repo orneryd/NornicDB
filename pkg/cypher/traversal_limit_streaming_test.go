@@ -53,7 +53,7 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	require.Len(t, result.Rows, 2)
 	require.Equal(t, 2, probe.startNodeVisits, "LIMIT should stop the start-node scan after two matching anchors")
 
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "traversal", separator: ":"}

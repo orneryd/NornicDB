@@ -165,12 +165,12 @@ func TestFabricValueFragmentRunsInTheStatement(t *testing.T) {
 
 type ownershipBeginCapture struct {
 	storage.Engine
-	begin   func(context.Context) (*storage.BadgerTransaction, error)
+	begin   func(context.Context, storage.BeginRequest) (*storage.BadgerTransaction, error)
 	started *storage.BadgerTransaction
 }
 
-func (engine *ownershipBeginCapture) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := engine.begin(ctx)
+func (engine *ownershipBeginCapture) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
+	tx, err := engine.begin(ctx, request)
 	engine.started = tx
 	return tx, err
 }

@@ -26,7 +26,7 @@ func TestWrittenImageNeverModifiesWriterMaps(t *testing.T) {
 						require.NoError(t, direct())
 						return
 					}
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, apply(tx))
 					require.NoError(t, tx.Commit())

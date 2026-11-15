@@ -105,7 +105,7 @@ func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 	head, err := e.GetNodeCurrentHead(context.Background(), "test:a")
 	require.NoError(t, err)
 
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
@@ -130,12 +130,12 @@ func TestBufferedRelationshipDeleteConflictsWithLaterCommit(t *testing.T) {
 	require.NoError(t, e.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	require.NoError(t, e.FlushWriteBehind(context.Background()))
 
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.DeleteEdge(t.Context(), "test:r"))
 
-	peer, err := e.BeginTransaction(t.Context())
+	peer, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, peer.SetImplicit(true))
 	require.NoError(t, peer.DeleteEdge(t.Context(), "test:r"))
@@ -166,7 +166,7 @@ func TestPrefixDeleteOfAnotherNamespaceKeepsOpenTransaction(t *testing.T) {
 			e := newOwnerTestEngine(t, writeBehind)
 			_, err := e.CreateNode(t.Context(), &Node{ID: "other:x"})
 			require.NoError(t, err)
-			tx, err := e.BeginTransaction(t.Context())
+			tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)

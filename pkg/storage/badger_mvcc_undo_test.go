@@ -67,7 +67,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	require.NoError(t, eng.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: id, Labels: []string{"L", "M"}, Properties: v2Props}}))
 	v2 := nodeHeadVersion(t, eng, id)
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	node, err := tx.GetNode(t.Context(), id)
@@ -130,7 +130,7 @@ func TestUndoHistoryRebuildsEdgeVersions(t *testing.T) {
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "K", Confidence: 0.75, Properties: map[string]any{"w": int64(2), "keep": "k", "extra": true}}}))
 	v2 := edgeHeadVersion(t, eng, id)
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	edge, err := tx.GetEdge(t.Context(), id)
@@ -168,7 +168,7 @@ func TestUndoHistoryUsesTheCommitsFinalState(t *testing.T) {
 	twiceV1 := nodeHeadVersion(t, eng, "test:twice")
 	goneV1 := nodeHeadVersion(t, eng, "test:gone")
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	for _, value := range []int64{2, 3} {
@@ -201,7 +201,7 @@ func TestUndoHistorySnapshotReader(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, eng.UpdateNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:s", Labels: []string{"N"}, Properties: map[string]any{"v": int64(2)}}}))
 
-	reader, err := eng.BeginTransaction(t.Context())
+	reader, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = reader.Rollback() }()
 	require.NoError(t, reader.SetNamespace("test"))
@@ -281,7 +281,7 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	_, err = plain.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	before := nodeHeadVersion(t, plain, id)
-	reader, err := plain.BeginTransaction(t.Context())
+	reader, err := plain.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = reader.Rollback() }()
 	require.NoError(t, reader.SetNamespace("test"))

@@ -27,11 +27,11 @@ func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: doctor2, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": true}})
 	require.NoError(t, err)
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	tx3, err := engine.BeginTransaction(t.Context())
+	tx3, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	count1 := countNodesWithBoolProperty(t, tx1, "Doctor", "on_call")
@@ -49,7 +49,7 @@ func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	require.NoError(t, tx2.Commit())
 	require.ErrorIs(t, tx3.Commit(), ErrConflict)
 
-	verifyTx, err := engine.BeginTransaction(t.Context())
+	verifyTx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer verifyTx.Rollback()
 	require.Equal(t, 0, countNodesWithBoolProperty(t, verifyTx, "Doctor", "on_call"))
@@ -68,9 +68,9 @@ func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
 
 	nodeID := NodeID(prefixTestID("anchored-read-node"))
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	_, err = tx1.CreateNode(t.Context(), &Node{
@@ -92,7 +92,7 @@ func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
 	_, err = tx2.GetNode(t.Context(), nodeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
-	tx3, err := engine.BeginTransaction(t.Context())
+	tx3, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx3.Rollback()
 
@@ -121,14 +121,14 @@ func TestTransaction_ScanRepeatabilityWithinSnapshot(t *testing.T) {
 				require.NoError(t, err)
 			}
 			ctx := context.Background()
-			txScan, err := engine.BeginTransaction(t.Context())
+			txScan, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer txScan.Rollback()
 			before, err := test.read(ctx, txScan)
 			require.NoError(t, err)
 			require.Len(t, before, 3)
 			beforeIDs := sortedNodeIDs(before)
-			txInsert, err := engine.BeginTransaction(t.Context())
+			txInsert, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer txInsert.Rollback()
 			_, err = txInsert.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID(test.idPrefix + "-new")), Labels: []string{test.label}, Properties: map[string]interface{}{"index": 99}})
@@ -137,7 +137,7 @@ func TestTransaction_ScanRepeatabilityWithinSnapshot(t *testing.T) {
 			after, err := test.read(ctx, txScan)
 			require.NoError(t, err)
 			require.Equal(t, beforeIDs, sortedNodeIDs(after))
-			txFresh, err := engine.BeginTransaction(t.Context())
+			txFresh, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer txFresh.Rollback()
 			fresh, err := test.read(ctx, txFresh)
@@ -166,10 +166,10 @@ func TestTransaction_NodeDeleteAndEdgeCreateConflict(t *testing.T) {
 			_, err = engine.CreateNode(t.Context(), &Node{ID: target, Labels: []string{"Node"}})
 			require.NoError(t, err)
 			// The transaction begun and staged first is the one that must lose.
-			first, err := engine.BeginTransaction(t.Context())
+			first, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer first.Rollback()
-			second, err := engine.BeginTransaction(t.Context())
+			second, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer second.Rollback()
 			txDelete, txCreateEdge := first, second
@@ -221,7 +221,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: firstEdgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
 
-	txRead, err := engine.BeginTransaction(t.Context())
+	txRead, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txRead.Rollback()
 
@@ -234,7 +234,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 
 	laterTarget := NodeID(prefixTestID("adjacency-snapshot-target-later"))
 	laterEdgeID := EdgeID(prefixTestID("adjacency-snapshot-edge-later"))
-	txInsert, err := engine.BeginTransaction(t.Context())
+	txInsert, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = txInsert.CreateNode(t.Context(), &Node{ID: laterTarget, Labels: []string{"Node"}})
 	require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 	require.Equal(t, sortedEdgeIDStrings(outBefore), sortedEdgeIDStrings(outAfter))
 	require.Empty(t, inAfter)
 
-	txFresh, err := engine.BeginTransaction(t.Context())
+	txFresh, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txFresh.Rollback()
 	freshOut, err := txFresh.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
@@ -270,9 +270,9 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
 
-	txDelete, err := engine.BeginTransaction(t.Context())
+	txDelete, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	txRead, err := engine.BeginTransaction(t.Context())
+	txRead, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txRead.Rollback()
 	// Pin the reader to the namespace, as its first read would, so it is
@@ -307,7 +307,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	_, err = engine.GetEdge(t.Context(), edgeID)
 	require.ErrorIs(t, err, ErrNotFound)
 
-	txFresh, err := engine.BeginTransaction(t.Context())
+	txFresh, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txFresh.Rollback()
 	_, err = txFresh.GetNode(t.Context(), target)
@@ -345,7 +345,7 @@ func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
 	worker := func() {
 		defer wg.Done()
 		for job := range jobs {
-			tx, err := engine.BeginTransaction(b.Context())
+			tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if err != nil {
 				select {
 				case errCh <- err:

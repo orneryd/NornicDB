@@ -19,7 +19,7 @@ func TestTransactionRelabelSkipsDeletedAndRewrittenRelationships(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:gone", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:kept", StartNode: "test:a", EndNode: "test:c", Type: "R", Properties: map[string]interface{}{"v": int64(1)}}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteEdge(t.Context(), "test:gone"))
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:kept", StartNode: "test:a", EndNode: "test:c", Type: "R", Properties: map[string]interface{}{"v": int64(2)}}}))

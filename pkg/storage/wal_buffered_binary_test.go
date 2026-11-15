@@ -62,7 +62,7 @@ func TestBufferedWALBinaryIndexPublicReplay(t *testing.T) {
 		_, err = dest.CreateNode(t.Context(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))
@@ -120,7 +120,7 @@ func TestBufferedWALForeignNumericIDsPublicReplay(t *testing.T) {
 	require.True(t, sourceFound && destFound)
 	require.NotEqual(t, sourceID, destID)
 
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

@@ -13,7 +13,7 @@ import (
 // retired the prepared frame and released its authority.
 func TestAcceptedIdentitySurvivesPreparedRetirement(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("identity"))
@@ -23,7 +23,7 @@ func TestAcceptedIdentitySurvivesPreparedRetirement(t *testing.T) {
 	require.NoError(t, err)
 	defer prepared.Abort()
 
-	accepted, _, err := AcceptEntityCommit(context.Background(), b, prepared)
+	accepted, _, err := AcceptEntityCommit(context.Background(), b, EntityTransactionRequest{Prepared: prepared})
 	require.NoError(t, err)
 	namespace, logicalID := accepted.Identity()
 	require.Equal(t, "identity", namespace)

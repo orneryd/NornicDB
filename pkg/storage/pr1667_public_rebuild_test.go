@@ -89,7 +89,7 @@ func TestPR1667PublicReadsDuringLabelRebuild(t *testing.T) {
 	require.ErrorIs(t, engine.StreamNodesByLabelProjectedInScope(canceled, "alpha:", "absent", nil, func(*storage.Node) error { t.Error("canceled callback ran"); return nil }), context.Canceled)
 	// A transaction pinned before readiness cannot borrow a later view's
 	// positive readiness proof after the rebuild publishes.
-	pinned, err := engine.BeginTransaction(t.Context())
+	pinned, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
 	require.NoError(t, pinned.SetNamespace("alpha"))

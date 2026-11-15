@@ -36,7 +36,7 @@ func relatedSynchronousKeyEngine(t *testing.T, c Constraint) *BadgerEngine {
 // relatedBufferedUpdate moves an acknowledged buffered node's constraint key.
 func relatedBufferedUpdate(t *testing.T, engine *BadgerEngine, id NodeID, properties map[string]any) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -50,7 +50,7 @@ func relatedBufferedUpdate(t *testing.T, engine *BadgerEngine, id NodeID, proper
 
 func relatedBufferedDeleteNode(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -61,7 +61,7 @@ func relatedBufferedDeleteNode(t *testing.T, engine *BadgerEngine, id NodeID) {
 
 func relatedBufferedUpdateEdgeToken(t *testing.T, engine *BadgerEngine, id EdgeID, properties map[string]any) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -75,7 +75,7 @@ func relatedBufferedUpdateEdgeToken(t *testing.T, engine *BadgerEngine, id EdgeI
 
 func relatedBufferedDeleteEdge(t *testing.T, engine *BadgerEngine, id EdgeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -119,7 +119,7 @@ func relatedAckedKeyEngine(t *testing.T, c Constraint) *BadgerEngine {
 
 func relatedAckedBufferedEdge(t *testing.T, engine *BadgerEngine, edge *Edge) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -132,7 +132,7 @@ func relatedAckedBufferedEdge(t *testing.T, engine *BadgerEngine, edge *Edge) {
 // still rejects the duplicate of the acknowledged key.
 func relatedStagedDuplicateRejected(t *testing.T, engine *BadgerEngine, node *Node, edge *Edge) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

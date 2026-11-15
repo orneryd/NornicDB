@@ -18,7 +18,7 @@ func TestResidualRetainedAuthorityAdmission(t *testing.T) {
 	before := &Node{ID: "test:retained", Labels: []string{"Retained"}, Properties: map[string]any{"k": "old"}}
 	_, err = b.CreateNode(t.Context(), before)
 	require.NoError(t, err)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

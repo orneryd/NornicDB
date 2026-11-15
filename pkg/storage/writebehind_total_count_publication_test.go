@@ -49,7 +49,7 @@ func TestWriteBehindTotalCountsDuringPublicationCallbacks(t *testing.T) {
 			read("edge")
 		}
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -83,7 +83,7 @@ func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -168,7 +168,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		}
 	})
 	engine.OnEdgeDeleted(func(EdgeID) { observed <- read() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -186,7 +186,7 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 		check(<-observed)
 	}
 	check(read())
-	noop, err := engine.BeginTransaction(t.Context())
+	noop, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, noop.SetImplicit(true))
 	require.NoError(t, noop.SetNamespace("test"))
@@ -216,7 +216,7 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	// that can consume a later ACK. Stop just the flusher before staging this
 	// crash fixture; WAL capture and the engine's commit path remain unchanged.
 	engine.writeBehind.Close()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

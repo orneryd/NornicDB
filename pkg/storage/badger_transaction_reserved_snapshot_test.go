@@ -15,7 +15,7 @@ import (
 func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	require.NoError(t, peer.DeleteEdge(t.Context(), edgeID))
@@ -26,7 +26,7 @@ func TestTransactionSnapshotExcludesReservedUnpublishedDelete(t *testing.T) {
 	require.NoError(t, engine.materializeMVCCCommit(t.Context(), singleBatchWriter(peer.badgerTx), version, peer.operations))
 	require.NoError(t, peer.flushBufferedWrites(t.Context(), singleBatchWriter(peer.badgerTx)))
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	require.NoError(t, reader.SetNamespace(peer.namespace))

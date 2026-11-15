@@ -51,7 +51,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				}
 				engine, wal := open()
 				initial := map[string]any{"v": float64(1), "time": time.Date(2026, 10, 15, 1, 2, 3, 0, time.UTC), "bytes": []byte{1, 2, 3}}
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Properties: initial})
@@ -64,7 +64,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				require.NoError(t, err)
 				edgeHead, err := engine.loadEdgeMVCCHead("test:r")
 				require.NoError(t, err)
-				tx, err = engine.BeginTransaction(t.Context())
+				tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))
@@ -220,7 +220,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 				return b, w
 			}
 			b, w := open()
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, tx.SetImplicit(true))

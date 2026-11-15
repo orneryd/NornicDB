@@ -25,7 +25,7 @@ func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 			edge := &Edge{ID: id, StartNode: node.ID, EndNode: "test:peer", Type: "REL"}
 			require.NoError(t, b.CreateEdge(t.Context(), edge))
 			readEdge := func() (*Edge, error) {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))
@@ -48,7 +48,7 @@ func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 				require.ErrorIs(t, err, ErrNotFound, "node recreation cannot revive detached edge")
 			})
 			t.Run("type", func(t *testing.T) {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))

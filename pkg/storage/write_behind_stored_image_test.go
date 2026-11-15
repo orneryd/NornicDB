@@ -40,7 +40,7 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 			vectors[c][i] = float32((c + i) % 7)
 		}
 	}
-	created, err := engine.BeginTransaction(t.Context())
+	created, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, created.SetImplicit(true))
 	// Bodies whose values the codec keeps as given are served without a decode.
@@ -58,7 +58,7 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 	require.NoError(t, created.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}))
 	require.NoError(t, created.CreateEdge(t.Context(), &Edge{ID: "test:plain-r", StartNode: "test:plain", EndNode: "test:a", Type: "LINK"}))
 	require.NoError(t, created.Commit())
-	rewrite, err := engine.BeginTransaction(t.Context())
+	rewrite, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, rewrite.SetImplicit(true))
 	require.NoError(t, rewrite.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"A"}, Properties: properties()}, Policy: ClientNodeEdits}))
@@ -288,7 +288,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

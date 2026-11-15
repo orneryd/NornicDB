@@ -86,7 +86,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 
 func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransaction) error) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetImplicit(true))
@@ -138,7 +138,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 	// Updating the same node in a later buffered commit must shadow the
 	// earlier version (a second create of the same ID now correctly
 	// conflicts via the overlay).
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -162,7 +162,7 @@ func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}})
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -192,7 +192,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 		})
 	}
 	for i := 0; i < 3; i++ {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
@@ -268,7 +268,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.Equal(t, 3, streamedEdges, "StreamEdgesByType must merge the overlay")
 
 	// A buffered delete of a node also hides it from label scans.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -296,7 +296,7 @@ func TestWriteBehind_ExplicitBeginDrainsBufferedWrites(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.Zero(t, engine.writeBehind.PendingOps())
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	node, err := tx.GetNode(t.Context(), "test:n1")
@@ -348,7 +348,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 		{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "R"},
 		{ID: "test:bc", StartNode: "test:b", EndNode: "test:c", Type: "R"},
 	} {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
@@ -361,7 +361,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.Equal(t, int64(2), mustEdgeCount(t, engine))
 
 	// Wipe batch 1: delete a, which detaches a->b.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -377,7 +377,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 
 	// Wipe batch 2: delete b. b->c goes, but a->b was already deleted and
 	// must not be counted or replayed again.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -408,7 +408,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	// Reseed and confirm the round trip converges.
 	bufferedCreate(t, engine, &Node{ID: "test:a2", Labels: []string{"N"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b2", Labels: []string{"N"}})
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -438,7 +438,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 
 	bufferedCreate(t, engine, &Node{ID: "test:a", Labels: []string{"N"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b", Labels: []string{"N"}})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -448,7 +448,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 
 	// Wipe batch 1: delete a (detaches a->b). Flush immediately: the
 	// generation is applied and removed from the buffer's overlay.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -458,7 +458,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 
 	// Wipe batch 2: delete b. The relationship is already tombstoned in
 	// Badger; the batch must not delete it again.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

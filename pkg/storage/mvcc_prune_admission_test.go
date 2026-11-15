@@ -89,7 +89,7 @@ func TestMVCCPruneNeverBlocksTransactionSnapshotRegistration(t *testing.T) {
 	// and reads through it while the prune is in the middle of its walk.
 	admitted := make(chan error, 1)
 	go func() {
-		tx, err := engine.BeginTransaction(context.Background())
+		tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 		if err != nil {
 			admitted <- err
 			return
@@ -124,7 +124,7 @@ func TestMVCCPruneNeverBlocksTransactionSnapshotRegistration(t *testing.T) {
 func TestMVCCPruneKeepsTransactionSnapshotRegisteredDuringPrune(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	ids := seedPruneHistory(t, engine, prefixTestID("prune-during"), 3, 3)
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	// Newer versions after the transaction's cut.
@@ -183,7 +183,7 @@ func TestMVCCPruneKeepsSnapshotAcrossDropAndRecreate(t *testing.T) {
 	id := NodeID("d7:n")
 	_, err := engine.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"body": "Old"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("d7"))

@@ -59,7 +59,7 @@ func newRefreshedReadFixture(t *testing.T) *refreshedReadFixture {
 	} {
 		require.NoError(t, engine.CreateEdge(ctx, edge), edge.ID)
 	}
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -217,7 +217,7 @@ func warmRefreshedReadRoutes(t *testing.T, f *refreshedReadFixture) {
 
 	matched, err := tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", []string{"peer"}, func(edge *Edge) bool {
 		return edge.Properties["peer"] == int64(1)
-	})
+	}, SnapshotEdgeMatch)
 	require.NoError(t, err)
 	require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(matched))
 
@@ -238,7 +238,7 @@ func commitPeerUpdates(t *testing.T, f *refreshedReadFixture) {
 	peerNode := func(id NodeID, mutate func(*Node)) {
 		t.Helper()
 		ctx := t.Context()
-		peer, err := f.engine.BeginTransaction(ctx)
+		peer, err := f.engine.BeginTransaction(ctx, OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, peer.SetNamespace("test"))
 		node, err := peer.GetNode(ctx, id)
@@ -250,7 +250,7 @@ func commitPeerUpdates(t *testing.T, f *refreshedReadFixture) {
 	peerEdge := func(id EdgeID, mutate func(*Edge)) {
 		t.Helper()
 		ctx := t.Context()
-		peer, err := f.engine.BeginTransaction(ctx)
+		peer, err := f.engine.BeginTransaction(ctx, OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, peer.SetNamespace("test"))
 		edge, err := peer.GetEdge(ctx, id)
@@ -545,7 +545,7 @@ func TestWriteOwnedReadImagesComposeLatestCommittedCollections(t *testing.T) {
 
 		matched, err := f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", []string{"peer"}, func(edge *Edge) bool {
 			return edge.Properties["peer"] == int64(2)
-		})
+		}, SnapshotEdgeMatch)
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:edge", "test:own-edge"}, edgeIDs(matched))
 	})
@@ -859,7 +859,7 @@ func TestWriteOwnedReadImagesApplyLiveVisibility(t *testing.T) {
 	for name, read := range map[string]func() ([]*Edge, error){
 		"all_edges": func() ([]*Edge, error) { return f.tx.AllEdges(ctx) },
 		"matcher": func() ([]*Edge, error) {
-			return f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", nil, func(*Edge) bool { return true })
+			return f.tx.MatchEdgesBetween(ctx, refreshedDocID, refreshedPartID, "HAS", nil, func(*Edge) bool { return true }, SnapshotEdgeMatch)
 		},
 		"type": func() ([]*Edge, error) { return f.tx.GetEdgesByType(ctx, "HAS") },
 		"outgoing": func() ([]*Edge, error) {

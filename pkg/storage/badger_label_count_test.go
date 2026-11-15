@@ -73,7 +73,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -90,7 +90,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "db1:t1", CascadeEdges))

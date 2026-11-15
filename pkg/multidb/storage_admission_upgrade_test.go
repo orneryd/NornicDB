@@ -23,7 +23,7 @@ func TestManagedCommitByteUpgradeAfterPreparationIsKnownConflict(t *testing.T) {
 			tracker := engine.(*sizeTrackingEngine)
 			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxNodes: 10}}))
 			begin := func() *storage.BadgerTransaction {
-				tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
+				tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace(db))
 				_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":pending"), Properties: map[string]any{"value": "pending"}})

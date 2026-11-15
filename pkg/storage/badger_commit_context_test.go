@@ -22,7 +22,7 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 		t.Fatalf("AddUniqueConstraint failed: %v", err)
 	}
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 		t.Fatalf("CommitContext with a live context failed: %v", err)
 	}
 
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBadgerTransactionCommitContextCancelsValidation(t *testing.T) {
 	}
 
 	// An already-cancelled context fails before any work.
-	tx3, err := engine.BeginTransaction(t.Context())
+	tx3, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}

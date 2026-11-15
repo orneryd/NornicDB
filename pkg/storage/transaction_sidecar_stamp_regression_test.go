@@ -20,7 +20,7 @@ func TestTerminalFailureClearedByIdempotentBodyUpdate(t *testing.T) {
 			if route == "direct" {
 				require.NoError(t, b.UpdateNode(t.Context(), NodeUpdateRequest{After: body}))
 			} else {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: body, Policy: ClientNodeEdits}))
 				require.NoError(t, tx.Commit())
@@ -56,7 +56,7 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 					meta["embedding_error"] = "permanent"
 				}
 				require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, chunks, meta, time.Time{})))
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				for i := 1; i <= writes; i++ {
 					v, e := tx.GetNode(t.Context(), n.ID)
@@ -92,7 +92,7 @@ func TestTransactionRetainedSidecarConflictsWithWorker(t *testing.T) {
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	n := sidecarTestNode(t, b, "conflict", map[string]any{"text": "source"}, at)
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	v, err := tx.GetNode(t.Context(), n.ID)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "errors", map[string]any{"text": "source"}, at)
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			v, err := tx.GetNode(t.Context(), n.ID)
@@ -150,7 +150,7 @@ func TestTransactionRetainedSidecarMetadataStates(t *testing.T) {
 			defer b.Close()
 			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			n := sidecarTestNode(t, b, "states", map[string]any{"text": "source"}, at)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			switch state {

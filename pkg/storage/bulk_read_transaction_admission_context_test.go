@@ -129,7 +129,7 @@ func TestBulkTransactionReadsCancelWaitingForTransactionLock(t *testing.T) {
 
 	for _, read := range transactionBulkReadCases() {
 		t.Run(read.name, func(t *testing.T) {
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -234,7 +234,7 @@ func TestBulkTransactionReadsKeepTransactionStateErrorPrecedence(t *testing.T) {
 
 	for _, read := range transactionBulkReadCases() {
 		t.Run(read.name, func(t *testing.T) {
-			closed, err := engine.BeginTransaction(t.Context())
+			closed, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, closed.Rollback())
 
@@ -242,7 +242,7 @@ func TestBulkTransactionReadsKeepTransactionStateErrorPrecedence(t *testing.T) {
 			require.ErrorIs(t, err, ErrTransactionClosed, "a closed transaction reports its closure, not an empty result")
 			require.Zero(t, countBulkReadItems(t, value))
 
-			detached, err := engine.BeginTransaction(t.Context())
+			detached, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = detached.Rollback() })
 			detached.clientDetached.Store(true)

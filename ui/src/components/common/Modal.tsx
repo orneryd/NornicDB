@@ -45,12 +45,12 @@ export function Modal({
     <dialog
       ref={dialog}
       onCancel={event=>{event.preventDefault();onCloseRef.current()}}
-      className="bg-transparent text-white p-0 max-w-none max-h-[90vh] backdrop:bg-black/60 backdrop:backdrop-blur-sm"
+      className={`fixed inset-0 m-auto w-[calc(100%-2rem)] ${sizeClasses[size]} bg-transparent text-white p-0 max-h-[90dvh] backdrop:bg-black/60 backdrop:backdrop-blur-sm`}
       aria-labelledby={title ? titleId : undefined}
     >
       {/* Modal Content */}
       <div
-        className={`relative bg-norse-deep border border-norse-rune rounded-xl p-6 ${sizeClasses[size]} mx-4 shadow-2xl w-full ${className}`}
+        className={`relative bg-norse-deep border border-norse-rune rounded-xl p-6 shadow-2xl w-full ${className}`}
         role="document"
       >
         {title && (

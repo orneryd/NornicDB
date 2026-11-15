@@ -44,7 +44,7 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 		go func(worker int) {
 			defer wg.Done()
 			for round := worker; round < b.N; round += workers {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					failures[worker] = err
 					return
@@ -73,7 +73,7 @@ func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 			b.Fatalf("worker%d: %v", worker, err)
 		}
 	}
-	reader, err := engine.BeginTransaction(b.Context())
+	reader, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 	if err != nil {
 		b.Fatal(err)
 	}

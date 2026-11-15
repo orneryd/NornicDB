@@ -24,7 +24,7 @@ func TestBufferedCommitPublicationBeforeReplayListener(t *testing.T) {
 			listenerPublication = append(listenerPublication, published)
 		}
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -61,7 +61,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 		observed = append(observed, node.ID)
 	})
 
-	rejected, err := engine.BeginTransaction(t.Context())
+	rejected, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer rejected.Rollback()
 	require.NoError(t, rejected.SetImplicit(true))
@@ -75,7 +75,7 @@ func TestRejectedBufferedCommitAllowsLaterPublication(t *testing.T) {
 	_, err = engine.GetStoredNode(t.Context(), "test:rejected-publication")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	accepted, err := engine.BeginTransaction(t.Context())
+	accepted, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer accepted.Rollback()
 	require.NoError(t, accepted.SetImplicit(true))

@@ -275,7 +275,7 @@ func pr1655StageBody(tx *BadgerTransaction, id NodeID, body string) error {
 // namespace's committed sequence afterwards.
 func pr1655SeedDoc(t *testing.T, b *BadgerEngine, id NodeID, body string) uint64 {
 	t.Helper()
-	seed, err := b.BeginTransaction(t.Context())
+	seed, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, seed.SetNamespace("test"))
 	_, err = seed.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"body": body}})
@@ -294,7 +294,7 @@ func TestPR1655CommitReadFixturesStayInert(t *testing.T) {
 	engine, fault := pr1655NewCommitReadFaultEngine(t, false)
 	pr1655SeedDoc(t, engine, "test:fixture-inert", "before")
 
-	rename, err := engine.BeginTransaction(t.Context())
+	rename, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, rename.SetNamespace("test"))
 	require.NoError(t, rename.SetMetadata(map[string]any{"fixture": true}))

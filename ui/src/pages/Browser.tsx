@@ -1,3 +1,4 @@
+import {useMediaQuery} from "../utils/useMediaQuery";
 import { useEffect, useId, useState, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router-dom";
 import { Terminal, Sparkles, Database, Share2 } from "lucide-react";
@@ -40,6 +41,8 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const route = useParams();
   const navigate = useNavigate();
   const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const compactInspector=useMediaQuery('(max-width: 1023px)');
+  const [inspectorOpen,setInspectorOpen]=useViewState('inspector',false);
   const [searchParams] = useSearchParams();
   const {
     stats,
@@ -79,8 +82,7 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const clearNodeSelection=()=>setSelection([]);
 
   const similarId=params.get('similar');
-  const findSimilar=(id:string)=>patch({similar:id});
-  const collapseSimilar=()=>patch({similar:null});
+  const findSimilar=(id:string)=>{if(params.get('similar')===id)void loadSimilar(id);else patch({similar:id});};
   useEffect(()=>{
     if(similarId)void loadSimilar(similarId);else clearSimilar();
     return ()=>clearSimilar();
@@ -90,7 +92,9 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const setActiveTab = (tab: string) => patch({tab: tab === 'query' ? null : tab});
   const [selectedRelationship, resolveRelationship] =
     useState<GraphEdgePayload | null>(null);
-  const setSelectedRelationship=(edge:GraphEdgePayload|null)=>{resolveRelationship(edge);patch({'graph.edge':edge?.id??null})};
+  const setSelectedRelationship=(edge:GraphEdgePayload|null)=>patch({'graph.edge':edge?.id??null});
+  const relationshipId=params.get('graph.edge');
+  useEffect(()=>{if(!relationshipId)resolveRelationship(null);},[relationshipId]);
   const [graphRootNodeId, setGraphRootNodeId] = useViewState<string | null>('graph.root',null);
   const [embedData, setEmbedData] = useState<EmbedData>({
     stats: null,
@@ -173,10 +177,18 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
     fetchDatabases();
   }, [fetchDatabases]);
 
-  // Sync URL ?database= with selected database (apply URL when list is loaded)
+  // Resolve the default once into the canonical database route before any workspace action.
   useEffect(() => {
-    setSelectedDatabase(route.database || searchParams.get("database") || null);
-  }, [route.database, searchParams, setSelectedDatabase]);
+    if(maintenance){setSelectedDatabase(searchParams.get('database')||null);return;}
+    if(route.database){setSelectedDatabase(route.database);return;}
+    let current=true;
+    api.getResolvedDatabaseName(searchParams.get('database')||undefined).then(database=>{
+      if(!current)return;
+      const next=new URLSearchParams(searchParams);next.delete('database');
+      navigate({pathname:`/workspace/${encodeURIComponent(database)}`,search:next.toString()},{replace:true});
+    }).catch(error=>{if(current)setResolutionError(error.message)});
+    return ()=>{current=false;};
+  }, [route.database, searchParams, setSelectedDatabase,maintenance,navigate]);
 
   useEffect(()=>{
     if(maintenance)return;
@@ -191,7 +203,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
 
   const handleDatabaseChange = (dbName: string) => {
     const value = dbName === "" ? null : dbName;
-    setSelectedDatabase(value);
     const next = new URLSearchParams(params);
     next.delete('database'); next.delete('results.expanded');
     next.delete('selected');next.delete('similar');next.delete('graph.root');next.delete('grid.query-results-grid');
@@ -228,18 +239,21 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const handleUpdateProperties = async (
     nodeId: string,
     props: Record<string, unknown>,
+    removedProperties: string[] = [],
   ) => {
-    return await api.updateNodeProperties(
+    const result = await api.updateNodeProperties(
       nodeId,
       props,
       selectedDatabase ?? undefined,
+      removedProperties,
     );
+    if(result.success && result.node)setSelectedNode(graphNodeToSearchResult(result.node));
+    return result;
   };
 
   const handleSelectSearchResult = (result: SearchResult | null) => {
-    setSelectedRelationship(null);
-    setSelectedNode(result);
-    void api.getResolvedDatabaseName(selectedDatabase ?? undefined).then(database=>navigate({pathname:`/workspace/${encodeURIComponent(database)}${result ? `/nodes/${encodeURIComponent(result.node.id)}` : ''}`,search:params.toString()}));
+    const next=new URLSearchParams(params);next.delete('graph.edge');next.delete('similar');next.delete('inspectorView');
+    void api.getResolvedDatabaseName(selectedDatabase ?? undefined).then(database=>navigate({pathname:`/workspace/${encodeURIComponent(database)}${result ? `/nodes/${encodeURIComponent(result.node.id)}` : ''}`,search:next.toString()}));
   };
 
   const handleSelectNodeData = (nodeData: {
@@ -258,7 +272,7 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   };
 
   const handleSelectGraphEdge = (edge: GraphEdgePayload) => {
-    setSelectedRelationship(edge);
+    if(params.get('graph.edge')===edge.id)resolveRelationship(edge);else setSelectedRelationship(edge);
   };
 
   const handleActivateGraphTab = () => {
@@ -284,8 +298,9 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   };
 
   return (
-    <div className="min-h-screen bg-norse-night flex flex-col">
+    <div className={`min-h-screen bg-norse-night flex flex-col ${maintenance ? "" : "workspace-prototype"}`}>
       <Header
+        workspace={!maintenance}
         stats={stats}
         connected={connected}
         onAIChatClick={() => setShowAIChat(true)}
@@ -312,12 +327,9 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
           <button type="button" disabled={embedTriggering || !selectedDatabase} onClick={()=>setShowRegenerateConfirm(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-400 disabled:opacity-50">{embedTriggering ? 'Starting…' : 'Regenerate database embeddings'}</button>
         </details>
         {embedMessage && <p role="status" className="text-norse-silver">{embedMessage}</p>}
-      </section> : <>
+      </section> : !route.database || selectedDatabase!==route.database ? <section className="p-6"><p role="status" className="text-norse-silver">Resolving database…</p>{resolutionError&&<p role="alert" className="text-red-300">{resolutionError}</p>}</section> : <>
       {resolutionError && <p role="alert" className="p-4 text-red-400">{resolutionError}</p>}
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Left Panel - Query/Search */}
-        <div className={activeTab==='graph'?"flex-1 min-w-0 border-r border-norse-rune flex flex-col":"w-full lg:w-1/2 border-r border-norse-rune flex flex-col"}>
+      <section className="workspace-context" aria-label="Database context">
           {/* Database selector - all queries run against this database */}
           <div className="flex items-center gap-2 px-4 py-2 border-b border-norse-rune bg-norse-shadow/30">
             <Database
@@ -346,6 +358,11 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
             </select>
           </div>
           <DatabaseSummary database={selectedDatabase} refreshKey={stats?.server?.uptime_seconds} />
+      </section>
+      {/* Main Content */}
+      <div className="workspace-body flex-1 flex flex-col lg:flex-row">
+        {/* Left Panel - Query/Search */}
+        <div className="workspace-activity flex-1 min-w-0 flex flex-col">
           {/* Tabs */}
           <div role="tablist" aria-label="Workspace mode" className="flex border-b border-norse-rune" onKeyDown={event=>{
             const tabs=['query','search','graph'];let index=tabs.indexOf(activeTab);
@@ -432,7 +449,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
               selectedNodeIds={selectedNodeIds}
               selectedNode={selectedNode}
               deleteError={deleteError}
-              expandedSimilar={expandedSimilar}
               onExecute={executeSearch}
               onNodeSelect={handleSelectSearchResult}
               onToggleSelect={toggleNodeSelection}
@@ -442,8 +458,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
                 setDeleteError(null);
                 setShowDeleteConfirm(true);
               }}
-              onFindSimilar={findSimilar}
-              onCollapseSimilar={collapseSimilar}
               deleting={deleting}
             />
           )}
@@ -464,7 +478,11 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
         </div>
 
         {/* Right Panel - Node Details */}
-        <div className={activeTab==='graph'?`w-full lg:w-80 flex flex-col bg-norse-shadow/30 ${selectedNode||selectedRelationship?'':'hidden'}`:"w-full lg:w-1/2 flex flex-col bg-norse-shadow/30"}>
+        <aside aria-label="Selected result" className={`workspace-inspector flex flex-col bg-norse-shadow/30 ${selectedNode || selectedRelationship ? "" : "hidden"}`}>
+          <details className="inspector-disclosure" open={!compactInspector || inspectorOpen} onToggle={event=>{if(compactInspector && event.currentTarget.open !== inspectorOpen)setInspectorOpen(event.currentTarget.open);}}>
+          <summary className="inspector-mobile-toggle">Selected result details</summary>
+          <div className="inspector-content">
+          <div className="inspector-caption">INSPECT SELECTED RESULT</div>
           <NodeDetailsPanel
             selectedNode={selectedNode}
             selectedRelationship={selectedRelationship}
@@ -477,12 +495,13 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
               handleSelectSearchResult(null);
             }}
             onFindSimilar={findSimilar}
-            onCollapseSimilar={collapseSimilar}
             onNodeSelect={handleSelectSearchResult}
             onUpdateProperties={handleUpdateProperties}
             onRefresh={handleRefresh}
           />
-        </div>
+          </div>
+          </details>
+        </aside>
       </div>
 
       </>}

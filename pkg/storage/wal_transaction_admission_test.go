@@ -21,7 +21,7 @@ func TestJournalTransactionRejectsBeforePublication(t *testing.T) {
 			if scenario == "foreign_transaction" {
 				staging = newTestEngine(t)
 			}
-			tx, err := staging.BeginTransaction(t.Context())
+			tx, err := staging.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))

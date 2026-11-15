@@ -119,7 +119,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 			check(b.UpdateNode(t.Context(), NodeUpdateRequest{After: node}))
 			parkBuffer()
 		}
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		check(err)
 		check(tx.SetNamespace("upgrade"))
 		check(tx.SetImplicit(true))
@@ -204,7 +204,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	wal, err := NewWAL(logDir, DefaultWALConfig())
 	check(err)
 	journal := NewWALEngine(source, wal)
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	check(err)
 	check(tx.SetNamespace("upgrade"))
 	check(tx.SetImplicit(true))

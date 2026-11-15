@@ -28,7 +28,7 @@ func BenchmarkPreparedVectorPropertyUpdate(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}

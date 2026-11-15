@@ -444,8 +444,8 @@ RETURN nodes(p), relationships(p), length(p)
 
 ```go
 // Uses the standard-library maps package and pkg/storage.
-func renameNode(engine *storage.BadgerEngine, nodeID storage.NodeID, name string) error {
-    tx, err := engine.BeginTransaction()
+func renameNode(ctx context.Context, engine *storage.BadgerEngine, nodeID storage.NodeID, name string) error {
+    tx, err := engine.BeginTransaction(ctx, storage.OrdinaryBegin)
     if err != nil {
         return err
     }
@@ -472,7 +472,7 @@ func renameNode(engine *storage.BadgerEngine, nodeID storage.NodeID, name string
 
 **Features Implemented**:
 
--  `BeginTransaction()` - Start new transaction
+-  `BeginTransaction(ctx, storage.OrdinaryBegin)` - Start new transaction; an autocommit schema statement passes `storage.AutocommitSchemaBegin` instead
 -  `Commit()` - Atomically apply all buffered operations
 -  `Rollback()` - Discard all buffered operations
 -  `CreateNode/UpdateGraphNode/DeleteGraphNode` - Node operations in transaction

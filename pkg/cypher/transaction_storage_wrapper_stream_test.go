@@ -24,7 +24,7 @@ func TestTransactionStorageWrapperStreamNodesWithOptions(t *testing.T) {
 		require.NoError(t, err)
 	}
 	stream := func(namespace string) []string {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		w := &transactionStorageWrapper{tx: tx, underlying: engine, namespace: namespace, separator: ":", mutatedNodeIDs: map[string]struct{}{}}

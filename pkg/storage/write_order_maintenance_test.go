@@ -39,7 +39,7 @@ func TestTemporalConstraintBackfillsBufferedNodes(t *testing.T) {
 	t.Cleanup(func() { _ = inner.Close() })
 	engine := NewNamespacedEngine(inner, "test")
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	tx, err := inner.BeginTransaction(t.Context())
+	tx, err := inner.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

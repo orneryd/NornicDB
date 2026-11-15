@@ -16,12 +16,14 @@ import { BASE_PATH, joinBasePath } from "../../utils/basePath";
 import {useViewState} from '../../utils/useUrlState';
 
 interface HeaderProps {
+  workspace?: boolean;
   stats: DatabaseStats | null;
   connected: boolean;
   onAIChatClick: () => void;
 }
 
 export function Header({
+  workspace = false,
   stats,
   connected,
   onAIChatClick,
@@ -48,7 +50,7 @@ export function Header({
     }
   };
   return (
-    <header className="bg-norse-shadow border-b border-norse-rune px-4 py-3">
+    <header className="workspace-header bg-norse-shadow border-b border-norse-rune px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex shrink-0 items-center gap-3">
           {/* NornicDB Logo - Interwoven threads with gold nexus */}
@@ -123,7 +125,7 @@ export function Header({
           </svg>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold text-white">NornicDB</h1>
+              <h1 className="text-lg font-semibold text-white">{workspace ? 'Workspace' : 'NornicDB'}</h1>
               {stats?.server?.version ? (
                 <span className="rounded-full border border-valhalla-gold/30 bg-valhalla-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-valhalla-gold">
                   v{stats.server.version}
@@ -131,13 +133,13 @@ export function Header({
               ) : null}
             </div>
             <p className="text-xs text-norse-silver">
-              The Graph Database That Learns
+              {workspace ? 'Query, search and inspect' : 'The Graph Database That Learns'}
             </p>
           </div>
         </div>
 
         {/* Connection Status */}
-        <div className="flex min-w-0 flex-1 basis-[42rem] flex-wrap items-center justify-end gap-2">
+        <div className="flex min-w-0 flex-1 basis-auto flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={onAIChatClick}

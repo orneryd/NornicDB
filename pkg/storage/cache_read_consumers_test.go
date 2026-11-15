@@ -16,7 +16,7 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 			t.Run(fmt.Sprintf("buffered=%v/%s", buffered, route), func(t *testing.T) {
 				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
@@ -26,7 +26,7 @@ func TestCachedNestedValuesAcrossPopulationReaders(t *testing.T) {
 				require.NoError(t, tx.CommitContext(context.Background()))
 				var reader *BadgerTransaction
 				if route == "transaction-point" {
-					reader, err = b.BeginTransaction(t.Context())
+					reader, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = reader.Rollback() })
 					require.NoError(t, reader.SetNamespace("test"))

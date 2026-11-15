@@ -38,7 +38,7 @@ func TestFinishPreparedReceipt(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true}))
 			require.NoError(t, err)
-			tx, err := base.BeginTransaction(t.Context())
+			tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))

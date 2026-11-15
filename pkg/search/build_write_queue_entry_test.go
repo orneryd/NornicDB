@@ -305,7 +305,7 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	svc.SetIndexFlags(false, false)
 	node := &storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "newterm"}}
 	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1, 0}}}
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: storage.CopyNode(node), Policy: storage.ClientNodeEdits}))
@@ -331,7 +331,7 @@ func TestBuildIndexesAcknowledgedWriteBehindNodes(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("nornic"))

@@ -20,19 +20,12 @@ interface SearchPanelProps {
   selectedNodeIds: Set<string>;
   selectedNode: SearchResult | null;
   deleteError: string | null;
-  expandedSimilar: {
-    nodeId: string;
-    results: SearchResult[];
-    loading: boolean;
-  } | null;
   onExecute: () => void;
   onNodeSelect: (result: SearchResult) => void;
   onToggleSelect: (nodeId: string) => void;
   onSelectAll: (nodeIds: string[]) => void;
   onClearSelection: () => void;
   onDeleteClick: () => void;
-  onFindSimilar: (nodeId: string) => void;
-  onCollapseSimilar: () => void;
   deleting?: boolean;
 }
 
@@ -46,15 +39,12 @@ export function SearchPanel({
   selectedNodeIds,
   selectedNode,
   deleteError,
-  expandedSimilar,
   onExecute,
   onNodeSelect,
   onToggleSelect,
   onSelectAll,
   onClearSelection,
   onDeleteClick,
-  onFindSimilar,
-  onCollapseSimilar,
   deleting = false,
 }: SearchPanelProps) {
   const inputId=useId();
@@ -70,8 +60,9 @@ export function SearchPanel({
   const searchTargetLabel = selectedDatabase ? selectedDatabase : "default";
 
   return (
-    <div className="flex-1 flex flex-col p-4 gap-4">
-      <p className="text-xs text-norse-silver">
+    <div className="workspace-search flex-1 flex flex-col p-4 gap-4">
+      <h2 className="text-sm font-semibold text-white">Find related information</h2>
+      <p className="text-xs text-norse-silver">Describe what you are looking for.
         Searching in: <span className="font-medium text-norse-silver">{searchTargetLabel}</span>
       </p>
       <form onSubmit={handleSubmit} className="flex gap-2">
@@ -104,12 +95,12 @@ export function SearchPanel({
 
       {/* Search Results */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <SelectionToolbar
+        {selectedNodeIds.size > 0 && <SelectionToolbar
           selectedCount={selectedNodeIds.size}
           onDelete={onDeleteClick}
           onClear={onClearSelection}
           deleting={deleting}
-        />
+        />}
 
         {/* Delete Error Display */}
         {deleteError && (
@@ -123,6 +114,7 @@ export function SearchPanel({
             <div className="mb-2">
               <input
                 type="checkbox"
+                aria-label="Select all search results"
                 checked={allSelected}
                 onChange={(e) => {
                   if (e.target.checked) {
@@ -143,15 +135,8 @@ export function SearchPanel({
               result={result}
               isSelected={selectedNodeIds.has(result.node.id)}
               isActive={selectedNode?.node.id === result.node.id}
-              expandedSimilar={
-                expandedSimilar?.nodeId === result.node.id
-                  ? expandedSimilar
-                  : undefined
-              }
               onSelect={() => onNodeSelect(result)}
               onToggleSelect={() => onToggleSelect(result.node.id)}
-              onFindSimilar={() => onFindSimilar(result.node.id)}
-              onCollapseSimilar={onCollapseSimilar}
             />
           ))}
 
