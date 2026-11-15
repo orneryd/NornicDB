@@ -30,6 +30,12 @@ func clearPublicationConfig() *nornicdb.Config {
 	cfg.EmbeddingWorker.MaxRetries = 0
 	cfg.EmbeddingWorker.BatchDelay = 0
 	cfg.EmbeddingWorker.TriggerDebounceDelay = 0
+	// The fixture orders its own setup against the startup warmup: the node is
+	// stored first, then clearPublicationSearch waits for the database's
+	// initial build and releases this gate. Holding the gate is the wiring
+	// contract Open documents for callers that must finish setup before warmup
+	// runs.
+	cfg.DeferSearchWarmup = true
 	return cfg
 }
 
@@ -54,6 +60,26 @@ func clearPublicationNode(t *testing.T, db *nornicdb.DB) {
 	require.NoError(t, err)
 }
 
+// clearPublicationSearch waits for the database's own initial index build and
+// returns the service it built. That build is the database's search lifecycle
+// owner, and it is the sequence that publishes readiness: a build another one
+// waits for leaves the rest of the sequence, publication included, to that
+// other build. Waiting on the database's build therefore establishes the
+// fixture's precondition, which a build of the service's own would race.
+func clearPublicationSearch(t *testing.T, db *nornicdb.DB) *search.Service {
+	t.Helper()
+	svc, err := db.EnsureSearchIndexes(context.Background(), "nornic", db.GetStorage(), nornicdb.SearchIndexBuildWait)
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+	require.True(t, svc.IsReady(), "the database's initial index build publishes search readiness")
+	// The node is stored and the initial build has completed, so the startup
+	// warmup this fixture held observes that completed build instead of
+	// starting another one.
+	db.MarkSearchWarmupReady()
+	require.NoError(t, svc.EnsureWarm(context.Background()))
+	return svc
+}
+
 // The serving vector index is a publication of the stored vectors, so it
 // follows the stored reset instead of preceding it: a clear the journal refuses
 // resets no node, and the index keeps serving the vectors storage still holds.
@@ -67,12 +93,7 @@ func TestRefusedEmbeddingClearKeepsServingIndex(t *testing.T) {
 
 	vector := clearPublicationVector()
 	clearPublicationNode(t, db)
-
-	svc, err := db.GetOrCreateSearchService("nornic", db.GetStorage())
-	require.NoError(t, err)
-	require.NotNil(t, svc)
-	require.NoError(t, svc.BuildIndexes(ctx))
-	require.NoError(t, svc.EnsureWarm(ctx))
+	svc := clearPublicationSearch(t, db)
 
 	options := search.DefaultSearchOptions()
 	options.Limit = 5
@@ -112,11 +133,7 @@ func TestCompletedEmbeddingClearPublishesAnEmptyIndex(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	clearPublicationNode(t, db)
-
-	svc, err := db.GetOrCreateSearchService("nornic", db.GetStorage())
-	require.NoError(t, err)
-	require.NoError(t, svc.BuildIndexes(ctx))
-	require.NoError(t, svc.EnsureWarm(ctx))
+	svc := clearPublicationSearch(t, db)
 	require.Equal(t, 1, svc.EmbeddingCount(), "the stored vector is served before the reset")
 
 	count, err := db.ClearAllEmbeddings()
