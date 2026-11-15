@@ -96,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recovery backup. Failed preparation leaves source files unchanged and cleans
   its staging directories; interrupted publication still resumes from backup.
 
+- Clustered entity writes that exceed replication journal capacity are rejected
+  before queue acceptance instead of reporting an unknown committed outcome.
+  Fitting writes retain asynchronous publication and existing recovery semantics.
 
 - Embedded Cypher transactions now retain their WAL publication owner when
   committing native storage. Durable create, update, delete and relationship

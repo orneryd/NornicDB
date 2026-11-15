@@ -57,12 +57,15 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 // lifecycle owner: enrolled before the goroutine exists, joined by Shutdown,
 // with that work's context for the application and its join. A sealed owner
 // rejects the command before it is recorded. Author: NOR-288 lane (Claude), 2026-10-30.
-func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome), validate func() error, work *lifecycle.WorkLifetime, apply func(context.Context, *Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
+func submitAcceptedByApply(ctx context.Context, owner Storage, cmd *Command, settle func(storage.CommitOutcome), validate func() error, work *lifecycle.WorkLifetime, apply func(context.Context, *Command, time.Duration) error, timeout time.Duration) (*storage.CommitReceipt, error) {
 	if err := validate(); err != nil {
 		return nil, err
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if err := checkCommandCapacity(ctx, owner, cmd); err != nil {
+		return nil, err
 	}
 	receipt, resolve := storage.NewCommitReceipt(settle)
 	// The work's context has no children, so it enrols without allocating
@@ -86,7 +89,7 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 	return receipt, nil
 }
 func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
-	return submitAcceptedByApply(ctx, cmd, settle, func() error {
+	return submitAcceptedByApply(ctx, r.storage, cmd, settle, func() error {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
 		return checkApplyReadiness(r.work.Closing(), r.started)
@@ -108,7 +111,7 @@ func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Co
 			return r.applyCommand(waitCtx, cmd)
 		}
 	}
-	return submitAcceptedByApply(ctx, cmd, settle, func() error {
+	return submitAcceptedByApply(ctx, r.storage, cmd, settle, func() error {
 		if err := checkApplyReadiness(r.work.Closing(), r.started.Load()); err != nil {
 			return err
 		}

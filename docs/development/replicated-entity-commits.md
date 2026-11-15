@@ -38,6 +38,26 @@ the accepted semantic record. Replaying a previously accepted transaction after
 prefix deletion does not resurrect its entities; a new write requires a new
 transaction identity.
 
+## Record-size admission
+
+Cluster journals use the standard 16 MiB frame policy. That limit applies to
+encoded records, not property lengths. The replication record contains base64
+command bytes, so its size can exceed the native semantic record's size.
+
+Leaders check the replication record's capacity before transferring a prepared
+command to an asynchronous worker or Raft queue. A capacity refusal is a definite
+rejection: it creates no commit record or graph mutation. It must not be reported
+as an accepted command with an unknown outcome. Accepted records still retain the
+existing completion and recovery guarantees if I/O, quorum waiting or a caller's
+wait fails later.
+
+Admission reserves metadata space for the largest sequence number, checksum and
+timestamp. Near the frame limit, a record may need a few more bytes of headroom
+than an immediate append at a small sequence. Sequence assignment still belongs
+to the append lock. The WAL format and configured record policy are unchanged.
+Fitting commands are measured from their existing byte lengths; admission does
+not re-encode or copy their payloads.
+
 ## Accepted-command journal identity
 
 An accepted entity transaction is identified by its database namespace and
