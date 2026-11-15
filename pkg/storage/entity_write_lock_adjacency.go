@@ -1,5 +1,13 @@
 package storage
 
+// adjacencyReadAuthorityLocked selects the common committed view for full
+// adjacency and projected between matching. Only a write-owned latest read
+// grants its returned relationships/endpoints last-committed point authority.
+func (tx *BadgerTransaction) adjacencyReadAuthorityLocked(nodeID NodeID) (latest, locked bool) {
+	locked = tx.readsLockedAdjacencyLatestLocked(nodeID)
+	return tx.readTS.IsZero() || tx.engine.writeBehind != nil || locked, locked
+}
+
 // readsLockedAdjacencyLatestLocked reports whether the transaction reads
 // nodeID's relationships as last committed instead of at its snapshot
 // (NOR-213). It does once it holds the node's write lock: its statements then

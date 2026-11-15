@@ -11,6 +11,12 @@ import (
 
 var _ CountStoreReadEngine = (*BadgerEngine)(nil)
 
+// countStoreReadView runs one count-store read against one physical view: the
+// engine's current view, or the snapshot an explicit transaction pinned. Both
+// halves of the read - the counter value and the visibility decision - run
+// against the same view, so they describe one point.
+type countStoreReadView func(read func(*badger.Txn) error) error
+
 // positionalSub maps a positional count family to its persisted tier byte.
 func positionalSub(kind CountStoreReadKind) byte {
 	if kind == CountStoreRelationshipsByEndLabel {
@@ -24,29 +30,42 @@ func positionalSub(kind CountStoreReadKind) byte {
 // persisted snapshot and one buffered view, under the count families' read
 // holds. A persisted count that cannot be decoded is repaired by its family's
 // canonical rebuild and read again, as the other derived-count readers do.
+//
+// A request carrying a Scope (CountStoreReadScope) belongs to one explicit
+// transaction and is answered at that transaction's snapshot instead
+// (CountStoreReadScope.readCountStore): the current counters describe that
+// transaction's rows only until a peer commits, and its snapshot's counters
+// describe them always. Such a read is never repaired from a newer view.
 func (b *BadgerEngine) ReadCountStore(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+	if request.Scope != nil {
+		return request.Scope.readCountStore(ctx, b, request)
+	}
 	if err := b.pendingNamespaceConflict(request.Namespace); err != nil {
 		return CountStoreRead{}, err
 	}
 	if err := b.ensureOpen(false); err != nil {
 		return CountStoreRead{}, err
 	}
-	answer, err := b.readCountStoreSnapshot(ctx, request)
+	answer, err := b.readCountStoreAt(ctx, request, b.withView)
 	if !errors.Is(err, errMalformedDerivedCount) {
 		return answer, err
 	}
 	if rebuildErr := b.rebuildCountStoreFamilyLocked(ctx, request.Kind); rebuildErr != nil {
 		return CountStoreRead{}, rebuildErr
 	}
-	return b.readCountStoreSnapshot(ctx, request)
+	return b.readCountStoreAt(ctx, request, b.withView)
 }
 
-// readCountStoreSnapshot holds the count families' read locks and answers the
-// request from one view and one buffered view. Both halves read the label
-// counts - the counter's own family lock orders the count against folds and
-// replay, and the label lock orders the visibility half the same way - so the
-// locks are taken in the publication path's order: label, then relationship.
-func (b *BadgerEngine) readCountStoreSnapshot(ctx context.Context, request CountStoreReadRequest) (CountStoreRead, error) {
+// readCountStoreAt answers the request from one view: the same counter kernel
+// for the engine's current view and for a transaction's pinned snapshot. It
+// holds the count families' read locks and, for a current-view read, the
+// buffered-read lock, and answers both halves from one view.
+//
+// Both halves read the label counts - the counter's own family lock orders the
+// count against folds and replay, and the label lock orders the visibility half
+// the same way - so the locks are taken in the publication path's order: label,
+// then relationship.
+func (b *BadgerEngine) readCountStoreAt(ctx context.Context, request CountStoreReadRequest, view countStoreReadView) (CountStoreRead, error) {
 	labelMu := b.namedCountMutex(countDeltaKindLabel)
 	if err := labelMu.RLockContext(ctx); err != nil {
 		return CountStoreRead{}, err
@@ -68,7 +87,7 @@ func (b *BadgerEngine) readCountStoreSnapshot(ctx context.Context, request Count
 	}
 	var answer CountStoreRead
 	var hidden bool
-	err := b.withView(func(txn *badger.Txn) error {
+	err := view(func(txn *badger.Txn) error {
 		count, err := b.sumCountStoreInTxn(ctx, txn, request)
 		if err != nil {
 			return err

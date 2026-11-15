@@ -368,8 +368,8 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 	// invisible to the pinned view. Read the latest overlaid engine view
 	// instead (PR #1043 read-overlay parity). A write-owned node also
 	// sees the latest committed adjacency after a later commit (NOR-213).
-	locked := tx.readsLockedAdjacencyLatestLocked(request.Node)
-	if tx.readTS.IsZero() || tx.engine.writeBehind != nil || locked {
+	latest, locked := tx.adjacencyReadAuthorityLocked(request.Node)
+	if latest {
 		edges, err := tx.engine.ReadAdjacentEdges(ctx, request)
 		if err == nil && locked {
 			tx.recordLatestEndpointsLocked(request.Node, edges)
@@ -399,7 +399,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
 	var cache *snapshotAdjacencyCache
 	switch request.Direction {
-	case AdjacentOutgoing:
+	case AdjacentOutgoing, AdjacentBetween:
 		cache = &tx.snapshotOutgoingAdjacency
 	case AdjacentIncoming:
 		cache = &tx.snapshotIncomingAdjacency
@@ -445,7 +445,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.C
 		// requested type it does not name excludes it.
 		var headers map[EdgeID]*Edge
 		var decided map[EdgeID]struct{}
-		if request.Headers || len(request.Types) > 0 {
+		if request.Headers || len(request.Types) > 0 || request.Direction == AdjacentBetween {
 			headers, decided, err = tx.engine.adjacentSnapshotHeadersInTxn(ctx, snapshot, request, tx.readTS)
 			if err != nil {
 				return err
@@ -481,13 +481,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.C
 					tx.cacheSnapshotEdgeByIDLocked(edge)
 				}
 			}
-			if edge == nil || !adjacentTypesAdmit(request.Types, edge.Type) {
-				continue
-			}
-			if request.Direction == AdjacentOutgoing && edge.StartNode != request.Node {
-				continue
-			}
-			if request.Direction == AdjacentIncoming && edge.EndNode != request.Node {
+			if !request.admits(edge) {
 				continue
 			}
 			// An entry that cannot decide the request at the read version leaves the

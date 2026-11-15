@@ -1,0 +1,10 @@
+- [x] Reproduce count/list/between disagreement after peer commits.
+- [x] Share the transaction's canonical adjacency authority and overlay.
+- [x] Add the approved opaque snapshot count request capability.
+- [x] Reuse one counter kernel for current and pinned reads, without a wrapper.
+- [x] Validate cut identity and compose staged deltas at consumption.
+- [x] Preserve custom reader errors/declines and avoid uncertified answers.
+- [x] Exercise detached handles, reader expiry and concurrent consumption.
+- [x] Document Go callers and scope limits.
+- [ ] Rebase and independently rerun focused/race checks.
+- [ ] Publish draft and resolve exact-head CI and duplicate findings.

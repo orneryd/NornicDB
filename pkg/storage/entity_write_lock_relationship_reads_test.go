@@ -103,6 +103,46 @@ func TestLockedNodeReadsRelationshipsAPeerCreated(t *testing.T) {
 	require.Empty(t, stale["headers"], "a transaction without the lock keeps the snapshot")
 }
 
+// A between read uses the same snapshot or write-lock authority as the other
+// adjacency readers, and a by-ID read resolves every relationship it returns.
+func TestLockedNodeBetweenListingAndPointReadAnswerTheSameRelationship(t *testing.T) {
+	for _, locked := range []bool{false, true} {
+		name := "snapshot"
+		if locked {
+			name = "write_locked"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			engine := newLockedAdjacencyEngine(t, false)
+			tx := beginPinnedAdjacencyReader(t, engine, 0)
+			require.NoError(t, engine.CreateEdge(ctx, &Edge{
+				ID: lockedAdjacencyEdge, StartNode: lockedAdjacencyNode, EndNode: lockedAdjacencyOther,
+				Type: "LINK", Properties: map[string]interface{}{"weight": int64(2)},
+			}))
+			if locked {
+				_, err := tx.LockNodeForWrite(ctx, lockedAdjacencyNode)
+				require.NoError(t, err)
+			}
+			// Do not warm another adjacency reader before the between lookup:
+			// doing so would hide a missing authority handoff in this path.
+			between, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: lockedAdjacencyNode, Other: lockedAdjacencyOther})
+			require.NoError(t, err)
+			if !locked {
+				require.Empty(t, between, "an unlocked reader retains the snapshot")
+				_, err = tx.GetEdge(ctx, lockedAdjacencyEdge)
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
+			require.Len(t, between, 1)
+			point, err := tx.GetEdge(ctx, between[0].ID)
+			require.NoError(t, err, "the point read resolves the relationship returned by the locked listing")
+			committed, err := engine.GetEdge(ctx, lockedAdjacencyEdge)
+			require.NoError(t, err)
+			require.Equal(t, committed, point)
+		})
+	}
+}
+
 func TestLockedNodeReadsRelationshipsAPeerDeleted(t *testing.T) {
 	ctx := t.Context()
 	engine := newLockedAdjacencyEngine(t, true)
@@ -188,4 +228,38 @@ func TestLockedNodeReadsTheOtherEndOfANewRelationship(t *testing.T) {
 
 	_, err = unlocked.GetNode(ctx, newEnd)
 	require.ErrorIs(t, err, ErrNotFound, "a transaction without the lock keeps the snapshot")
+}
+
+func TestBetweenPropertyMatchingUsesItsOwnSnapshotAndLockAuthority(t *testing.T) {
+	ctx := t.Context()
+	engine := newLockedAdjacencyEngine(t, false)
+	require.NoError(t, engine.CreateEdge(ctx, &Edge{ID: lockedAdjacencyEdge, StartNode: lockedAdjacencyNode, EndNode: lockedAdjacencyOther, Type: "LINK", Properties: map[string]any{"key": "before", "payload": "old body"}}))
+	tx := beginPinnedAdjacencyReader(t, engine, 1)
+	before, err := engine.GetEdge(ctx, lockedAdjacencyEdge)
+	require.NoError(t, err)
+	after := copyEdge(before)
+	after.Properties["key"] = "after"
+	after.Properties["payload"] = "new body"
+	require.NoError(t, engine.UpdateEdge(ctx, EdgeUpdateRequest{Before: before, After: after}))
+	match := func(want string) func(*Edge) bool {
+		return func(edge *Edge) bool { return edge.Properties["key"] == want }
+	}
+	current, err := engine.MatchEdgesBetween(ctx, lockedAdjacencyNode, lockedAdjacencyOther, "LINK", []string{"key"}, match("after"))
+	require.NoError(t, err)
+	require.Len(t, current, 1, "the peer's replacement is committed and warms the current body cache")
+	pinned, err := tx.MatchEdgesBetween(ctx, lockedAdjacencyNode, lockedAdjacencyOther, "LINK", []string{"key"}, match("before"))
+	require.NoError(t, err)
+	require.Len(t, pinned, 1)
+	require.Equal(t, "old body", pinned[0].Properties["payload"], "accepted candidates retain the complete snapshot body")
+	future, err := tx.MatchEdgesBetween(ctx, lockedAdjacencyNode, lockedAdjacencyOther, "LINK", []string{"key"}, match("after"))
+	require.NoError(t, err)
+	require.Empty(t, future, "a newer cache image cannot satisfy a snapshot predicate")
+	_, err = tx.LockNodeForWrite(ctx, lockedAdjacencyNode)
+	require.NoError(t, err)
+	refreshed, err := tx.MatchEdgesBetween(ctx, lockedAdjacencyNode, lockedAdjacencyOther, "LINK", []string{"key"}, match("after"))
+	require.NoError(t, err)
+	require.Len(t, refreshed, 1)
+	point, err := tx.GetEdge(ctx, lockedAdjacencyEdge)
+	require.NoError(t, err)
+	require.Equal(t, "new body", point.Properties["payload"], "matching under the write lock transfers current point authority")
 }

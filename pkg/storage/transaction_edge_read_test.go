@@ -32,14 +32,11 @@ func TestTransactionReadEdgesPreservesViewsAndPendingOverlay(t *testing.T) {
 	require.NoError(t, writer.Commit())
 	require.NoError(t, reader.CreateEdge(t.Context(), &Edge{ID: "test:pending", StartNode: "test:a", EndNode: "test:b", Type: "P"}))
 	require.NoError(t, reader.DeleteEdge(t.Context(), "test:old"))
-	for _, request := range []AdjacentEdgeRead{outgoing, incoming} {
+	for _, request := range []AdjacentEdgeRead{outgoing, incoming, between} {
 		edges, err := reader.ReadEdges(context.Background(), request)
 		require.NoError(t, err)
-		require.Equal(t, []string{"test:pending"}, sortedEdgeIDStrings(edges), "directional reads retain their pinned view and overlay")
+		require.Equal(t, []string{"test:pending"}, sortedEdgeIDStrings(edges), "every adjacency direction retains its pinned view and overlay")
 	}
-	edges, err := reader.ReadEdges(context.Background(), between)
-	require.NoError(t, err)
-	require.Equal(t, []string{"test:later", "test:pending"}, sortedEdgeIDStrings(edges), "between reads retain the engine view and overlay")
 	edge, err := reader.GetEdgeBetween(t.Context(), "test:a", "test:b", "P")
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("test:pending"), edge.ID)

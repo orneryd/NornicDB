@@ -195,11 +195,11 @@ func (tx *BadgerTransaction) GetEdge(ctx context.Context, edgeID EdgeID) (*Edge,
 
 // ReadEdges answers one adjacent-edge request from the transaction's view: its
 // snapshot (or write-behind, read-committed) view of the committed adjacency
-// overlaid with its own pending writes and excluding its pending deletes, just
-// as the transaction's other adjacent-edge reads merge them.
+// overlaid with its own pending writes and excluding its pending deletes. A
+// write-locked node reads current adjacency and transfers that authority to
+// the returned relationships and endpoints for subsequent by-ID reads.
 //
-// The request's direction selects the adjacency (a between read keeps the
-// engine's current view, as the engine's own between read answers it), its type
+// The request's direction selects the adjacency, its type
 // set filters the relationships before they are hydrated, and Headers asks for
 // ID, type and endpoints without the relationship records.
 //
@@ -237,13 +237,7 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request AdjacentEdge
 	if request.Headers && tx.engine.visibilityFiltered() {
 		request.Headers = false
 	}
-	var committed []*Edge
-	var err error
-	if request.Direction == AdjacentBetween {
-		committed, err = tx.engine.ReadAdjacentEdges(ctx, request)
-	} else {
-		committed, err = tx.getCommittedAdjacentEdgesLocked(ctx, request)
-	}
+	committed, err := tx.getCommittedAdjacentEdgesLocked(ctx, request)
 	if err != nil {
 		return nil, err
 	}

@@ -61,14 +61,18 @@ func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID
 	if err != nil {
 		return nil, err
 	}
-	return filterEdgesBetween(edges, startID, endID, edgeType, properties, match), nil
+	return filterEdgesBetween(ctx, edges, startID, endID, edgeType, properties, match)
 }
 
 // filterEdgesBetween returns the edges of edges from startID to endID of
 // type edgeType that match accepts, shown their properties projected.
-func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) []*Edge {
+func filterEdgesBetween(ctx context.Context, edges []*Edge, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	var matched []*Edge
+	var cancel bulkReadCancellation
 	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
 			continue
 		}
@@ -76,7 +80,7 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 			matched = append(matched, edge)
 		}
 	}
-	return matched
+	return matched, ctx.Err()
 }
 
 // MatchEdgesBetween matches the engine's edges between two nodes. Under
@@ -187,7 +191,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(ctx context.Context, startID, 
 			// A cached body is the committed edge GetEdge would return:
 			// match it without reading or decoding (the cache is read-only;
 			// a match is returned as a copy).
-			if cached, hit := b.cacheLoadEdge(edgeID); hit && b.writeBehind == nil {
+			if cached, hit := b.cacheLoadEdgeForRead(edgeID, txn.ReadTs()); hit && b.writeBehind == nil {
 				if cached.StartNode != startID || cached.EndNode != endID || cached.Type != edgeType ||
 					b.filterEntityByDecay(visibleRead, cached, nowNanos) || !match(cached) {
 					continue
@@ -248,16 +252,23 @@ func (b *BadgerEngine) committedMatchEdgesBetween(ctx context.Context, startID, 
 	if err != nil {
 		return nil, err
 	}
-	if len(legacy) > 0 {
+	if len(legacy) > 0 && len(views) == 0 {
+		// A borrowed view may be historical; its rows cannot repair current indexes.
 		_ = b.selfHealEdgeBetweenIndexes(ctx, legacy)
 	}
-	return filterEdgesBetween(legacy, startID, endID, edgeType, properties, match), nil
+	return filterEdgesBetween(ctx, legacy, startID, endID, edgeType, properties, match)
 }
 
 // MatchEdgesBetween matches the engine's edges as this transaction sees
 // them: its deleted edges are gone, and its created or updated ones replace
 // the stored versions, as in a between adjacent-edge request.
 func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if err := tx.clientOwnershipError(transactionRead); err != nil {
+		return nil, err
+	}
+	if match == nil {
+		return nil, ErrInvalidData
+	}
 	if err := tx.mu.LockContext(ctx); err != nil {
 		return nil, err
 	}
@@ -275,7 +286,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 	if err != nil {
 		return nil, err
 	}
-	matched, err := tx.engine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, func(edge *Edge) bool {
+	include := func(edge *Edge) bool {
 		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 			return false
 		}
@@ -283,12 +294,39 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 			return false
 		}
 		return match(edge)
-	})
+	}
+	var matched []*Edge
+	latest, locked := tx.adjacencyReadAuthorityLocked(startID)
+	switch {
+	case latest:
+		matched, err = tx.engine.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, include)
+	case tx.readsPinnedSnapshotBodyLocked():
+		// The native set index and projected bodies belong to the same pinned
+		// physical snapshot, so rejected candidates need no whole-body copy.
+		matched, err = tx.engine.committedMatchEdgesBetween(ctx, startID, endID, edgeType, properties, include, func(_ context.Context, read func(*badger.Txn) error) error {
+			return tx.withSnapshotViewLocked(read)
+		})
+	default:
+		// An explicitly historical logical cut cannot use the current-body
+		// set index. The canonical MVCC reader owns that version.
+		request := AdjacentEdgeRead{Direction: AdjacentBetween, Node: startID, Other: endID, Types: []string{edgeType}}
+		var committed []*Edge
+		committed, err = tx.getCommittedAdjacentEdgesLocked(ctx, request)
+		if err == nil {
+			matched, err = filterEdgesBetween(ctx, committed, startID, endID, edgeType, properties, include)
+		}
+	}
+	if err == nil && locked {
+		tx.recordLatestEndpointsLocked(startID, matched)
+	}
 	if err != nil {
 		return nil, err
 	}
 	now := DecayScoringTime()
 	for _, edge := range pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType || tx.engine.filterEntityByDecay(visibleRead, edge, now) {
 			continue
 		}
