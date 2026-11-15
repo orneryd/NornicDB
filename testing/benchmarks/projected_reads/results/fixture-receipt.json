@@ -1,0 +1,38 @@
+{
+  "prepared": {
+    "stock-combined": {
+      "source": "/tmp/combined-projection-rxg7ihvs/old",
+      "prepared": "/lab-data/settled-comparison-0jswgod6/stock-combined",
+      "normalizer": "/tmp/normalize-stock-fixture",
+      "experimental": false,
+      "after_levels": {
+        "6": {
+          "Tables": 107,
+          "Keys": 3943161,
+          "Disk": 219255225,
+          "Raw": 367639291,
+          "Stale": 10840
+        }
+      },
+      "closed_file_bytes": 458432607
+    },
+    "stock-northwind": {
+      "source": "/lab-data/profile-selected-false",
+      "prepared": "/lab-data/settled-comparison-0jswgod6/stock-northwind",
+      "normalizer": "/tmp/normalize-stock-fixture",
+      "experimental": false,
+      "after_levels": {
+        "0": {
+          "Tables": 4,
+          "Keys": 3921201,
+          "Disk": 162511204,
+          "Raw": 281075512,
+          "Stale": 0
+        }
+      },
+      "closed_file_bytes": 315617431
+    }
+  },
+  "original_sources_unchanged": true,
+  "purpose": "identical ordinary-format fixtures for both projected-read builds"
+}
