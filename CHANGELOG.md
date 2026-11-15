@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scoped CALL subqueries retain their imported variables inside FOREACH, and
   transactional CALL bodies preserve wildcard imports.
 
+- Prepared write-behind commits reserve memory before journal acceptance, so
+  refused writes cannot reappear during recovery. Accepted accounting uses the
+  completion lifetime even after request cancellation.
+
 - Property-index reads keep pending deletions and relabels hidden when an older
   write-behind generation retires its final candidate entries.
 
