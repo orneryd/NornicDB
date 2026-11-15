@@ -222,6 +222,27 @@
       "property.NewEncoder": 1
     }
   },
+  "pkg/heimdall/handler.go:Handler.runAgenticLoopWithTools": {
+    "read_domain": "input",
+    "contract": "Externally generated tool-call arguments; each number keeps the value the model emitted, so an INTEGER above 2^53 reaches the tool unchanged.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/heimdall/handler.go:parseActionEnvelope": {
+    "read_domain": "input",
+    "contract": "Externally generated action envelope whose parameters become tool parameters; the numbers keep the exact value the model emitted.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
+  "pkg/heimdall/plugin.go:tryParseActionResponse": {
+    "read_domain": "input",
+    "contract": "Externally generated action envelope for plugin-invoked SLM actions; the numbers keep the exact value the model emitted.",
+    "calls": {
+      "input.Unmarshal": 1
+    }
+  },
   "pkg/graphql/models/models.go:FloatArray.MarshalGQL": {
     "write_domain": "property",
     "contract": "External GraphQL scalar input and existing result/embedding JSON output, classified separately by direction.",
