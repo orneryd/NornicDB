@@ -397,7 +397,7 @@ func cloneBufferedCommit(record WALBufferedCommitData) WALBufferedCommitData {
 func durableNumericBindings(t *testing.T, dir string) map[string]uint64 {
 	t.Helper()
 	bindings := map[string]uint64{}
-	store, err := badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil))
+	store, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	require.NoError(t, store.View(func(tx *badger.Txn) error {
@@ -426,7 +426,7 @@ func durableNumericBindings(t *testing.T, dir string) map[string]uint64 {
 // reads the closed store directly, so it describes durable state only.
 func persistedNodeBody(t *testing.T, dir, id string) bool {
 	t.Helper()
-	store, err := badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil))
+	store, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil)))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	found := false
