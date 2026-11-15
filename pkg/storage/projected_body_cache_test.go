@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"sync"
@@ -10,15 +9,7 @@ import (
 	"testing"
 )
 
-func projectedReadsFlag(t *testing.T, enabled bool) {
-	t.Helper()
-	previous := config.IsProjectedReadsEnabled()
-	config.SetProjectedReadsEnabled(enabled)
-	t.Cleanup(func() { config.SetProjectedReadsEnabled(previous) })
-}
-
 func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	id := NodeID("test:partial-cache")
 	body := strings.Repeat("unrequested document body ", 1024)
@@ -88,7 +79,6 @@ func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheSnapshotAndInvalidation(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	id := NodeID("test:projected-version")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "old", "body": "old body"}})
@@ -112,7 +102,6 @@ func TestProjectedReadsProjectedBodyCacheSnapshotAndInvalidation(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheBudget(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	b.nodeCacheMaxEntries = 1
 	b.nodeBodyCacheMaxBytes = 2048
@@ -133,7 +122,6 @@ func TestProjectedReadsProjectedBodyCacheBudget(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheLatestAdmission(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	id := NodeID("test:projection-current")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "one", "body": "body"}})
@@ -169,7 +157,6 @@ func TestProjectedReadsProjectedBodyCacheLatestAdmission(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheConcurrentWrites(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	id := NodeID("test:projection-concurrent")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"sequence": int64(0), "body": "body"}})
@@ -210,7 +197,6 @@ func TestProjectedReadsProjectedBodyCacheConcurrentWrites(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheConcurrentLazyFill(t *testing.T) {
-	projectedReadsFlag(t, true)
 	b := createTestBadgerEngine(t)
 	id := NodeID("test:projection-union")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"a": int64(1), "b": int64(2), "c": int64(3)}})

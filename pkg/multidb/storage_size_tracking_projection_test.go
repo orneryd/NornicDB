@@ -1,7 +1,6 @@
 package multidb
 
 import (
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"strings"
@@ -9,9 +8,6 @@ import (
 )
 
 func TestSizeTrackingEngine_GetNodeProjected(t *testing.T) {
-	previous := config.IsProjectedReadsEnabled()
-	t.Cleanup(func() { config.SetProjectedReadsEnabled(previous) })
-	config.SetProjectedReadsEnabled(true)
 	manager, name := setupTestManager(t)
 	store, err := manager.GetStorage(name)
 	require.NoError(t, err)

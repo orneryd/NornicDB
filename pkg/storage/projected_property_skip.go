@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 	"io"
@@ -14,7 +13,7 @@ import (
 // io.ByteScanner, so the decoder has no buffered input to invalidate. Containers
 // retain the canonical decoder walk; selected values retain strict decoding.
 func skipUnselectedProperty(dec *msgpack.Decoder, reader *bytes.Reader, raw []byte) error {
-	if !config.IsProjectedReadsEnabled() || len(raw) == 0 {
+	if len(raw) == 0 {
 		return dec.Skip()
 	}
 	header, extra := 1, uint64(0)

@@ -9,12 +9,10 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProjectedReadsPreserveOrdinaryStorageFormat(t *testing.T) {
-	projectedReadsFlag(t, false)
 	dir := t.TempDir()
 	open := func() *BadgerEngine {
 		b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -26,7 +24,7 @@ func TestProjectedReadsPreserveOrdinaryStorageFormat(t *testing.T) {
 	_, err := b.CreateNode(t.Context(), &Node{ID: "test:existing", Labels: []string{"Doc"}, Properties: map[string]any{"key": "existing", "body": strings.Repeat("ordinary-format documentation ", 2048), "numbers": []int64{1, 2, 3, 4}}})
 	require.NoError(t, err)
 	require.NoError(t, b.Close())
-	config.SetProjectedReadsEnabled(true)
+
 	b = open()
 	var before []byte
 	require.NoError(t, b.db.View(func(txn *badger.Txn) error {
@@ -65,7 +63,7 @@ func TestProjectedReadsPreserveOrdinaryStorageFormat(t *testing.T) {
 	for _, table := range manifest.Tables {
 		require.Contains(t, []options.CompressionType{options.None, options.Snappy, options.ZSTD}, table.Compression)
 	}
-	config.SetProjectedReadsEnabled(false)
+
 	b = open()
 	node, err := b.GetNode(t.Context(), "test:new")
 	require.NoError(t, err)

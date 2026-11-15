@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -245,7 +244,7 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 	gen := b.nodeCacheGen.current()
 	var node *Node
 	var bodyVersion uint64
-	currentBody := config.IsProjectedReadsEnabled() && cacheMode == nodeReadCacheProjection && len(projection) > 0 && projection[0] != nil && !slices.Contains(projection[0], hasEmbeddingProperty)
+	currentBody := cacheMode == nodeReadCacheProjection && len(projection) > 0 && projection[0] != nil && !slices.Contains(projection[0], hasEmbeddingProperty)
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		node = nil
 		bodyVersion = 0

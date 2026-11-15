@@ -5,17 +5,12 @@ of an entity. They work with the ordinary NornicDB node and relationship formats
 They do not mean that Badger reads individual property bytes from a device:
 Badger still reads and decodes its normal blocks.
 
-## Enable the read optimizations
+## Default read behavior
 
-```sh
-NORNICDB_PROJECTED_READS_ENABLED=true nornicdb serve --data-dir ./data
-```
-
-The flag defaults to false. It enables safe indexed-candidate projection,
-retained property-use analysis and a lazily widened body cache. It does not
-select a writer, change schema versions, migrate existing data or enable an
-experimental table codec. Disabling it restores the ordinary read routing.
-The public projection APIs remain available with either setting.
+Safe indexed-candidate projection, retained property-use analysis and a lazily
+widened body cache run automatically. No feature flag or data conversion is
+required. These optimizations do not select a writer, change schema versions,
+migrate existing data or enable an experimental table codec.
 
 For omitted strings, byte arrays and opaque MessagePack extensions, the read path
 checks the span and advances the unbuffered reader without copying payload bytes
@@ -45,14 +40,14 @@ or new physical projection primitive is claimed by this integration.
 Experimental property compression, integer columns, columnar SST blocks and the
 offline conversion command remain on the separate storage-layout branch. They
 are not included here. The format-free branch contains none of their encoders
-or readers, so enabling projected reads requires neither converted files nor
+or readers, so projected reads require neither converted files nor
 experimental-format data.
 
 ## Qualification
 
 This integration is a draft for focused review. Storage tests exercise ordinary
-persisted data, unchanged primary bytes, ordinary table compression, reopening
-with the read flag disabled, cache widening, ownership, snapshot visibility and
+persisted data, unchanged primary bytes, ordinary table compression, reopening,
+cache widening, ownership, snapshot visibility and
 scan admission. Query tests cover indexed plans, residual predicates, whole-node
 fallback and forwarding through a managed database. Full-suite and performance
 qualification remain separate; results from the storage-layout experiment do

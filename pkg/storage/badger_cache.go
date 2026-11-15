@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -196,8 +195,7 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 	// Starting a map iterator can scan a large, sparsely populated cache even
 	// when the first loop body immediately breaks. Prove room before entering
 	// either iterator; eviction and its accounting remain owned by this path.
-	experimental := config.IsProjectedReadsEnabled()
-	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.nodeCache) >= b.nodeCacheMaxEntries && mode != nodeReadCacheQuery) {
+	if b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.nodeCache) >= b.nodeCacheMaxEntries && mode != nodeReadCacheQuery) {
 		for id := range b.nodeCache {
 			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
 				break
@@ -205,7 +203,7 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 			b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 		}
 	}
-	if !experimental || b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) >= b.nodeCacheMaxEntries && mode == nodeReadCacheQuery) {
+	if b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) >= b.nodeCacheMaxEntries && mode == nodeReadCacheQuery) {
 		for id := range b.queryNodeCache {
 			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
 				break
