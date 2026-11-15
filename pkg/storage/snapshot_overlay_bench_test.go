@@ -33,7 +33,7 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 				}
 			}
 			if pending {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}

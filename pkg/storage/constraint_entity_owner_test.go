@@ -148,7 +148,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
@@ -254,7 +254,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			// prepared transaction still stabilizes.
 			if endpoint {
 				for _, end := range []NodeID{"test:a", "test:b"} {
-					blocked, err := b.BeginTransaction(t.Context())
+					blocked, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, blocked.SetNamespace("test"))
 					node, err := blocked.GetNode(t.Context(), end)
@@ -273,7 +273,7 @@ func TestPreparedEntityAuthorityRetainsOnlyItsCanonicalHold(t *testing.T) {
 			require.Empty(t, entityAuthoritySnapshot(schema))
 			// With the prepared owner gone, the endpoint write it blocked proceeds.
 			if endpoint {
-				owner, err := b.BeginTransaction(t.Context())
+				owner, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, owner.SetNamespace("test"))
 				node, err := owner.GetNode(t.Context(), "test:a")
@@ -302,7 +302,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 		require.NoError(t, err)
 	}
 	prepareEdge := func(local, end string) *PreparedEntityCommit {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(local), StartNode: "test:hub", EndNode: NodeID(end), Type: "LINK", Properties: map[string]any{"uid": local}}))
@@ -352,7 +352,7 @@ func TestPreparedRelationshipEndpointSerializesConflictingWrites(t *testing.T) {
 	} {
 		t.Run(caseConflict.name, func(t *testing.T) {
 			owner := prepareEdge("test:e-"+caseConflict.name, "test:a")
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, caseConflict.build(tx))

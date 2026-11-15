@@ -25,7 +25,7 @@ func TestCacheProjectionNestedOwnership(t *testing.T) {
 				"right":   map[string]any{"values": []int64{3, 4}},
 				"omitted": "retained",
 			}}
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetImplicit(buffered))

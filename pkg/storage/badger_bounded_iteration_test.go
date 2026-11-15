@@ -46,7 +46,7 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 	}
 
 	readAll := func() time.Duration {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		start := time.Now()

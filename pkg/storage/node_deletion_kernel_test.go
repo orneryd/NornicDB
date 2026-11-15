@@ -52,7 +52,7 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 			if commit {
 				require.NoError(t, b.DeleteNode(t.Context(), id))
 			} else {
-				tx, e := b.BeginTransaction(t.Context())
+				tx, e := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, e)
 				require.NoError(t, tx.DeleteGraphNode(t.Context(), id, CascadeEdges))
 				require.NoError(t, tx.Rollback())
@@ -87,7 +87,7 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 			require.NoError(t, b.CreateEdge(t.Context(), &Edge{ID: "test:loop", StartNode: id, EndNode: id, Type: "SELF"}))
 			var result nodeDeletionResult
 			if staged {
-				tx, e := b.BeginTransaction(t.Context())
+				tx, e := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, e)
 				defer tx.Rollback()
 				_, e = accessMetaInTxn(tx.staged(), string(id), accessMetaWrite, &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 456, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true})

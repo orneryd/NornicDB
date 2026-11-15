@@ -61,7 +61,7 @@ func TestReplayedBufferedCommitReconcilesEdgeTypeCountsWithRestoredBody(t *testi
 	source := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{wal: true})
 	seedEdgeTypeDestination(t, source, "OldType")
 
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -130,7 +130,7 @@ func TestRecoveredEdgeTypeRelabelThenDeletedEdgeLeavesNoStaleTypeCount(t *testin
 		}},
 	}, snapshotPath))
 
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace(namespace))

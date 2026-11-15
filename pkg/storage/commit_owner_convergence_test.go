@@ -69,7 +69,7 @@ type invalidEntityPolicyStarter struct {
 	calls int
 }
 
-func (s *invalidEntityPolicyStarter) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
+func (s *invalidEntityPolicyStarter) BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error) {
 	s.calls++
 	return nil, ErrInvalidData
 }

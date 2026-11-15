@@ -81,7 +81,7 @@ func TestLargeCommit_CommitsBeyondOneBatchAndSurvivesReopen(t *testing.T) {
 	batches := countBatches(t)
 
 	const n = 6000
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, n)
 	require.NoError(t, tx.Commit())
@@ -111,7 +111,7 @@ func TestLargeCommit_DeleteBeyondOneBatch(t *testing.T) {
 	defer engine.Close()
 
 	const n = 6000
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, n)
 	// One node with many relationships: its deletion is one operation.
@@ -123,7 +123,7 @@ func TestLargeCommit_DeleteBeyondOneBatch(t *testing.T) {
 	require.NoError(t, tx.Commit())
 
 	batches := countBatches(t)
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges))
 	for i := 0; i < n; i++ {
@@ -186,7 +186,7 @@ func TestLargeCommit_NoPartialVisibilityAndReadersDoNotWait(t *testing.T) {
 		}
 	}()
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, n)
 	require.NoError(t, tx.Commit())
@@ -222,7 +222,7 @@ func TestLargeCommit_OrdinaryWritersWaitForPublication(t *testing.T) {
 	})
 	defer restore()
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
 	require.NoError(t, tx.Commit())
@@ -252,7 +252,7 @@ func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
 		}
 		return nil
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	stageLargeCreate(t, tx, 6000)
@@ -270,7 +270,7 @@ func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
 	// Both ordinary and large commits still work.
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:after", Labels: []string{"After"}})
 	require.NoError(t, err)
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
 	require.NoError(t, tx.Commit())
@@ -298,7 +298,7 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 		}
 		return nil
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	stageLargeCreate(t, tx, 6000)
@@ -317,7 +317,7 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), base.Properties["v"])
 	requireNoLargeCommitIntent(t, engine)
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
 	require.NoError(t, tx.Commit())
@@ -332,12 +332,12 @@ func TestLargeCommit_ConflictCoversTheWholeTransaction(t *testing.T) {
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, peer.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(3)}}, Policy: ClientNodeEdits}))
 	require.NoError(t, peer.Commit())
@@ -357,12 +357,12 @@ func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
 	const n = 6000
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, n)
 	require.NoError(t, tx.Commit())
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer reader.Rollback()
 	before, err := reader.GetNodesByLabel(context.Background(), "Big")
@@ -370,7 +370,7 @@ func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
 	require.Len(t, before, n)
 
 	batches := countBatches(t)
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
 		require.NoError(t, tx.DeleteGraphNode(t.Context(), largeCommitNodeID(i), CascadeEdges))
@@ -391,7 +391,7 @@ func TestDeleteByPrefix_FlushesPeriodicallyAndCompletes(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
 	const n = 15000
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
 		_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("drop:n-%d", i)), Labels: []string{"V"}, Properties: map[string]any{"id": int64(i)}})
@@ -581,7 +581,7 @@ func TestLargeCommit_ManyNewPropertyNames(t *testing.T) {
 		t.Run(shape.name, func(t *testing.T) {
 			dir := t.TempDir()
 			engine := openLargeCommitTestEngine(t, dir)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			for i := 0; i < shape.nodes; i++ {
 				props := make(map[string]any, shape.perNode)

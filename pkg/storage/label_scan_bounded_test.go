@@ -26,7 +26,7 @@ func labelTailScan(t *testing.T, eng *BadgerEngine, properties []string, snapsho
 			return eng.StreamNodesByLabelProjectedInScope(context.Background(), "test:", "Common", properties, visit)
 		}
 	}
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -156,7 +156,7 @@ func BenchmarkLabelScanStreaming(b *testing.B) {
 						eng.nodeBodyCacheMu.Unlock()
 						var tx *BadgerTransaction
 						if snapshot {
-							tx, err = eng.BeginTransaction(b.Context())
+							tx, err = eng.BeginTransaction(b.Context(), OrdinaryBegin)
 							require.NoError(b, err)
 							require.NoError(b, tx.SetNamespace("test"))
 							scan = func(visit func(*Node) error) error {

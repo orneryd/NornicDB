@@ -42,7 +42,7 @@ func TestTransactionSnapshotHeadMissingPhysicalBindingPreservesLogicalConflict(t
 	engine := createTestBadgerEngine(t)
 	_, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
 	require.NotEmpty(t, engine.mvccEdgeHeadKeyStringLookup(edgeID))
-	pinned, err := engine.BeginTransaction(t.Context())
+	pinned, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pinned.Rollback() })
 	readVersion := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 10}
@@ -86,7 +86,7 @@ func TestTransactionSnapshotHeadAbsentMetadataDoesNotInventConflict(t *testing.T
 		require.ErrorIs(t, err, badger.ErrKeyNotFound)
 		return nil
 	}))
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	conflict, err := reader.snapshotHeadConflict(bufferedEdgeEntity, "test:unpublished-edge", MVCCVersion{})
@@ -112,7 +112,7 @@ func TestTransactionSnapshotHeadInViewShortCircuitsAndPropagatesReadErrors(t *te
 	require.NoError(t, err)
 	require.True(t, conflict, "logical conflicts must short-circuit before accessing the view")
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	discarded := engine.db.testTxn(false)

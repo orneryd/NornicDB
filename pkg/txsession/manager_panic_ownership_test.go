@@ -17,8 +17,8 @@ type managerPanicCommitEngine struct {
 	started *storage.BadgerTransaction
 }
 
-func (e *managerPanicCommitEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := e.base.BeginTransaction(ctx)
+func (e *managerPanicCommitEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
+	tx, err := e.base.BeginTransaction(ctx, request)
 	e.started = tx
 	return tx, err
 }

@@ -15,7 +15,7 @@ func TestConstraintContracts_CurrentStateHelpers(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS", Properties: map[string]any{"kind": "friend"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -63,7 +63,7 @@ func TestConstraintContracts_EvaluateExpressions_Locked(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:works", StartNode: "test:left", EndNode: "test:right", Type: "WORKS_WITH", Properties: map[string]any{"kind": "peer", "weight": 2.0}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -150,7 +150,7 @@ func TestConstraintContracts_ValidateLocked_SuccessAndViolation(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "test:r1", StartNode: "test:p1", EndNode: "test:p2", Type: "WORKS_WITH", Properties: map[string]any{}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

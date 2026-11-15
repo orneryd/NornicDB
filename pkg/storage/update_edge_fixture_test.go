@@ -57,7 +57,7 @@ func (m updateEdgeMutation) apply(engine *BadgerEngine) error {
 	if !m.throughTransaction {
 		return engine.UpdateEdge(context.Background(), EdgeUpdateRequest{After: m.after})
 	}
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	if err != nil {
 		return err
 	}

@@ -43,7 +43,7 @@ func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
 		engine := openLargeCommitTestEngine(t, t.TempDir())
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
 		require.NoError(t, err)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		if large {
 			stageLargeCreate(t, tx, 6000)
@@ -96,7 +96,7 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 		}
 		return nil
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))
 	stageLargeCreate(t, tx, 6000)
@@ -117,12 +117,12 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	// commits (their new property names included) and large commits.
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:refused", Labels: []string{"Base"}})
 	require.ErrorContains(t, err, "refuses writes until restart")
-	small, err := engine.BeginTransaction(t.Context())
+	small, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = small.CreateNode(t.Context(), &Node{ID: "test:refused-tx", Labels: []string{"Base"}, Properties: map[string]any{"never_seen_before": int64(1)}})
 	require.NoError(t, err)
 	require.ErrorContains(t, small.Commit(), "refuses writes until restart")
-	big, err := engine.BeginTransaction(t.Context())
+	big, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, big, 6000)
 	require.ErrorContains(t, big.Commit(), "refuses writes until restart")
@@ -150,7 +150,7 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 // property name of its own.
 func largeCommitWithLateName(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:late", Labels: []string{"Late"}, Properties: map[string]any{"late_name": int64(1)}})

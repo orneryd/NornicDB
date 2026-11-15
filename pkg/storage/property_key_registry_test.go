@@ -54,7 +54,7 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 
 	// A transaction's writes make their names known as they are taken, and a
 	// rollback keeps them, as Neo4j's tokens survive it.
-	tx, err := badger.BeginTransaction(t.Context())
+	tx, err := badger.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "ns:t1", Properties: map[string]any{"g": int64(1)}})
 	require.NoError(t, err)

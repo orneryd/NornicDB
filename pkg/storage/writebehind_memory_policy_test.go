@@ -22,7 +22,7 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -48,7 +48,7 @@ func TestRejectedBufferedCommitClearsDetachedDictionaryEntries(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -93,7 +93,7 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

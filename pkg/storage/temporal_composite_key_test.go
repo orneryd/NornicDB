@@ -100,7 +100,7 @@ func TestBug_NodeTemporalCompositeKey_Transaction(t *testing.T) {
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(compositeTemporalConstraint()))
 
 	t.Run("two overlapping pending nodes", func(t *testing.T) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		_, err = tx.CreateNode(t.Context(), compositeTemporalNode("tx-a1", "t", "x", compositeDay(0), compositeDay(31)))
@@ -115,7 +115,7 @@ func TestBug_NodeTemporalCompositeKey_Transaction(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), compositeTemporalNode("c1", "c", "x", compositeDay(0), nil))
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		_, err = tx.CreateNode(t.Context(), compositeTemporalNode("c2", "c", "x", compositeDay(10), compositeDay(20)))
@@ -129,7 +129,7 @@ func TestBug_NodeTemporalCompositeKey_Transaction(t *testing.T) {
 	t.Run("checkTemporalConstraint adjacent windows", func(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), compositeTemporalNode("adj1", "adj", "x", compositeDay(0), compositeDay(10)))
 		require.NoError(t, err)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		c := compositeTemporalConstraint()

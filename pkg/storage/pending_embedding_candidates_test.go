@@ -57,7 +57,7 @@ func TestPendingCandidatesCommittedWriters(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(3).ID)
 	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), pendingCandidateNode(2))
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestPendingCandidatesCommittedWriters(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(2).ID)
 	require.Nil(t, requireEmbeddingCandidate(t, e.FindNodeNeedingEmbedding))
 
-	tx, err = e.BeginTransaction(t.Context())
+	tx, err = e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), pendingCandidateNode(1))
 	require.NoError(t, err)

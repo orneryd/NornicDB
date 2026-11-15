@@ -54,7 +54,7 @@ func TestNOR160TransactionEndpointVisibilityForOverlayImages(t *testing.T) {
 			engine := newTestMemoryEngine(t)
 			ctx := t.Context()
 			createEndpointFixture(t, engine, "test:start", "test:end")
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			id := NodeID("test:end")
@@ -124,7 +124,7 @@ func TestNOR160TransactionEndpointVisibilityAgreementAcrossSources(t *testing.T)
 	}
 	require.NoError(t, engine.CreateEdge(ctx, &Edge{ID: "test:r2", StartNode: "test:other", EndNode: "test:hidden", Type: "R"}))
 
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 

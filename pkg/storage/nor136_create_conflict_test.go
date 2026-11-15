@@ -47,7 +47,7 @@ func TestNOR136ExplicitIDCreateConflictWithBufferedPeerNode(t *testing.T) {
 	peerNode := &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"owner": "peer"}}
 
 	// 1. Begin and stage the explicit-ID create while the ID is still free.
-	writer, err := engine.BeginTransaction(ctx)
+	writer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	writerOpen := true
 	t.Cleanup(func() {
@@ -156,7 +156,7 @@ func TestNOR136ExplicitIDCreateConflictWithBufferedPeerEdge(t *testing.T) {
 		Properties: map[string]any{"owner": "writer"}}
 
 	// 1. Begin and stage the explicit-ID edge create while the ID is free.
-	writer, err := engine.BeginTransaction(ctx)
+	writer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	writerOpen := true
 	t.Cleanup(func() {

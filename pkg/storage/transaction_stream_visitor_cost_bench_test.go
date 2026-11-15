@@ -38,7 +38,7 @@ func BenchmarkTransactionStreamVisitorRetake(b *testing.B) {
 			Type:      "KNOWS",
 		}))
 	}
-	tx, err := engine.BeginTransaction(b.Context())
+	tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = tx.Rollback() })
 	_, err = tx.CreateNode(b.Context(), &Node{ID: "bench:pending", Labels: []string{"Person"}})

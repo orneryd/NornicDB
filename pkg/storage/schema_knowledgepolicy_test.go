@@ -730,7 +730,7 @@ func TestPolicySchemaTransactionFailures(t *testing.T) {
 			if boundary == "namespace" {
 				namespace = ""
 			}
-			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace)
+			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, OrdinaryBegin, namespace)
 
 			if boundary == "read" {
 				transaction.badgerTx.Discard()
@@ -759,7 +759,7 @@ func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	transaction, err := engine.BeginTransaction(t.Context())
+	transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	require.NoError(t, transaction.SetNamespace("native"))
@@ -785,7 +785,7 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	committed := engine.GetSchemaForNamespace("native")
 	require.NoError(t, committed.CreatePromotionProfile(validPromoProfile("boost")))
 	begin := func(namespace string) *BadgerTransaction {
-		transaction, err := engine.BeginTransaction(t.Context())
+		transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, transaction.SetNamespace(namespace))
 		t.Cleanup(func() { _ = transaction.Rollback() })

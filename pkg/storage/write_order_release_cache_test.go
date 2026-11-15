@@ -28,7 +28,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	restore := setCommitTailHook(func() {
 		once.Do(func() {
 			go func() {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				if err == nil {
 					err = tx.SetImplicit(true)
 				}
@@ -51,7 +51,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 	})
 	defer restore()
 
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())

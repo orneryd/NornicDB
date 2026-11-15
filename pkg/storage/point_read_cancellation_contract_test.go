@@ -94,7 +94,7 @@ func TestTransactionAdmissionHonorsCancelledRequestContext(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := engine.BeginTransaction(cancelled)
+	_, err := engine.BeginTransaction(cancelled, OrdinaryBegin)
 	require.ErrorIs(t, err, context.Canceled, "a cancelled request must not admit a transaction")
 }
 
@@ -104,7 +104,7 @@ func TestTransactionAdmissionHonorsCancelledRequestContext(t *testing.T) {
 func TestAcceptedTransactionKeepsItsOwnLifetime(t *testing.T) {
 	engine, _, _ := pointReadFixture(t)
 	admit, cancelAdmission := context.WithCancel(context.Background())
-	tx, err := engine.BeginTransaction(admit)
+	tx, err := engine.BeginTransaction(admit, OrdinaryBegin)
 	require.NoError(t, err)
 	cancelAdmission()
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -120,7 +120,7 @@ func TestAcceptedTransactionKeepsItsOwnLifetime(t *testing.T) {
 // completes.
 func TestTransactionStagingHonorsCancelledRequestContext(t *testing.T) {
 	engine, _, _ := pointReadFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 

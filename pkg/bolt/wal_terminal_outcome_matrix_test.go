@@ -26,11 +26,11 @@ type boltMatrixEngine struct {
 }
 
 func (e *boltMatrixEngine) GetWAL() *storage.WAL { return e.wal }
-func (e *boltMatrixEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *boltMatrixEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	if e.begin != nil {
 		return nil, e.begin
 	}
-	return e.MemoryEngine.BeginTransaction(ctx)
+	return e.MemoryEngine.BeginTransaction(ctx, request)
 }
 func (e *boltMatrixEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	if e.commit != nil {

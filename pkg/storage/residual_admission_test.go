@@ -25,7 +25,7 @@ func TestResidualCommitAdmissionCancellation(t *testing.T) {
 			if route == "change-log" {
 				b.SetChangeCapture("test", ChangeCaptureDiff)
 			}
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			var target sync.Locker

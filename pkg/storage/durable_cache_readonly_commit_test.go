@@ -102,7 +102,7 @@ func warmCacheFixture(t *testing.T) *BadgerEngine {
 // readOnlyTransaction reads one stored node and commits without writing.
 func readOnlyTransaction(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	_, getErr := tx.GetNode(t.Context(), id)
@@ -159,7 +159,7 @@ func TestUnknownRawTransactionWriteInvalidatesCaches(t *testing.T) {
 	engine := warmCacheFixture(t)
 	before := snapshotWarmCaches(engine)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("caches"))
@@ -179,7 +179,7 @@ func TestReadOnlyCommitPreservesPublicationDecision(t *testing.T) {
 		t.Run(map[bool]string{false: "accept", true: "reject"}[veto], func(t *testing.T) {
 			engine := warmCacheFixture(t)
 			before := snapshotWarmCaches(engine)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			_, err = tx.GetNode(t.Context(), "caches:a")

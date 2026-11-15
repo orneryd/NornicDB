@@ -18,7 +18,7 @@ func TestTransactionUnpinnedReadsIncludeLogicalHighWater(t *testing.T) {
 				_, err := engine.CreateNode(t.Context(), &Node{ID: NodeID(ns + ":before"), Labels: []string{"Before"}})
 				require.NoError(t, err)
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			_, err = engine.CreateNode(t.Context(), &Node{ID: "a:after", Labels: []string{"After"}})

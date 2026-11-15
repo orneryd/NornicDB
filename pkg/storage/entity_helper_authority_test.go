@@ -56,7 +56,7 @@ func TestNativeEntityHelpersRespectPreparedAuthority(t *testing.T) {
 			if tc.edge {
 				target, disjoint = "test:r", "test:s"
 			}
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			if tc.edge {
 				edge, err := tx.GetStoredEdge(t.Context(), EdgeID(target))
@@ -134,7 +134,7 @@ func TestAcceptedPhysicalFailureLetsAuthorityWaiterYieldRepairCut(t *testing.T) 
 			return func() {}, nil
 		}, nil
 	}, nil))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	node, err := tx.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)

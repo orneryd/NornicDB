@@ -110,7 +110,7 @@ func jsonPublicBufferedSource(b *testing.B, root string, nodes []*storage.Node) 
 	journal := storage.NewWALEngine(store, wal)
 	defer func() { jsonPublicStorageCheck(b, journal.Close()) }()
 	for _, node := range nodes {
-		tx, err := store.BeginTransaction(ctx)
+		tx, err := store.BeginTransaction(ctx, storage.OrdinaryBegin)
 		jsonPublicStorageCheck(b, err)
 		jsonPublicStorageCheck(b, tx.SetNamespace("jsonbench"))
 		jsonPublicStorageCheck(b, tx.SetImplicit(true))

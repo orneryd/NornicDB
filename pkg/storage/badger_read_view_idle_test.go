@@ -31,7 +31,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 					bufferedCreate(t, b, &Node{ID: "test:retired"})
 					require.NoError(t, b.FlushWriteBehind(context.Background()))
 				} else if mode == "other-namespace" {
-					tx, err := b.BeginTransaction(t.Context())
+					tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.SetImplicit(true))
 					require.NoError(t, tx.SetNamespace("other"))

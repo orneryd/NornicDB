@@ -230,10 +230,9 @@ func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(ctx context.Co
 }
 
 func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
-	if tx.commitReleaseWrite != nil {
-		release := tx.commitReleaseWrite
-		tx.commitReleaseWrite = nil
-		release()
+	if lease := tx.commitLease; lease != nil {
+		tx.commitLease = nil
+		lease.release()
 	}
 }
 

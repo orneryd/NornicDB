@@ -45,7 +45,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 			require.NoError(t, err)
 			source.SetBufferedCommitWAL(capture)
 			for i := 1; i <= 20; i++ {
-				tx, err := source.BeginTransaction(t.Context())
+				tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("legacy"))
 				require.NoError(t, tx.SetImplicit(true))
@@ -137,7 +137,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 	t.Cleanup(func() { _ = capture.Close() })
 	source.SetBufferedCommitWAL(capture)
 	for i := 0; i < 2; i++ {
-		tx, err := source.BeginTransaction(t.Context())
+		tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("prefix"))
 		require.NoError(t, tx.SetImplicit(true))
@@ -225,7 +225,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					for k := stage * 80; k < stage*80+160; k++ {
 						props[fmt.Sprintf("k%03d", k)] = int64(stage*1000 + k)
 					}
-					tx, err := source.BeginTransaction(t.Context())
+					tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))
@@ -301,7 +301,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = secondLog.Close() })
 			dest.SetBufferedCommitWAL(secondLog)
-			tx, err := dest.BeginTransaction(t.Context())
+			tx, err := dest.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("growth"))
 			require.NoError(t, tx.SetImplicit(true))

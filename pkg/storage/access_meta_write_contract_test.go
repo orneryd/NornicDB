@@ -73,7 +73,7 @@ func TestAccessMetaConditionalWriterStoredAndRetiredEntities(t *testing.T) {
 				written, err = b.WriteAccessMeta(context.Background(), request)
 				require.NoError(t, err)
 				require.True(t, written, "hidden stored entity remains eligible")
-				tx, txErr := b.BeginTransaction(t.Context())
+				tx, txErr := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, txErr)
 				require.NoError(t, tx.SetNamespace("test"))
 				if kind == StoredEntityNodeKind {

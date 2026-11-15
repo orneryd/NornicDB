@@ -13,7 +13,7 @@ func TestNOR160CompletePointSnapshotReuse(t *testing.T) {
 	ctx := t.Context()
 	id, err := engine.CreateNode(ctx, &Node{ID: "test:point-reuse", Labels: []string{"Held"}, Properties: map[string]any{"thing_id": "one", "n": int64(7)}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	projected, err := tx.GetNodeProjected(ctx, id, []string{"thing_id"})
@@ -43,7 +43,7 @@ func TestNOR160PointReuseKeepsSnapshotAndLiveVisibility(t *testing.T) {
 	ctx := t.Context()
 	id, err := engine.CreateNode(ctx, &Node{ID: "test:point-visible", Labels: []string{"Held"}, Properties: map[string]any{"n": int64(1)}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	first, err := tx.GetQueryNode(ctx, id)
@@ -178,7 +178,7 @@ func TestTransactionLabelAndPointReadsShareLiveVisibility(t *testing.T) {
 					if initiallyHidden {
 						require.NoError(t, b.SetManualSuppression(ctx, StoredEntityNodeKind, string(hidden), true))
 					}
-					tx, err := b.BeginTransaction(ctx)
+					tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetNamespace("test"))
@@ -247,7 +247,7 @@ func TestNOR160PendingEdgePointReadHonorsLiveSuppression(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, b.CreateEdge(ctx, &Edge{ID: "test:visible-edge", StartNode: "test:a", EndNode: "test:b", Type: "COHELD", Properties: map[string]any{"n": int64(1)}}))
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	edge, err := tx.GetEdge(ctx, "test:visible-edge")

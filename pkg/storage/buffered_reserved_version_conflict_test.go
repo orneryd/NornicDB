@@ -30,7 +30,7 @@ func TestBufferedReservedVersionDoesNotHideConcurrentUpdate(t *testing.T) {
 						return nil, nil
 					}, nil
 				}, nil))
-				older, err := b.BeginTransaction(t.Context())
+				older, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = older.Rollback() })
 				require.NoError(t, older.SetImplicit(true))
@@ -56,7 +56,7 @@ func TestBufferedReservedVersionDoesNotHideConcurrentUpdate(t *testing.T) {
 				case <-time.After(10 * time.Second):
 					t.Fatal("observer did not enter")
 				}
-				stale, err := b.BeginTransaction(t.Context())
+				stale, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer stale.Rollback()
 				require.NoError(t, stale.SetImplicit(implicit))

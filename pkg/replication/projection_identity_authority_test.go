@@ -51,7 +51,7 @@ type acceptedEntityFixture struct {
 
 func newAcceptedEntityCommand(t *testing.T, engine *storage.BadgerEngine, database, nodeID, requestID string) acceptedEntityFixture {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace(database))

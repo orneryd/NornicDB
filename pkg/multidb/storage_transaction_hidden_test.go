@@ -71,7 +71,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: total}}
 						}
 						require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
-						tx, err := base.BeginTransaction(t.Context())
+						tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 						require.NoError(t, err)
 						t.Cleanup(func() { _ = tx.Rollback() })
 						require.NoError(t, tx.SetNamespace(db))

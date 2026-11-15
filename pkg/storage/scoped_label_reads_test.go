@@ -108,7 +108,7 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 
 	// A transaction pinned to a database scans only that database's label
 	// entries, from the snapshot and, without a read version, the engine.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.Equal(t, "", tx.labelScanScopeLocked(), "unpinned")

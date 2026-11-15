@@ -172,7 +172,7 @@ func TestEdgeTypeCounts_TransactionPaths(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	seedEdgeCountNodes(t, engine, "a", "b")
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), testEdge("e1", "a", "b", "KNOWS")))
 	require.NoError(t, tx.CreateEdge(t.Context(), testEdge("e2", "b", "a", "KNOWS")))
@@ -182,7 +182,7 @@ func TestEdgeTypeCounts_TransactionPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), count)
 
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteEdge(t.Context(), EdgeID(prefixTestID("e1"))))
 	require.NoError(t, tx.Commit())
@@ -193,7 +193,7 @@ func TestEdgeTypeCounts_TransactionPaths(t *testing.T) {
 
 	// Transactional edge create + positional counters: start node gains label
 	// inside the same transaction before the edge is created.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("c")), Labels: []string{"Source"}})
 	require.NoError(t, err)

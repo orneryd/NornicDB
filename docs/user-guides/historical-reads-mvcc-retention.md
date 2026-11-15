@@ -31,7 +31,7 @@ Important behavior:
 NornicDB uses MVCC in two related ways:
 
 - explicit MVCC snapshot selectors let callers read historical committed state by commit time and commit sequence
-- storage transactions capture a read snapshot at `BeginTransaction()` and keep committed reads pinned to that snapshot for the life of the transaction
+- storage transactions capture a read snapshot at `BeginTransaction(ctx, storage.OrdinaryBegin)` and keep committed reads pinned to that snapshot for the life of the transaction
 
 That means:
 

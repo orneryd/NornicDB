@@ -36,7 +36,7 @@ func seedIncidentContextGraph(t testing.TB, engine *BadgerEngine, count int) Nod
 // write-behind retirement boundary (captureReadView).
 func bufferedIncidentScopeWrite(t testing.TB, engine *BadgerEngine) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetImplicit(true))
@@ -58,7 +58,7 @@ func TestStoredAdjacencyReadObservesCancellationAtHeldReadAdmission(t *testing.T
 	hub := seedIncidentContextGraph(t, engine, 2)
 	bufferedIncidentScopeWrite(t, engine)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 

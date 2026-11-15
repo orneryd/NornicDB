@@ -8,7 +8,7 @@ import (
 
 func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -18,7 +18,7 @@ func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	nodes, err := tx.GetNodesByLabel(context.Background(), "Child")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer peer.Rollback()
 	require.NoError(t, peer.SetNamespace("test"))
@@ -41,7 +41,7 @@ func TestAdvanceImplicitSnapshotAfterBatch(t *testing.T) {
 	require.Equal(t, int64(2), node.Properties["v"], "refused advancement preserves pending writes")
 	require.NoError(t, tx.Rollback())
 	require.Error(t, tx.AdvanceImplicitSnapshot())
-	explicit, err := engine.BeginTransaction(t.Context())
+	explicit, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer explicit.Rollback()
 	require.ErrorIs(t, explicit.AdvanceImplicitSnapshot(), ErrConflict)

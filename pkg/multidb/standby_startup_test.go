@@ -44,10 +44,10 @@ func TestNewDatabaseManager_ReadOnlyEngine_SkipsMetadataWrites(t *testing.T) {
 
 // This fixture exposes the required catalog receipt contract without exposing
 // opaque graph observation capabilities. Its existing leadership gate remains.
-func (e *leaderAwareEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *leaderAwareEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	return e.Engine.(interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
-	}).BeginTransaction(ctx)
+		BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error)
+	}).BeginTransaction(ctx, request)
 }
 func (e *leaderAwareEngine) CheckEntityCommitAdmission() error {
 	if !e.leader {

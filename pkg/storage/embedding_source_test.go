@@ -27,7 +27,7 @@ func TestManagedEmbeddingSourceTransaction(t *testing.T) {
 	meta := map[string]any{"has_embedding": true, "chunk_count": 1, embeddingsource.MetaKey: (embeddingsource.Source{Text: true, Include: []string{"text"}, Properties: []string{"id"}}).Metadata()}
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embeddingWriteback(t, b, node.ID, [][]float32{{1, 2}}, meta, node.UpdatedAt)))
 	update := func(key string) {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		n, err := tx.GetNode(t.Context(), node.ID)

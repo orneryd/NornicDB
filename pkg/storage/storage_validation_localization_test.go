@@ -106,7 +106,7 @@ func TestStorageValidationLocalizedTransactionErrorsPreserveSentinels(t *testing
 	t.Run("closed engine", func(t *testing.T) {
 		engine := &BadgerEngine{}
 		engine.work.CloseAdmission()
-		_, err := engine.BeginTransaction(t.Context())
+		_, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		requireStorageValidationLocalizedError(t, err, localization.MessageStorageTransactionEngineClosed, "engine is closed")
 		require.ErrorIs(t, err, ErrStorageClosed)
 	})

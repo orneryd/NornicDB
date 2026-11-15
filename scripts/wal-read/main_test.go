@@ -192,7 +192,7 @@ func TestWalReadUnpacksActualCompressedBufferedCommit(t *testing.T) {
 	t.Cleanup(func() { _ = wal.Close() })
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetBufferedCommitWAL(wal)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

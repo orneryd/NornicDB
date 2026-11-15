@@ -148,7 +148,7 @@ func TestCoreV2BeginSnapshotCaptureRetainsRequestCancellation(t *testing.T) {
 		err error
 	}
 	done := make(chan result, 1)
-	go func() { tx, err := e.BeginTransaction(ctx); done <- result{tx, err} }()
+	go func() { tx, err := e.BeginTransaction(ctx, OrdinaryBegin); done <- result{tx, err} }()
 	select {
 	case seen := <-waiting:
 		require.Same(t, ctx, seen)
@@ -178,7 +178,7 @@ func TestCoreV2BeginSnapshotCaptureRetainsRequestCancellation(t *testing.T) {
 	require.True(t, returned)
 	require.Nil(t, got.tx)
 	require.ErrorIs(t, got.err, context.Canceled)
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 }

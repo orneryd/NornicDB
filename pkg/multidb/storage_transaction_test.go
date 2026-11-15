@@ -18,7 +18,7 @@ func TestTransactionQuotaRateRefillAndCancellation(t *testing.T) {
 	tracker.checker.policy().writeRateLimiter = newRateLimiterWithClock(1, clock.Now)
 	commit := func(ctx context.Context, id string) error {
 		t.Helper()
-		tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
+		tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":" + id)})
 		require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestTransactionQuotaMergeAdmissionDoesNotWaitForWriter(t *testing.T) {
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddConstraint(storage.Constraint{Name: "quota_key", Type: storage.ConstraintUnique, Label: "Quota", Properties: []string{"id"}}))
 	require.NoError(t, storage.RefreshUniqueConstraintValuesForEngine(context.Background(), engine, schema))
-	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
+	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(db))
 	require.NoError(t, tx.PrepareMergeKey(context.Background(), "Quota", "id", int64(1)))

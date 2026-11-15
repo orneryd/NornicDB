@@ -131,10 +131,10 @@ func TestTransactionRelabelAndRewriteCountsMatchTheStoredGraphInEitherCommitOrde
 				t.Run(fmt.Sprintf("writeBehind=%v/%s/%s", writeBehind, rewrite.name, order), func(t *testing.T) {
 					engine := nor213PositionalCountEngine(t, writeBehind)
 					ctx := t.Context()
-					relabel, err := engine.BeginTransaction(ctx)
+					relabel, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 					require.NoError(t, err)
 					defer relabel.Rollback()
-					writer, err := engine.BeginTransaction(ctx)
+					writer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 					require.NoError(t, err)
 					defer writer.Rollback()
 					if order == "buffered-rewrite-then-relabel" {
@@ -173,7 +173,7 @@ func TestTransactionRewriteOffANodeDeletedBeforeCommitIsRefused(t *testing.T) {
 		t.Run(fmt.Sprintf("writeBehind=%v", writeBehind), func(t *testing.T) {
 			engine := nor213PositionalCountEngine(t, writeBehind)
 			ctx := t.Context()
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			edge, err := tx.GetEdge(ctx, "test:own")
@@ -229,7 +229,7 @@ func TestTransactionPositionalCountReadFallsBackForUnbalancedPositions(t *testin
 			engine := nor213PositionalCountEngine(t, false)
 			ctx := t.Context()
 			require.NoError(t, engine.UpdateNode(ctx, NodeUpdateRequest{After: &Node{ID: "test:z", Labels: []string{"After"}}}))
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))

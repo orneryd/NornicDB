@@ -28,7 +28,7 @@ func journalReplayEngine(t *testing.T, dir string) (*BadgerEngine, *WAL) {
 func journalReplayPrepare(t *testing.T, b *BadgerEngine, stage journalReplayStage) *PreparedEntityCommit {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	stage(t, ctx, tx)
 	prepared, err := tx.PrepareEntityCommit(ctx, EntityCommitRequest{LogicalID: tx.ID})

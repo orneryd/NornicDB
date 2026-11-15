@@ -29,7 +29,7 @@ func latestVisibleFixtureEngine(t *testing.T) (*MemoryEngine, NodeID, NodeID) {
 	t.Helper()
 	engine, aliceID, bobID, _ := mvccPublicAPIFixture(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < latestVisibleBulkPopulation; i++ {
 		_, err := tx.CreateNode(t.Context(), &Node{
@@ -146,7 +146,7 @@ func TestMVCCLatestVisibleNodesIterationCancellation(t *testing.T) {
 func TestMVCCLatestVisibleEdgesIterationLifetime(t *testing.T) {
 	engine, aliceID, bobID := latestVisibleFixtureEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < latestVisibleBulkPopulation; i++ {
 		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{

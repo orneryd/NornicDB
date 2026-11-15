@@ -72,7 +72,7 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 				_, err := be.CreateNode(t.Context(), &Node{ID: "test:committed", Labels: []string{"L"}})
 				require.NoError(t, err)
 			}
-			tx, err := be.BeginTransaction(t.Context())
+			tx, err := be.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.False(t, tx.HasPendingNodeMutations())

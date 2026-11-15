@@ -20,7 +20,7 @@ func TestTransactionEdgeCollectionsRemainGlobalAfterNamespaceWrite(t *testing.T)
 		}
 		require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: EdgeID(namespace + ":edge"), StartNode: NodeID(namespace + ":start"), EndNode: NodeID(namespace + ":end"), Type: "MATCHES"}))
 	}
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	_, err = reader.CreateNode(t.Context(), &Node{ID: "alpha:pending"})
@@ -59,7 +59,7 @@ func TestTransactionLabelLookupDoesNotDecodeUnrelatedNodes(t *testing.T) {
 		return txn.Set(nodeKey(unrelatedID), []byte{0xff})
 	}))
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 
@@ -87,7 +87,7 @@ func TestTransactionEdgeTypeLookupDoesNotDecodeUnrelatedEdges(t *testing.T) {
 		return txn.Set(edgeKey(unrelatedID), []byte{0xff})
 	}))
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 
@@ -116,7 +116,7 @@ func TestTransactionIndexedLookupsReturnMatchingCandidateDecodeErrors(t *testing
 	engine.cacheDeleteNode(nodeID, nodeCacheBodyOnly)
 	engine.cacheDeleteEdge(edgeID)
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	_, err = reader.GetNodesByLabel(context.Background(), "Target")
@@ -166,7 +166,7 @@ func TestTransactionIndexedLookupsIgnoreMalformedAndStaleIndexEntries(t *testing
 	require.NoError(t, err)
 	require.Len(t, allEdges, 2)
 
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reader.Rollback() })
 	nodes, err := reader.GetNodesByLabel(context.Background(), "Target")
@@ -225,7 +225,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 
 	start, target, edgeID := seedSnapshotAdjacencyGraph(t, engine, 200)
 
-	txRead, err := engine.BeginTransaction(t.Context())
+	txRead, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txRead.Rollback()
 	require.False(t, txRead.readTS.IsZero(), "read tx must pin a snapshot version")
@@ -242,7 +242,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 	// Commit a second edge from start in a concurrent transaction.
 	laterTarget := NodeID(prefixTestID("snap-adj-target-later"))
 	laterEdgeID := EdgeID(prefixTestID("snap-adj-edge-later"))
-	txInsert, err := engine.BeginTransaction(t.Context())
+	txInsert, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = txInsert.CreateNode(t.Context(), &Node{ID: laterTarget, Labels: []string{"Node"}})
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestTransaction_SnapshotAdjacencyIsNodeLocalAndConsistent(t *testing.T) {
 		"snapshot read must be stable across a concurrent commit")
 
 	// A fresh transaction sees both edges.
-	txFresh, err := engine.BeginTransaction(t.Context())
+	txFresh, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer txFresh.Rollback()
 	freshOut, err := txFresh.ReadEdges(context.Background(), AdjacentEdgeRead{Node: start})
@@ -272,7 +272,7 @@ func TestTransaction_SnapshotAdjacencyRejectsUnknownDirection(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	start, _, _ := seedSnapshotAdjacencyGraph(t, engine, 1)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.False(t, tx.readTS.IsZero(), "read tx must pin a snapshot version")
@@ -291,7 +291,7 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 	engine := createTestBadgerEngine(t)
 	start, target, edgeID := seedSnapshotAdjacencyGraph(t, engine, 1)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -334,7 +334,7 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -393,7 +393,7 @@ func BenchmarkTransaction_LabelLookup(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			tx, err := engine.BeginTransaction(b.Context())
+			tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if err != nil {
 				b.Fatal(err)
 			}

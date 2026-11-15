@@ -24,7 +24,7 @@ func TestTransactionCreationTimesRegression(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				eng := newTestMemoryEngine(t)
 				t.Cleanup(func() { require.NoError(t, eng.Close()) })
-				tx, err := eng.BeginTransaction(t.Context())
+				tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				before := time.Now()

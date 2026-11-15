@@ -91,7 +91,7 @@ func BenchmarkTransactionWrapperAdjacency(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		tx, err := base.BeginTransaction(b.Context())
+		tx, err := base.BeginTransaction(b.Context(), storage.OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func BenchmarkTransactionWrapperCount(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			tx, err := base.BeginTransaction(b.Context())
+			tx, err := base.BeginTransaction(b.Context(), storage.OrdinaryBegin)
 			if err != nil {
 				b.Fatal(err)
 			}

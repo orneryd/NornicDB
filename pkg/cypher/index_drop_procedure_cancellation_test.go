@@ -117,9 +117,9 @@ type indexDropCommitBoundary struct {
 	released time.Time
 }
 
-func (b *indexDropCommitBoundary) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (b *indexDropCommitBoundary) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	b.begins++
-	return b.base.BeginTransaction(ctx)
+	return b.base.BeginTransaction(ctx, request)
 }
 
 func (b *indexDropCommitBoundary) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {

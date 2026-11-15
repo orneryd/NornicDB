@@ -231,7 +231,7 @@ func TestFulltextDocumentsInFlightReadJournalsOnlyRelevantChanges(t *testing.T) 
 					return
 				}
 				pending = false
-				tx, err := store.BeginTransaction(t.Context())
+				tx, err := store.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.DeleteGraphNode(t.Context(), "inflight:doc-07", storage.CascadeEdges))
 				for i := 0; i < 1000; i++ {
@@ -309,7 +309,7 @@ func TestFulltextDocumentsInFlightDeferralIsBounded(t *testing.T) {
 	build := func(node *storage.Node, edge *storage.Edge) *FulltextDocument {
 		if pending {
 			pending = false
-			tx, err := store.BeginTransaction(t.Context())
+			tx, err := store.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.DeleteGraphNode(t.Context(), "bounded:doc-07", storage.CascadeEdges))
 			for i := 0; i < fulltextDeferredFloor+100; i++ {

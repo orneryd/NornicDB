@@ -37,7 +37,7 @@ func seedHighDegreeValidationGraph(tb testing.TB, engine *BadgerEngine, edgesPer
 
 func runHighDegreeDeleteValidation(tb testing.TB, engine *BadgerEngine, nodeID NodeID) {
 	tb.Helper()
-	tx, err := engine.BeginTransaction(tb.Context())
+	tx, err := engine.BeginTransaction(tb.Context(), OrdinaryBegin)
 	require.NoError(tb, err)
 	require.NoError(tb, tx.SetNamespace("test"))
 	tx.operations = append(tx.operations, Operation{Type: OpDeleteNode, NodeID: nodeID})

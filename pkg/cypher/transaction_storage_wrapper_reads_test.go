@@ -213,7 +213,7 @@ func TestTransactionWrapperReadsRejectCanceledCaller(t *testing.T) {
 	_, err = tenant.CreateNode(t.Context(), &storage.Node{ID: "y", Labels: []string{"N"}})
 	require.NoError(t, err)
 	require.NoError(t, tenant.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "x", EndNode: "y", Type: "REL"}))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("a"))

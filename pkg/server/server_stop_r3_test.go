@@ -349,14 +349,14 @@ func TestServerStopR3HookLineage(t *testing.T) {
 type stopR3BeginEngine struct {
 	storage.Engine
 	beginner interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+		BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error)
 	}
 	gate *stopR2Gate
 	tx   *storage.BadgerTransaction
 }
 
-func (e *stopR3BeginEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := e.beginner.BeginTransaction(ctx)
+func (e *stopR3BeginEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
+	tx, err := e.beginner.BeginTransaction(ctx, request)
 	e.tx = tx
 	return tx, err
 }

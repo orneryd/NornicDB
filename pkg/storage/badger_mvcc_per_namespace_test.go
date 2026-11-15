@@ -122,7 +122,7 @@ func TestPerNamespaceMVCC_BeginTransactionInOneNamespaceCannotObserveAnother(t *
 	engine := newTestEngine(t)
 
 	// Seed a node in namespace_b.
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx1.SetNamespace("namespace_b"))
 	_, err = tx1.CreateNode(t.Context(), &Node{
@@ -134,7 +134,7 @@ func TestPerNamespaceMVCC_BeginTransactionInOneNamespaceCannotObserveAnother(t *
 	require.NoError(t, tx1.Commit())
 
 	// Open a transaction in namespace_a.
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx2.SetNamespace("namespace_a"))
 
@@ -248,7 +248,7 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	require.Equal(t, uint64(1), persistedAfterEnsure,
 		"EnsureNamespaceMVCC must persist the recovered namespace floor so later restarts do not fall back to seq=0")
 
-	tx, err := reopened.BeginTransaction(t.Context())
+	tx, err := reopened.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
 	require.Equal(t, uint64(1), tx.readTS.CommitSequence,

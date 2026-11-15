@@ -139,7 +139,7 @@ func writeNumericWireSchemaValue(ctx context.Context, engine *BadgerEngine, enti
 	var tx *BadgerTransaction
 	if explicit {
 		var err error
-		tx, err = engine.BeginTransaction(ctx)
+		tx, err = engine.BeginTransaction(ctx, OrdinaryBegin)
 		if err != nil {
 			return err
 		}

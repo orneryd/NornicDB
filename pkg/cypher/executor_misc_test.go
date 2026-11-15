@@ -29,7 +29,7 @@ type beginFailEngine struct {
 	storage.Engine
 }
 
-func (e *beginFailEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *beginFailEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	return nil, errors.New("begin failed")
 }
 

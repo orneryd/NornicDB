@@ -16,7 +16,7 @@ func TestNewTransaction(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err != nil {
 		t.Fatalf("BeginTransaction failed: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestNewTransaction(t *testing.T) {
 
 func TestTransaction_CreateNode_Basic(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	node := &Node{
 		ID:         NodeID(prefixTestID("tx-node-1")),
@@ -87,7 +87,7 @@ func TestTransaction_CreateNode_Basic(t *testing.T) {
 
 func TestTransaction_Rollback(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Create some nodes
 	for i := 0; i < 5; i++ {
@@ -134,7 +134,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 		t.Fatalf("Pre-create failed: %v", err)
 	}
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Create some nodes
 	for i := 0; i < 3; i++ {
@@ -182,7 +182,7 @@ func TestTransaction_DeleteNode(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Delete in transaction
 	err := tx.DeleteGraphNode(t.Context(), NodeID(prefixTestID("delete-me")), CascadeEdges)
@@ -228,7 +228,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 		t.Fatalf("CreateNode failed: %v", err)
 	}
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Update in transaction
 	updatedNode := &Node{
@@ -288,7 +288,7 @@ func TestTransaction_CommitRejectsConstraintContractViolation(t *testing.T) {
 	}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraintContractBundle(contract, nil, nil, false))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	_, err = tx.CreateNode(t.Context(), &Node{
@@ -318,7 +318,7 @@ func TestTransaction_CreateEdge(t *testing.T) {
 	engine.CreateNode(t.Context(), node1)
 	engine.CreateNode(t.Context(), node2)
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Create edge in transaction
 	edge := &Edge{
@@ -382,7 +382,7 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 		t.Fatalf("CreateEdge failed: %v", err)
 	}
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	updated := &Edge{
 		ID:         edgeID,
 		StartNode:  node2.ID,
@@ -448,7 +448,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err := tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: nil}); err != ErrInvalidData {
 		t.Errorf("Expected ErrInvalidData, got %v", err)
 	}
@@ -469,7 +469,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 		t.Fatalf("CreateEdge failed: %v", err)
 	}
 
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err := tx2.DeleteEdge(t.Context(), edgeID); err != nil {
 		t.Fatalf("DeleteEdge failed: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 		t.Errorf("Expected ErrNotFound for deleted edge, got %v", err)
 	}
 
-	tx3, _ := engine.BeginTransaction(t.Context())
+	tx3, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	err := tx3.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
 		ID:        edgeID,
 		StartNode: node1.ID,
@@ -501,7 +501,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 
 func TestTransaction_CreateEdgeWithNewNodes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Create nodes IN transaction
 	node1 := &Node{ID: NodeID(prefixTestID("new-edge-node-1")), Labels: []string{"New"}}
@@ -558,7 +558,7 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 	}
 	engine.CreateEdge(t.Context(), edge)
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Delete edge in transaction
 	err := tx.DeleteEdge(t.Context(), EdgeID(prefixTestID("delete-edge-1")))
@@ -587,7 +587,7 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 
 func TestTransaction_ClosedTransaction(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Commit first
 	tx.Commit()
@@ -622,7 +622,7 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 
 func TestTransaction_IsActive(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	if !tx.IsActive() {
 		t.Error("New transaction should be active")
@@ -639,7 +639,7 @@ func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	if err := tx.SetValidationSetting(DeferredConstraintValidation, true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation failed: %v", err)
 	}
@@ -697,7 +697,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 	t.Run("validates basic temporal inputs", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
 		defer engine.Close()
-		tx, _ := engine.BeginTransaction(t.Context())
+		tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 		err := tx.checkTemporalConstraint(context.Background(), newTemporalNode(prefixTestID("temporal-count"), "acct", now, now.Add(time.Hour)), Constraint{
 			Type:       ConstraintTemporal,
@@ -728,7 +728,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 	t.Run("detects overlap and invalid pending nodes", func(t *testing.T) {
 		engine := newTestMemoryEngine(t)
 		defer engine.Close()
-		tx, _ := engine.BeginTransaction(t.Context())
+		tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 		tx.pendingNodes[NodeID(prefixTestID("pending-invalid"))] = &Node{
 			ID:     NodeID(prefixTestID("pending-invalid")),
@@ -769,7 +769,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -784,7 +784,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
-		tx, err = engine.BeginTransaction(t.Context())
+		tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -802,7 +802,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -832,7 +832,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 
 	t.Run("checkNodeKeyConstraint validates nulls pending duplicates and committed duplicates", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -863,7 +863,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 		if err != nil {
 			t.Fatalf("CreateNode failed: %v", err)
 		}
-		tx, err = engine.BeginTransaction(t.Context())
+		tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -892,7 +892,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 			t.Fatalf("AddPropertyTypeConstraint failed: %v", err)
 		}
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -981,7 +981,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 			t.Fatalf("CreateEdge failed: %v", err)
 		}
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -1049,7 +1049,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 			t.Fatalf("seed update failed: %v", err)
 		}
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -1067,7 +1067,7 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 	t.Run("returns not found and buffers pending embedding cleanup for missing node", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -1110,7 +1110,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 			return txn.Set(embeddingKey(nodeID, 0), emb)
 		}))
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			t.Fatalf("BeginTransaction failed: %v", err)
 		}
@@ -1144,14 +1144,14 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		require.NoError(t, engine.Close())
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.Nil(t, tx)
 		require.ErrorContains(t, err, "engine is closed")
 	})
 
 	t.Run("flushBufferedWrites applies delete wins semantics and clears buffers", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer tx.Rollback()
 
@@ -1179,7 +1179,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 
 	t.Run("flushBufferedWrites surfaces invalid buffered deletes", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer tx.Rollback()
 
@@ -1194,7 +1194,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), &Node{ID: nodeID, Labels: []string{"Person", "Member"}})
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer tx.Rollback()
 
@@ -1215,7 +1215,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 
 	t.Run("commit on closed transaction returns ErrTransactionClosed", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.Rollback())
 		require.ErrorIs(t, tx.Commit(), ErrTransactionClosed)
@@ -1227,12 +1227,12 @@ func TestTransaction_Isolation(t *testing.T) {
 	defer engine.Close()
 
 	// Transaction 1 creates a node
-	tx1, _ := engine.BeginTransaction(t.Context())
+	tx1, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	node := &Node{ID: NodeID(prefixTestID("isolated-node")), Labels: []string{"Isolated"}}
 	tx1.CreateNode(t.Context(), node)
 
 	// Transaction 2 should NOT see this node
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	_, err := tx2.GetNode(t.Context(), NodeID(prefixTestID("isolated-node")))
 	if err != ErrNotFound {
 		t.Error("TX2 should not see TX1's uncommitted node")
@@ -1246,7 +1246,7 @@ func TestTransaction_Isolation(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// A new transaction started after the commit should see the node.
-	tx3, err := engine.BeginTransaction(t.Context())
+	tx3, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx3.Rollback()
 	_, err = tx3.GetNode(t.Context(), NodeID(prefixTestID("isolated-node")))
@@ -1268,9 +1268,9 @@ func TestTransaction_WriteWriteConflict(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	require.NoError(t, tx1.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
@@ -1312,9 +1312,9 @@ func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
 		Properties: map[string]interface{}{"weight": 1},
 	}))
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	require.NoError(t, tx1.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
@@ -1347,7 +1347,7 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Existing"}})
 	engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("existing-2")), Labels: []string{"Existing"}})
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 
 	// Mix of operations
 	tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("new-1")), Labels: []string{"New"}})
@@ -1388,7 +1388,7 @@ func BenchmarkTransaction_CommitNodes(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, _ := engine.BeginTransaction(b.Context())
+		tx, _ := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		for j := 0; j < 10; j++ {
 			node := &Node{
 				ID:     NodeID(prefixTestID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j)))),
@@ -1405,7 +1405,7 @@ func BenchmarkTransaction_RollbackNodes(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, _ := engine.BeginTransaction(b.Context())
+		tx, _ := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		for j := 0; j < 10; j++ {
 			node := &Node{
 				ID:     NodeID(prefixTestID("bench-" + time.Now().Format("150405.000000") + "-" + string(rune('0'+j)))),
@@ -1420,7 +1420,7 @@ func BenchmarkTransaction_RollbackNodes(b *testing.B) {
 func TestTransaction_CreateEdge_MissingNodes(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -1445,7 +1445,7 @@ func TestTransaction_CreateEdge_MissingNodes(t *testing.T) {
 func TestTransaction_CreateEdge_Duplicate(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -1478,7 +1478,7 @@ func TestTransaction_DeleteNode_CascadeEdges(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), e))
 
 	// Delete node in transaction — should cascade delete edges
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	err = tx.DeleteGraphNode(t.Context(), NodeID(prefixTestID("dc-n1")), CascadeEdges)
@@ -1535,7 +1535,7 @@ func TestTransaction_UpdateEdge_TypeChange(t *testing.T) {
 func TestTransaction_DeleteNode_NotFound(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -1565,7 +1565,7 @@ func TestTransaction_ValidateAllConstraints(t *testing.T) {
 	require.NoError(t, err)
 
 	// Enable deferred constraint validation
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	err = tx.SetValidationSetting(DeferredConstraintValidation, true)
 	require.NoError(t, err)
@@ -1610,7 +1610,7 @@ func TestTransaction_RelationshipConstraintUsesFinalEdgeStateAtCommit(t *testing
 	_, err = engine.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("edge-final-state-b")), Labels: []string{"Person"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
@@ -1645,7 +1645,7 @@ func TestTransaction_RelationshipConstraintUsesFinalEdgeStateAtCommit(t *testing
 func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	nodeID := NodeID(prefixTestID("create-then-update"))
@@ -1692,7 +1692,7 @@ func TestTransaction_IncidentEdgesSkipNonEdgeKeys(t *testing.T) {
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
 	}))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	tx.mu.Lock()

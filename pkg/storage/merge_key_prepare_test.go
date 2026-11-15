@@ -22,7 +22,7 @@ func newMergeKeyTestEngine(t *testing.T) (*BadgerEngine, *SchemaManager) {
 
 func beginMergeKeyTx(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	return tx

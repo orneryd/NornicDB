@@ -28,7 +28,7 @@ func TestTransactionStorageWrapper_PrefixHelpers(t *testing.T) {
 func TestTransactionStorageWrapper_CreateGetDelete_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "tenant", separator: ":"}
@@ -66,7 +66,7 @@ func TestTransactionStorageWrapper_NamespaceIsolation(t *testing.T) {
 		}
 		require.NoError(t, eng.CreateEdge(t.Context(), &storage.Edge{ID: id, StartNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), EndNode: storage.NodeID(prefix + ":" + map[string]string{"tenant": "own", "tenantb": "other"}[prefix]), Type: "REL"}))
 	}
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	w := &transactionStorageWrapper{tx: tx, underlying: storage.NewNamespacedEngine(eng, "tenant"), namespace: "tenant", separator: ":"}
@@ -111,7 +111,7 @@ func TestTransactionStorageWrapper_BulkOps_AndCounts(t *testing.T) {
 	err = eng.CreateEdge(t.Context(), &storage.Edge{ID: "test:re1", StartNode: "test:r1", EndNode: "test:r2", Type: "REL", Properties: map[string]interface{}{}})
 	require.NoError(t, err)
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -183,7 +183,7 @@ func TestTransactionStorageWrapper_BulkOps_WithNamespace(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -240,7 +240,7 @@ func TestTransactionStorageWrapper_BulkDeleteEdges_WithNamespaceInvalidatesPrelo
 	require.NoError(t, err)
 	require.Len(t, outgoingEP, 1)
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	w := &transactionStorageWrapper{tx: tx, underlying: eng, namespace: "tenant", separator: ":"}
 	require.NoError(t, w.BulkDeleteEdges(t.Context(), []storage.EdgeID{"r1", "m1"}))
@@ -272,7 +272,7 @@ func TestTransactionStorageWrapper_BulkDelete_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -289,7 +289,7 @@ func TestTransactionStorageWrapper_BulkCreate_ErrorPaths(t *testing.T) {
 	eng := newTestMemoryEngine(t)
 	defer eng.Close()
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -302,7 +302,7 @@ func TestTransactionStorageWrapper_BulkCreate_ErrorPaths(t *testing.T) {
 	require.Error(t, err)
 
 	// Namespaced bulk edge create: duplicate edge ID should fail.
-	tx2, err := eng.BeginTransaction(t.Context())
+	tx2, err := eng.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx2.Rollback()
 	wNS := &transactionStorageWrapper{tx: tx2, underlying: eng, namespace: "tenant", separator: ":"}

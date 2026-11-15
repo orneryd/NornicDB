@@ -31,7 +31,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": int64(1)}})
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))

@@ -1438,7 +1438,7 @@ func cypherSyntaxConfusableReplacement(character rune) (string, bool) {
 // BeginTransaction uses ctx for admission and snapshot capture. The returned
 // handle has its own lifetime; subsequent operations supply their own contexts.
 type TransactionCapableEngine interface {
-	BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+	BeginTransaction(context.Context, storage.BeginRequest) (*storage.BadgerTransaction, error)
 }
 
 type implicitTxEngines struct {

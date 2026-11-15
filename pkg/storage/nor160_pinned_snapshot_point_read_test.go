@@ -46,7 +46,7 @@ func nor160SetManualSuppression(t *testing.T, b *BadgerEngine, id NodeID, hidden
 // request's first prefixed read does.
 func nor160BeginPinned(t *testing.T, b *BadgerEngine, namespace string) *BadgerTransaction {
 	t.Helper()
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace(namespace))
@@ -260,7 +260,7 @@ func TestNOR160PinnedSnapshotPointReadKeepsLogicalOwnerElsewhere(t *testing.T) {
 	t.Run("unpinned transaction", func(t *testing.T) {
 		b := newTestEngine(t)
 		id := nor160SeededNode(t, b)
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.False(t, tx.readsPinnedSnapshotBodyLocked(), "a transaction without a namespace has no pinned body owner")
@@ -271,7 +271,7 @@ func TestNOR160PinnedSnapshotPointReadKeepsLogicalOwnerElsewhere(t *testing.T) {
 
 	t.Run("late namespace pin", func(t *testing.T) {
 		b := newTestEngine(t)
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		// The namespace and its node are committed after this transaction's

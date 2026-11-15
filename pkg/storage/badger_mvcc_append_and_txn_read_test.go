@@ -54,7 +54,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_ReadTSBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// readTS == zero path: missing edge returns ErrNotFound.
-	txZero, err := engine.BeginTransaction(t.Context())
+	txZero, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, txZero.SetNamespace("tenant"))
 	_, err = txZero.getCommittedEdgeLocked(t.Context(), "tenant:missing")
@@ -62,11 +62,11 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_ReadTSBranches(t *testing.T) {
 	require.NoError(t, txZero.Rollback())
 
 	// readTS != zero path: edge committed after reader begin must be hidden.
-	txRead, err := engine.BeginTransaction(t.Context())
+	txRead, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, txRead.SetNamespace("tenant"))
 
-	txWrite, err := engine.BeginTransaction(t.Context())
+	txWrite, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, txWrite.SetNamespace("tenant"))
 	err = txWrite.CreateEdge(t.Context(), &Edge{ID: "tenant:e1", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL"})
@@ -78,7 +78,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_ReadTSBranches(t *testing.T) {
 	require.NoError(t, txRead.Rollback())
 
 	// New reader should see committed edge through visible-at path.
-	txAfter, err := engine.BeginTransaction(t.Context())
+	txAfter, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, txAfter.SetNamespace("tenant"))
 	edge, err := txAfter.getCommittedEdgeLocked(t.Context(), "tenant:e1")

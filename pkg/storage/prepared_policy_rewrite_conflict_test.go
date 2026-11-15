@@ -46,7 +46,7 @@ func testPreparedPolicyRewriteConflict(t *testing.T, buffered, implicit bool, op
 	if operation != "node-delete" && operation != "node-update" && operation != "edge-create" {
 		require.NoError(t, b.CreateEdge(t.Context(), edge))
 	}
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -105,7 +105,7 @@ func testPreparedPolicyRewriteConflict(t *testing.T, buffered, implicit bool, op
 	node, err := b.GetStoredNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, "original", node.Properties["payload"], "rejected preparation publishes no user mutation")
-	next, err := b.BeginTransaction(t.Context())
+	next, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer next.Rollback()
 	require.NoError(t, next.SetNamespace("test"))

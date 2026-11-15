@@ -73,7 +73,7 @@ func setupHiddenGraph(t *testing.T, engine *BadgerEngine) {
 
 func deleteInTransaction(t *testing.T, engine *BadgerEngine, deleteNode func(*BadgerTransaction) error) error {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -173,7 +173,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 			if writeBehind {
 				// Before the flush the buffered delete is what a transaction
 				// reads; the engine's records follow at the flush.
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				incident := func(id NodeID) []string {
 					edges, err := tx.IncidentEdges(t.Context(), id)
@@ -203,7 +203,7 @@ func TestWriteBehindReplayRemovesHiddenRelationships(t *testing.T) {
 	wal := engine.bufferedCommitWAL
 	setupHiddenGraph(t, engine)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

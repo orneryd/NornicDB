@@ -16,7 +16,7 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 		{ID: "snapshot_bulk:item", Labels: []string{"Item"}},
 	}))
 
-	beforeCreate, err := engine.BeginTransaction(t.Context())
+	beforeCreate, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, beforeCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {
@@ -37,7 +37,7 @@ func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
 	require.Empty(t, beforeOutgoing, "a snapshot opened before the create must not observe the relationship")
 	require.NoError(t, beforeCreate.Rollback())
 
-	afterCreate, err := engine.BeginTransaction(t.Context())
+	afterCreate, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, afterCreate.SetNamespace("snapshot_bulk"))
 	t.Cleanup(func() {

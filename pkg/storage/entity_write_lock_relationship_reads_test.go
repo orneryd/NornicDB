@@ -39,7 +39,7 @@ func newLockedAdjacencyEngine(t *testing.T, seedEdge bool) *MemoryEngine {
 // read of the node's relationships.
 func beginPinnedAdjacencyReader(t *testing.T, engine *MemoryEngine, wantBefore int) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

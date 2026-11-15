@@ -122,7 +122,7 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	old, err = SnapshotNodeForEmbedding(t.Context(), old)
 	require.NoError(t, err)
 	stamp := old.UpdatedAt
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -145,7 +145,7 @@ func TestEmbeddingRevisionCapturedBufferedUpdates(t *testing.T) {
 	same, err = ack.EmbeddingRevision().MatchesNode(t.Context(), materialized)
 	require.NoError(t, err)
 	require.True(t, same)
-	tx, err = b.BeginTransaction(t.Context())
+	tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

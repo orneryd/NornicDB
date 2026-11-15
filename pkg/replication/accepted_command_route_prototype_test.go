@@ -76,7 +76,7 @@ func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *test
 	require.NoError(t, err)
 	r, mirror := newAcceptedReplicationFixture(t, base, peer, &Config{})
 	engine := NewReplicatedEngine(base, r, time.Second)
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	node := &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"value": "prepared"}, EmbedMeta: map[string]any{"embedding_model": "source"}}
@@ -101,7 +101,7 @@ func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *test
 	assertStoredNodeParity(t, a, b)
 	require.Equal(t, int32(1), mirror.calls.Load())
 	// The historical rejected-origin counterexample is rejected before any record.
-	stale, err := base.BeginTransaction(t.Context())
+	stale, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer stale.Rollback()
 	require.NoError(t, stale.UpdateGraphNode(t.Context(), storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Properties: map[string]any{"value": "stale"}}, Policy: storage.ClientNodeEdits}))

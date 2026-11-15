@@ -68,7 +68,7 @@ func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "race:1", Labels: []string{"Race"}, Properties: map[string]any{"k": "v"}})
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestBadgerTransaction_CommitAfterCloseFailsCleanly(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "late:1", Labels: []string{"Late"}})
 	require.NoError(t, err)

@@ -303,7 +303,7 @@ func TestPR1667CurrentReleaseLabelStreamAndBackupInterleavedWithDrops(t *testing
 func TestPR1667CurrentReleaseSnapshotKeepsPropertiesAcrossDrop(t *testing.T) {
 	b := pr1667NewEngine(t)
 	pr1667CreateTargetNode(t, b, "a:old", "original")
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("a"))

@@ -109,7 +109,7 @@ func walPublicCheck(b *testing.B, err error) {
 
 func walPublicCommit(b *testing.B, store *storage.BadgerEngine, nodes []*storage.Node) {
 	for _, node := range nodes {
-		tx, err := store.BeginTransaction(b.Context())
+		tx, err := store.BeginTransaction(b.Context(), storage.OrdinaryBegin)
 		walPublicCheck(b, err)
 		walPublicCheck(b, tx.SetNamespace("walbench"))
 		walPublicCheck(b, tx.SetImplicit(true))

@@ -21,7 +21,7 @@ func TestResidualReplicatedPublicationDecision(t *testing.T) {
 			t.Cleanup(func() { _ = base.Close() })
 			r, mirror := newAcceptedReplicationFixture(t, base, nil, &Config{})
 			owner := NewReplicatedEngine(base, r, time.Second)
-			tx, err := base.BeginTransaction(t.Context())
+			tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:replicated-decision", Properties: map[string]any{"v": int64(1)}})

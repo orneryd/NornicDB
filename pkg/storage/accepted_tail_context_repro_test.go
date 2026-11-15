@@ -19,7 +19,7 @@ func TestAcceptedPositionalTailRetainsCommittedCounts(t *testing.T) {
 				_, err := engine.CreateNode(t.Context(), node)
 				require.NoError(t, err)
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "tail:e", StartNode: "tail:a", EndNode: "tail:b", Type: "LINK"}))

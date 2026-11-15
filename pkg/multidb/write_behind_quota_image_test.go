@@ -42,7 +42,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					// transaction committed by the tracker.
 					write := func(change func(tx *storage.BadgerTransaction) error) {
 						t.Helper()
-						tx, err := base.BeginTransaction(t.Context())
+						tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 						require.NoError(t, err)
 						require.NoError(t, tx.SetNamespace("nornic"))
 						require.NoError(t, tx.SetImplicit(true))

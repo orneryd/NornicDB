@@ -45,10 +45,10 @@ func TestPR1655StorageUniqueClaimConflict(t *testing.T) {
 				Properties: map[string]interface{}{"id": tc.before, "summary_input": "before"},
 			})
 			require.NoError(t, err)
-			loser, err := engine.BeginTransaction(t.Context())
+			loser, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = loser.Rollback() })
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = peer.Rollback() })
 			for i, tx := range []*BadgerTransaction{loser, peer} {
@@ -97,7 +97,7 @@ func TestPR1655UncontendedUniqueClaimIdentity(t *testing.T) {
 			require.NoError(t, schema.AddUniqueConstraint("doc_id", "Doc", "id"))
 			id, err := engine.CreateNode(t.Context(), &Node{ID: "test:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": tc.key}})
 			require.NoError(t, err)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			node, err := tx.GetNode(t.Context(), id)

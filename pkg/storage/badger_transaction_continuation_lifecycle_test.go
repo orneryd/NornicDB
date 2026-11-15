@@ -42,7 +42,7 @@ func TestIndependentContinuationPreservesLifecycleConflict(t *testing.T) {
 				}
 				_, err := b.CreateNode(t.Context(), &Node{ID: "test:retained", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}})
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))

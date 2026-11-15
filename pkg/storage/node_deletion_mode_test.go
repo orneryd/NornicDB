@@ -9,7 +9,7 @@ func TestDeleteGraphNodeInvalidModeDoesNotStage(t *testing.T) {
 	engine := newTestEngine(t)
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:mode"})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.ErrorIs(t, tx.DeleteGraphNode(t.Context(), "test:mode", NodeDeletionMode(255)), ErrInvalidData)

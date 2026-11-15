@@ -15,7 +15,7 @@ func TestBadgerTransaction_ValidateConstraintContracts_EarlyOutAndPaths(t *testi
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "MEMBER_OF", Properties: map[string]any{"kind": "primary"}}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -53,7 +53,7 @@ func TestBadgerTransaction_ValidateConstraintContracts_EngineClosedError(t *test
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 

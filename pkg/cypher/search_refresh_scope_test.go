@@ -43,7 +43,7 @@ func TestCypherRefreshAfterCommitResolvesServiceOnce(t *testing.T) {
 func TestCypherRefreshDefersTransactionMutations(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
-	transaction, err := base.BeginTransaction(t.Context())
+	transaction, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
 	tx := transactionStorageWrapper{tx: transaction, underlying: store, namespace: "test", separator: ":"}
@@ -77,7 +77,7 @@ func TestCypherTransactionRefreshFollowsCommitOrRollback(t *testing.T) {
 			t.Cleanup(func() { _ = service.Close() })
 			require.NoError(t, service.BuildIndexes(ctx))
 
-			transaction, err := base.BeginTransaction(t.Context())
+			transaction, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = transaction.Rollback() })
 			wrapped := &transactionStorageWrapper{tx: transaction, underlying: store, namespace: "test", separator: ":"}

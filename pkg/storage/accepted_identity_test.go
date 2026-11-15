@@ -13,7 +13,7 @@ import (
 // retired the prepared frame and released its authority.
 func TestAcceptedIdentitySurvivesPreparedRetirement(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("identity"))

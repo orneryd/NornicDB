@@ -44,7 +44,7 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 		return out
 	}
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -138,7 +138,7 @@ func TestPendingIndexStagingCancellationKeepsReadsCoherent(t *testing.T) {
 				finished := false
 				t.Run(fmt.Sprint(budget), func(t *testing.T) {
 					engine := newTestEngine(t)
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() {
 						if err := tx.Rollback(); err != nil {

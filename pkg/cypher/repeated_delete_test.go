@@ -62,7 +62,7 @@ func TestTransactionWrapperBulkDeleteEdgesSkipsDeleted(t *testing.T) {
 	require.Len(t, edges, 1)
 
 	require.NoError(t, base.EnsureNamespaceMVCC("test"))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))

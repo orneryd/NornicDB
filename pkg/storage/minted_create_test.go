@@ -47,7 +47,7 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 			require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, string(hiddenEdge), true))
 
 			begin := func() *BadgerTransaction {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))

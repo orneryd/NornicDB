@@ -25,7 +25,7 @@ func snapshotOverlayFixture(t *testing.T, options ...writeBehindTestOptions) *Ba
 		bufferedCreate(t, b, &Node{ID: id, Labels: []string{"Old"}, Properties: map[string]any{"v": int64(1)}})
 	}
 	require.NoError(t, b.FlushWriteBehind(context.Background()))
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -260,7 +260,7 @@ func TestSnapshotOverlayStreamRetainsViewAcrossReplay(t *testing.T) {
 
 func TestSnapshotOverlayTransactionOwnWrites(t *testing.T) {
 	b := snapshotOverlayFixture(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -344,7 +344,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 		t.Run(map[bool]string{false: "complete", true: "prefix"}[stopEarly], func(t *testing.T) {
 			b := snapshotOverlayFixture(t)
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetNamespace("test"))
@@ -359,7 +359,7 @@ func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			writer, err := b.BeginTransaction(t.Context())
+			writer, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, writer.SetNamespace("test"))
 			require.NoError(t, writer.SetImplicit(true))
