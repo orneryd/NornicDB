@@ -50,3 +50,7 @@ control follows narrow projections, so the builds intentionally have different
 body-cache coverage. Treat it as the cost of widening a read. Use a standalone
 phase for equal cold preparation, or enough large-field calls to warm the measured
 document set. Process-cold does not imply cold filesystem/device caches.
+
+The [rebase investigation](results/rebase-investigation/README.md) tracks the
+large-field widening and selected Northwind regressions against the newer release
+head, with paired receipts and a rejected optimization experiment.
