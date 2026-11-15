@@ -22,7 +22,7 @@ func BenchmarkTransactionBetweenPropertyRejection(b *testing.B) {
 	if err := engine.BulkCreateEdges(ctx, edges); err != nil {
 		b.Fatal(err)
 	}
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	if err != nil {
 		b.Fatal(err)
 	}

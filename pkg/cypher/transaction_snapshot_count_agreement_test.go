@@ -415,7 +415,7 @@ func newSnapshotCountRaceWrapper(t *testing.T, family, peer string) snapshotCoun
 			return err
 		},
 	}
-	tx, err := base.BeginTransaction(ctx)
+	tx, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("snapshot_count_families"))
