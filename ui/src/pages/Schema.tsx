@@ -1,3 +1,5 @@
+import {RoutedTaskPanel} from "../components/common/RoutedTaskPanel";
+import {useUnsavedChanges} from "../components/common/useUnsavedChanges";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { GridOptions } from "@ornery/ui-grid-core";
@@ -41,6 +43,8 @@ export function Schema() {
     [target, setTarget] = useState(""),
     [properties, setProperties] = useState(""),
     [constraint, setConstraint] = useState<"unique" | "exists">("unique");
+  const {allowLeave,warning}=useUnsavedChanges(creating && Boolean(name||target||properties||entity!=='node'||constraint!=='unique'));
+  useEffect(()=>{setName('');setTarget('');setProperties('');setEntity('node');setConstraint('unique');},[creating,kind,database]);
   const currentDb = useRef(database);
   currentDb.current = database;
   const base = `/schema/${encodeURIComponent(database)}`;
@@ -119,7 +123,7 @@ export function Schema() {
       if(currentDb.current!==database)return;
       setSuccess(message);
       patch({ confirm: null, name: null, kind: null });
-      if (creating) open(base);
+      if (creating) {allowLeave();const next=new URLSearchParams(location.search);next.set('tab',kind==='constraint'?'constraints':'indexes');navigate({pathname:base,search:next.toString()});}
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Schema operation failed");
@@ -167,7 +171,7 @@ export function Schema() {
     [tab, database, data],
   );
   return (
-    <PageLayout>
+    <PageLayout className="management-prototype schema-page">
       <PageHeader title="Schema" />
       <div className="max-w-7xl mx-auto p-6 space-y-5">
         <p className="text-norse-silver">
@@ -193,7 +197,7 @@ export function Schema() {
         </label>
         {error && !creating && !drop && <Alert type="error" message={error} />}
         {success && <Alert type="success" message={success} />}
-        {database && (
+        {database && !creating && (
           <>
             <div className="flex flex-wrap gap-3">
               <Button
@@ -285,13 +289,9 @@ export function Schema() {
             </Disclosure>
           </>
         )}
-        <Modal
-          isOpen={creating}
-          onClose={() => open(base)}
-          title={`Create ${kind}`}
-        >
+        <RoutedTaskPanel open={creating} onBack={()=>open(base)} title={`Create ${kind}`} backLabel="Back to schema">
           <form
-            className="space-y-4"
+            className="schema-create-form"
             onSubmit={(event) => {
               event.preventDefault();
               if (statement)
@@ -305,8 +305,10 @@ export function Schema() {
               Target database: <strong>{database}</strong>. Existing data is
               checked by the server.
             </p>
+            <div className="schema-create-fields">
             <FormInput
               label="Schema name"
+              description="Choose a name that identifies the target and property."
               value={name}
               onChange={setName}
               required
@@ -334,6 +336,7 @@ export function Schema() {
               onChange={setProperties}
               required
               placeholder="email, tenantId"
+              description="Separate multiple property names with commas."
             />
             {kind === "constraint" && (
               <label className="block text-sm text-norse-silver">
@@ -350,6 +353,8 @@ export function Schema() {
                 </select>
               </label>
             )}
+            </div>
+            <aside className="schema-create-preview"><h3>Review the definition</h3><p className="text-sm text-norse-silver mb-4">{kind==='index'?'An index helps lookups on the chosen label or relationship type and properties.':constraint==='unique'?'Unique values prevent duplicate property combinations on the target entities.':'Property existence requires these values on matching entities.'}</p>
             <p className="text-sm text-norse-silver">
               {validation || "Review the statement before creating it."}
             </p>
@@ -358,12 +363,13 @@ export function Schema() {
                 {statement}
               </pre>
             )}
+            </aside>
             {error && <Alert type="error" message={error} />}
-            <div className="flex gap-3">
+            <div className="schema-create-actions flex gap-3">
               <Button
                 variant="secondary"
                 type="button"
-                onClick={() => open(base)}
+                onClick={() => {allowLeave();open(base);}}
               >
                 Cancel
               </Button>
@@ -372,7 +378,7 @@ export function Schema() {
               </Button>
             </div>
           </form>
-        </Modal>
+        </RoutedTaskPanel>
         <Modal
           isOpen={Boolean(drop)}
           onClose={() => patch({ confirm: null, name: null, kind: null })}
@@ -408,6 +414,7 @@ export function Schema() {
             </Button>
           </div>
         </Modal>
+      {warning}
       </div>
     </PageLayout>
   );

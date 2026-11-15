@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from "react";
 import {
-  BrowserRouter,
+  createBrowserRouter,
+  RouterProvider,
   Routes,
   Route,
   Navigate,
@@ -55,9 +56,8 @@ function TrailingSlashCanonicalizer() {
   return null;
 }
 
-function App() {
+function AppContent() {
   return (
-    <BrowserRouter basename={basename}>
       <UrlStateProvider>
       <DemoSeedProvider>
       <TrailingSlashCanonicalizer />
@@ -205,8 +205,9 @@ function App() {
       </div>
       </DemoSeedProvider>
       </UrlStateProvider>
-    </BrowserRouter>
   );
 }
 
+const router = createBrowserRouter([{path:"*",element:<AppContent/>}],{basename});
+function App(){return <RouterProvider router={router}/>;}
 export default App;

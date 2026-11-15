@@ -1,3 +1,5 @@
+import {RoutedTaskPanel} from "../components/common/RoutedTaskPanel";
+import {useUnsavedChanges} from "../components/common/useUnsavedChanges";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
@@ -66,6 +68,9 @@ export function Databases() {
   const [configError, setConfigError] = useState("");
   const [configGridApi, setConfigGridApi] = useState<UiGridApi | null>(null);
   const configSectionRef = useRef<HTMLElement | null>(null);
+  const configBaseline=useRef(JSON.stringify({values:{},defaults:{}}));
+  const {allowLeave,warning}=useUnsavedChanges(Boolean(showCreateModal&&newName)||Boolean(configDbName&&!configLoading&&JSON.stringify({values:configFormValues,defaults:configUseDefault})!==configBaseline.current));
+  useEffect(()=>{if(!showCreateModal)setNewName('');},[showCreateModal]);
 
   const formatEta = (etaSeconds?: number): string => {
     if (etaSeconds == null || etaSeconds < 0) return "estimating...";
@@ -129,6 +134,7 @@ export function Databases() {
 
     try {
       await api.createDatabase(newName);
+      allowLeave();
       setShowCreateModal(false);
       setNewName("");
       await loadDatabases();
@@ -189,6 +195,7 @@ export function Databases() {
           ? (overrides[k.key] ?? "")
           : (configRes.effective?.[k.key] ?? "");
       }
+      configBaseline.current=JSON.stringify({values:formValues,defaults:useDefault});
       setConfigUseDefault(useDefault);
       setConfigFormValues(formValues);
     } catch (err) {
@@ -223,6 +230,7 @@ export function Databases() {
           // Ignore modal refresh errors; list refresh above already applied.
         }
       }
+      allowLeave();
       setConfigDbName(null);
     } catch (err) {
       setConfigError(
@@ -349,6 +357,7 @@ export function Databases() {
         <div className="py-1" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
+            aria-label={`Value for ${row.key}`}
             checked={String(row.value) === "true"}
             disabled={row.useDefault}
             onChange={(e) => setConfigFormValue(row.rawKey, e.target.checked ? "true" : "false")}
@@ -363,6 +372,7 @@ export function Databases() {
         <div className="py-1" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
+            aria-label={`Use server default for ${row.key}`}
             checked={row.useDefault}
             onChange={(e) => setConfigUseDefaultForKey(row.rawKey, e.target.checked)}
             className="rounded border-norse-rune bg-norse-stone text-nornic-primary"
@@ -393,23 +403,13 @@ export function Databases() {
     effectiveDefault: renderConfigCell,
   }), [renderConfigCell]);
 
-  if (loading) {
-    return (
-      <PageLayout>
-        <PageHeader title="Databases" backTo="/" backLabel="Back to Browser" />
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="text-norse-silver">Loading databases...</div>
-        </div>
-      </PageLayout>
-    );
-  }
 
   return (
-    <PageLayout>
+    <PageLayout className="management-prototype databases-page">
       <PageHeader
         title="Databases"
         backTo="/"
-        backLabel="Back to Browser"
+        backLabel="Workspace"
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -430,7 +430,8 @@ export function Databases() {
         }
       />
 
-      <main className="max-w-6xl mx-auto p-6">
+      {loading&&<p role="status" className="p-6 text-norse-silver">Loading databases…</p>}
+      <div className="database-content max-w-6xl mx-auto p-6">
         {error && (
           <Alert
             type="error"
@@ -441,6 +442,8 @@ export function Databases() {
           />
         )}
 
+        {!loading && !route.database && !showCreateModal && <>
+        <p className="database-intro">Choose a database to query its data, inspect its schema, or manage its configuration.</p>
         {databases.length === 0 ? (
           <div className="bg-norse-shadow border border-norse-rune rounded-lg p-12 text-center">
             <Database className="w-16 h-16 text-norse-silver mx-auto mb-4" />
@@ -460,7 +463,7 @@ export function Databases() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="database-catalog-list">
               {databases.map((db) => {
               const isComposite = db.type === "composite";
               const ready = db.searchReady === true;
@@ -476,9 +479,9 @@ export function Databases() {
                 return (
                   <div
                     key={db.name}
-                    className="bg-norse-shadow border border-norse-rune rounded-lg p-4 hover:border-nornic-primary transition-colors"
+                    className="database-record"
                   >
-                  <div className="flex items-start justify-between mb-3">
+                  <div className="database-record-heading flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <h3 className="text-lg font-semibold text-white mb-1">
                         {db.name}
@@ -523,7 +526,8 @@ export function Databases() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="database-actions flex items-center gap-1">
+                      <Button size="sm" onClick={()=>navigate(`/workspace/${encodeURIComponent(db.name)}`)}>Open workspace</Button>
                       {isAdmin && (
                         <div
                           title={
@@ -543,7 +547,7 @@ export function Databases() {
                             icon={Activity}
                             disabled={db.name === "system" || isComposite}
                           >
-                            <span className="sr-only">Manage lifecycle</span>
+                            Lifecycle
                           </Button>
                         </div>
                       )}
@@ -555,7 +559,7 @@ export function Databases() {
                             onClick={() => setConfigDbName(db.name)}
                             icon={Settings}
                           >
-                            <span className="sr-only">Configure</span>
+                            Settings
                           </Button>
                         </div>
                       )}
@@ -567,7 +571,7 @@ export function Databases() {
                           onClick={() => handleViewDetails(db)}
                           icon={Info}
                         >
-                          <span className="sr-only">View details</span>
+                          Details
                         </Button>
                       </div>
                       <div
@@ -585,14 +589,14 @@ export function Databases() {
                           disabled={db.default}
                           className="text-red-400 hover:text-red-300 hover:bg-red-900/20 disabled:opacity-40 disabled:hover:bg-transparent"
                         >
-                          <span className="sr-only">Delete database</span>
+                          Delete
                         </Button>
                       </div>
                     </div>
                   </div>
 
                   {isComposite ? (
-                    <div className="space-y-2 text-sm">
+                    <div className="database-metrics space-y-2 text-sm">
                       <div className="text-norse-silver text-xs font-medium uppercase tracking-wide">
                         Constituents
                       </div>
@@ -633,7 +637,7 @@ export function Databases() {
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-2 text-sm">
+                    <div className="database-metrics space-y-2 text-sm">
                       {!ready && (
                         <div className="flex justify-between">
                           <span className="text-norse-silver">Search ETA:</span>
@@ -675,6 +679,10 @@ export function Databases() {
               })}
             </div>
 
+
+          </>
+        )}
+        </>}
             {configDbName && (
               <section
                 ref={configSectionRef}
@@ -733,17 +741,9 @@ export function Databases() {
                   )}
                 </div>
               </section>
-            )}
-          </>
-        )}
-      </main>
+            )}      </div>
 
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="Create Database"
-        size="md"
-      >
+      <RoutedTaskPanel open={showCreateModal} onBack={()=>setShowCreateModal(false)} title="Create database" backLabel="Back to databases">
         <form onSubmit={handleCreateDatabase} className="space-y-4">
           {createError && (
             <Alert
@@ -769,7 +769,7 @@ export function Databases() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setShowCreateModal(false)}
+              onClick={() => {allowLeave();setShowCreateModal(false);}}
               disabled={creating}
             >
               Cancel
@@ -783,7 +783,7 @@ export function Databases() {
             </Button>
           </div>
         </form>
-      </Modal>
+      </RoutedTaskPanel>
 
       <Modal
         isOpen={Boolean(deleteTarget)}
@@ -810,6 +810,7 @@ export function Databases() {
           <div className="flex justify-end gap-2 pt-4">
             <Button
               type="button"
+              data-autofocus
               variant="secondary"
               onClick={() => setDeleteTarget(null)}
               disabled={deleting}
@@ -828,12 +829,7 @@ export function Databases() {
         </div>
       </Modal>
 
-      <Modal
-        isOpen={showDetailsModal}
-        onClose={() => setShowDetailsModal(false)}
-        title="Database Details"
-        size="md"
-      >
+      <RoutedTaskPanel open={showDetailsModal} onBack={()=>setShowDetailsModal(false)} title="Database details" backLabel="Back to databases">
         {selectedDatabase ? (
           <div className="space-y-3 text-sm">
             <div className="flex justify-between">
@@ -960,7 +956,9 @@ export function Databases() {
         ) : (
           <div className="text-norse-silver">No database selected.</div>
         )}
-      </Modal>
+      {selectedDatabase && <nav aria-label="Database tasks" className="database-detail-actions"><Button onClick={()=>navigate(`/workspace/${encodeURIComponent(selectedDatabase.name)}`)}>Open workspace</Button>{selectedDatabase.type!=='composite'&&<Button variant="secondary" onClick={()=>navigate(`/schema/${encodeURIComponent(selectedDatabase.name)}`)}>Schema</Button>}{isAdmin&&<Button variant="secondary" onClick={()=>setConfigDbName(selectedDatabase.name)}>Settings</Button>}{isAdmin&&selectedDatabase.name!=='system'&&selectedDatabase.type!=='composite'&&<Button variant="secondary" onClick={()=>navigate(`/security/lifecycle?db=${encodeURIComponent(selectedDatabase.name)}`)}>Lifecycle</Button>}</nav>}
+      </RoutedTaskPanel>
+      {warning}
     </PageLayout>
   );
 }
