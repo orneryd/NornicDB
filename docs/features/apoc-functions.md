@@ -1109,6 +1109,25 @@ CALL apoc.periodic.commit(
 )
 ```
 
+`apoc.periodic.iterate` passes `config.params` to both inner statements. A
+configured value overrides an outer parameter of the same name; an iterate
+row's column overrides a configured value of the same name in the action.
+
+```cypher
+CALL apoc.periodic.iterate(
+  'UNWIND [1,2,3] AS i RETURN i',
+  'CREATE (:ProcessedItem {i: i, v: i * $factor})',
+  {batchSize: 2, params: {factor: 10}}
+)
+YIELD failedBatches, errorMessages
+RETURN failedBatches, errorMessages
+```
+
+This creates values 10, 20 and 30. A failed batch rolls back its rows;
+`failedOperations` counts those rows, while `errorMessages` counts failed
+executions by message. Inspect both instead of treating a returned summary as
+proof that every batch committed.
+
 ### Graph Refactoring (`apoc.refactor.*`)
 
 ```cypher

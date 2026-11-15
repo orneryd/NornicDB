@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Periodic iteration honors configured parameters and returns failed-batch messages instead of empty error maps.
+
 - Use the normal server storage profile for full CSV import so exported large values remain importable. Explicitly smaller embedded and low-memory capacities are unchanged.
 - Reduce temporary identity-table allocations when copying large cached query results while preserving detached mutable outputs.
 
