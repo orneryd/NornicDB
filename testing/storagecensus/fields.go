@@ -174,6 +174,11 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.callerCopyIndex.count":   {class: "caller-copy traversal progress"},
 	"pkg/storage.callerCopyIndex.current": {class: "caller-copy traversal progress"},
 	"pkg/storage.callerCopyIndex.slots":   {class: "caller-copy identity lookup scratch"},
+	// These fields belong to transient wire/proof-reuse state, not stored
+	// entities: references omit coordinates from the borrowed encoding image,
+	// and the fixed WAL proof cache advances only its replacement cursor.
+	"pkg/storage.semanticTransactionNode.ChunkEmbeddings": {class: "WAL reference encoding scratch"},
+	"pkg/storage.walManagedAnchorCache.next":              {class: "WAL proof-cache replacement cursor"},
 	// These offsets delimit equal-value groups in the privately owned ID result
 	// of readPropertyIndexSnapshot. They are query-result metadata, created by
 	// snapshotPropertyIndexLocked and consumed after the source leases end; they
