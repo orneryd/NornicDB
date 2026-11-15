@@ -104,3 +104,16 @@ func BenchmarkIdleAutoCompaction(b *testing.B) {
 		}
 	}
 }
+
+// takePeriodicSnapshot uses the same writer and journal truncation as automatic
+// compaction, returning the single snapshot made in this fresh fixture.
+func takePeriodicSnapshot(t *testing.T, journal *WALEngine, root string) string {
+	t.Helper()
+	journal.snapshotDir = filepath.Join(root, "snapshots")
+	require.NoError(t, os.MkdirAll(journal.snapshotDir, 0o755))
+	require.NoError(t, journal.createSnapshotAndCompact(t.Context(), saveCompactionSnapshot))
+	entries, err := os.ReadDir(journal.snapshotDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	return filepath.Join(journal.snapshotDir, entries[0].Name())
+}

@@ -35,3 +35,22 @@ Integrated parent race checks for pins, native source reads, transcoding and
 foreground overlap pass. These deterministic checks establish barrier ownership
 and recovery correctness; they are not production-size latency or peak-memory
 measurements. Workload cost qualification remains pending.
+
+## Existing stream allocation check
+
+An isolated ABBA comparison of the unchanged 1,000-node stream benchmarks used
+release `7f565720f` and candidate `e8bf08f98` on an Apple M2 Max, Go 1.27.3,
+GOMAXPROCS=4. Each side has four samples of 20 iterations; no local Go test ran
+alongside them.
+
+| Existing workload | Release median | Candidate median | Allocations / scan |
+| --- | --- | --- | --- |
+| Full node stream | 393.9 µs; 690,978 B | 412.5 µs; 691,234 B | 7,216 → 7,222 |
+| Projected options stream | 939.6 µs; 703,282 B | 943.0 µs; 703,545 B | 17,779 → 17,785 |
+
+Full-stream samples ranged 376.9–443.4 µs on release and 399.3–734.5 µs on the
+candidate; the upper candidate sample remains in the comparison. The extracted
+read-view path adds six allocations and about 256 bytes per scan, under 0.1%
+for these workloads. This checks extraction cost only: it does not qualify
+40,000-node snapshot write latency, vector-heavy streams or peak disk retention.
+No production-size timing target is claimed from it.

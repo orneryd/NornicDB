@@ -86,19 +86,3 @@ func (s *storedSnapshotSource) StreamEdges(ctx context.Context, write func(byte,
 	writer := snapshotStoredEdgeWriter{write: write, pin: s}
 	return writer.stream(ctx, s.engine, "")
 }
-
-// streamSnapshotEdgeBodies is the pinned counterpart of
-// BadgerEngine.streamSnapshotEdgeBodies: the same snapshot body transcoder over
-// the resolved stored edges of this pin.
-func (s *storedSnapshotSource) streamSnapshotEdgeBodies(ctx context.Context, resolved storedReadResolution, writer *snapshotStoredEdgeWriter) error {
-	if resolved.native != s.target.native || resolved.scope != s.target.scope {
-		return errStoredSnapshotUnsupported
-	}
-	var transcoder snapshotEdgeTranscoder
-	body := snapshotEdgeBodyWriter(s.target.native, &transcoder, writer.ids, writer.write)
-	return s.target.native.streamEdgesByTypeInScopeAtView(ctx, s.view.withView, &s.edges, s.target.scope, "", storedRead, writer.visit, body)
-}
-
-// Close releases the pin's read view; later scans fail. It waits for a scan in
-// progress and is idempotent (badgerReadView.Close).
-func (s *storedSnapshotSource) Close() { s.view.Close() }

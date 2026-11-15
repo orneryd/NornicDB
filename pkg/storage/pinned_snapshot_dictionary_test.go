@@ -60,7 +60,7 @@ func TestPinnedSnapshotRetainsStoredEdgeBindingsAcrossNamespaceRecreation(t *tes
 	// The snapshot caller pins the stored population before it serializes.
 	source, err := openStoredSnapshotSource(ctx, engine)
 	require.NoError(t, err)
-	defer source.Close()
+	defer source.view.Close()
 
 	pinnedDictionaryReplacement(t, engine)
 	// The current view holds the replacement bindings, not the pin's.

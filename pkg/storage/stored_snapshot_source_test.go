@@ -116,7 +116,7 @@ func TestStoredSnapshotSourcePinsStoredNodesBeforeMutations(t *testing.T) {
 
 	source, err := openStoredSnapshotSource(ctx, engine)
 	require.NoError(t, err)
-	defer source.Close()
+	defer source.view.Close()
 
 	// Mutate the store after the pin: update, delete, replace vectors, create.
 	require.NoError(t, engine.UpdateNode(ctx, NodeUpdateRequest{After: &Node{ID: "app:ordinary", Labels: []string{"Doc"}, Properties: map[string]any{"state": "mutated"}}}))
@@ -193,7 +193,7 @@ func TestStoredSnapshotSourcePinsStoredEdgesBeforeMutations(t *testing.T) {
 
 	source, err := openStoredSnapshotSource(ctx, engine)
 	require.NoError(t, err)
-	defer source.Close()
+	defer source.view.Close()
 
 	// Mutate the store after the pin.
 	require.NoError(t, engine.UpdateEdge(ctx, EdgeUpdateRequest{After: &Edge{ID: "app:active_rel", StartNode: "app:a", EndNode: "app:b", Type: "REL", Properties: map[string]any{"state": "mutated"}}}))
@@ -243,7 +243,7 @@ func TestStoredSnapshotSourcePinsNamespaceEntities(t *testing.T) {
 
 	source, err := openStoredSnapshotSource(ctx, documents)
 	require.NoError(t, err)
-	defer source.Close()
+	defer source.view.Close()
 
 	require.NoError(t, documents.UpdateNode(ctx, NodeUpdateRequest{After: &Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]any{"state": "mutated"}}}))
 
@@ -273,7 +273,7 @@ func TestStoredSnapshotSourcePinsBufferedWriteBehindEntities(t *testing.T) {
 
 	source, err := openStoredSnapshotSource(ctx, engine)
 	require.NoError(t, err)
-	defer source.Close()
+	defer source.view.Close()
 
 	// The acknowledged write reaches the store after the pin.
 	require.NoError(t, engine.FlushWriteBehind(ctx))
@@ -344,7 +344,7 @@ func TestStoredSnapshotSourcePreservesCustomNodeStream(t *testing.T) {
 	require.Equal(t, 1, wrapped.calls)
 	source, err := openStoredSnapshotSource(ctx, wrapped)
 	if source != nil {
-		source.Close()
+		source.view.Close()
 	}
 	require.ErrorIs(t, err, errStoredSnapshotUnsupported,
 		"native pinning must not bypass an engine's custom node enumeration")

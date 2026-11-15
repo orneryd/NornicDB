@@ -32,10 +32,15 @@ func (w *snapshotStoredEdgeWriter) stream(ctx context.Context, engine Engine, sc
 	resolved := resolveStoredRead(engine, scope, w.ids)
 	w.ids = resolved.ids
 	if resolved.native != nil {
-		if w.pin != nil {
-			return w.pin.streamSnapshotEdgeBodies(ctx, resolved, w)
+		if w.pin != nil && (resolved.native != w.pin.target.native || resolved.scope != w.pin.target.scope) {
+			return errStoredSnapshotUnsupported
 		}
-		return resolved.native.streamSnapshotEdgeBodies(ctx, resolved.scope, w)
+		var transcoder snapshotEdgeTranscoder
+		body := snapshotEdgeBodyWriter(resolved.native, &transcoder, w.ids, w.write)
+		if w.pin != nil {
+			return resolved.native.streamEdgesByTypeInScopeAtView(ctx, w.pin.view.withView, &w.pin.edges, resolved.scope, "", storedRead, w.visit, body)
+		}
+		return resolved.native.streamEdgesByTypeInScopeWithBodies(ctx, resolved.scope, "", storedRead, w.visit, body)
 	}
 	if w.pin != nil {
 		// A pin cannot serve an override's own enumeration: its caller keeps the
@@ -60,10 +65,4 @@ func (w *snapshotStoredEdgeWriter) visit(edge *Edge) error {
 		edge = w.ids.toUserEdge(edge)
 	}
 	return w.write(streamSnapshotEdge, edge)
-}
-
-func (b *BadgerEngine) streamSnapshotEdgeBodies(ctx context.Context, scope string, writer *snapshotStoredEdgeWriter) error {
-	var transcoder snapshotEdgeTranscoder
-	body := snapshotEdgeBodyWriter(b, &transcoder, writer.ids, writer.write)
-	return b.streamEdgesByTypeInScopeWithBodies(ctx, scope, "", storedRead, writer.visit, body)
 }

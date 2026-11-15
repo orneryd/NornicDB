@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,19 +84,6 @@ func (l *cruLab) create(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// snapshotPeriodic takes the snapshot automatic compaction takes, and
-// truncates the journal as it does.
-func (l *cruLab) snapshotPeriodic(t *testing.T) string {
-	t.Helper()
-	l.journal.snapshotDir = filepath.Join(l.dir, "snapshots")
-	require.NoError(t, os.MkdirAll(l.journal.snapshotDir, 0o755))
-	require.NoError(t, l.journal.createSnapshotAndCompact(context.Background(), saveCompactionSnapshot))
-	entries, err := os.ReadDir(l.journal.snapshotDir)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	return filepath.Join(l.journal.snapshotDir, entries[0].Name())
-}
-
 // TestClearEmbeddingsDoesNotResurrectVectorsAnUpdateCarriedBack reproduces
 // report 46 and asserts the corrected order.
 func TestClearEmbeddingsDoesNotResurrectVectorsAnUpdateCarriedBack(t *testing.T) {
@@ -114,7 +100,7 @@ func TestClearEmbeddingsDoesNotResurrectVectorsAnUpdateCarriedBack(t *testing.T)
 			dir := t.TempDir()
 			lab := cruOpen(t, dir)
 			lab.create(t)
-			snapshot := lab.snapshotPeriodic(t)
+			snapshot := takePeriodicSnapshot(t, lab.journal, lab.dir)
 
 			lab.interpose.update = func(ctx context.Context) error {
 				node, err := lab.journal.GetNode(ctx, rrvNode)

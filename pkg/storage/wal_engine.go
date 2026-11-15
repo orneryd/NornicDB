@@ -478,7 +478,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactio
 		return err
 	}
 	if source != nil {
-		defer source.Close()
+		defer source.view.Close()
 		// The pin fixes every stored entity and sidecar at this cut. File
 		// encoding and fsync no longer need to exclude accepted mutations.
 		mutationLocked = false
