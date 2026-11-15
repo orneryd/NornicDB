@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/pluginbuild"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -238,12 +239,11 @@ type coverageGPUGenerator struct {
 func (g *coverageGPUGenerator) UsingGPU() bool { return true }
 func (g *coverageGPUGenerator) GPULayers() int { return 4 }
 
-type coverageFailingResponseWriter struct{}
-
-func (w *coverageFailingResponseWriter) Header() http.Header { return http.Header{} }
-func (w *coverageFailingResponseWriter) Write([]byte) (int, error) {
-	return 0, errors.New("write failed")
+type coverageFailingResponseWriter struct {
+	fixtureowner.ErrorWriter
 }
+
+func (w *coverageFailingResponseWriter) Header() http.Header        { return http.Header{} }
 func (w *coverageFailingResponseWriter) WriteHeader(statusCode int) {}
 func (w *coverageFailingResponseWriter) Flush()                     {}
 
@@ -896,7 +896,9 @@ func TestHeimdallCoverage_BifrostBroadcastClientBranches(t *testing.T) {
 	err = b.broadcast(BifrostMessage{Type: "bad", Data: map[string]interface{}{"bad": make(chan int)}})
 	require.ErrorContains(t, err, "failed to marshal message")
 
-	b.RegisterClient("client-2", &coverageFailingResponseWriter{}, &coverageFailingResponseWriter{})
+	b.RegisterClient("client-2",
+		&coverageFailingResponseWriter{ErrorWriter: fixtureowner.ErrorWriter{Err: errors.New("write failed")}},
+		&coverageFailingResponseWriter{ErrorWriter: fixtureowner.ErrorWriter{Err: errors.New("write failed")}})
 	b.UnregisterClient("client-1")
 	err = b.Broadcast("will fail")
 	require.ErrorContains(t, err, "write failed")

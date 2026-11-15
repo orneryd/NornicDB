@@ -406,6 +406,23 @@ func (s *stallStore) diagnoseFirstMiss(id string) {
 				directFound, directScore = true, hit.Score
 			}
 		}
+		// Keep the first failed query intact. This later exhaustive observation
+		// distinguishes a stale coordinate from an absent canonical entry;
+		// it never replaces the failed assertion or waits for a passing query.
+		revisionBefore := service.IndexRevision()
+		population, populationErr := service.VectorQueryNodes(s.t.Context(), query, search.VectorQuerySpec{
+			IndexName: "doc_embedding", Label: "Doc", Property: "embedding", Similarity: "cosine", Limit: len(nodes), Exact: true,
+		})
+		populationFound, populationScore := false, float64(0)
+		for _, hit := range population {
+			if hit.ID == string(node.ID) {
+				populationFound, populationScore = true, hit.Score
+				break
+			}
+		}
+		bm25Max, vectorMax, metadataMax, _, _ := service.IndexCapacityPolicy()
+		s.t.Logf("first-miss-followup id=%s population_found=%v population_score=%g population_rows=%d population_err=%v revision_before=%d revision_after=%d property_entries=%d stored_doc_nodes=%d vector_storage=%+v bm25_max=%d vector_max=%d metadata_max=%d",
+			id, populationFound, populationScore, len(population), populationErr, revisionBefore, service.IndexRevision(), service.CountPropertyVectorEntries("embedding"), len(nodes), service.VectorStorageStatus(), bm25Max, vectorMax, metadataMax)
 		state := s.db.GetDatabaseSearchStatus("nornic")
 		s.t.Logf("first-miss id=%s stored_id=%s durable_max_difference=%g durable_dimensions=%d encode_err=%v decode_err=%v exact_found=%v exact_score=%g exact_err=%v exact_elapsed=%v direct_found=%v direct_score=%g direct_err=%v direct_elapsed=%v ready=%v building=%v phase=%s",
 			id, node.ID, difference, len(stored), encodeErr, decodeErr, found, score, exactErr, exactAt, directFound, directScore, directErr, directAt, state.Ready, state.Building, state.Phase)

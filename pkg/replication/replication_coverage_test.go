@@ -1320,7 +1320,7 @@ func TestStorageAdapter_WriteSnapshot_Failures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			adapter := setupTestAdapter(t).adapter
-			var writer io.Writer = &errWriter{err: errors.New("write failed")}
+			var writer io.Writer = &runtimeFixtureOwner.ErrorWriter{Err: errors.New("write failed")}
 			if test.encodeFailure {
 				adapter.engine = &snapshotEncodeErrorEngine{}
 				writer = &bytes.Buffer{}
@@ -1330,10 +1330,6 @@ func TestStorageAdapter_WriteSnapshot_Failures(t *testing.T) {
 		})
 	}
 }
-
-type errWriter struct{ err error }
-
-func (w *errWriter) Write([]byte) (int, error) { return 0, w.err }
 
 type snapshotEncodeErrorEngine struct {
 	storage.Engine
@@ -1382,7 +1378,7 @@ func TestTransport_WireReadWriteHelpers(t *testing.T) {
 	require.Equal(t, ClusterMsgHeartbeat, readMsg.Type)
 	require.Equal(t, []byte("ok"), readMsg.Payload)
 
-	errBuf := bufio.NewWriter(&errWriter{err: errors.New("write boom")})
+	errBuf := bufio.NewWriter(&runtimeFixtureOwner.ErrorWriter{Err: errors.New("write boom")})
 	require.NoError(t, transferClusterMessage(msg, nil, errBuf, 0))
 	require.ErrorContains(t, errBuf.Flush(), "write boom")
 

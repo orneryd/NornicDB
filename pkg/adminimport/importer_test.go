@@ -473,8 +473,10 @@ func TestImporterPreservesEmptyStringPropertiesUnlessIgnored(t *testing.T) {
 	dir := t.TempDir()
 	nodesPath := filepath.Join(dir, "nodes.csv")
 	relsPath := filepath.Join(dir, "rels.csv")
-	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string,nickname:string,age:int\nn1,Alice,,34\nn2,Bob,builder,29\n"), 0o600))
-	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,note:string,since:int\nn1,n2,KNOWS,,2024\n"), 0o600))
+	// A present empty string is the quoted empty cell; a bare empty cell is a
+	// property the source does not hold.
+	require.NoError(t, os.WriteFile(nodesPath, []byte(":ID,name:string,nickname:string,age:int\nn1,Alice,\"\",34\nn2,Bob,builder,29\n"), 0o600))
+	require.NoError(t, os.WriteFile(relsPath, []byte(":START_ID,:END_ID,:TYPE,note:string,since:int\nn1,n2,KNOWS,\"\",2024\n"), 0o600))
 
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
