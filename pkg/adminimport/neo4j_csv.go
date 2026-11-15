@@ -669,6 +669,10 @@ func (w *csvFieldTailWriter) releaseTail() error {
 		}
 	} else {
 		n, err := w.out.Write([]byte{w.tail})
+		if n == 1 {
+			// An accepted byte must not be replayed even when the sink also fails.
+			w.held = false
+		}
 		if err != nil {
 			return err
 		}

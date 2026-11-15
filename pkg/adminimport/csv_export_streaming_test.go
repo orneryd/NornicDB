@@ -379,3 +379,33 @@ func TestCSVFieldTailWriterPreservesTailOnShortRelease(t *testing.T) {
 	writer.discardTail()
 	require.Equal(t, "a", sink.buf.String())
 }
+
+// acceptedTailErrorSink reports the bytes it accepted even when it also returns
+// an error. Retrying the new chunk must not replay a previously accepted tail.
+type acceptedTailErrorSink struct {
+	data    bytes.Buffer
+	failure error
+}
+
+func (s *acceptedTailErrorSink) Write(p []byte) (int, error) {
+	n, _ := s.data.Write(p)
+	failure := s.failure
+	s.failure = nil
+	return n, failure
+}
+
+func TestCSVFieldTailWriterDoesNotReplayAcceptedTailAfterError(t *testing.T) {
+	sink := &acceptedTailErrorSink{failure: errCSVFieldSink}
+	writer := &csvFieldTailWriter{out: sink}
+	_, err := writer.WriteString("a")
+	require.NoError(t, err)
+	n, err := writer.WriteString("b")
+	require.Zero(t, n)
+	require.ErrorIs(t, err, errCSVFieldSink)
+	_, err = writer.WriteString("b")
+	require.NoError(t, err)
+	_, err = writer.WriteString("\n")
+	require.NoError(t, err)
+	writer.discardTail()
+	require.Equal(t, "ab", sink.data.String())
+}
