@@ -26,7 +26,7 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 	transactionRoute := func(name string, implicit, bulk bool) createRoute {
 		apply := func(t *testing.T, engine *BadgerEngine, stage func(*BadgerTransaction) error) error {
 			t.Helper()
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))
@@ -294,7 +294,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 
 			begin := func() *BadgerTransaction {
 				t.Helper()
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				return tx
@@ -397,7 +397,7 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	before = comparableStoredEdge(before)
 	begin := func() *BadgerTransaction {
 		t.Helper()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		return tx
@@ -535,7 +535,7 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 				}
 				require.NoError(t, engine.CreateEdge(t.Context(), edge(tc.same())))
 				implicit := func() *BadgerTransaction {
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.SetImplicit(true))
 					return tx

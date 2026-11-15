@@ -62,7 +62,7 @@ func TestPolicyMutationWaitsForNativePublicationBeforeReadingSchema(t *testing.T
 
 	nativeDone := make(chan error, 1)
 	go func() {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			nativeDone <- err
 			return

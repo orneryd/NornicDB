@@ -23,7 +23,7 @@ import (
 
 func acceptedClosePhaseFrame(t *testing.T, engine *BadgerEngine, id string) (*PreparedEntityCommit, []byte) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(id), Properties: map[string]any{"v": "committed"}})
 	require.NoError(t, err)
@@ -123,7 +123,7 @@ func TestAcceptedWALApplicationSurvivesClosePhaseAfter(t *testing.T) {
 	wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
 	owner := NewWALEngine(base, wal)
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}})
 	require.NoError(t, err)

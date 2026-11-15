@@ -18,7 +18,7 @@ func TestLabelRebuildPreservesReadyTransactionSnapshot(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"ReadySnapshot"}})
 		require.NoError(t, err)
 	}
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

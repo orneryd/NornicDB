@@ -147,7 +147,7 @@ func TestConstraintContractExpressionComparisonParseErrors_Propagate(t *testing.
 
 	t.Run("transaction evaluator malformed literal", func(t *testing.T) {
 		engine := newTestEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -171,7 +171,7 @@ func TestNodeConstraintComparisonExpressions_EvaluatedInEngineAndTransaction(t *
 
 	t.Run("transaction evaluator comparison", func(t *testing.T) {
 		engine := newTestEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -209,7 +209,7 @@ func TestConstraintContractEvaluation_EngineAndTransactionViewsAgree(t *testing.
 	edge, err := engine.GetEdge(t.Context(), "test:k")
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

@@ -29,7 +29,7 @@ func TestBadgerDeleteRemovesPropertyIndexPostings(t *testing.T) {
 						b.cacheDeleteNode(n.ID, nodeCacheAllForms)
 					}
 					if explicit {
-						tx, e := b.BeginTransaction(t.Context())
+						tx, e := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, e)
 						require.NoError(t, tx.SetNamespace("tenant"))
 						require.NoError(t, tx.DeleteGraphNode(t.Context(), n.ID, CascadeEdges))

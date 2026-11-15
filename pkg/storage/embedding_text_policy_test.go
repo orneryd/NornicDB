@@ -98,7 +98,7 @@ func TestTransactionUpdateEmbeddingStoragePolicy(t *testing.T) {
 				require.NoError(t, err)
 			}
 			update := func(change func(*Node)) {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
@@ -202,7 +202,7 @@ func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
 		return node
 	}
 	twoWrites := func(id NodeID, second func(*Node)) {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		row, err := tx.GetNode(t.Context(), id)

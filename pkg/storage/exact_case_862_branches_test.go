@@ -380,7 +380,7 @@ func TestTransactionRelabelMovesEndpointLabelCounts(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:b", Labels: []string{"Thing"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"person"}}, Policy: ClientNodeEdits}))

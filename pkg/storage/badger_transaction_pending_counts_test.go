@@ -16,7 +16,7 @@ func TestBadgerTransactionPendingCountDeltas(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	_, tracked := tx.PendingNodeLabelCountDelta("tenant", "L")

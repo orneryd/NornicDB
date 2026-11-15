@@ -37,7 +37,7 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 				edgeID := EdgeID("test:delete-conflict-edge")
 				require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"writer": "seed"}}))
 
-				deleter, err := engine.BeginTransaction(t.Context())
+				deleter, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = deleter.Rollback() })
 				switch target {
@@ -66,7 +66,7 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 					t.Fatal("delete did not reach the post-validation barrier")
 				}
 
-				peer, err := engine.BeginTransaction(t.Context())
+				peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = peer.Rollback() })
 				if target == "relationship" {
@@ -119,7 +119,7 @@ func TestTransactionWriteFailsWhenConflictTrackingReadFails(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "R", Properties: map[string]interface{}{"v": 1}}))
 
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			node, err := tx.GetNode(t.Context(), nodeID)

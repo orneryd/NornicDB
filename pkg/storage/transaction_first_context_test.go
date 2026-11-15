@@ -12,7 +12,7 @@ func TestTransactionFirstNodeReadRetainsCallerContext(t *testing.T) {
 	e := newTestMemoryEngine(t)
 	_, err := e.CreateNode(t.Context(), &Node{ID: "test:first", Labels: []string{"First"}})
 	require.NoError(t, err)
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -25,7 +25,7 @@ func TestTransactionFirstNodeReadRetainsCallerContext(t *testing.T) {
 
 func TestTransactionDeleteOldNodeReadRetainsCallerContext(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{manualDrain: true})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

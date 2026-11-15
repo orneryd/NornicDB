@@ -41,12 +41,29 @@ read-only statements that need no transaction; writes return the same “engine 
 requirement error for `WITH EMBEDDING` remains unchanged.
 
 Native `MemoryEngine` and `BadgerEngine` provide
-`BeginTransaction() (*storage.BadgerTransaction, error)`. A transparent adapter
-can retain the existing `storage.EngineUnwrapper` contract so capability and
-namespace discovery reach that owner. An adapter that changes mutation semantics
-must preserve those semantics in the transaction owner; exposing an inner engine
-is not a substitute for making its writes atomic. Custom independent backends
-without a compatible transaction owner must not accept local Cypher writes.
+`BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error)`.
+The typed request states the admission a begin owns, not the transaction's
+semantics afterwards:
+
+- `storage.OrdinaryBegin` captures the snapshot without lifecycle admission. An
+  explicit `BEGIN` and a data autocommit use it, and the transaction keeps its
+  own snapshot and its commit-time conflict guards.
+- `storage.AutocommitSchemaBegin` opens an autocommit schema statement. The
+  engine applies the write-behind commits already acknowledged, then holds its
+  exclusive lifecycle write barrier from before the snapshot until the
+  statement's publication or rollback, and the transaction owns that lease until
+  its single release. This is the request
+  `SchemaManager.BeginSchemaTransaction` passes to its opener, so an index build
+  never rejects its commit because an unrelated data commit landed inside its
+  window.
+
+An adapter that forwards `BeginTransaction` forwards the request it was given. A
+transparent adapter can retain the existing `storage.EngineUnwrapper` contract so
+capability and namespace discovery reach that owner. An adapter that changes
+mutation semantics must preserve those semantics in the transaction owner;
+exposing an inner engine is not a substitute for making its writes atomic.
+Custom independent backends without a compatible transaction owner must not
+accept local Cypher writes.
 
 For example, a namespaced native engine supports atomic statements directly:
 
@@ -56,6 +73,16 @@ defer engine.Close()
 scoped := storage.NewNamespacedEngine(engine, "tenant")
 executor := cypher.NewStorageExecutor(scoped)
 _, err := executor.Execute(ctx, "CREATE (:Document {id: 'one'})", nil)
+```
+
+A caller that owns one native transaction opens it with the admission it needs:
+
+```go
+tx, err := engine.BeginTransaction(ctx, storage.OrdinaryBegin)
+if err != nil {
+    return err
+}
+defer tx.Rollback()
 ```
 
 Resolved remote/Fabric statements retain their existing delegated coordinator.

@@ -19,7 +19,7 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 	if err = engine.CreateEdge(b.Context(), &Edge{ID: "point:e", StartNode: "point:a", EndNode: "point:a", Type: "R"}); err != nil {
 		b.Fatal(err)
 	}
-	tx, err := engine.BeginTransaction(b.Context())
+	tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func BenchmarkNativeTransactionPointRead(b *testing.B) {
 	b.Run("cold-node", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			reader, err := engine.BeginTransaction(b.Context())
+			reader, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if err != nil {
 				b.Fatal(err)
 			}

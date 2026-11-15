@@ -23,7 +23,7 @@ func TestResidualDecisionContainsPhysicalAction(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			_, err = b.CreateNode(t.Context(), &Node{ID: "test:physical", Properties: map[string]any{"v": int64(1)}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:physical", Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))

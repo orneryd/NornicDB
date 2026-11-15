@@ -989,7 +989,7 @@ func TestBadgerEngine_UpdateNode_LargeEmbedding_SeparateStorage(t *testing.T) {
 func TestTransaction_CreateNode_LargeEmbedding_SeparateStorage(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	node := &Node{

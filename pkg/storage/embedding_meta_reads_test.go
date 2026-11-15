@@ -147,7 +147,7 @@ func TestEmbeddingMetaOfFallsBackToTheNode(t *testing.T) {
 // write-behind buffers.
 func writeBehindCommit(t *testing.T, engine *BadgerEngine, change func(*BadgerTransaction) error) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("nornic"))

@@ -15,7 +15,7 @@ type knowledgePolicyOpaqueEngine struct{ storage.Engine }
 
 func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
+	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, storage.OrdinaryBegin, "lookup")
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
 	_, view, err := executor.knowledgePolicyContext("")
@@ -38,7 +38,7 @@ func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 func TestSchemaMutationHelperErrorBoundaries(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	require.NoError(t, NewStorageExecutor(base).prepareSchemaTransaction(context.Background()))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("mutation"))
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
@@ -56,7 +56,7 @@ func TestSchemaMutationHelperErrorBoundaries(t *testing.T) {
 	err = executor.mutateSchema(ctx, func(*storage.SchemaManager) error { return tx.Rollback() })
 	require.Error(t, err, "staging must refuse a transaction closed during its schema callback")
 	require.Error(t, executor.prepareSchemaTransaction(ctx))
-	tx, err = base.BeginTransaction(t.Context())
+	tx, err = base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "mutation:data"})
 	require.NoError(t, err)

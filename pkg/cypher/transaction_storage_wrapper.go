@@ -783,6 +783,19 @@ func (w *transactionStorageWrapper) GetOutDegree(ctx context.Context, nodeID sto
 	return w.underlying.GetOutDegree(ctx, nodeID)
 }
 
+// NativeSchemaTransaction is the native transaction this statement's view wraps,
+// so the storage owner can stage a schema change's derived work (a new temporal
+// constraint's history and current-version entries) in the transaction that
+// publishes the change. It grants nothing by itself: storage validates that the
+// transaction's engine, isolated schema and pinned database are this view's
+// before it stages a key.
+func (w *transactionStorageWrapper) NativeSchemaTransaction() *storage.BadgerTransaction {
+	if w == nil {
+		return nil
+	}
+	return w.tx
+}
+
 func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
 	if w.schema != nil {
 		return w.schema

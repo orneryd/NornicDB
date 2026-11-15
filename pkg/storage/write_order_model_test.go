@@ -123,7 +123,7 @@ func (d *engineDriver) Write(op writeordertest.Op, v int64, implicit bool) (writ
 
 func (d *engineDriver) writeOnce(op writeordertest.Op, v int64, implicit bool) (writeordertest.Outcome, error) {
 	if implicit {
-		tx, err := d.e.BeginTransaction(context.Background())
+		tx, err := d.e.BeginTransaction(context.Background(), OrdinaryBegin)
 		if err != nil {
 			return outcomeOf(err)
 		}
@@ -157,7 +157,7 @@ func (d *engineDriver) writeOnce(op writeordertest.Op, v int64, implicit bool) (
 }
 
 func (d *engineDriver) Begin(slot int, implicit bool) error {
-	tx, err := d.e.BeginTransaction(context.Background())
+	tx, err := d.e.BeginTransaction(context.Background(), OrdinaryBegin)
 	if err != nil {
 		return err
 	}

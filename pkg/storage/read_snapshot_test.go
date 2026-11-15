@@ -70,7 +70,7 @@ func TestReadSnapshotSeesOnePoint(t *testing.T) {
 	require.NoError(t, err)
 	defer snapshot.Close()
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, Policy: ClientNodeEdits}))
@@ -95,7 +95,7 @@ func TestReadSnapshotIncludesWriteBehind(t *testing.T) {
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		bufferedCreate(t, engine, &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "buffered"}})
 	}
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

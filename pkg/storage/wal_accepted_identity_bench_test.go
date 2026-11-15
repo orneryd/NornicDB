@@ -33,7 +33,7 @@ func BenchmarkWALAcceptedCommit(b *testing.B) {
 			namespace = "beta"
 		}
 		id := fmt.Sprintf("commit-%d", i)
-		tx, err := native.BeginTransaction(b.Context())
+		tx, err := native.BeginTransaction(b.Context(), OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}

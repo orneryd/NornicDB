@@ -11,7 +11,7 @@ import (
 
 func TestAcceptedEntityHandleRetiresTerminalNativeFrame(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -65,7 +65,7 @@ func TestAcceptedWALCloseRetiresPendingNativeFrameWithoutDiscard(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
 	w := NewWALEngine(inner, wal)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -162,7 +162,7 @@ func (s *arbitrationProbeSubmitter) SubmitEntityCommit(ctx context.Context, prep
 // transport with the owner: foreign submission runs outside arbitration.
 func TestAcceptedHandleSubmitsOutsideArbitration(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

@@ -13,7 +13,7 @@ import (
 
 func stagedQuotaNode(t *testing.T, manager *DatabaseManager, db, id string) *storage.BadgerTransaction {
 	t.Helper()
-	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context())
+	tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(db))
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(db + ":" + id), Labels: []string{"Review"}})

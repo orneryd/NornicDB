@@ -118,7 +118,7 @@ CREATE (c:Invalid!)  // ← Syntax error here
 func (e *Executor) Execute(ctx, query, params) {
     // For write operations without explicit transaction
     if isWriteQuery && !inExplicitTransaction {
-        tx := e.storage.BeginTransaction()
+        tx := e.storage.BeginTransaction(ctx, storage.OrdinaryBegin)
         defer tx.Rollback()  // Rollback on any error
         
         result, err := e.executeWithTransaction(tx, query)

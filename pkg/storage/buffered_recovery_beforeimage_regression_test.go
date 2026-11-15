@@ -15,7 +15,7 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "unique_v", Type: ConstraintUnique, Label: "L", Properties: []string{"v"}}))
 			_, err := engine.CreateNode(t.Context(), &Node{ID: "test:original", Labels: []string{"L"}, Properties: map[string]interface{}{"v": "old"}})
 			require.NoError(t, err)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))

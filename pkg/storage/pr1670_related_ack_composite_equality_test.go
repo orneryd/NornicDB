@@ -50,7 +50,7 @@ func relatedAckedCompositeSeed(t *testing.T, engine *BadgerEngine) {
 // issue in one implicit transaction and returns the acknowledged transaction.
 func relatedAckedCompositeUpdate(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -135,7 +135,7 @@ func TestRelatedAckedCompositeLookupDropsSupersededMembership(t *testing.T) {
 		relatedAckedCompositeSeed(t, engine)
 		require.Equal(t, []NodeID{"test:doc"}, relatedAckedCompositeLookup(t, sm, idx, true, "before", "stable"))
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
@@ -162,7 +162,7 @@ func TestRelatedAckedCompositeLookupDropsSupersededMembership(t *testing.T) {
 		relatedAckedCompositeSeed(t, engine)
 		require.Equal(t, []NodeID{"test:doc"}, relatedAckedCompositeLookup(t, sm, idx, true, "before", "stable"))
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
@@ -186,7 +186,7 @@ func TestRelatedAckedCompositeLookupPrefixWithIncompleteProperties(t *testing.T)
 	engine, sm, idx := relatedAckedCompositeEngine(t, writeBehindTestOptions{manualDrain: true})
 	relatedAckedCompositeSeed(t, engine)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

@@ -40,7 +40,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.NoError(t, err)
 	journal := NewWALEngine(source, wal)
 	t.Cleanup(func() { _ = journal.Close() })
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("binding"))
 	require.NoError(t, tx.SetImplicit(true))

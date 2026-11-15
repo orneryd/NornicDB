@@ -431,7 +431,7 @@ func TestStoreValueLimitRefusesAHistoryRecordOverTheLimit(t *testing.T) {
 				record, err := encodeMVCCNodeRecord(stored, false)
 				require.NoError(t, err)
 				require.LessOrEqual(t, len(record), limit, "the node's history record fits the store")
-				reader, err := b.BeginTransaction(ctx)
+				reader, err := b.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, reader.SetNamespace("test"))
 				require.True(t, b.mustArchiveForHistory(), "the engine archives superseded versions while the other transaction is open")

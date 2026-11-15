@@ -20,7 +20,7 @@ func BenchmarkBufferedConflictPreparationScan(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			tx, err := engine.BeginTransaction(b.Context())
+			tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -66,7 +66,7 @@ func BenchmarkPublicBufferedEntityCommitPreparation(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}

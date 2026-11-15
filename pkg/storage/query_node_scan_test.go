@@ -16,7 +16,7 @@ func TestTransactionQueryNodeScansKeepMetadataAndFullReads(t *testing.T) {
 				id := NodeID("test:lazy")
 				tc.create(t, b, id)
 				corruptFirstEmbeddingChunk(t, b, id)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				for read := 0; read < 2; read++ {

@@ -29,7 +29,7 @@ func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
 		require.NotContains(t, payload.EmbedMeta, embeddingRangeManifestKey, "the physical index cannot enter publication")
 	}
 	write(initial, map[string]any{"chunk_count": 2, "embedding_model": "first"})
-	old, err := engine.BeginTransaction(t.Context())
+	old, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, old.Rollback()) })
 	write([][]float32{{5, 6}}, map[string]any{"chunk_count": 1, "embedding_model": "second"})

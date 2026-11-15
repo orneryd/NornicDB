@@ -19,7 +19,7 @@ func TestResidualMetadataIngressOwnership(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			b.SetChangeCapture("test", storage.ChangeCaptureFull)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			metadata := map[string]any{

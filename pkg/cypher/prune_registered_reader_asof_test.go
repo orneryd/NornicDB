@@ -41,7 +41,7 @@ func TestTemporalAsOfAtOpenTransactionCutSurvivesPrune(t *testing.T) {
 			// An open transaction that began before the document existed.
 			_, err = base.CreateNode(t.Context(), &storage.Node{ID: "test:other", Labels: []string{"Other"}})
 			require.NoError(t, err)
-			older, err := base.BeginTransaction(ctx)
+			older, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 			require.NoError(t, err)
 			defer func() { _ = older.Rollback() }()
 			require.NoError(t, older.SetNamespace("test"))
@@ -63,7 +63,7 @@ func TestTemporalAsOfAtOpenTransactionCutSurvivesPrune(t *testing.T) {
 			head, err := base.GetNodeCurrentHead(ctx, "test:doc")
 			require.NoError(t, err)
 			// A newer open transaction whose cut sees v=2.
-			newer, err := base.BeginTransaction(ctx)
+			newer, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 			require.NoError(t, err)
 			defer func() { _ = newer.Rollback() }()
 			require.NoError(t, newer.SetNamespace("test"))

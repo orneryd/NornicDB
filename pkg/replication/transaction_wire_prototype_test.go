@@ -159,7 +159,7 @@ func wireDictionaryIdentity(t *testing.T, b *storage.BadgerEngine, key string) s
 	require.NoError(t, err)
 	fixtureowner.OwnChecked(t, w)
 	b.SetBufferedCommitWAL(w)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("wire"))

@@ -139,7 +139,7 @@ func TestEdgeUpdateKeepsPhysicalCounts(t *testing.T) {
 				if move {
 					updated.Type, updated.StartNode = "MOVED", "test:c"
 				}
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				require.NoError(t, tx.SetImplicit(true))

@@ -28,7 +28,7 @@ func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 						defer writers.Done()
 						node := &Node{ID: NodeID(fmt.Sprintf("test:%d-%d", iteration, writer)), Labels: []string{"CU"}, Properties: map[string]interface{}{"a": int64(iteration), "b": int64(1)}}
 						if explicit {
-							transaction, err := engine.BeginTransaction(t.Context())
+							transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 							if err != nil {
 								results <- err
 								return
@@ -88,7 +88,7 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, ValidateConstraintOnCreationForEngine(context.Background(), NewNamespacedEngine(engine, "test"), constraint))
 
-	transaction, err := engine.BeginTransaction(t.Context())
+	transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer transaction.Rollback()
 	_, err = transaction.CreateNode(t.Context(), node("test:tx_duplicate", int64(1), "two"))

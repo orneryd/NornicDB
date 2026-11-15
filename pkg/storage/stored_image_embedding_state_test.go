@@ -118,7 +118,7 @@ func seedKeptStateNode(t *testing.T, b *BadgerEngine, node *Node) {
 func keptStateRead(t *testing.T, b *BadgerEngine, id NodeID, engine bool) string {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := b.BeginTransaction(ctx)
+	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -176,7 +176,7 @@ func keptStateUpdate(t *testing.T, b *BadgerEngine, id NodeID, path, grow, dir s
 		if accepted {
 			tx, err = BeginEntityTransaction(ctx, b, CommitModeExplicit)
 		} else {
-			tx, err = b.BeginTransaction(ctx)
+			tx, err = b.BeginTransaction(ctx, OrdinaryBegin)
 			if err == nil && b.writeBehind != nil {
 				err = tx.SetImplicit(true)
 			}

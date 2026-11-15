@@ -31,7 +31,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 				id := NodeID("test:visibility")
 				_, err = b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "before"}})
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				read := b.GetQueryNode

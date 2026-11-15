@@ -19,7 +19,7 @@ func TestIndependentEdgeCommitsShareEndpointAuthority(t *testing.T) {
 		require.NoError(t, err)
 	}
 	makeTxn := func(id EdgeID, end NodeID) *BadgerTransaction {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:hub", EndNode: end, Type: "CONNECTS"}))
@@ -258,11 +258,11 @@ func TestSharedEndpointExcludesNodeMutations(t *testing.T) {
 				_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Before"}})
 				require.NoError(t, err)
 			}
-			edgeTx, err := b.BeginTransaction(t.Context())
+			edgeTx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, edgeTx.SetNamespace("test"))
 			require.NoError(t, edgeTx.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:hub", EndNode: "test:end", Type: "LINK"}))
-			nodeTx, err := b.BeginTransaction(t.Context())
+			nodeTx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, nodeTx.SetNamespace("test"))
 			if deletion {
@@ -321,7 +321,7 @@ func TestSharedEndpointConcurrentBufferedCommitCounts(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		prepared := make([]*PreparedEntityCommit, 0, 2)
 		for j, end := range []NodeID{"test:left", "test:right"} {
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("test"))
 			require.NoError(t, tx.SetImplicit(true))

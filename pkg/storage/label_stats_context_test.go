@@ -17,7 +17,7 @@ func TestCountNodesWithLabelCanceledMetadataAdmission(t *testing.T) {
 			// route below counts committed buffer state rather than a landed
 			// generation.
 			create := func(namespace string, node *Node) {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetImplicit(true))

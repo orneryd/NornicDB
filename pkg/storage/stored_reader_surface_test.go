@@ -186,7 +186,7 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 	})
 
 	t.Run("transaction", func(t *testing.T) {
-		tx, err := base.BeginTransaction(t.Context())
+		tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.NoError(t, tx.SetNamespace("ns"))

@@ -22,7 +22,7 @@ func relationshipUniqueCommitFixture(t testing.TB, existing int, constraints ...
 		_, err = engine.CreateNode(context.Background(), &Node{ID: id})
 		require.NoError(t, err)
 	}
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < existing; i++ {
 		require.NoError(t, tx.CreateEdge(context.Background(), &Edge{ID: EdgeID(fmt.Sprintf("test:existing%d", i)), StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": int64(i)}}))
@@ -35,7 +35,7 @@ func relationshipUniqueCommitFixture(t testing.TB, existing int, constraints ...
 }
 func commitUniqueRelationships(t testing.TB, engine *BadgerEngine, first, count int) {
 	t.Helper()
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for i := 0; i < count; i++ {
@@ -64,7 +64,7 @@ func BenchmarkRelationshipUniqueCommit(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					tx, err := engine.BeginTransaction(b.Context())
+					tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 					require.NoError(b, err)
 					for j := 0; j < pending; j++ {
 						id := existing + 1000 + i*pending + j
@@ -88,7 +88,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 			create := func(tx *BadgerTransaction, id EdgeID, value interface{}) error {
 				return tx.CreateEdge(t.Context(), &Edge{ID: id, StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": value}})
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			switch scenario {
@@ -110,7 +110,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 				require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 				require.NoError(t, create(tx, "test:replacement", int64(1)))
 				require.NoError(t, tx.Commit())
-				next, err := engine.BeginTransaction(t.Context())
+				next, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer next.Rollback()
 				require.NoError(t, create(next, "test:dup-new", int64(200)))
@@ -120,7 +120,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 				require.NoError(t, create(tx, "test:rolledback", int64(200)))
 				require.NoError(t, tx.Rollback())
 				commitUniqueRelationships(t, engine, 200, 1)
-				next, err := engine.BeginTransaction(t.Context())
+				next, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer next.Rollback()
 				require.NoError(t, create(next, "test:still-duplicate", int64(1)))
@@ -146,7 +146,7 @@ func TestRelationshipUniqueIndexPreservesTransactionSemantics(t *testing.T) {
 			case "list fallback":
 				require.NoError(t, create(tx, "test:list1", []interface{}{float64(200)}))
 				require.NoError(t, tx.Commit())
-				next, err := engine.BeginTransaction(t.Context())
+				next, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer next.Rollback()
 				stored, err := engine.GetEdge(t.Context(), "test:list1")
@@ -182,11 +182,11 @@ func TestRelationshipUniqueIndexConcurrentCommits(t *testing.T) {
 				{ID: "test:writer0", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: tc.properties()},
 				{ID: "test:writer1", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: tc.properties()},
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.CreateEdge(t.Context(), edges[0]))
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer peer.Rollback()
 			if !tc.direct {
@@ -226,7 +226,7 @@ func TestRelationshipUniqueCompositeIndexSignedZero(t *testing.T) {
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "composite", Type: ConstraintRelationshipKey, EntityType: ConstraintEntityRelationship, Label: "T", Properties: []string{"tenant", "id"}}))
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:zero", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"tenant": "x", "id": math.Copysign(0, -1)}}))
 	for i := 0; i < 2; i++ {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:dup%d", i)), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"tenant": "x", "id": float64(0)}}))
 		require.Error(t, tx.Commit())
@@ -239,7 +239,7 @@ func BenchmarkRelationshipUnconstrainedCommit(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, err := engine.BeginTransaction(b.Context())
+		tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		require.NoError(b, err)
 		for j := 0; j < 16; j++ {
 			id := 10000 + i*16 + j
@@ -259,7 +259,7 @@ func TestRelationshipUniqueNaNUsesScanFallback(t *testing.T) {
 	restore := setUniqueConstraintScanHook(func() { scans.Add(1) })
 	defer restore()
 	for i := 0; i < 2; i++ {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: EdgeID(fmt.Sprintf("test:nan%d", i)), Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": math.NaN()}}))
 		// NaN remains unequal under the existing constraint comparator. It must
@@ -279,7 +279,7 @@ func TestRelationshipUniqueIndexSeparatesSurrogatePropertyNames(t *testing.T) {
 		require.NoError(t, schema.AddConstraint(Constraint{Name: fmt.Sprintf("surrogate_%d", i), Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "T", Properties: []string{property}}))
 	}
 	create := func(id EdgeID, a, b string) error {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			return err
 		}

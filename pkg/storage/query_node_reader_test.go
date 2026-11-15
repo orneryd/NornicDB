@@ -62,7 +62,7 @@ func TestTransactionGetQueryNodeReadsNoChunk(t *testing.T) {
 			id := NodeID("test:lazy")
 			chunks := tc.create(t, b, id)
 
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			full, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestTransactionGetQueryNodeReadsNoChunk(t *testing.T) {
 			require.NoError(t, tx.Rollback())
 
 			corruptFirstEmbeddingChunk(t, b, id)
-			tx, err = b.BeginTransaction(t.Context())
+			tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			for read := 0; read < 2; read++ {
@@ -102,7 +102,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			id := NodeID("test:lazy")
 			chunks := tc.create(t, b, id)
 
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			node, err := tx.GetQueryNode(t.Context(), id)
 			require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			require.Equal(t, chunks, stored.ChunkEmbeddings)
 			require.Equal(t, tc.chunks, chunkCountFromMeta(stored.EmbedMeta))
 
-			tx, err = b.BeginTransaction(t.Context())
+			tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			reread, err := tx.GetNode(t.Context(), id)
 			require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			if tc.name != "worker-sidecar" {
 				return // managed embeddings only
 			}
-			tx, err = b.BeginTransaction(t.Context())
+			tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			node, err = tx.GetQueryNode(t.Context(), id)
 			require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 // deletes), sharing in-memory vectors instead of copying them.
 func TestTransactionGetQueryNodeVisibility(t *testing.T) {
 	b := newSidecarTestBadger(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 
@@ -207,7 +207,7 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		var out outcome
 		out.keysAfterCreate = countQueryReadEmbeddingKeys(t, b, id)
 
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		node, err := read(tx)
 		require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		out.chunksAfter = stored.ChunkEmbeddings
 
-		tx, err = b.BeginTransaction(t.Context())
+		tx, err = b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		_, err = read(tx)
 		require.NoError(t, err)
@@ -328,7 +328,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		require.Equal(t, full.RuntimeMetadata(), node.RuntimeMetadata())
 		require.True(t, node.HasChunkEmbeddings())
 
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))

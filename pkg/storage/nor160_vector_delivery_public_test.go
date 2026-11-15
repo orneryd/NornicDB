@@ -27,7 +27,7 @@ func TestNOR160StorageReadVectorIsolation(t *testing.T) {
 			engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			ctx := t.Context()
-			writer, err := engine.BeginTransaction(ctx)
+			writer, err := engine.BeginTransaction(ctx, storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, writer.SetNamespace("test"))
 			_, err = writer.CreateNode(ctx, &storage.Node{ID: "test:vector", Labels: []string{"Vector"}, Properties: map[string]any{"nested": map[string]any{"list": []int64{7}}}, ChunkEmbeddings: [][]float32{{1, 2}}, NamedEmbeddings: map[string][]float32{"named": {3, 4}}})

@@ -20,7 +20,7 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 	engine.OnEdgeUpdated(func(*Edge) { record("edge update") })
 	engine.OnEdgeDeleted(func(EdgeID) { record("edge delete") })
 	write := func(change func(*Transaction)) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))

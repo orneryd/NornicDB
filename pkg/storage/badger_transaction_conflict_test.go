@@ -19,7 +19,7 @@ func TestCheckNodeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	// tx1 is started BEFORE tx2 commits, so tx1.readTS < the new head.
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
@@ -50,7 +50,7 @@ func TestCheckEdgeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	tx1, err := engine.BeginTransaction(t.Context())
+	tx1, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx1.Rollback() })
 
@@ -86,7 +86,7 @@ func TestGetCommittedEdgeLocked_SnapshotRead(t *testing.T) {
 		Properties: map[string]any{"k": "v"},
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -109,7 +109,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:target", Labels: []string{"L"}})
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -128,7 +128,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 		_, err = engine.CreateNode(t.Context(), &Node{ID: "test:start", Labels: []string{"L"}})
 		require.NoError(t, err)
 
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -150,7 +150,7 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: []string{"name"},
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -255,7 +255,7 @@ func TestTransactionEntityPolicyScenarios(t *testing.T) {
 			if tc.committedEdge != nil {
 				require.NoError(t, engine.CreateEdge(t.Context(), tc.committedEdge))
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			for _, node := range tc.pendingNodes {

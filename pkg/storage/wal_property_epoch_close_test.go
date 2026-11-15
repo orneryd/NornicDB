@@ -92,7 +92,7 @@ func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	w, err := NewWAL(logDir, DefaultWALConfig())
 	require.NoError(t, err)
 	source.SetBufferedCommitWAL(w)
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("close"))
 	require.NoError(t, tx.SetImplicit(true))

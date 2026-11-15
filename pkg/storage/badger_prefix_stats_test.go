@@ -40,7 +40,7 @@ func TestBadgerEngine_PrefixStatsAreO1AndCorrect(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "db1:n3"})
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
 		ID:        "db1:e2",

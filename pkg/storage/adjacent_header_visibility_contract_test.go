@@ -154,7 +154,7 @@ func requireHeaderVisibilityContract(t *testing.T, tx *BadgerTransaction, node N
 func TestTransactionAdjacentHeadersMatchRecordVisibilityUnderDecay(t *testing.T) {
 	t.Run("pinned snapshot", func(t *testing.T) {
 		engine := newHeaderVisibilityContractEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		require.NoError(t, tx.SetNamespace("test"))
@@ -164,7 +164,7 @@ func TestTransactionAdjacentHeadersMatchRecordVisibilityUnderDecay(t *testing.T)
 
 	t.Run("pending overlay", func(t *testing.T) {
 		engine := newHeaderVisibilityContractEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		require.NoError(t, tx.SetNamespace("test"))
@@ -183,7 +183,7 @@ func TestTransactionAdjacentHeadersMatchRecordVisibilityUnderDecay(t *testing.T)
 
 	t.Run("pinned historical", func(t *testing.T) {
 		engine := newHeaderVisibilityContractEngine(t)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		require.NoError(t, tx.SetNamespace("test"))

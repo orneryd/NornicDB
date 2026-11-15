@@ -39,7 +39,7 @@ func TestTransactionNodeUpdateChunkPersistence(t *testing.T) {
 				require.NoError(t, err)
 				originalStored, err := b.GetStoredNode(t.Context(), original.ID)
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))
@@ -118,7 +118,7 @@ func BenchmarkTransactionNodeUpdateWithoutVectors(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, err := engine.BeginTransaction(b.Context())
+		tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -171,7 +171,7 @@ func BenchmarkTransactionNodeUpdateSeparateEmbeddings(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction(ctx)
+				tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}

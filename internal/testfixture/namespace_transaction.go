@@ -5,15 +5,19 @@ import (
 	"testing"
 )
 
-// NamespaceTransaction opens a test transaction, binds its namespace when
-// provided, and owns rollback even when an assertion terminates its caller.
-// For example: tx := NamespaceTransaction(t, engine.BeginTransaction, "tenant").
+// NamespaceTransaction opens a test transaction with the begin request its
+// caller owns, binds its namespace when provided, and owns rollback even when an
+// assertion terminates its caller. A test that needs an autocommit schema
+// statement passes storage.AutocommitSchemaBegin here only through
+// SchemaManager.BeginSchemaTransaction; this helper opens the transaction it is
+// given.
+// For example: tx := NamespaceTransaction(t, engine.BeginTransaction, storage.OrdinaryBegin, "tenant").
 func NamespaceTransaction[T interface {
 	SetNamespace(string) error
 	Rollback() error
-}](t testing.TB, begin func(context.Context) (T, error), namespace string) T {
+}, R comparable](t testing.TB, begin func(context.Context, R) (T, error), request R, namespace string) T {
 	t.Helper()
-	transaction, err := begin(t.Context())
+	transaction, err := begin(t.Context(), request)
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}

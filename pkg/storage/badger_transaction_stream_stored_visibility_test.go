@@ -71,7 +71,7 @@ func TestBadgerTransactionStreamStoredNodesIncludesHiddenPendingAndRefreshedImag
 		[]NodeID{storedStreamVisibilityVisibleID, storedStreamVisibilityPendingID, storedStreamVisibilityRefreshedID},
 		storedByEngine, "StreamStoredNodes reads what storage holds, hidden entities included")
 
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

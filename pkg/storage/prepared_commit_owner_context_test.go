@@ -9,7 +9,7 @@ import (
 
 func TestPreparedCommitOwnerSurvivesPreparationWaitCancellation(t *testing.T) {
 	b := newTestEngine(t)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

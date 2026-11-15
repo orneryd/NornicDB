@@ -72,7 +72,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			t.Cleanup(func() { _ = wal.Close() })
 			source.SetBufferedCommitWAL(wal)
 			update := func(id NodeID, properties map[string]any) {
-				tx, err := source.BeginTransaction(t.Context())
+				tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("epoch"))
 				require.NoError(t, tx.SetImplicit(true))

@@ -84,7 +84,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 							require.NoError(t, target.UpdateNode(t.Context(), NodeUpdateRequest{Before: before, After: &after}))
 						}
 					} else {
-						tx, err := engine.BeginTransaction(t.Context())
+						tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
@@ -115,7 +115,7 @@ func TestPR1655UniqueTransitionsLifecycle(t *testing.T) {
 				create("keeper", "held")
 				// Staging a rename publishes neither its new claim nor release
 				// of its old claim. A separate writer may take the new key.
-				rollback, err := engine.BeginTransaction(t.Context())
+				rollback, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer rollback.Rollback()
 				before, err := rollback.GetNode(t.Context(), "test:a")
@@ -186,7 +186,7 @@ func TestPR1655UniqueTransitionsStaleWriterAfterReuse(t *testing.T) {
 				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
 				_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "old", "note": "seed"}})
 				require.NoError(t, err)
-				loser, err := engine.BeginTransaction(t.Context())
+				loser, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer loser.Rollback()
 				require.NoError(t, loser.SetImplicit(implicit))
@@ -198,7 +198,7 @@ func TestPR1655UniqueTransitionsStaleWriterAfterReuse(t *testing.T) {
 				require.NoError(t, loser.UpdateGraphNode(t.Context(), NodeUpdateRequest{Before: before, After: &after, Policy: ClientNodeEdits}))
 				_, err = loser.CreateNode(t.Context(), &Node{ID: "test:marker", Properties: map[string]interface{}{"note": "must roll back"}})
 				require.NoError(t, err)
-				peer, err := engine.BeginTransaction(t.Context())
+				peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer peer.Rollback()
 				require.NoError(t, peer.SetImplicit(true))
@@ -409,7 +409,7 @@ func TestPR1655UniqueTransitionsRestoredSchemaPendingClaims(t *testing.T) {
 			target := openPR1655AcceptanceEngine(t, writeBehind)
 			require.NoError(t, target.Restore(backup))
 			restored := NewNamespacedEngine(target, "test")
-			tx, err := target.BeginTransaction(t.Context())
+			tx, err := target.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.SetImplicit(true))
@@ -452,7 +452,7 @@ func TestPR1655UniqueTransitionsBufferedDeleteThenReuse(t *testing.T) {
 				require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), target, schema))
 				_, err := target.CreateNode(t.Context(), &Node{ID: "old-owner", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "key", "code": "code-key"}})
 				require.NoError(t, err)
-				peer, err := engine.BeginTransaction(t.Context())
+				peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, peer.SetImplicit(true))
 				require.NoError(t, peer.DeleteGraphNode(t.Context(), NodeID(namespace+":old-owner"), CascadeEdges))
@@ -512,7 +512,7 @@ func TestPR1655UniqueTransitionsIntermediateAcknowledgedClaims(t *testing.T) {
 			_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "seed", "code": "code-seed"}})
 			require.NoError(t, err)
 			for _, value := range []string{"old", "renamed"} {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				before, err := tx.GetNode(t.Context(), "test:a")
@@ -567,7 +567,7 @@ func TestPR1655UniqueTransitionsRecoveredIntermediateClaims(t *testing.T) {
 			_, err := target.CreateNode(t.Context(), &Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"id": "seed"}})
 			require.NoError(t, err)
 			for _, value := range []string{"old", "renamed"} {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				before, err := tx.GetNode(t.Context(), "test:a")
@@ -622,7 +622,7 @@ func TestPR1655UniqueTransitionsAtomicSwap(t *testing.T) {
 				_, err := target.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"id": value}})
 				require.NoError(t, err)
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			for _, mutation := range []struct {

@@ -53,7 +53,7 @@ func TestIDDict_BulkTxnCommitsCounterOnce(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng.Close() })
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	const n = 10
@@ -94,7 +94,7 @@ func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	_, err = eng.CreateNode(t.Context(), &Node{ID: "t:c1", Labels: []string{"L"}})
 	require.NoError(t, err)
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
 		id := NodeID("t:r" + string(rune('0'+i)))

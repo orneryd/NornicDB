@@ -17,17 +17,17 @@ import (
 type managerBeginGateEngine struct {
 	storage.Engine
 	beginner interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+		BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error)
 	}
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (e *managerBeginGateEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *managerBeginGateEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	e.once.Do(func() { close(e.entered) })
 	<-e.release
-	return e.beginner.BeginTransaction(ctx)
+	return e.beginner.BeginTransaction(ctx, request)
 }
 
 func TestManagerTouchAfterCommitDoesNotRestartExpiry(t *testing.T) {

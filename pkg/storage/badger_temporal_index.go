@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"sort"
 	"time"
 
@@ -659,14 +660,86 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 	return wb.Flush()
 }
 
-// rebuildTemporalNodeInTxn indexes one stored node for a temporal index rebuild
-// or a label backfill. It runs inside the chunk transaction before that chunk
-// commits, on the maintenance write's own lifetime: ctx is the rebuild context
-// its caller passed to RebuildTemporalIndexes or the backfill
-// (backfillTemporalIndexForLabel), so a canceled rebuild stops at the schema
-// admission this discovery waits on instead of continuing on a lifetime nobody
-// can cancel.
-func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger.Txn, node *Node, asOf time.Time) error {
+// temporalRebuildView is the private input of one temporal rebuild pass: the
+// writer its derived history and current-version keys go to, and the reads
+// that choose each key's current version. A physical pass (RebuildTemporalIndexes
+// and the label backfill) writes the engine's maintenance transaction; a schema
+// statement's pass writes its own transaction's buffered writes, so the entries
+// a new constraint needs publish with the constraint and roll back with it.
+// The pass's key construction, target choice and current-version choice are the
+// same in both, because they are this view's only difference.
+type temporalRebuildView struct {
+	engine      *BadgerEngine
+	physical    *badger.Txn
+	transaction *BadgerTransaction
+}
+
+// physicalTemporalRebuild keeps the physical read and write handles together.
+func (b *BadgerEngine) physicalTemporalRebuild(txn *badger.Txn) temporalRebuildView {
+	return temporalRebuildView{engine: b, physical: txn}
+}
+
+// Set writes a derived key through this view's actual transaction owner. The
+// concrete view makes both ownership and static write reachability explicit;
+// no callback can substitute a foreign writer or outlive its staged frame.
+func (view temporalRebuildView) Set(key, value []byte) error {
+	if view.transaction != nil {
+		return view.transaction.stageTemporalRebuildKey(key, value)
+	}
+	return view.physical.Set(key, value)
+}
+
+func (view temporalRebuildView) schema(namespace string) *SchemaManager {
+	if view.transaction != nil {
+		return view.transaction.temporalRebuildSchema(namespace)
+	}
+	return view.engine.GetSchemaForNamespace(namespace)
+}
+
+func (view temporalRebuildView) stored(ctx context.Context, id NodeID) (*Node, error) {
+	if view.transaction != nil {
+		return view.transaction.storedNodeWithoutVectors(ctx, id)
+	}
+	return view.engine.loadNodeForTemporalTxn(view.physical, id, false)
+}
+
+func (view temporalRebuildView) current(key []byte) (NodeID, bool, error) {
+	if view.transaction != nil {
+		return view.transaction.temporalRebuildCurrentPointer(key)
+	}
+	return readTemporalCurrentPointer(view.physical, key)
+}
+
+// readTemporalCurrentPointer owns decoding the physical pointer in either view.
+// A staged caller holds its transaction lock before borrowing the snapshot.
+func readTemporalCurrentPointer(txn *badger.Txn, key []byte) (NodeID, bool, error) {
+	item, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var current NodeID
+	if err := item.Value(func(value []byte) error {
+		current = NodeID(append([]byte(nil), value...))
+		return nil
+	}); err != nil {
+		return "", false, err
+	}
+	return current, true, nil
+}
+
+// rebuildTemporalNodeInTxn indexes one stored node for a temporal rebuild or a
+// label backfill through view. For a physical pass it runs inside the chunk
+// transaction before that chunk commits, on the maintenance write's own
+// lifetime: ctx is the rebuild context its caller passed to
+// RebuildTemporalIndexes or the backfill (backfillTemporalIndexForLabel), so a
+// canceled rebuild stops at the schema admission this discovery waits on
+// instead of continuing on a lifetime nobody can cancel. For a staged pass the
+// same ctx bounds the statement's own reads, and every write joins that
+// statement's buffered writes.
+func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, view temporalRebuildView, node *Node, asOf time.Time) error {
 	if node == nil {
 		return nil
 	}
@@ -674,8 +747,7 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger
 	if !ok {
 		return nil
 	}
-	schema := b.GetSchemaForNamespace(namespace)
-	constraints, discoveryErr := temporalConstraintsForLabels(ctx, schema, node.Labels)
+	constraints, discoveryErr := temporalConstraintsForLabels(ctx, view.schema(namespace), node.Labels)
 	if discoveryErr != nil {
 		return discoveryErr
 	}
@@ -687,23 +759,19 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger
 		if !ok {
 			continue
 		}
-		if err := txn.Set(temporalHistoryKey(target.desc, start, node.ID), []byte{}); err != nil {
+		if err := view.Set(temporalHistoryKey(target.desc, start, node.ID), []byte{}); err != nil {
 			return err
 		}
 		if !nodeMatchesTemporalLookup(node, constraint, target.keyValue, asOf) {
 			continue
 		}
 		currentKey := temporalCurrentKey(target.desc)
-		item, err := txn.Get(currentKey)
-		if err == nil {
-			var existingID NodeID
-			if err := item.Value(func(val []byte) error {
-				existingID = NodeID(append([]byte(nil), val...))
-				return nil
-			}); err != nil {
-				return err
-			}
-			existingNode, err := b.loadNodeForTemporalTxn(txn, existingID, false)
+		existingID, hasCurrent, err := view.current(currentKey)
+		if err != nil {
+			return err
+		}
+		if hasCurrent {
+			existingNode, err := view.stored(ctx, existingID)
 			if err != nil {
 				return err
 			}
@@ -713,10 +781,8 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, txn *badger
 					continue
 				}
 			}
-		} else if err != badger.ErrKeyNotFound {
-			return err
 		}
-		if err := txn.Set(currentKey, []byte(node.ID)); err != nil {
+		if err := view.Set(currentKey, []byte(node.ID)); err != nil {
 			return err
 		}
 	}
@@ -761,7 +827,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		}
 		maintenancePause(pauseTemporalRebuildNode)
 		return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
-			return b.rebuildTemporalNodeInTxn(ctx, txn, node, asOf)
+			return b.rebuildTemporalNodeInTxn(ctx, b.physicalTemporalRebuild(txn), node, asOf)
 		})
 	}); err != nil {
 		return err

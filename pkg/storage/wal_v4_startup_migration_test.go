@@ -71,7 +71,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	capture, err := NewWAL(filepath.Join(dir, "capture-wal"), DefaultWALConfig())
 	require.NoError(t, err)
 	engine.SetBufferedCommitWAL(capture)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("legacy"))
 	require.NoError(t, tx.SetImplicit(true))
@@ -81,7 +81,7 @@ func TestV4StartupUpgradeRestoresHistoricalPendingNewIDs(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	// A later unflushed record refers to the first record's numeric IDs.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("legacy"))
 	require.NoError(t, tx.SetImplicit(true))

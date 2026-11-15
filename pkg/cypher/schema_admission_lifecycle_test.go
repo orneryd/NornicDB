@@ -18,8 +18,8 @@ type ddlAdmissionCommitOwner struct {
 	reject  error
 }
 
-func (e *ddlAdmissionCommitOwner) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := e.base.BeginTransaction(ctx)
+func (e *ddlAdmissionCommitOwner) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
+	tx, err := e.base.BeginTransaction(ctx, request)
 	e.opened = tx
 	return tx, err
 }

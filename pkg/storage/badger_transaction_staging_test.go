@@ -17,7 +17,7 @@ func TestStagedKV_ExistenceSeesStagedWrites(t *testing.T) {
 	engine := newTestEngine(t)
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:committed", Labels: []string{"X"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	w := tx.staged()
@@ -80,7 +80,7 @@ func TestTransaction_ReusesEachFreedNumericIDOnce(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(40 * time.Millisecond)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		_, err := tx.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("test:new-%d", i)), Labels: []string{"X"}})

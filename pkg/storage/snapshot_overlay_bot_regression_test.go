@@ -33,7 +33,7 @@ func TestSnapshotOverlayProjectedCallbacksOwnPayload(t *testing.T) {
 			if reader == "label" {
 				require.NoError(t, b.StreamNodesByLabelProjectedInScope(context.Background(), "test", "Doc", opts.Projection, mutate))
 			} else if reader == "transaction-stream" {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.StreamNodesWithOptions(context.Background(), opts, mutate))
 				require.NoError(t, tx.Rollback())
@@ -85,7 +85,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			require.Equal(t, misses, atomic.LoadInt64(&b.cacheMisses), "a warm query cache must avoid another physical read")
 			require.Equal(t, hits+1, atomic.LoadInt64(&b.cacheHits))
 			node.Properties["v"] = int64(2)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
@@ -123,7 +123,7 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 			} else if writer == "buffered" {
 				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges) })
 			} else {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:hub", CascadeEdges))
 				require.NoError(t, tx.Commit())

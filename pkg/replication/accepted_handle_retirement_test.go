@@ -15,7 +15,7 @@ func TestAcceptedCommandMemoryWALRetiresNativeFrameRetainsPayload(t *testing.T) 
 	standalone := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	engine, adapter := standalone.engine, standalone.adapter
 
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:a", ChunkEmbeddings: [][]float32{make([]float32, 16000)}})
@@ -60,7 +60,7 @@ func TestAcceptedInnerWALRejectionReleasesNativeFrameKeepsLogicalPending(t *test
 	owner := storage.NewWALEngine(base, wal)
 	engine := setupTestAdapter(t, adapterFixtureOptions{backing: owner, standalone: true, timeout: time.Second}).engine
 
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:pending"})

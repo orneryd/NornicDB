@@ -125,7 +125,7 @@ func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "restore:before", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	restored := make(chan error, 1)
 	go func() { restored <- engine.Restore(backup) }()
@@ -133,7 +133,7 @@ func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 		_, err := engine.GetNode(t.Context(), "restore:uncached")
 		return errors.Is(err, ErrStorageRestoring)
 	}, 5*time.Second, time.Millisecond, "store reads are turned away while the restore waits")
-	_, err = engine.BeginTransaction(t.Context())
+	_, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.ErrorIs(t, err, ErrStorageRestoring)
 	require.ErrorContains(t, err, "the database is being restored")
 	select {
@@ -163,7 +163,7 @@ func TestBadgerEngine_RestoreBusyChangesNothing(t *testing.T) {
 	restoreReadDrainTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { restoreReadDrainTimeout = previous })
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	err = engine.Restore(backup)
 	require.ErrorContains(t, err, "restore not started: reads or transactions were still open after 50ms")
@@ -195,7 +195,7 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 	defer engine.Close()
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "held:n", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	snapshot := tx.snapshotTx

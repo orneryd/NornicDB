@@ -72,16 +72,6 @@ func (lease writeBarrierLease) release() {
 	}
 }
 
-// releaseCallback returns the mutex's existing bound method when a transaction
-// must keep admission through publication. Capturing the whole lease would
-// retain its unused notification state in every transaction's callback.
-func (lease writeBarrierLease) releaseCallback() func() {
-	if lease.exclusive {
-		return lease.engine.writeBarrier.Unlock
-	}
-	return lease.engine.writeBarrier.RUnlock
-}
-
 // finish releases lifecycle admission before delivering its publication hold.
 // Plain release remains available to transactions that deliver notifications
 // separately after all of their other locks have been released.

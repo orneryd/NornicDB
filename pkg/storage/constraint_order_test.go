@@ -54,7 +54,7 @@ func TestBadgerTransaction_TemporalConstraintIgnoresPendingNodesWithOtherKeys(t 
 	constraint := Constraint{Name: "person_temporal", Type: ConstraintTemporal, Label: "Person", Properties: []string{"account", "from", "to"}}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))

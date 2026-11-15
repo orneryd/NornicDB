@@ -14,7 +14,7 @@ func TestBadgerEngine_RelationshipUniqueConstraint(t *testing.T) {
 	defer cleanup()
 
 	// Create nodes first
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
@@ -26,7 +26,7 @@ func TestBadgerEngine_RelationshipUniqueConstraint(t *testing.T) {
 	tx.Commit()
 
 	// Create relationships with transaction IDs
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx2.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID(prefixTestID("txn-1")),
 		StartNode: NodeID(prefixTestID("user-1")),
@@ -39,7 +39,7 @@ func TestBadgerEngine_RelationshipUniqueConstraint(t *testing.T) {
 	tx2.Commit()
 
 	// Try to create duplicate transaction ID (should fail when constraint is checked)
-	tx3, _ := engine.BeginTransaction(t.Context())
+	tx3, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx3.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID(prefixTestID("txn-2")),
 		StartNode: NodeID(prefixTestID("user-2")),
@@ -79,13 +79,13 @@ func TestBadgerEngine_RelationshipExistenceConstraint(t *testing.T) {
 	defer cleanup()
 
 	// Create nodes
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("person-1")), Labels: []string{"Person"}})
 	tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("person-2")), Labels: []string{"Person"}})
 	tx.Commit()
 
 	// Create relationship WITH required property
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx2.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID(prefixTestID("knows-1")),
 		StartNode: NodeID(prefixTestID("person-1")),
@@ -98,7 +98,7 @@ func TestBadgerEngine_RelationshipExistenceConstraint(t *testing.T) {
 	tx2.Commit()
 
 	// Create relationship WITHOUT required property
-	tx3, _ := engine.BeginTransaction(t.Context())
+	tx3, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx3.CreateEdge(t.Context(), &Edge{
 		ID:         EdgeID(prefixTestID("knows-2")),
 		StartNode:  NodeID(prefixTestID("person-2")),
@@ -129,13 +129,13 @@ func TestBadgerEngine_RelationshipConstraintValidTypes(t *testing.T) {
 	defer cleanup()
 
 	// Create nodes
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("user-1")), Labels: []string{"User"}})
 	tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("post-1")), Labels: []string{"Post"}})
 	tx.Commit()
 
 	// Create CREATED relationship with transaction ID
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx2.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID(prefixTestID("created-1")),
 		StartNode: NodeID(prefixTestID("user-1")),
@@ -148,7 +148,7 @@ func TestBadgerEngine_RelationshipConstraintValidTypes(t *testing.T) {
 	tx2.Commit()
 
 	// Create LIKES relationship with same txid (different type - should be OK)
-	tx3, _ := engine.BeginTransaction(t.Context())
+	tx3, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx3.CreateEdge(t.Context(), &Edge{
 		ID:        EdgeID(prefixTestID("likes-1")),
 		StartNode: NodeID(prefixTestID("user-1")),
@@ -177,7 +177,7 @@ func TestBadgerEngine_RelationshipConstraintValidationErrors(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: NodeID(prefixTestID("user-1")), Labels: []string{"User"}})
 	require.NoError(t, err)

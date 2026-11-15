@@ -64,7 +64,7 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, engine.FlushWriteBehind(context.Background()))
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			if c.stagedImplicit {
 				require.NoError(t, tx.SetImplicit(true))

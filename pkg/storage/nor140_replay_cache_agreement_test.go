@@ -97,7 +97,7 @@ func TestNOR140BufferedReplayCacheAgreement(t *testing.T) {
 			require.NoError(t, storage.RefreshUniqueConstraintValuesForEngine(ctx, storage.NewNamespacedEngine(b, "test"), schema))
 			_, err = b.CreateNode(ctx, &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"id": "seed", "note": "seed"}})
 			require.NoError(t, err)
-			ack, err := b.BeginTransaction(ctx)
+			ack, err := b.BeginTransaction(ctx, storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, ack.SetImplicit(true))
 			require.NoError(t, ack.UpdateGraphNode(ctx, storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"id": "old", "note": "seed"}}, Policy: storage.ClientNodeEdits}))
@@ -106,7 +106,7 @@ func TestNOR140BufferedReplayCacheAgreement(t *testing.T) {
 			require.True(t, storage.NOR140BufferedNodeForTest(b, "test:a"), "the old update must be acknowledged into the replay buffer")
 			// Public Cypher BEGIN intentionally drains buffered writes. The
 			// recorded storage-transaction schedule must leave them pending.
-			peer, err := b.BeginTransaction(ctx)
+			peer, err := b.BeginTransaction(ctx, storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, peer.UpdateGraphNode(ctx, storage.NodeUpdateRequest{After: &storage.Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"id": nil, "note": "seed"}}, Policy: storage.ClientNodeEdits}))
 			entered, resume := make(chan struct{}), make(chan struct{})

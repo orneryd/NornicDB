@@ -58,7 +58,7 @@ func TestNodeCascadeDeleteRejectsConcurrentlyDeletedRelationship(t *testing.T) {
 					Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
 				require.NoError(t, engine.FlushWriteBehind(ctx))
 
-				tx, err := engine.BeginTransaction(ctx)
+				tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.DeleteGraphNode(ctx, "test:n3", CascadeEdges))
@@ -84,7 +84,7 @@ func TestNodeCascadeDeleteRejectsConcurrentlyDeletedRelationship(t *testing.T) {
 
 				// A retry reads the state the concurrent commit left, so the
 				// deletion it wants succeeds and the counters stay correct.
-				retry, err := engine.BeginTransaction(ctx)
+				retry, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, retry.SetImplicit(true))
 				require.NoError(t, retry.DeleteGraphNode(ctx, "test:n3", CascadeEdges))
@@ -134,7 +134,7 @@ func TestNodeCascadeDeleteCountsOnlyRemovedRelationships(t *testing.T) {
 				Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
 			require.NoError(t, engine.FlushWriteBehind(ctx))
 
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.DeleteGraphNode(ctx, "test:n2", CascadeEdges))

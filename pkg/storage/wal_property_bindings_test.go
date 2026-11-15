@@ -62,7 +62,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 			versions := make(map[string]MVCCVersion)
 			for stage, props := range []map[string]any{first, last} {
 				for _, ns := range []string{"binding", "second"} {
-					tx, err := source.BeginTransaction(t.Context())
+					tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))

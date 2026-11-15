@@ -151,7 +151,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						require.NoError(t, err)
 						if implicit {
 							// Re-encode the actual catalog body through the buffered writer.
-							tx, err := base.BeginTransaction(t.Context())
+							tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 							require.NoError(t, err)
 							require.NoError(t, tx.SetNamespace("system"))
 							require.NoError(t, tx.SetImplicit(true))

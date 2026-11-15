@@ -122,7 +122,7 @@ func TestChangeCaptureTransactions(t *testing.T) {
 
 	run := func(write func(tx *BadgerTransaction) error) {
 		t.Helper()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, write(tx))
 		require.NoError(t, tx.Commit())
@@ -158,7 +158,7 @@ func TestChangeCaptureTransactions(t *testing.T) {
 			}
 			return tx.DeleteGraphNode(t.Context(), id("tmp"), CascadeEdges)
 		})
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		_, err = tx.CreateNode(t.Context(), &Node{ID: id("gone")})
 		require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestChangeCaptureWithWriteBehindAndFailedWrites(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "the failed bulk create rolled back")
 
 	// An implicit transaction in the capturing database: events at once.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "cdc:implicit", Labels: []string{"I"}})

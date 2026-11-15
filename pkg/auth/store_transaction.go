@@ -36,7 +36,7 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 		break
 	}
 	beginner, ok := inner.(interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context, storage.BeginRequest) (*storage.BadgerTransaction, error)
 	})
 	if !ok {
 		return storage.ErrNotImplemented
@@ -46,7 +46,7 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 			return err
 		}
 	}
-	tx, err := beginner.BeginTransaction(ctx)
+	tx, err := beginner.BeginTransaction(ctx, storage.OrdinaryBegin)
 	if err != nil {
 		return err
 	}

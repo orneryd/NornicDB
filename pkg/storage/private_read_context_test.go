@@ -65,7 +65,7 @@ func TestTransactionEndpointReadsUseCallerContext(t *testing.T) {
 	}
 	err = b.CreateEdge(t.Context(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T"})
 	require.NoError(t, err)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	canceled, cancel := context.WithCancel(t.Context())

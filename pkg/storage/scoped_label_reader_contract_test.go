@@ -70,7 +70,7 @@ func TestScopedLabelReadersPreserveOrderAndExactMembership(t *testing.T) {
 
 func TestScopedLabelSnapshotResumeSurvivesLiveDictionaryEviction(t *testing.T) {
 	engine := scopedLabelOrderFixture(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("a"))
 	defer tx.Rollback()
@@ -99,7 +99,7 @@ func TestScopedLabelReadersKeepBufferedReplacementVisibility(t *testing.T) {
 	}
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:add-label", Labels: []string{"Other"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

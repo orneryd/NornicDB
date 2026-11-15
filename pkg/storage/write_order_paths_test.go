@@ -45,7 +45,7 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "test:n", Labels: []string{"Untargeted"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old})
 		require.NoError(t, err)
 		require.NoError(t, engine.FlushWriteBehind(context.Background()))
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, Policy: ClientNodeEdits}))
@@ -79,13 +79,13 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:n", Properties: map[string]any{"v": "initial"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
-	buffered, err := engine.BeginTransaction(t.Context())
+	buffered, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, buffered.SetImplicit(true))
 	require.NoError(t, buffered.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, buffered.Commit())
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, Policy: ClientNodeEdits}))
 	require.NoError(t, tx.Commit())
@@ -128,7 +128,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
 	failing.Store(true)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, Policy: ClientNodeEdits}))
@@ -154,7 +154,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 			return err
 		},
 		"explicit tx commit": func() error {
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			if err := tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, Policy: ClientNodeEdits}); err != nil {
 				_ = tx.Rollback()

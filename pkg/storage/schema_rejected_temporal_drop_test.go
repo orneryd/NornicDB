@@ -125,7 +125,7 @@ func TestRejectedTemporalConstraintDropKeepsIncompleteHistoryUntrusted(t *testin
 	sm.SetPersister(nil)
 
 	scans := countTemporalScans(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, createErr := tx.CreateNode(t.Context(), temporalFact("overlap", int64(1), 5, 15))
 	require.NoError(t, tx.Rollback())

@@ -83,8 +83,8 @@ func NewMemoryEngineWithOptions(opts BadgerOptions) (*MemoryEngine, error) {
 
 // BeginTransaction starts a new transaction.
 // Returns *BadgerTransaction for compatibility with the executor.
-func (m *MemoryEngine) BeginTransaction(ctx context.Context) (*BadgerTransaction, error) {
-	return m.BadgerEngine.BeginTransaction(ctx)
+func (m *MemoryEngine) BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error) {
+	return m.BadgerEngine.BeginTransaction(ctx, request)
 }
 
 // DeleteByPrefix delegates to the underlying BadgerEngine.

@@ -13,9 +13,9 @@ import (
 // synchronous writes and the asynchronous commits used to observe listener
 // publication. Staging completes before the asynchronous commit starts.
 func runPublicationTransaction(engine interface {
-	BeginTransaction(context.Context) (*BadgerTransaction, error)
+	BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error)
 }, implicit bool, write func(*BadgerTransaction) error, result chan<- error) error {
-	tx, err := engine.BeginTransaction(context.Background())
+	tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "review:child"})
 		require.NoError(t, err)
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:outer"})
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 		_, err := engine.CreateNode(t.Context(), &Node{ID: "review:after-close"})
 		callbackResult <- err
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:close"})
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 
 func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:canceled"})
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 			panic("listener failed")
 		}
 	})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "review:panic"})
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 	require.True(t, published)
 	_, err = engine.GetNode(t.Context(), "review:panic")
 	require.NoError(t, err, "listener failure cannot erase committed data")
-	next, err := engine.BeginTransaction(t.Context())
+	next, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = next.CreateNode(t.Context(), &Node{ID: "review:after-panic"})
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func (c *publicationContextCheckpoint) Err() error {
 
 func TestPublishCommitRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() {
 		// The accepted owner is simulated only at the lifecycle boundary. Restore
@@ -225,7 +225,7 @@ func TestClientLifecycleRechecksDetachedOwnershipUnderLock(t *testing.T) {
 	for _, operation := range []string{"active", "rollback"} {
 		t.Run(operation, func(t *testing.T) {
 			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: true})
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				tx.clientDetached.Store(false)

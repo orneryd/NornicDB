@@ -128,7 +128,7 @@ func TestCommitPublicationPublicOrder(t *testing.T) {
 								return b.CreateEdge(t.Context(), edge(value))
 							}
 						}
-						tx, e := b.BeginTransaction(t.Context())
+						tx, e := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						if e != nil {
 							return e
 						}

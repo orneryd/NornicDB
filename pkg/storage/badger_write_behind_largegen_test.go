@@ -23,7 +23,7 @@ func flushLargeWriteBehindGeneration(t *testing.T, engine *BadgerEngine, n int, 
 	t.Helper()
 
 	for i := 0; i < n; i++ {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
@@ -79,7 +79,7 @@ func TestWriteBehind_SyncLargeCommitControl(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 
 	const n = 25000
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	for i := 0; i < n; i++ {

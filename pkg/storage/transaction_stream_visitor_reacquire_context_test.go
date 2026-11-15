@@ -76,7 +76,7 @@ func transactionStreamVisitorCases() []transactionStreamVisitorCase {
 // it back after the case.
 func beginStreamVisitorTransaction(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx

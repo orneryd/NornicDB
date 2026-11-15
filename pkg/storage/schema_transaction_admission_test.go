@@ -29,9 +29,9 @@ func TestSchemaTransactionAdmissionCancellationPrecedesSnapshot(t *testing.T) {
 	})
 	defer restore()
 	began := false
-	tx, err := schema.BeginSchemaTransaction(ctx, func(beginCtx context.Context) (*BadgerTransaction, error) {
+	tx, err := schema.BeginSchemaTransaction(ctx, func(beginCtx context.Context, begin BeginRequest) (*BadgerTransaction, error) {
 		began = true
-		return engine.BeginTransaction(beginCtx)
+		return engine.BeginTransaction(beginCtx, begin)
 	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, tx)
@@ -47,18 +47,53 @@ func TestSchemaTransactionAdmissionCancellationPrecedesSnapshot(t *testing.T) {
 	schema.schemaMutationMu.Unlock()
 }
 
+// TestSchemaTransactionAdmissionPassesSchemaPurpose pins the one requester of
+// an autocommit schema begin: the manager's opener receives the schema purpose,
+// so the native begin admits the statement before its snapshot, and the
+// statement's own transaction owns that exclusive lease.
+func TestSchemaTransactionAdmissionPassesSchemaPurpose(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	schema := engine.GetSchemaForNamespace("admission")
+	request := OrdinaryBegin
+	tx, err := schema.BeginSchemaTransaction(context.Background(), func(ctx context.Context, begin BeginRequest) (*BadgerTransaction, error) {
+		request = begin
+		return engine.BeginTransaction(ctx, begin)
+	})
+	require.NoError(t, err)
+	require.Equal(t, AutocommitSchemaBegin, request, "the autocommit opener must request a schema begin")
+	if tx.commitLease == nil || !tx.commitLease.exclusive {
+		t.Fatal("a schema begin must own the engine's exclusive lifecycle lease")
+	}
+	require.NoError(t, tx.Rollback())
+	require.Nil(t, tx.commitLease)
+	require.True(t, schema.schemaMutationMu.TryLock())
+	schema.schemaMutationMu.Unlock()
+	require.True(t, engine.writeBarrier.TryLock(), "rollback must release the begin's exclusive lease")
+	engine.writeBarrier.Unlock()
+}
+
 func TestSchemaTransactionAdmissionBeginFailureReleases(t *testing.T) {
 	schema := NewSchemaManager()
 	failure := errors.New("begin rejected")
-	tx, err := schema.BeginSchemaTransaction(context.Background(), func(context.Context) (*BadgerTransaction, error) { return nil, failure })
+	tx, err := schema.BeginSchemaTransaction(context.Background(), func(context.Context, BeginRequest) (*BadgerTransaction, error) { return nil, failure })
 	require.ErrorIs(t, err, failure)
 	require.Nil(t, tx)
 	require.True(t, schema.schemaMutationMu.TryLock())
 	schema.schemaMutationMu.Unlock()
 }
 
+// TestSchemaTransactionAdmissionTerminalRelease pins the statement's single
+// release owner for every terminal outcome: publication, rollback and a rejected
+// commit each end its manager admission and its exclusive lifecycle lease once,
+// and a repeated close cannot release either on a peer's behalf.
+//
+// The rejected commit waits for a peer schema publication's definition gate and
+// is canceled there. A concurrent entity commit is not that terminal any more:
+// an autocommit schema statement's admission excludes data commits for its whole
+// window, so a peer write is admitted only after its publication
+// (schema_ddl_data_writer_test.go).
 func TestSchemaTransactionAdmissionTerminalRelease(t *testing.T) {
-	for _, terminal := range []string{"commit", "rollback", "conflict"} {
+	for _, terminal := range []string{"commit", "rollback", "rejected_commit"} {
 		t.Run(terminal, func(t *testing.T) {
 			engine := newTestMemoryEngine(t)
 			schema := engine.GetSchemaForNamespace("admission")
@@ -75,10 +110,19 @@ func TestSchemaTransactionAdmissionTerminalRelease(t *testing.T) {
 				require.NoError(t, tx.Commit())
 			case "rollback":
 				require.NoError(t, tx.Rollback())
-			case "conflict":
-				_, err = engine.CreateNode(t.Context(), &Node{ID: "admission:peer", Labels: []string{"Item"}})
+			case "rejected_commit":
+				peer, err := schema.beginSchemaPublication(context.Background())
 				require.NoError(t, err)
-				require.ErrorIs(t, tx.Commit(), ErrConflict)
+				commitCtx, cancelCommit := context.WithCancel(context.Background())
+				defer cancelCommit()
+				restore := setAdmissionWaitObserver(func(owner any, _ context.Context) {
+					if owner == &schema.publicationGate {
+						cancelCommit()
+					}
+				})
+				defer restore()
+				require.ErrorIs(t, tx.CommitContext(commitCtx), context.Canceled)
+				peer.release()
 			}
 			require.Nil(t, tx.schemaAdmission)
 			require.True(t, schema.schemaMutationMu.TryLock())
@@ -86,6 +130,8 @@ func TestSchemaTransactionAdmissionTerminalRelease(t *testing.T) {
 			require.ErrorIs(t, tx.Rollback(), ErrTransactionClosed)
 			require.True(t, schema.schemaMutationMu.TryLock(), "repeated close cannot release a peer's lease")
 			schema.schemaMutationMu.Unlock()
+			require.True(t, engine.writeBarrier.TryLock(), "a terminal outcome must release the begin's exclusive lease once")
+			engine.writeBarrier.Unlock()
 			_, exists := schema.GetCompositeIndex("admitted")
 			require.Equal(t, terminal == "commit", exists)
 		})
@@ -154,7 +200,7 @@ func BenchmarkSchemaAdmissionBeginRollback(b *testing.B) {
 				if admitted {
 					tx, err = schema.BeginSchemaTransaction(context.Background(), engine.BeginTransaction)
 				} else {
-					tx, err = engine.BeginTransaction(b.Context())
+					tx, err = engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				}
 				if err != nil {
 					b.Fatal(err)

@@ -72,7 +72,7 @@ func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
 			engine, cleanup := setupTestBadgerEngine(t)
 			defer cleanup()
 			require.NoError(t, tc.addConstraint(engine.GetSchemaForNamespace("test")))
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			for i := 0; i < 3*pendingIndexMinNodes; i++ {
@@ -95,7 +95,7 @@ func TestPendingConstraintIndex_TemporalOverlapInTransaction(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	day := 24 * time.Hour
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	// Many records, each with two adjacent non-overlapping windows.
@@ -132,7 +132,7 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 		defer cleanup()
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddUniqueConstraint("u_k", "Item", "k"))
 		require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), engine, engine.GetSchemaForNamespace("test")))
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		start := time.Now()
 		for i := 0; i < n; i++ {
