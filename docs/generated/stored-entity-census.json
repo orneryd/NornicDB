@@ -1596,23 +1596,23 @@
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:684",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:684",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:684"
+      "origin": "pkg/storage/badger_nodes.go:693",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:693",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:693"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:708",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:708",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:708"
+      "origin": "pkg/storage/badger_nodes.go:717",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:717",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:717"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:714",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:714",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:714"
+      "origin": "pkg/storage/badger_nodes.go:723",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:723",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:723"
     },
     {
       "space": "prefixPendingEmbed",
