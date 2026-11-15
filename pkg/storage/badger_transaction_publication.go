@@ -290,6 +290,10 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 
 	// Preparation hands immutable semantic images to the accepted command owner
 	// only after the normal validation/order pipeline, before any commit bytes.
+	// The buffered route completes that handoff inside commitBufferedLocked,
+	// after the commit's memory reservation and before either journal holds a
+	// record of it; the direct route hands off here.
+	var preparedContinuation func(context.Context) (context.Context, error)
 	if prepare != nil {
 		// Body-conflict admission applies to new client decisions only.
 		// Accepted replay already owns its validated image; concurrent copies
@@ -299,6 +303,14 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 				return tx.abortCommitLocked(err)
 			}
 		}
+		continuePrepared := func(preparationContext context.Context) (context.Context, error) {
+			if err := prepare(preparationContext); err != nil {
+				return preparationContext, err
+			}
+			// Successful handoff means the terminal owner accepted the command.
+			// Its completion is independent of request and engine-stop cancellation.
+			return context.Background(), nil
+		}
 		// Direct commits already validated endpoints under their retained
 		// exclusive ordering lease above. Only buffered admission needs the
 		// mixed stripe decision here; reacquiring direct stripes would deadlock.
@@ -306,27 +318,20 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			if err := tx.revalidateEndpointsBeforeDecisionLocked(ctx); err != nil {
 				return tx.abortCommitLocked(err)
 			}
+			preparedContinuation = continuePrepared
+		} else {
+			completed, err := continuePrepared(ctx)
+			if err != nil {
+				return tx.abortCommitLocked(err)
+			}
+			ctx = completed
 		}
-		if err := prepare(ctx); err != nil {
-			return tx.abortCommitLocked(err)
-		}
-		// The sole private preparation continuation returns success only after
-		// its terminal owner accepts the command. Completion is detached from
-		// both the original caller and engine stop from this handoff onward.
-		ctx = context.Background()
 	}
 
 	// Plain commits retain the caller lifetime until publication acceptance.
 	if err := ctx.Err(); err != nil {
 		return tx.abortCommitLocked(err)
 	}
-
-	// Buffered replay can run before this function returns, including from
-	// the accounting callback itself. Reserve its publication position before
-	// either admission path so listeners wait for accounting/admission to
-	// finish after every storage lock is released. Failed commits release the
-	// same hold without invoking afterPublication.
-	publication = tx.engine.holdPublication()
 
 	// Write-behind buffering: an implicit autocommit commit with no schema,
 	// knowledge-policy or temporal writes is acknowledged after every
@@ -336,11 +341,25 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
+	//
+	// The buffered core holds this commit's publication position itself: at
+	// its entry for an ordinary commit, and only after a prepared commit's
+	// handoff accepts, so an unaccepted preparation never parks the global
+	// publication queue. It returns that hold for this call's existing defer
+	// to release after the transaction mutex and write locks.
 	if bufferedCommit {
 		// A prepared commit's record is journaled by the handoff above; an
 		// accepted application's was journaled before it began.
-		return tx.commitBufferedLocked(ctx, admitted, prepare != nil || tx.acceptedApplication)
+		publication, err = tx.commitBufferedLocked(ctx, admitted, prepare != nil || tx.acceptedApplication, preparedContinuation)
+		return err
 	}
+
+	// Buffered replay can run before this function returns, including from
+	// the accounting callback itself. Reserve its publication position before
+	// either admission path so listeners wait for accounting/admission to
+	// finish after every storage lock is released. Failed commits release the
+	// same hold without invoking afterPublication.
+	publication = tx.engine.holdPublication()
 
 	physicalOperations := tx.physicalOperationsLocked()
 	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
