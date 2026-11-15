@@ -303,6 +303,22 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 	return result, nil
 }
 
+// walkEndNodeID is the one node a walk that starts at startNode may end at: the
+// end node a pipeline row already bound, or, for a pattern that names one
+// variable at both ends, the walk's own start node. findPaths rejects every
+// other endpoint before it counts toward the traversal limit, so the endpoint
+// identity decides the paths and a LIMIT may stop the walk as soon as one
+// qualifying path exists.
+func walkEndNodeID(match *TraversalMatch, startNode *storage.Node) storage.NodeID {
+	if !match.IsChained && match.StartNode.variable != "" && match.StartNode.variable == match.EndNode.variable {
+		if startNode == nil {
+			return ""
+		}
+		return storage.NodeID(startNode.IdentityKey())
+	}
+	return match.boundEndNodeID
+}
+
 // executeMatchWithRelationshipsWithPathSeeded is the single traversal entry
 // with an additional endSeedNodes parameter. When a pipeline row already binds
 // the pattern's end-node variable (but not its start-node variable), the
@@ -360,8 +376,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if hint.earlyLimit == 0 {
 		return result, nil
 	}
-	repeatedEndpoint := matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable
-	if hint.earlyLimit > 0 && whereClause == "" && !repeatedEndpoint {
+	if hint.earlyLimit > 0 && whereClause == "" {
 		matches.TraversalLimit = hint.earlyLimit
 	}
 
@@ -537,15 +552,6 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		if whereClause != "" {
 			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
 		}
-	}
-	if repeatedEndpoint {
-		filtered := paths[:0]
-		for _, path := range paths {
-			if len(path.Nodes) > 0 && path.Nodes[0].Identity() == path.Nodes[len(path.Nodes)-1].Identity() {
-				filtered = append(filtered, path)
-			}
-		}
-		paths = filtered
 	}
 	// Aggregates are the row pipeline's: its states (pipelineAggregateState)
 	// group by the grouping values and aggregate every item on its own, as
@@ -1540,7 +1546,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		}
 		traversalCtx := &TraversalContext{
 			startNode:                    startNode,
-			endNodeID:                    match.boundEndNodeID,
+			endNodeID:                    walkEndNodeID(match, startNode),
 			relTypes:                     match.Relationship.Types,
 			relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 			relProperties:                match.Relationship.Properties,
@@ -1615,7 +1621,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 				// Each goroutine gets its own traversal state (no shared state)
 				traversalCtx := &TraversalContext{
 					startNode:                    startNode,
-					endNodeID:                    match.boundEndNodeID,
+					endNodeID:                    walkEndNodeID(match, startNode),
 					relTypes:                     match.Relationship.Types,
 					relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 					relProperties:                match.Relationship.Properties,
@@ -1965,7 +1971,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
-	ctx.endNodeID = match.boundEndNodeID
+	ctx.endNodeID = walkEndNodeID(match, startNode)
 	// Single-segment traversals (including each segment of a chain) share the
 	// planner's endpoint/relationship read analysis so the header and
 	// labels-only fast paths apply to chained patterns too (#1110).
