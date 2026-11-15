@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 )
 
 // The original headerless writer used this rolling checksum before atomic
@@ -243,6 +242,32 @@ func (r *v4UpgradeRecords) carries() bool {
 // fits one frame; under the standard policy a record that does not is refused
 // with the encoder's frame error, under the large policy it spans frames.
 func (r *v4UpgradeRecords) convert(buf *bytes.Buffer, entry WALEntry) (WALEntry, walRecordFrames, error) {
+	// A historical buffered commit whose source encoding replaced physical key
+	// bytes is repaired from the record's own facts here, before any ambiguity or
+	// frame-size decision: validation converts every record with this function and
+	// discards the result, so the bytes the upgrade writes are the bytes it
+	// admitted, and a record it cannot prove is refused before anything is
+	// written. The typed encoding preserves physical key bytes; the repaired
+	// record carries the physical-property-image marker so its lossy historical
+	// named properties stay non-authoritative.
+	if entry.Operation == OpBufferedCommit {
+		data, err := decodeBufferedWALRecord(entry)
+		if err != nil {
+			return entry, walRecordFrames{}, err
+		}
+		if !data.losslessPhysicalKeys && historicalPhysicalKeysAmbiguous(data.Writes, data.Deletes) {
+			repaired, err := repairV4BufferedCommitPhysicalKeys(data)
+			if err != nil {
+				return entry, walRecordFrames{}, fmt.Errorf("wal: historical buffered commit %d: %w", entry.Sequence, err)
+			}
+			payload, err := marshalWALRecoveryPayload(nil, repaired)
+			if err != nil {
+				return entry, walRecordFrames{}, fmt.Errorf("wal: re-encode repaired historical buffered commit %d: %w", entry.Sequence, err)
+			}
+			entry.Data = compressWALBufferedCommitPayload(payload)
+			entry.Checksum = crc32Checksum(entry.Data)
+		}
+	}
 	if entry.Operation == OpEntityCommit && entry.framingVersion < walFormatVersionCurrent {
 		converted, err := convertV4SemanticWALRecord(entry)
 		if err != nil {
@@ -276,27 +301,8 @@ func planV4WALMigration(source string, allowTornTail bool, records *v4UpgradeRec
 				return fmt.Errorf("wal: historical frame at %d: %w", start, err)
 			}
 		}
-		if entry.Operation == OpBufferedCommit {
-			data, err := decodeBufferedWALRecord(entry)
-			if err != nil {
-				return err
-			}
-			if !data.namedPropertiesAuthoritative {
-				// The old JSON encoder replaced invalid UTF-8 in physical
-				// map keys. U+FFFD is ambiguous: the original bytes may
-				// already be lost, so never apply those keys silently.
-				for key := range data.Writes {
-					if strings.ContainsRune(key, '\ufffd') {
-						return fmt.Errorf("wal: historical physical key contains ambiguous UTF-8 replacement")
-					}
-				}
-				for _, key := range data.Deletes {
-					if strings.ContainsRune(key, '\ufffd') {
-						return fmt.Errorf("wal: historical physical key contains ambiguous UTF-8 replacement")
-					}
-				}
-			}
-		}
+		// A buffered commit's physical keys are decided by records.convert, which
+		// both this planning pass and the conversion pass use.
 		if epoch == nil {
 			return nil
 		}
