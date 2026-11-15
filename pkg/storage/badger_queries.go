@@ -387,6 +387,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	// and materialize thousands of bodies it will reject.
 	var covers bool
 	coversDecided := false
+	admitProjectionBodies := true
 	// A filtered scan settles its filter on an image the node read cache holds
 	// of a node, as the other label reads do, and reads the node records the
 	// cache does not hold. When the scan of a label the cache can hold repeats,
@@ -473,6 +474,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return err
 			}
 			coversDecided = true
+			admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			resident = holds && labelled >= 0 && !covers && label != "" &&
 				(b.nodeCacheMaxEntries <= 0 || labelled <= int64(b.nodeCacheMaxEntries)) &&
 				b.filteredLabelScans.repeats(scope, label)
@@ -603,7 +605,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		// cachedNode is the row the node read cache gives for a label entry.
 		// For a filtered scan it reports kept when the filter kept the node on
@@ -711,11 +713,13 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 
 			if !coversDecided && lookups >= labelScanPointLookups {
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {

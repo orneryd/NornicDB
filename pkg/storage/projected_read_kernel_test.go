@@ -49,7 +49,7 @@ func TestGetNodeProjectedThrough_KernelContract(t *testing.T) {
 
 	t.Run("projection_reader_serves_the_read", func(t *testing.T) {
 		fake := &projectionReaderOnlyEngine{node: node}
-		got, err := getNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
+		got, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
 		require.NoError(t, err)
 		require.Same(t, node, got)
 		require.Zero(t, fake.getCalls)
@@ -58,14 +58,14 @@ func TestGetNodeProjectedThrough_KernelContract(t *testing.T) {
 	t.Run("reader_errors_propagate_without_fallback", func(t *testing.T) {
 		sentinel := errors.New("reader failure")
 		fake := &projectionReaderOnlyEngine{err: sentinel}
-		_, err := getNodeProjectedThrough(t.Context(), fake, node.ID, nil)
+		_, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, nil)
 		require.ErrorIs(t, err, sentinel)
 		require.Zero(t, fake.getCalls)
 	})
 
 	t.Run("fallback_projects_the_full_read", func(t *testing.T) {
 		fake := &projectionFallbackOnlyEngine{node: node}
-		got, err := getNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
+		got, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
 		require.NoError(t, err)
 		require.Equal(t, 1, fake.getCalls)
 		require.NotSame(t, node, got)
@@ -75,7 +75,7 @@ func TestGetNodeProjectedThrough_KernelContract(t *testing.T) {
 
 	t.Run("fallback_nil_properties_copy_the_node", func(t *testing.T) {
 		fake := &projectionFallbackOnlyEngine{node: node}
-		got, err := getNodeProjectedThrough(t.Context(), fake, node.ID, nil)
+		got, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, nil)
 		require.NoError(t, err)
 		require.NotSame(t, node, got)
 		require.Equal(t, node.Properties, got.Properties)
@@ -83,7 +83,7 @@ func TestGetNodeProjectedThrough_KernelContract(t *testing.T) {
 
 	t.Run("fallback_not_found_propagates", func(t *testing.T) {
 		fake := &projectionFallbackOnlyEngine{err: ErrNotFound}
-		_, err := getNodeProjectedThrough(t.Context(), fake, node.ID, nil)
+		_, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, nil)
 		require.ErrorIs(t, err, ErrNotFound)
 		require.Equal(t, 1, fake.getCalls)
 	})
@@ -91,7 +91,7 @@ func TestGetNodeProjectedThrough_KernelContract(t *testing.T) {
 	t.Run("fallback_error_propagates", func(t *testing.T) {
 		sentinel := errors.New("read failure")
 		fake := &projectionFallbackOnlyEngine{err: sentinel}
-		_, err := getNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
+		_, err := GetNodeProjectedThrough(t.Context(), fake, node.ID, []string{"name"})
 		require.ErrorIs(t, err, sentinel)
 	})
 }

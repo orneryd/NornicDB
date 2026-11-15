@@ -169,15 +169,15 @@ func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bo
 // GetNodeProjected forwards the projected read to the underlying engine. WAL
 // adds no overlay, so a plain forward preserves parity with GetNode.
 func (w *WALEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
-	return getNodeProjectedThrough(ctx, w.engine, id, properties)
+	return GetNodeProjectedThrough(ctx, w.engine, id, properties)
 }
 
-// getNodeProjectedThrough reads a projected node through a single engine: a
+// GetNodeProjectedThrough reads a projected node through a single engine: a
 // projection-capable reader serves the read directly, and any other engine
 // serves a full read that is projected on the way out. Async, WAL and the
 // composite constituent scan share this tail, so reader preference and error
 // propagation cannot drift between wrappers.
-func getNodeProjectedThrough(ctx context.Context, engine Engine, id NodeID, properties []string) (*Node, error) {
+func GetNodeProjectedThrough(ctx context.Context, engine Engine, id NodeID, properties []string) (*Node, error) {
 	if reader, ok := engine.(ProjectedNodeReader); ok {
 		return reader.GetNodeProjected(ctx, id, properties)
 	}

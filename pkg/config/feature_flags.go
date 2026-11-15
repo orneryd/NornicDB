@@ -719,6 +719,7 @@ func DisableAllFeatures() {
 
 // ResetFeatureFlags resets all feature flags to defaults.
 func ResetFeatureFlags() {
+	projectedReadsEnabled.Store(false)
 	kalmanEnabled.Store(false)
 	topologyLinkPredictionEnabled.Store(false)
 	cooldownAutoIntegrationEnabled.Store(false)
@@ -768,6 +769,7 @@ func GetEnabledFeatures() []string {
 
 // FeatureStatus returns the current status of all features.
 type FeatureStatus struct {
+	ProjectedReadsEnabled    bool
 	GlobalEnabled            bool
 	KalmanEnabled            bool
 	TopologyEnabled          bool
@@ -786,6 +788,7 @@ func GetFeatureStatus() FeatureStatus {
 	defer featureFlagsMu.RUnlock()
 
 	status := FeatureStatus{
+		ProjectedReadsEnabled:    IsProjectedReadsEnabled(),
 		GlobalEnabled:            kalmanEnabled.Load(),
 		KalmanEnabled:            kalmanEnabled.Load(),
 		TopologyEnabled:          topologyLinkPredictionEnabled.Load(),
