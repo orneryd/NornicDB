@@ -116,5 +116,6 @@ writing and no gob path were added.
 - Public startup is exercised through `nornicdb.Open` in an external-package test.
   A test-only fixture bridge supplies a disposable legacy journal; public Cypher
   verifies recovered node counts and a relationship after startup and reopen.
-- The property-binding guard owner inventory remains unchanged pending explicit
-  operator approval for the new physical-write-image producer.
+- The operator-approved exact property-binding owner entry names this physical
+  image producer. Existing unauthorized-producer rejection controls remain unchanged
+  and pass; no analyzer rules were changed.

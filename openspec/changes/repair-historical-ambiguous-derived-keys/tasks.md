@@ -49,8 +49,8 @@
       new JSON WAL writing and no gob path; `WALMessagePack` and the framing codec
       are unchanged.
 - [x] Parent focused historical repair/refusal checks pass (4.296s).
-- [ ] Independently rerun affected race checks on the final rebased head.
-- [ ] Parent independent acceptance.
+- [x] Rebased focused race checks pass (4.049s); go vet passes.
+- [x] Parent independent review and public startup/collision completeness correction.
 - [ ] Exact-head CI and remote duplicate review.
 
 ## Remaining, deliberately out of scope
@@ -62,4 +62,5 @@
   through MATCH, closes, and repeats the same public reads after a second open.
 - [x] Independent fail-first collision-class control rejects a missing body even
   when a surviving member still names the collapsed damaged key.
-- [ ] Exact property-binding owner inventory entry awaits operator approval.
+- [x] Operator approved the one exact property-binding owner entry; unchanged
+  unauthorized-producer rejection controls pass (18.659s).
