@@ -2296,23 +2296,23 @@
     {
       "space": "prefixMVCCMeta+\"wal-v4-msgpack-upgrade-pending\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_v4_directory_migration.go:396",
-      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:396",
+      "origin": "pkg/storage/wal_v4_directory_migration.go:419",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:419",
       "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen -"
     },
     {
       "space": "prefixMVCCMeta+\"wal-v4-upgrade-pending\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_v4_directory_migration.go:396",
-      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:396",
+      "origin": "pkg/storage/wal_v4_directory_migration.go:419",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$1 pkg/storage/wal_v4_directory_migration.go:419",
       "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen -"
     },
     {
       "space": "prefixMVCCMeta+\"wal-v4-msgpack-upgrade-pending\"",
       "class": "store-metadata",
-      "origin": "pkg/storage/wal_v4_directory_migration.go:420",
-      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:420",
-      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:420"
+      "origin": "pkg/storage/wal_v4_directory_migration.go:443",
+      "func": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:443",
+      "where": "pkg/storage.BadgerEngine.recoverV4WALAtOpen$2 pkg/storage/wal_v4_directory_migration.go:443"
     }
   ],
   "fieldWrites": [
