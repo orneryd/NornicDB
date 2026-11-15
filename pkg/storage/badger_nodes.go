@@ -624,7 +624,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		// ones replace them; ones carried over unchanged are dropped when the
 		// embedding source changed, and the sidecar cleanup below removes
 		// them from storage too (#963).
-		dropStaleCarriedEmbeddings(b, existingNode, node)
+		keptManagedEmbeddings := dropStaleCarriedEmbeddings(b, existingNode, node)
 
 		if err := b.validateNodeConstraintsInTxn(write.ctx, txn, node, schema, dbName, node.ID); err != nil {
 			return err
@@ -667,6 +667,15 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		// If embeddings are stored separately, write them after commit in bounded txns.
 		if embeddingsSeparate {
 			persistSeparateEmbeddings = true
+			if keptManagedEmbeddings {
+				// Reuse only the sidecar that supplied this exact stored
+				// image. Presence alone cannot prove freshness or metadata.
+				meta, fresh, err := b.freshEmbeddingSidecarMeta(embeddingRecordReader{txn: txn}, existingNode, node.ID)
+				if err != nil {
+					return err
+				}
+				persistSeparateEmbeddings = !fresh || !sameStoredValue(meta, node.EmbedMeta)
+			}
 			embeddingsToPersist = node.ChunkEmbeddings
 		} else {
 			// Node fits inline - clean up any old separately stored embeddings
