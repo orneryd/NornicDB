@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 func TestWriteAtomicRecordV2_MatchesBuild(t *testing.T) {
@@ -99,19 +101,11 @@ func (w *shortWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type errWriter struct {
-	err error
-}
-
-func (w *errWriter) Write(_ []byte) (int, error) {
-	return 0, w.err
-}
-
 func TestWriteAtomicRecordV2Bufio_ErrorBranches(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 64)
 
 	t.Run("flush failure is returned", func(t *testing.T) {
-		bw := bufio.NewWriterSize(&errWriter{err: errors.New("flush fail")}, 16)
+		bw := bufio.NewWriterSize(&testfixture.ErrorWriter{Err: errors.New("flush fail")}, 16)
 		_, err := writeAtomicRecordBufio(bw, payload, walFormatVersionCurrent)
 		if err == nil {
 			t.Fatalf("expected flush error")
@@ -126,7 +120,7 @@ func TestWriteAtomicRecordV2Bufio_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("writer error is returned", func(t *testing.T) {
-		_, err := writeAtomicRecordBufio(&errWriter{err: errors.New("write fail")}, payload, walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&testfixture.ErrorWriter{Err: errors.New("write fail")}, payload, walFormatVersionCurrent)
 		if err == nil {
 			t.Fatalf("expected write error")
 		}

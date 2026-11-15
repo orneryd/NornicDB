@@ -77,17 +77,6 @@ type walCaptureLogger struct {
 	entries []map[string]any
 }
 
-type walErrWriter struct {
-	err error
-}
-
-func (w *walErrWriter) Write(p []byte) (int, error) {
-	if w.err == nil {
-		w.err = errors.New("writer failure")
-	}
-	return 0, w.err
-}
-
 func (e *walStreamErrorEngine) StreamNodes(_ context.Context, _ func(*Node) error) error {
 	return e.nodeErr
 }
@@ -710,7 +699,7 @@ func TestWAL_InternalBranchErrors(t *testing.T) {
 
 		bad := &WAL{
 			config: &WALConfig{SyncMode: "none"},
-			writer: bufio.NewWriterSize(&walErrWriter{err: errors.New("flush boom")}, 16),
+			writer: bufio.NewWriterSize(&fixtureowner.ErrorWriter{Err: errors.New("flush boom")}, 16),
 		}
 		_, _ = bad.writer.Write([]byte("trigger flush"))
 		require.ErrorContains(t, bad.syncLocked(), "flush failed")
@@ -2466,7 +2455,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 			w := &WAL{
 				config: &WALConfig{Dir: dir, SyncMode: "none"},
 				file:   f,
-				writer: bufio.NewWriterSize(&walErrWriter{err: fmt.Errorf("flush-fail")}, 16),
+				writer: bufio.NewWriterSize(&fixtureowner.ErrorWriter{Err: fmt.Errorf("flush-fail")}, 16),
 			}
 			_, _ = w.writer.WriteString("pending")
 			err = w.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate)

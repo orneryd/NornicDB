@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
@@ -256,7 +257,7 @@ func TestPropertyJSONEncoderIndentOpaqueAndErrors(t *testing.T) {
 	}
 
 	boom := fmt.Errorf("writer failed")
-	writer := &formattedErrorWriter{err: boom}
+	writer := &testfixture.ErrorWriter{Err: boom}
 	encoder := convert.PropertyJSON.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(map[string]any{"v": float64(2)}); err == nil || err.Error() != boom.Error() {
@@ -265,8 +266,8 @@ func TestPropertyJSONEncoderIndentOpaqueAndErrors(t *testing.T) {
 	if err := encoder.Encode(map[string]any{"v": float64(3)}); err == nil || err.Error() != boom.Error() {
 		t.Fatalf("writer error was not sticky: %v", err)
 	}
-	if writer.calls != 1 {
-		t.Fatalf("failed writer invoked %d times, want once", writer.calls)
+	if writer.Calls.Load() != 1 {
+		t.Fatalf("failed writer invoked %d times, want once", writer.Calls.Load())
 	}
 }
 
@@ -386,14 +387,4 @@ func formattedRandomString(random *rand.Rand) string {
 		builder.WriteString(alphabet[random.Intn(len(alphabet))])
 	}
 	return builder.String()
-}
-
-type formattedErrorWriter struct {
-	err   error
-	calls int
-}
-
-func (writer *formattedErrorWriter) Write(data []byte) (int, error) {
-	writer.calls++
-	return 0, writer.err
 }
