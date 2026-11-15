@@ -301,3 +301,20 @@ func TestManagedVectorReferenceRecoveryAfterWorkerReplacesImage(t *testing.T) {
 	require.Equal(t, float32(42), recovered.ChunkEmbeddings[0][0])
 	require.Equal(t, propertyUpdateNamedVectorValues(), recovered.NamedEmbeddings[propertyUpdateNamedVector])
 }
+
+func TestManagedVectorReferenceAdmissionRejectsBeforeAnchor(t *testing.T) {
+	engine, wrapped := newPropertyUpdateVectorEngine(t, WALRecordsLarge)
+	const id NodeID = "test:reference-refusal"
+	seedPropertyUpdateVectorNode(t, engine, wrapped, id, 16)
+	before, err := wrapped.GetNode(t.Context(), id)
+	require.NoError(t, err)
+	after := CopyNode(before)
+	after.Properties["flag"] = true
+	wal := wrapped.GetWAL()
+	cut := wal.Sequence()
+	calls := 0
+	_, err = wal.managedReferences(t.Context(), []Operation{{Type: OpUpdateNode, Node: after, OldNode: before, nodeAnchorEligible: true}}, func() error { calls++; return ErrStoreValueTooLarge })
+	require.ErrorIs(t, err, ErrStoreValueTooLarge)
+	require.Equal(t, 1, calls)
+	require.Equal(t, cut, wal.Sequence(), "neither an anchor nor a client record may precede definite refusal")
+}

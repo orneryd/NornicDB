@@ -10,8 +10,13 @@
 - [x] Reuse a bounded fixed-size proof cache, invalidated by canonical embedding-audit append and journal retirement.
 - [x] Never anchor an uncommitted staged predecessor; preserve complete replacement vectors.
 - [x] Focused public Cypher, journal-only recovery, malformed-reference and above-frame controls pass.
-- [ ] Rebase onto the latest release and independently repeat affected checks.
-- [ ] Complete staged/multiple-update, snapshot-cut and worker-reset interleaving controls.
-- [ ] Run affected race checks and vet.
+- [x] Rebased onto a492f2acd; focused storage/nornicdb/replication checks pass
+  (18.365s / 2.163s / 2.294s), with no-tests-selected results kept separate.
+- [x] Staged replacement, snapshot retirement and worker replacement recovery
+  controls pass; reference admission preserves complete replay-image validation.
+- [x] Focused storage/nornicdb race checks pass (5.265s / 2.640s); vet passes.
+- [x] Final admission-focused checks pass4.537s; large-frame checks2.480s;
+  final focused race passes5.697s/2.814s. Native full-image admission remains before
+  anchor append. Byte measurements are documented separately from runtime cost.
 - [ ] Qualify cold first-anchor versus steady-state bytes and runtime allocations/cost.
 - [ ] Publish a separate release fix PR and trigger exact-head CI/duplicate review.

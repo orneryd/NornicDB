@@ -80,7 +80,7 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 		var mutationOnce sync.Once
 		releaseMutation = func() { mutationOnce.Do(w.mutationMu.RUnlock) }
 	}
-	references, err := w.wal.managedReferences(ctx, ops)
+	references, err := w.wal.managedReferences(ctx, ops, func() error { return prepared.storeValueLimitError(ctx) })
 	if err != nil {
 		return nil, err
 	}

@@ -110,11 +110,12 @@ func (cache *walManagedAnchorCache) remember(identity, digest [sha256.Size]byte,
 // Callers cannot construct references to arbitrary storage state.
 type ManagedVectorReferences struct{ entries []managedVectorReference }
 
-func (w *WAL) managedReferences(ctx context.Context, operations []Operation) (ManagedVectorReferences, error) {
+func (w *WAL) managedReferences(ctx context.Context, operations []Operation, admission func() error) (ManagedVectorReferences, error) {
 	var references ManagedVectorReferences
 	if !config.IsWALEnabled() {
 		return references, nil
 	}
+	checkedAdmission := false
 	for index := range operations {
 		operation := &operations[index]
 		if operation.Type != OpUpdateNode || !operation.nodeAnchorEligible || operation.Node == nil || operation.OldNode == nil || len(operation.Node.ChunkEmbeddings) == 0 {
@@ -130,6 +131,15 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation) (Ma
 		}
 		if before != after {
 			continue
+		}
+		// Removing vectors must not skip admission formerly triggered by the
+		// full record's size. Validate the complete replay image before even an
+		// anchor is appended, through the existing native admission owner.
+		if !checkedAdmission {
+			if err := admission(); err != nil {
+				return ManagedVectorReferences{}, err
+			}
+			checkedAdmission = true
 		}
 		identity := sha256.Sum256([]byte(operation.Node.ID))
 		if err := w.lockAdmission(ctx); err != nil {

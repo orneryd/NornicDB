@@ -36,7 +36,7 @@ func (cw *commitWriter) prepareNativeWAL() (*valueEncoder, error) {
 	cw.configureStoredEntityPublication(logicalID, false)
 	mode := cw.entityMode
 	encoder := getValueEncoder()
-	references, err := wal.managedReferences(cw.ctx, operations)
+	references, err := wal.managedReferences(cw.ctx, operations, cw.replayedBodyLimit)
 	if err != nil {
 		return encoder, err
 	}
