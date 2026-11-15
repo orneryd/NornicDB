@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -23,7 +24,7 @@ func traversalCallReadsHeaderOnly(name string) bool {
 // reads its properties. The map omits variables whose properties are read, so
 // a missing entry means "read"; a nil map means "not analysed", which every
 // consumer treats as read.
-func (e *StorageExecutor) traversalUnusedPropertyVariables(match *TraversalMatch, returnItems []returnItem, whereClause string) map[string]bool {
+func (e *StorageExecutor) traversalUnusedPropertyVariables(ctx context.Context, match *TraversalMatch, returnItems []returnItem, whereClause string) map[string]bool {
 	expressions := make([]string, 0, len(returnItems)+1)
 	for _, item := range returnItems {
 		expressions = append(expressions, item.expr)
@@ -31,7 +32,7 @@ func (e *StorageExecutor) traversalUnusedPropertyVariables(match *TraversalMatch
 	if whereClause != "" {
 		expressions = append(expressions, whereClause)
 	}
-	return e.traversalUnusedPropertyVariablesForExpressions(match, expressions)
+	return e.traversalUnusedPropertyVariablesForExpressions(ctx, match, expressions)
 }
 
 // traversalUnusedPropertyVariablesForTail is the pipeline form of the same
@@ -41,8 +42,9 @@ func (e *StorageExecutor) traversalUnusedPropertyVariables(match *TraversalMatch
 // shared owner computes for it is complete and names no property, which is the
 // same decision the endpoint reads that follow it are given. A nil readTail
 // means the tail is not read-only, so every variable is conservatively treated
-// as read.
-func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *TraversalMatch, whereClause string, readTail []pipelineClause) map[string]bool {
+// as read, and so is every variable whose demand ctx's cancellation left
+// incomplete.
+func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(ctx context.Context, match *TraversalMatch, whereClause string, readTail []pipelineClause) map[string]bool {
 	if readTail == nil {
 		return nil
 	}
@@ -64,7 +66,7 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *Travers
 	}
 	unused := make(map[string]bool, len(names))
 	for name := range names {
-		properties, complete := pipelineNodePropertyDemand(name, whereClause, nil, readTail)
+		properties, complete := pipelineNodePropertyDemand(ctx, name, whereClause, nil, readTail)
 		if complete && len(properties) == 0 {
 			unused[name] = true
 		}
@@ -76,8 +78,10 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *Travers
 }
 
 // traversalUnusedPropertyVariablesForExpressions returns, for every named node
-// variable of match, whether none of expressions reads its properties.
-func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(match *TraversalMatch, expressions []string) map[string]bool {
+// variable of match, whether none of expressions reads its properties. A
+// statement canceled while the shared scan read expressions has no complete
+// verdict, so no variable is reported unused.
+func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(ctx context.Context, match *TraversalMatch, expressions []string) map[string]bool {
 	names := make(map[string]struct{}, 4)
 	add := func(v string) {
 		if v != "" {
@@ -95,7 +99,7 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(match *
 		return nil
 	}
 
-	if pipelineConsumersReadWholeVisibleScope(expressions) {
+	if pipelineConsumersReadWholeVisibleScope(ctx, expressions) {
 		// A full-scope callback reads the row, not only its arguments, so no
 		// binding this MATCH materialises is header-only-safe while one of the
 		// expressions holds such a call.

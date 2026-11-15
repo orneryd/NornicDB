@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -123,6 +124,11 @@ func runScalarNodeInputImageChild(t *testing.T, declaration string) {
 			statement string
 			want      [][]interface{}
 		}{
+			{
+				name:      "filtered_count",
+				statement: "MATCH (n:EIBig) WHERE toUpper('ignored') = " + fmt.Sprint(scalarNodeUnusedBytes) + " RETURN count(n)",
+				want:      [][]interface{}{{int64(1)}},
+			},
 			{
 				// The call sits inside another call's argument, a form the
 				// per-variable walk reads as that unknown-shaped argument: the

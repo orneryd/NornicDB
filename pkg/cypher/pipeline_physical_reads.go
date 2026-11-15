@@ -265,7 +265,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		reduction.invocationRows(1)
 		return newCountReductionOutcome(count, column, countReductionObservedScan)
 	}
-	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	projectedProperties, _ := pipelineNodePropertyDemand(ctx, nodePattern.variable, whereClause, nodePattern.properties, nil)
 	label := nodeScanLabels(ctx, store, nodePattern.labels)[0]
 	visit := queryprofile.EntityVisitor(ctx, profileKindNodeByLabelScan, label, func(node *storage.Node) error {
 		return countNode(node, false)
@@ -417,20 +417,25 @@ func pipelineCallInputOf(name string) pipelineCallInput {
 // The calls are the semantic scanner's, so a call nested inside a form the
 // per-variable analysis cannot read (an unknown function's argument, an
 // operator over the variable) is found too. The scan reads retained syntax and
-// performs no statement work, so it has no caller context of its own to
-// observe.
-func pipelineConsumersReadWholeVisibleScope(expressions []string) bool {
+// performs no statement work, and it runs under the statement's own context, so
+// the statement's cancellation stops it. A stopped scan has not read every
+// call, so it reports the whole visible scope: every binding keeps its whole
+// image instead of the demand narrowing on a partial analysis, and the query
+// that owns the context reports the cancellation.
+func pipelineConsumersReadWholeVisibleScope(ctx context.Context, expressions []string) bool {
 	for _, expression := range expressions {
 		if strings.TrimSpace(expression) == "" {
 			continue
 		}
 		reads := false
-		_ = forEachFunctionCall(context.Background(), expression, func(_, normalized string) error {
+		if err := forEachFunctionCall(ctx, expression, func(_, normalized string) error {
 			if pipelineCallInputOf(normalized) == pipelineCallFullVisible {
 				reads = true
 			}
 			return nil
-		})
+		}); err != nil {
+			return true
+		}
 		if reads {
 			return true
 		}
@@ -550,7 +555,12 @@ func pipelineNodePredicateProperties(variable, expression string, inline map[str
 		var call functionCallFacts
 		if inspectFunctionCall(expression, qualifiedFunctionCall, "", &call) {
 			name := strings.ToLower(call.name)
-			arguments := splitTopLevelComma(call.inner)
+			argumentSource := call.inner
+			if _, inner, _, aggregate := parsePipelineAggregate(expression); aggregate {
+				// Demand follows the same modifier/name boundary as execution.
+				argumentSource = inner
+			}
+			arguments := splitTopLevelComma(argumentSource)
 			switch pipelineCallInputOf(name) {
 			case pipelineCallFullVisible:
 				// The implementation receives the row, not only its

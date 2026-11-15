@@ -177,7 +177,7 @@ func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInf
 	if _, viewport := TemporalViewportFromContext(ctx); viewport {
 		return nil, false
 	}
-	return pipelineNodePropertyDemand(nodePattern.variable, whereClause, nodePattern.properties, readTail)
+	return pipelineNodePropertyDemand(ctx, nodePattern.variable, whereClause, nodePattern.properties, readTail)
 }
 
 // pipelineNodePropertyDemand returns the stored property bodies a MATCH must
@@ -190,13 +190,17 @@ func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInf
 // projection, a traversal endpoint's projection and the traversal's
 // labels-only decision all describe the same clauses and the same variable, so
 // they ask this function instead of each deriving the demand from clause text.
-func pipelineNodePropertyDemand(variable, whereClause string, inline map[string]interface{}, readTail []pipelineClause) ([]string, bool) {
+//
+// The consumer scan runs under ctx. A statement canceled while that scan is
+// reading has no complete analysis, so the demand declines the narrowing and
+// keeps every body; the query that owns ctx reports the cancellation.
+func pipelineNodePropertyDemand(ctx context.Context, variable, whereClause string, inline map[string]interface{}, readTail []pipelineClause) ([]string, bool) {
 	consumers := make([]string, 0, len(readTail)+1)
 	consumers = append(consumers, whereClause)
 	for _, clause := range readTail {
 		consumers = append(consumers, clause.text)
 	}
-	if pipelineConsumersReadWholeVisibleScope(consumers) {
+	if pipelineConsumersReadWholeVisibleScope(ctx, consumers) {
 		// A full-scope callback reads the row, not only its arguments: every
 		// visible binding keeps its whole image for it, whichever of them this
 		// variable is.

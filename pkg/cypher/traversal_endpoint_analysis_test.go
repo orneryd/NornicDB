@@ -48,13 +48,13 @@ func TestTraversalUnusedPropertyVariables(t *testing.T) {
 		StartNode: nodePatternInfo{variable: "a", labels: []string{"P"}},
 		EndNode:   nodePatternInfo{variable: "l", labels: []string{"Q"}},
 	}
-	unused := e.traversalUnusedPropertyVariables(match, items, "")
+	unused := e.traversalUnusedPropertyVariables(t.Context(), match, items, "")
 	require.True(t, unused["l"])
 	require.True(t, unused["a"], "start variable is also unused but never read by traversal endpoints")
 
 	// A property read flips that variable back to "read"; other variables stay
 	// as they were.
-	unused = e.traversalUnusedPropertyVariables(match, []returnItem{{expr: "l.text", alias: "t"}}, "")
+	unused = e.traversalUnusedPropertyVariables(t.Context(), match, []returnItem{{expr: "l.text", alias: "t"}}, "")
 	require.False(t, unused["l"], "l.text is a property read")
 	require.True(t, unused["a"], "a's properties are still unread")
 
@@ -68,13 +68,13 @@ func TestTraversalUnusedPropertyVariables(t *testing.T) {
 			{FromNode: nodePatternInfo{variable: "c", labels: []string{"Child"}}, ToNode: nodePatternInfo{variable: "l", labels: []string{"Leaf"}}},
 		},
 	}
-	unused = e.traversalUnusedPropertyVariables(chained, items, "")
+	unused = e.traversalUnusedPropertyVariables(t.Context(), chained, items, "")
 	require.True(t, unused["l"])
 	require.True(t, unused["c"])
 	require.True(t, unused["r"])
 
 	// The WHERE predicate counts against a variable.
-	unused = e.traversalUnusedPropertyVariables(chained, items, "c.id = 3")
+	unused = e.traversalUnusedPropertyVariables(t.Context(), chained, items, "c.id = 3")
 	require.False(t, unused["c"])
 	require.True(t, unused["l"])
 }
@@ -94,10 +94,10 @@ func TestTraversalUnusedPropertyVariablesKeepsEveryBindingForFullScopeCallback(t
 		EndNode:   nodePatternInfo{variable: "l", labels: []string{"Q"}},
 	}
 	items := []returnItem{{expr: "count(l)", alias: "c"}}
-	require.True(t, e.traversalUnusedPropertyVariables(match, items, "")["l"],
+	require.True(t, e.traversalUnusedPropertyVariables(t.Context(), match, items, "")["l"],
 		"a header aggregate narrows the binding it counts")
 
 	items = append(items, returnItem{expr: "traversal_scope_probe('x')", alias: "p"})
-	require.Nil(t, e.traversalUnusedPropertyVariables(match, items, ""),
+	require.Nil(t, e.traversalUnusedPropertyVariables(t.Context(), match, items, ""),
 		"a full-scope callback keeps every visible binding's whole body")
 }
