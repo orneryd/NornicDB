@@ -40,10 +40,10 @@ func TestAutoCompactionRemovesInterruptedSnapshots(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "nornic:cleanup", Properties: map[string]any{"name": "retained"}})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(stale, []byte("interrupted"), 0644))
-	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context()))
+	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context(), saveCompactionSnapshot))
 	require.NoFileExists(t, stale, "a later compaction also reclaims interrupted files")
 	// Cleanup also runs on idle ticks, without requiring another full snapshot.
 	require.NoError(t, os.WriteFile(stale, []byte("interrupted"), 0644))
-	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context()))
+	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context(), saveCompactionSnapshot))
 	require.NoFileExists(t, stale)
 }

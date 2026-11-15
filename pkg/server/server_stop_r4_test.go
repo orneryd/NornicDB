@@ -604,19 +604,15 @@ func TestServerStopR4ProviderCloseReentry(t *testing.T) {
 	}
 }
 
-type r4FailedWriter struct{ err error }
-
-func (w r4FailedWriter) Write([]byte) (int, error) { return 0, w.err }
-
 func TestServerStopR4LogOutcomes(t *testing.T) {
 	for _, kind := range []string{"slow-query", "audit", "terminal-observer"} {
 		t.Run(kind, func(t *testing.T) {
 			s, _ := stopR2Server(t)
 			failure := errors.New("r4 " + kind + " sink failed")
 			if kind == "slow-query" {
-				s.slowQueryLogger = log.New(r4FailedWriter{failure}, "", 0)
+				s.slowQueryLogger = log.New(&fixtureowner.ErrorWriter{Err: failure}, "", 0)
 			} else {
-				s.SetAuditLogger(audit.NewLoggerWithWriter(r4FailedWriter{failure}, audit.DefaultConfig()))
+				s.SetAuditLogger(audit.NewLoggerWithWriter(&fixtureowner.ErrorWriter{Err: failure}, audit.DefaultConfig()))
 			}
 			token := "Bearer " + getAuthToken(t, s.auth, "admin")
 			switch kind {
@@ -657,7 +653,7 @@ func TestServerStopR4RetentionAuditOutcome(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Stop(context.Background())
 	failure := errors.New("r4 retention audit failed")
-	s.SetAuditLogger(audit.NewLoggerWithWriter(r4FailedWriter{failure}, audit.DefaultConfig()))
+	s.SetAuditLogger(audit.NewLoggerWithWriter(&fixtureowner.ErrorWriter{Err: failure}, audit.DefaultConfig()))
 	node, err := db.CreateNode(context.Background(), []string{"Memory"}, map[string]interface{}{"content": "expired"})
 	require.NoError(t, err)
 	rm := db.GetRetentionManager()

@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type failingFlushWriter struct {
+	fixtureowner.ErrorWriter
 	header http.Header
 }
 
@@ -20,10 +22,6 @@ func (w *failingFlushWriter) Header() http.Header {
 		w.header = make(http.Header)
 	}
 	return w.header
-}
-
-func (w *failingFlushWriter) Write([]byte) (int, error) {
-	return 0, errors.New("write failed")
 }
 
 func (w *failingFlushWriter) WriteHeader(int) {}
@@ -229,7 +227,7 @@ func TestBifrost_RequestConfirmation_PropagatesBroadcastError(t *testing.T) {
 	bifrost := NewBifrost(cfg)
 	require.NotNil(t, bifrost)
 
-	w := &failingFlushWriter{}
+	w := &failingFlushWriter{ErrorWriter: fixtureowner.ErrorWriter{Err: errors.New("write failed")}}
 	bifrost.RegisterClient("bad-client", w, w)
 	defer bifrost.UnregisterClient("bad-client")
 

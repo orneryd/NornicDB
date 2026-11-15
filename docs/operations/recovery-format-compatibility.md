@@ -29,8 +29,12 @@ Other historical recovery payloads retain their existing representation. Old
 JSON cannot reconstruct physical key bytes that an older writer already
 replaced, so an ambiguous record is rejected instead of silently applied.
 
-Before replacing WAL files, the migration keeps a synced copy in a protected
-`wal.before-v4-v6` directory. After a successful storage upgrade it is retained as
+The migration first stages and syncs the original WAL and every converted file.
+Only after conversion succeeds does it publish the protected `wal.before-v4-v6`
+copy, before replacing any active files. Validation, backup-copy and conversion
+failures leave the source unchanged and remove their own temporary directories;
+they do not publish a new backup. Failures after publication retain that backup
+so a restart can resume safely. After a successful storage upgrade it is retained as
 `wal.pre-v4-<id>` beside the active WAL. It may contain unencrypted application
 data and credentials: protect it like the original database and remove it only
 after the upgrade and independent backup have been verified. If the upgrade is

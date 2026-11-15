@@ -78,7 +78,7 @@ func TestPeriodicSnapshotPreservesTheVectorsReadsReturn(t *testing.T) {
 			require.Equal(t, rrvBits(rrvVectors(3, 100)), rrvBits(live.ChunkEmbeddings), "the live node holds the published vectors")
 			require.False(t, NodeNeedsEmbedding(live))
 
-			snapshot := lab.snapshotPeriodic()
+			snapshot := takePeriodicSnapshot(t, lab.journal, lab.dir)
 			crashClose(t, lab.engine, lab.wal)
 
 			destination, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))

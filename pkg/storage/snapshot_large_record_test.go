@@ -179,7 +179,7 @@ func TestCompactionSnapshotsEntitiesOver16MiB(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, before)
 
-	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context()), "compaction snapshots a store holding entities over 16 MiB")
+	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context(), saveCompactionSnapshot), "compaction snapshots a store holding entities over 16 MiB")
 	files, err := filepath.Glob(filepath.Join(snapshots, "snapshot-*"))
 	require.NoError(t, err)
 	require.Len(t, files, 1, "one snapshot")
@@ -211,7 +211,7 @@ func TestCancelledLargeSnapshotKeepsThePreviousSnapshotAndTheJournal(t *testing.
 	engine, walDir, snapshots := compactionLab(t)
 	_, err := engine.CreateNode(ctx, &Node{ID: "test:first", Properties: map[string]any{"text": strings.Repeat("x", 18<<20)}})
 	require.NoError(t, err)
-	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context()))
+	require.NoError(t, engine.createSnapshotAndCompact(engine.work.Context(), saveCompactionSnapshot))
 	files, err := filepath.Glob(filepath.Join(snapshots, "snapshot-*"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -224,7 +224,7 @@ func TestCancelledLargeSnapshotKeepsThePreviousSnapshotAndTheJournal(t *testing.
 	require.NoError(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	require.Error(t, engine.createSnapshotAndCompact(cancelled), "a cancelled snapshot fails")
+	require.Error(t, engine.createSnapshotAndCompact(cancelled, saveCompactionSnapshot), "a cancelled snapshot fails")
 
 	files, err = filepath.Glob(filepath.Join(snapshots, "*"))
 	require.NoError(t, err)

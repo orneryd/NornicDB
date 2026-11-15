@@ -155,7 +155,7 @@ func (a *StorageAdapter) loadWALPosition() error {
 	}
 	a.projectedIDs = make(map[projectionIdentity]uint64)
 	for _, entry := range entries {
-		if entry.Operation != storage.OperationType("replication_command") {
+		if entry.Operation != replicationWALOperation {
 			continue
 		}
 		record, err := decodeProjectionRecord(entry)
@@ -597,7 +597,7 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 	var entries []*WALEntry
 	for _, storageEntry := range storageEntries {
 		// Only process replication_command entries
-		if storageEntry.Operation != storage.OperationType("replication_command") {
+		if storageEntry.Operation != replicationWALOperation {
 			continue
 		}
 

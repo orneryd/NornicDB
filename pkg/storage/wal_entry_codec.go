@@ -87,17 +87,9 @@ func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (e
 	if err != nil {
 		return nil, false, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
 	}
-	// Never acknowledge a record recovery would be unable to read.
-	if len(jsonBytes) > int(walMaxEntrySize)-8 || len(entry.Data) > int(walMaxEntrySize)-8-len(jsonBytes) {
-		if !spanning || len(jsonBytes) > int(walMaxEntrySize)-8 {
-			return nil, false, &walRecordRejection{cause: fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)}
-		}
-		// The record format stores the data length in 32 bits: the ceiling
-		// of one logical record, however many frames it spans.
-		if uint64(len(entry.Data)) > math.MaxUint32 {
-			return nil, false, &walRecordRejection{cause: fmt.Errorf("wal: journal record data of %d bytes exceeds the record format's limit of %d bytes", len(entry.Data), uint64(math.MaxUint32))}
-		}
-		large = true
+	large, err = checkWALEntrySize(len(jsonBytes), len(entry.Data), spanning)
+	if err != nil {
+		return nil, false, err
 	}
 	encoded = make([]byte, 4+len(jsonBytes)+4+len(entry.Data))
 	binary.LittleEndian.PutUint32(encoded[0:4], uint32(len(jsonBytes)))
@@ -106,4 +98,21 @@ func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (e
 	binary.LittleEndian.PutUint32(encoded[dataOff:dataOff+4], uint32(len(entry.Data)))
 	copy(encoded[dataOff+4:], entry.Data)
 	return encoded, large, nil
+}
+
+// checkWALEntrySize is shared by capacity admission and physical encoding.
+func checkWALEntrySize(headerSize, dataSize int, spanning bool) (bool, error) {
+	if dataSize < 0 {
+		return false, ErrInvalidData
+	}
+	if headerSize > int(walMaxEntrySize)-8 || dataSize > int(walMaxEntrySize)-8-headerSize {
+		if !spanning || headerSize > int(walMaxEntrySize)-8 {
+			return false, &walRecordRejection{cause: fmt.Errorf("wal: entry exceeds maximum WAL frame size of %d bytes", walMaxEntrySize)}
+		}
+		if uint64(dataSize) > math.MaxUint32 {
+			return false, &walRecordRejection{cause: fmt.Errorf("wal: journal record data of %d bytes exceeds the record format's limit of %d bytes", dataSize, uint64(math.MaxUint32))}
+		}
+		return true, nil
+	}
+	return false, nil
 }
