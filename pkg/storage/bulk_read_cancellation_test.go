@@ -214,7 +214,7 @@ func TestBulkReadCancellationLabelStreamRetires(t *testing.T) {
 func TestBulkReadCancellationTransactionPendingOverlayRetires(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	committed := seedCancellationNodes(t, b, 4)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -279,7 +279,7 @@ func TestBulkReadCancellationTransactionPendingOverlayRetires(t *testing.T) {
 func TestBulkReadCancellationSnapshotScopedAndProjectedRoutesRetire(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	expected := seedCancellationNodes(t, b, cancellationRouteRecords)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	ctx := context.Background()

@@ -57,7 +57,7 @@ func BenchmarkResidualCosts(b *testing.B) {
 	})
 	b.Run("transaction-metadata", func(b *testing.B) {
 		engine := benchEngine(b)
-		tx, err := engine.BeginTransaction(b.Context())
+		tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}

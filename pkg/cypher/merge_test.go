@@ -172,7 +172,7 @@ func TestCloneWithStorageIsolatesNodeLookupCacheForTxClones(t *testing.T) {
 	parent := NewStorageExecutor(newTestMemoryEngine(t))
 	parent.ensureNodeLookupCache()
 
-	tx, err := parent.storage.(*storage.MemoryEngine).BeginTransaction(t.Context())
+	tx, err := parent.storage.(*storage.MemoryEngine).BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 

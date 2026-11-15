@@ -81,7 +81,7 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 				}
 				scan, read := b.StreamNodesWithOptions, b.GetNode
 				if reader != "engine" {
-					tx, err := b.BeginTransaction(t.Context())
+					tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 					if reader == "pending-new" {

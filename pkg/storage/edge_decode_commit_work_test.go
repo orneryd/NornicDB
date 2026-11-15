@@ -14,7 +14,7 @@ func TestStoredEdgeDecodePreservesCommitWork(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "decode:e", StartNode: "decode:a", EndNode: "decode:b", Type: "LINK", Properties: map[string]any{"weight": int64(3)}}))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 	require.NoError(t, tx.SetNamespace("decode"))

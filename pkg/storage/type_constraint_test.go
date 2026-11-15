@@ -88,7 +88,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	defer cleanup()
 
 	// Insert node with correct type
-	tx1, _ := engine.BeginTransaction(t.Context())
+	tx1, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx1.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-1")),
 		Labels: []string{"User"},
@@ -99,7 +99,7 @@ func TestBadgerEngine_PropertyTypeConstraintValidation(t *testing.T) {
 	tx1.Commit()
 
 	// Insert node with WRONG type
-	tx2, _ := engine.BeginTransaction(t.Context())
+	tx2, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx2.CreateNode(t.Context(), &Node{
 		ID:     NodeID(prefixTestID("user-2")),
 		Labels: []string{"User"},
@@ -127,7 +127,7 @@ func TestBadgerEngine_PropertyTypeConstraintSuccess(t *testing.T) {
 	defer cleanup()
 
 	// Insert nodes with correct types
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{
 		ID:     "user-1",
 		Labels: []string{"User"},
@@ -174,7 +174,7 @@ func TestBadgerEngine_MixedNumericTypes(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{
 		ID:     "node-1",
 		Labels: []string{"Node"},
@@ -208,7 +208,7 @@ func TestBadgerEngine_PropertyTypeConstraintWithNulls(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 
-	tx, _ := engine.BeginTransaction(t.Context())
+	tx, _ := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	tx.CreateNode(t.Context(), &Node{
 		ID:     "person-1",
 		Labels: []string{"Person"},

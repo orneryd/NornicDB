@@ -41,7 +41,7 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -94,7 +94,7 @@ func TestBadgerTransactionStreamNodesAfterCommitFails(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	require.Error(t, tx.StreamNodesWithOptions(context.Background(), StreamNodesOptions{}, func(*Node) error { return nil }))
@@ -116,7 +116,7 @@ func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
 		require.NoError(t, err)
 	}
 	legacy := func(readTS MVCCVersion) *BadgerTransaction {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		tx.snapshotTx.Discard()
@@ -141,7 +141,7 @@ func TestBadgerTransactionStreamNodesPendingVisitErrors(t *testing.T) {
 	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for _, id := range []NodeID{"a:1", "a:2"} {

@@ -37,12 +37,12 @@ func (p *optionalDrainProbe) FlushWriteBehind(ctx context.Context) error {
 	}
 	return p.native.FlushWriteBehind(ctx)
 }
-func (p *optionalDrainProbe) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (p *optionalDrainProbe) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	p.begins++
 	if p.observe {
 		p.events = append(p.events, "begin")
 	}
-	return p.native.BeginTransaction(ctx)
+	return p.native.BeginTransaction(ctx, request)
 }
 func newOptionalDrainProbe(t testing.TB) (*StorageExecutor, *optionalDrainProbe) {
 	t.Helper()

@@ -29,7 +29,7 @@ func TestReservedDeletionPublicationConflicts(t *testing.T) {
 							return nil, nil
 						}, nil
 					}, nil))
-					older, err := b.BeginTransaction(t.Context())
+					older, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = older.Rollback() })
 					require.NoError(t, older.SetImplicit(true))
@@ -77,7 +77,7 @@ func TestReservedDeletionPublicationConflicts(t *testing.T) {
 					case <-time.After(10 * time.Second):
 						t.Fatal("observer did not enter")
 					}
-					stale, err := b.BeginTransaction(t.Context())
+					stale, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = stale.Rollback() })
 					require.NoError(t, stale.SetImplicit(implicit))
@@ -117,7 +117,7 @@ func TestFrameCreatedTombstonedIdentityCanBeDeleted(t *testing.T) {
 				require.NoError(t, b.DeleteEdge(t.Context(), "test:r2"))
 			}
 			require.NoError(t, b.FlushWriteBehind(context.Background()))
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetImplicit(true))
@@ -167,7 +167,7 @@ func TestAcknowledgedRecreationCanBeMutatedBeforeReplay(t *testing.T) {
 					require.NoError(t, err)
 					require.True(t, head.Tombstoned, "the acknowledged re-create must remain unapplied")
 				}
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetImplicit(true))
@@ -228,7 +228,7 @@ func TestRelationshipUsesAcknowledgedRecreatedEndpoint(t *testing.T) {
 	head, err := b.GetNodeCurrentHead(t.Context(), "test:n2")
 	require.NoError(t, err)
 	require.True(t, head.Tombstoned)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetImplicit(true))

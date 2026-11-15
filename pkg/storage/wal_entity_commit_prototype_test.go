@@ -24,7 +24,7 @@ func TestAcceptedWALRoutesAndRecoversAtomicSemanticImage(t *testing.T) {
 	route, found := EntityCommitSubmitterFor(owner)
 	require.True(t, found)
 	require.True(t, route.RequiresSubmission)
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

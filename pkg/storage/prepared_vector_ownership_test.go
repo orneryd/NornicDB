@@ -19,7 +19,7 @@ func TestPreparedVectorImagesStayDetachedFromCallers(t *testing.T) {
 	input, err := engine.GetNode(t.Context(), "test:owned")
 	require.NoError(t, err)
 	input.Properties["flag"] = true
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: input, Policy: ClientNodeEdits}))
@@ -78,7 +78,7 @@ func TestPreparedImagesStayDetachedThroughPublication(t *testing.T) {
 				node.ChunkEmbeddings[0][0] = 999
 				delivered <- struct{}{}
 			})
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer tx.Rollback()
 			require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:published", Properties: map[string]any{"text": "same", "flag": true}}, Policy: ClientNodeEdits}))

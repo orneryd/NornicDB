@@ -13,7 +13,7 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	// No earlier check can have initialized the derived equality cache.
 	engine := relationshipUniqueCommitFixture(t, 1)
 	require.Empty(t, engine.relationshipUniqueIndexes.entries)
-	staged, err := engine.BeginTransaction(t.Context())
+	staged, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = staged.Rollback() })
 	require.NoError(t, staged.SetValidationSetting(DeferredConstraintValidation, true))
@@ -33,7 +33,7 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	require.Empty(t, engine.relationshipUniqueIndexes.entries, "cancellation must not publish a reusable partial cache")
 	require.False(t, engine.relationshipUniqueIndexes.active.Load())
 
-	retry, err := engine.BeginTransaction(t.Context())
+	retry, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, retry.SetValidationSetting(DeferredConstraintValidation, true))
 	require.NoError(t, retry.CreateEdge(t.Context(), &Edge{ID: "test:healthy", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]interface{}{"id": int64(7)}}))
@@ -44,7 +44,7 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 
 	// A warm cache wait is preparation too. Cancel at the actual blocked lock
 	// boundary, before it can read cached candidates or report a violation.
-	blocked, err := engine.BeginTransaction(t.Context())
+	blocked, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, blocked.SetValidationSetting(DeferredConstraintValidation, true))
 	edge.ID = "test:warm-cancelled"
@@ -77,7 +77,7 @@ func TestRelationshipUniquePreparationCancellationColdRetryWarm(t *testing.T) {
 	require.False(t, indexed)
 
 	// A healthy warm-cache duplicate remains a real semantic violation.
-	warm, err := engine.BeginTransaction(t.Context())
+	warm, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, warm.SetValidationSetting(DeferredConstraintValidation, true))
 	edge.ID = "test:warm-duplicate"

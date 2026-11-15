@@ -16,7 +16,7 @@ func TestTransactionLabelReadsAreIsolated(t *testing.T) {
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:scan", Labels: []string{"Doc"}, Properties: map[string]any{"text": "stored"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BadgerEngine.BeginTransaction(t.Context())
+	tx, err := engine.BadgerEngine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	for round := 0; round < 2; round++ { // a fresh scan, then the cached one

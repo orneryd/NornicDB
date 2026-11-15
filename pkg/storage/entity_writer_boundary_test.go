@@ -8,7 +8,7 @@ import (
 
 func TestEntityWriterRejectsCrossNamespaceLock(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -28,7 +28,7 @@ func TestEntityWriterRefreshesAtSaturatedCommitSequence(t *testing.T) {
 	state, err := engine.namespaceMVCC("test")
 	require.NoError(t, err)
 	state.seq.Store(maxMVCCCommitSequence)
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

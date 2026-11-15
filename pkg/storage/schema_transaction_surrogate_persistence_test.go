@@ -38,7 +38,7 @@ func schemaTransactionOpen(t *testing.T, directory string) *BadgerEngine {
 
 func schemaTransactionBegin(t *testing.T, engine *BadgerEngine, namespace string) *BadgerTransaction {
 	t.Helper()
-	transaction, err := engine.BeginTransaction(t.Context())
+	transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, transaction.SetNamespace(namespace))
 	t.Cleanup(func() { _ = transaction.Rollback() })

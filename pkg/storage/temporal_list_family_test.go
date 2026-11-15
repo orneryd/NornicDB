@@ -257,7 +257,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					first := tlfListProperties(values[0], composite, 0, 10*time.Hour)
 					probe := tlfListProperties(values[1], composite, 5*time.Hour, 15*time.Hour)
 					if mode == "pending" {
-						tx, err := inner.BeginTransaction(t.Context())
+						tx, err := inner.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
@@ -295,7 +295,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					var err error
 					phase := "direct"
 					if strings.HasSuffix(mode, "transaction") {
-						tx, beginErr := inner.BeginTransaction(t.Context())
+						tx, beginErr := inner.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, beginErr)
 						defer tx.Rollback()
 						require.NoError(t, tx.SetNamespace("test"))
@@ -550,7 +550,7 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						var err error
 						phase := "direct"
 						if strings.HasSuffix(mode, "transaction") {
-							tx, beginErr := inner.BeginTransaction(t.Context())
+							tx, beginErr := inner.BeginTransaction(t.Context(), OrdinaryBegin)
 							require.NoError(t, beginErr)
 							defer tx.Rollback()
 							require.NoError(t, tx.SetNamespace("test"))

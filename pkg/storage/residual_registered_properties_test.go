@@ -65,7 +65,7 @@ func TestResidualRegisteredPropertyImages(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, b.CreateEdge(t.Context(), edge))
 			} else {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))

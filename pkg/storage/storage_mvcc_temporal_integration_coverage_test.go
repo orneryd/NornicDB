@@ -22,7 +22,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	}))
 
 	// Tx create phase.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:a", Labels: []string{"User", "Role"}, Properties: map[string]any{"entity_id": "u1", "valid_from": time.Now().Add(-2 * time.Hour), "valid_to": time.Now().Add(2 * time.Hour), "name": "Alice"}})
@@ -39,7 +39,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	engine.activeMVCCSnapshotReaders.Store(1)
 
 	// Tx update phase.
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx2.SetNamespace("test"))
 	nodeA, err := tx2.GetNode(t.Context(), "test:a")
@@ -53,7 +53,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	require.NoError(t, tx2.Commit())
 
 	// Tx delete phase.
-	tx3, err := engine.BeginTransaction(t.Context())
+	tx3, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx3.SetNamespace("test"))
 	require.NoError(t, tx3.DeleteEdge(t.Context(), "test:e2"))
@@ -92,7 +92,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	require.NoError(t, err)
 
 	// Conflict helper calls.
-	tx4, err := engine.BeginTransaction(t.Context())
+	tx4, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx4.SetNamespace("test"))
 	tx4.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}

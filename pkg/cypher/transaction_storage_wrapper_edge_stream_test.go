@@ -29,7 +29,7 @@ func TestTransactionStorageWrapper_StreamEdgesByType(t *testing.T) {
 	}
 
 	require.NoError(t, base.EnsureNamespaceMVCC("a"))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("a"))

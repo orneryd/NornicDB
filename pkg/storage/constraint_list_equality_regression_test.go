@@ -91,7 +91,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 				}
 				first := []interface{}{float64(200)}
 				if mode == "pending" {
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, create(tx, "one", first))
@@ -115,7 +115,7 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 					asConstraintViolation(t, create(nil, "two", first))
 					return
 				}
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				err = create(tx, "two", first)
@@ -206,7 +206,7 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "recovered_list", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "T", Properties: []string{"id"}}))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
@@ -220,7 +220,7 @@ func TestUniqueListRejectsDuplicateAfterBufferedRecovery(t *testing.T) {
 	n, err := RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	next, err := recovered.BeginTransaction(t.Context())
+	next, err := recovered.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer next.Rollback()
 	require.NoError(t, next.CreateEdge(t.Context(), &Edge{ID: "test:duplicate", Type: "T", StartNode: "test:a", EndNode: "test:b", Properties: map[string]interface{}{"id": []interface{}{float64(200)}}}))

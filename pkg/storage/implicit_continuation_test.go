@@ -14,7 +14,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 			dir := t.TempDir()
 			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("continue"))
 			require.NoError(t, tx.SetImplicit(true))
@@ -23,7 +23,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 			// Populate the old completed-label cache before the separate commit.
 			_, err = tx.GetNodesByLabel(context.Background(), "Batch")
 			require.NoError(t, err)
-			batch, err := engine.BeginTransaction(t.Context())
+			batch, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			_, err = batch.CreateNode(t.Context(), &Node{ID: "continue:batch", Labels: []string{"Batch"}, Properties: map[string]interface{}{"batch_token": "batch"}})
 			require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestImplicitContinuationRetainsConflictChecks(t *testing.T) {
 			defer engine.Close()
 			_, err := engine.CreateNode(t.Context(), &Node{ID: "continue:same", Properties: map[string]interface{}{"value": int64(0)}})
 			require.NoError(t, err)
-			outer, err := engine.BeginTransaction(t.Context())
+			outer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer outer.Rollback()
 			require.NoError(t, outer.SetNamespace("continue"))
@@ -88,7 +88,7 @@ func TestImplicitContinuationRetainsConflictChecks(t *testing.T) {
 			if !beforeResume {
 				require.NoError(t, outer.ResumeAfterIndependentCommit(t.Context()))
 			}
-			peer, err := engine.BeginTransaction(t.Context())
+			peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			node, err = peer.GetNode(t.Context(), "continue:same")
 			require.NoError(t, err)

@@ -29,7 +29,7 @@ func TestResidualFinalCacheImages(t *testing.T) {
 				}
 				edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T", Properties: map[string]any{"p": int64(0)}}
 				require.NoError(t, b.CreateEdge(t.Context(), edge))
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("test"))
@@ -215,7 +215,7 @@ func TestResidualUnrelatedCachesRemainWarm(t *testing.T) {
 				require.Equal(t, EdgeID("test:keep-e"), got[0].ID)
 			}
 			if buffered {
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				_, err = tx.CreateNode(t.Context(), &Node{ID: "other:new", Labels: []string{"OTHER"}, Properties: map[string]any{"fresh-property": int64(1)}})

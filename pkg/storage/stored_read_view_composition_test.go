@@ -105,7 +105,7 @@ func TestStoredReadViewTransactionIncidenceAcrossReplay(t *testing.T) {
 		return tx.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
 	})
 	count := b.GapProbeAcrossReplay(t, func() (int64, error) {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err != nil {
 			return 0, err
 		}

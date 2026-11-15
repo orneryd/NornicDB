@@ -59,7 +59,7 @@ func newRefreshedReadFixture(t *testing.T) *refreshedReadFixture {
 	} {
 		require.NoError(t, engine.CreateEdge(ctx, edge), edge.ID)
 	}
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -238,7 +238,7 @@ func commitPeerUpdates(t *testing.T, f *refreshedReadFixture) {
 	peerNode := func(id NodeID, mutate func(*Node)) {
 		t.Helper()
 		ctx := t.Context()
-		peer, err := f.engine.BeginTransaction(ctx)
+		peer, err := f.engine.BeginTransaction(ctx, OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, peer.SetNamespace("test"))
 		node, err := peer.GetNode(ctx, id)
@@ -250,7 +250,7 @@ func commitPeerUpdates(t *testing.T, f *refreshedReadFixture) {
 	peerEdge := func(id EdgeID, mutate func(*Edge)) {
 		t.Helper()
 		ctx := t.Context()
-		peer, err := f.engine.BeginTransaction(ctx)
+		peer, err := f.engine.BeginTransaction(ctx, OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, peer.SetNamespace("test"))
 		edge, err := peer.GetEdge(ctx, id)

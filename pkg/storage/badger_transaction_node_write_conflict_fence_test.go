@@ -26,7 +26,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	_, err = engine.CreateNode(t.Context(), &Node{ID: nodeID, Properties: map[string]interface{}{"writer": "seed"}})
 	require.NoError(t, err)
 
-	stale, err := engine.BeginTransaction(t.Context())
+	stale, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stale.Rollback() })
 	node, err := stale.GetNode(t.Context(), nodeID)
@@ -49,7 +49,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 		t.Fatal("stale writer did not reach post-validation barrier")
 	}
 
-	peer, err := engine.BeginTransaction(t.Context())
+	peer, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	peerNode, err := peer.GetNode(t.Context(), nodeID)

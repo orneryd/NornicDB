@@ -75,7 +75,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 					EndNode: NodeID(fmt.Sprintf("test:n%d", (i+1)%6)), Type: "LINK", Properties: map[string]any{"v": int64(r.Intn(100))}}
 			}
 			inTx := func(implicit bool, apply func(*BadgerTransaction) error) error {
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				if err != nil {
 					return err
 				}

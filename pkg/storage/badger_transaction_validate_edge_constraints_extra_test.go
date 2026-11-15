@@ -10,7 +10,7 @@ import (
 
 func TestBadgerTransaction_ValidateEdgeConstraints_EarlyReturns(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 
@@ -44,7 +44,7 @@ func TestBadgerTransaction_ValidateEdgeConstraints_BranchCoverage(t *testing.T) 
 	require.NoError(t, sm.AddPropertyTypeConstraint("rel_rank_type", "LINK", "rank", PropertyTypeInteger, PropertyTypeConstraintOptions{EntityType: ConstraintEntityRelationship}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "rel_temporal", Type: ConstraintTemporal, EntityType: ConstraintEntityRelationship, Label: "TEMP_LINK", Properties: []string{"key", "valid_from", "valid_to"}}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))

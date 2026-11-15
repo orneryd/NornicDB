@@ -20,7 +20,7 @@ func TestTransactionWriteAdmissionDecidesEveryWrite(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	begin := func(admit func() error) *BadgerTransaction {
 		t.Helper()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		require.NoError(t, tx.SetNamespace("adm"))
@@ -156,7 +156,7 @@ func TestTransactionWriteAdmissionRetryAfterRejection(t *testing.T) {
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "retry:a", Labels: []string{"A"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("retry"))
@@ -197,7 +197,7 @@ func TestTransactionWriteAdmissionRetryAfterRejection(t *testing.T) {
 // makes, and every write it then admits reaches storage at commit.
 func TestTransactionWriteAdmissionRunsOnceOnSuccess(t *testing.T) {
 	engine := createTestBadgerEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("once"))
@@ -224,7 +224,7 @@ func TestTransactionIsCommittedStatus(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	// Active: not committed.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.False(t, tx.IsCommitted())
 	require.NoError(t, tx.SetNamespace("status"))
@@ -242,7 +242,7 @@ func TestTransactionIsCommittedStatus(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound, "a rejected write never reached storage")
 
 	// Committed: IsCommitted is true.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("status"))
 	tx.SetWriteAdmission(func() error { return nil })
@@ -255,7 +255,7 @@ func TestTransactionIsCommittedStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty commit commits too.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("status"))
 	require.False(t, tx.IsCommitted())
@@ -273,7 +273,7 @@ func TestTransactionWriteAdmissionReadsDoNotAsk(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "ro:ab", StartNode: "ro:a", EndNode: "ro:b", Type: "R"}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("ro"))
@@ -307,7 +307,7 @@ func TestTransactionWriteAdmissionReadsDoNotAsk(t *testing.T) {
 	require.Zero(t, asks, "no read or rejected purpose asks the write admission")
 
 	// Another transaction on the same storage keeps its own admission.
-	other, err := engine.BeginTransaction(t.Context())
+	other, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = other.Rollback() })
 	require.NoError(t, other.SetNamespace("ro"))
@@ -331,7 +331,7 @@ func TestTransactionWriteAdmissionRejectedDeleteStagesNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "del:ab", StartNode: "del:a", EndNode: "del:b", Type: "R"}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("del"))
@@ -361,7 +361,7 @@ func TestTransactionWriteAdmissionRejectedDeleteStagesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	// A cascade delete admitted normally still works afterwards.
-	tx2, err := engine.BeginTransaction(t.Context())
+	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx2.Rollback() })
 	require.NoError(t, tx2.SetNamespace("del"))
@@ -410,7 +410,7 @@ func BenchmarkTransactionAdmissionOverhead(b *testing.B) {
 		b.Run(bc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatalf("begin: %v", err)
 				}
@@ -454,7 +454,7 @@ func BenchmarkTransactionFirstWriteAdmission(b *testing.B) {
 		b.Run(bc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatalf("begin: %v", err)
 				}

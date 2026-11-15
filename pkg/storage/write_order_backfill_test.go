@@ -26,7 +26,7 @@ func openBackfillTestEngine(t *testing.T, dir string, writeBehind bool) *BadgerE
 // the path a query's write takes: with write-behind on it is acknowledged
 // buffered, and applied later. It reports whether it was.
 func implicitWrite(b *BadgerEngine, write func(tx *BadgerTransaction) error) (buffered bool, err error) {
-	tx, err := b.BeginTransaction(context.Background())
+	tx, err := b.BeginTransaction(context.Background(), OrdinaryBegin)
 	if err != nil {
 		return false, err
 	}

@@ -290,7 +290,7 @@ func (e *StorageExecutor) handleBegin(ctx context.Context) (_ *ExecuteResult, re
 
 	// Start transaction for any engine that supports BeginTransaction.
 	txEngine, ok := engine.(interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
+		BeginTransaction(context.Context, storage.BeginRequest) (*storage.BadgerTransaction, error)
 	})
 	if !ok {
 		return nil, localizedError(localization.CypherTransactionsEngineUnsupported(), nil)

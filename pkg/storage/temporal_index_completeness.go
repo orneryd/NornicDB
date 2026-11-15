@@ -136,17 +136,30 @@ func (sm *SchemaManager) HasConstraintNamed(name string) bool {
 //   - on an empty label (the usual schema-first load) there is nothing to
 //     index, and every later write maintains the index;
 //   - over existing nodes, which were written before the constraint and have
-//     no entries, their entries are written now (backfillTemporalIndexForLabel),
-//     so the index never stays incomplete across a restart that skips the
-//     rebuild (a clean shutdown certifies the derived indexes as current).
+//     no entries, their entries are written now, so the index never stays
+//     incomplete across a restart that skips the rebuild (a clean shutdown
+//     certifies the derived indexes as current).
 //
 // Only an engine that doesn't unwrap to a BadgerEngine leaves a constraint over
 // existing nodes incomplete; it is validated by label scan until a rebuild.
+//
+// The entries belong to the statement that published the constraint. When
+// engine is a schema statement's own transaction view, the pass stages them in
+// that transaction (stageTemporalBackfillForLabel): they publish with the
+// constraint and are discarded with it, and the statement's begin already holds
+// the engine's exclusive lifecycle admission from before its snapshot, so the
+// pass takes none. Every other view backfills as a maintenance write
+// (beginMaintenanceWrite), the engine's own pass that no statement's admission
+// covers.
 func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
 	if engine == nil || schema == nil {
 		return nil
 	}
 	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
+	staged, err := stagedSchemaTransactionFor(engine, schema)
+	if err != nil {
+		return err
+	}
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
@@ -157,6 +170,13 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 				return err
 			}
 			schema.markTemporalIndexCreated(c, empty)
+			continue
+		}
+		if staged != nil {
+			if err := badgerEngine.stageTemporalBackfillForLabel(context.Background(), staged, engine, c.Label); err != nil {
+				return err
+			}
+			schema.markTemporalIndexCreated(c, true)
 			continue
 		}
 		if err := func() error {
@@ -223,12 +243,13 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(ctx context.Context, engine
 	for start := 0; start < len(ids); start += chunk {
 		part := ids[start:min(start+chunk, len(ids))]
 		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+			view := b.physicalTemporalRebuild(txn)
 			for _, id := range part {
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {
 					return err
 				}
-				if err := b.rebuildTemporalNodeInTxn(ctx, txn, node, asOf); err != nil {
+				if err := b.rebuildTemporalNodeInTxn(ctx, view, node, asOf); err != nil {
 					return err
 				}
 			}

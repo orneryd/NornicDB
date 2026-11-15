@@ -31,7 +31,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 					}
 					b := open()
 					require.NoError(t, b.GetSchemaForNamespace("victim").AddUniqueConstraint("uid", "Person", "uid"))
-					tx, err := b.BeginTransaction(t.Context())
+					tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetImplicit(buffered))
@@ -97,7 +97,7 @@ func TestNamespaceDropRecoveryPreservesVictimsAndCounts(t *testing.T) {
 					require.ErrorIs(t, b.BulkCreateNodes(t.Context(), []*Node{{ID: "victim:bulk"}}), ErrConflict)
 					require.ErrorIs(t, b.GetSchemaForNamespace("victim").AddUniqueConstraint("blocked_schema", "Blocked", "uid"), ErrConflict)
 					for _, implicit := range []bool{false, true} {
-						writer, err := b.BeginTransaction(t.Context())
+						writer, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						err = writer.SetImplicit(implicit)
 						if err == nil {

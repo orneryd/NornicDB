@@ -33,7 +33,7 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityNodeKind, "test:h", true))
 	require.NoError(t, engine.SetManualSuppression(context.Background(), StoredEntityEdgeKind, "test:r", true))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}, Policy: ClientNodeEdits}))

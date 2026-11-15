@@ -28,7 +28,7 @@ import (
 // operation; reading a known-absent node is a cheap way to force it.
 func beginPinnedTransaction(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.GetNode(t.Context(), "test:pin-probe")
 	require.ErrorIs(t, err, ErrNotFound)
@@ -142,7 +142,7 @@ func TestGetCommittedEdgeForUpdateLockedZeroReadTSDelegates(t *testing.T) {
 		ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL",
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -178,7 +178,7 @@ func BenchmarkTransaction_UpdateEdge(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tx, err := engine.BeginTransaction(b.Context())
+		tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -452,12 +452,12 @@ func TestCreateIndexCancellationPublishesNoSchema(t *testing.T) {
 	}
 }
 
-// TestCreateIndexCommitRejectionPublishesNoSchema advances the database's
-// commit sequence while a fill is parked, so the schema transaction's commit
+// TestExplicitCreateIndexCommitRejectionPublishesNoSchema advances the database's
+// commit sequence while an explicit fill is parked, so its commit
 // is rejected by its own snapshot check. The rejection publishes no schema,
 // every stored node stays readable, and the retry fills the index from the
 // complete population.
-func TestCreateIndexCommitRejectionPublishesNoSchema(t *testing.T) {
+func TestExplicitCreateIndexCommitRejectionPublishesNoSchema(t *testing.T) {
 	for _, backend := range []string{"memory", "badger"} {
 		t.Run(backend, func(t *testing.T) {
 			fixture := newDDLPublicationFixture(t, backend)
@@ -465,17 +465,22 @@ func TestCreateIndexCommitRejectionPublishesNoSchema(t *testing.T) {
 			gate := newDDLFillGate(t, index, label)
 			exec := fixture.executor()
 			seedDDLPopulation(t, exec, label, property, "alice", "alice", "bob")
+			peer := fixture.executor()
+			_, err := exec.Execute(t.Context(), "BEGIN", nil)
+			require.NoError(t, err)
 
-			err := gate.runParked(t, exec, context.Background(),
+			err = gate.runParked(t, exec, context.Background(),
 				"CREATE INDEX "+index+" FOR (n:"+label+") ON (n."+property+")",
 				func() {
 					// A concurrent entity write changes the namespace's commit
 					// sequence: the parked schema transaction's snapshot is stale.
-					_, writeErr := exec.Execute(context.Background(),
+					_, writeErr := peer.Execute(context.Background(),
 						"CREATE (:RejectedCommitPerson {name: 'dave'})", nil)
 					require.NoError(t, writeErr)
 				})
-			require.Error(t, err, "a schema transaction whose snapshot changed must not commit")
+			require.NoError(t, err, "the explicit statement stages its index before commit")
+			_, err = exec.Execute(t.Context(), "COMMIT", nil)
+			require.Error(t, err, "an explicit schema transaction whose snapshot changed must not commit")
 			t.Logf("rejected schema commit: %v", err)
 			require.False(t, ddlPublishedCompositeIndex(fixture.store.GetSchema(), index),
 				"a rejected commit left a declared index behind")

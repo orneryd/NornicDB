@@ -82,9 +82,9 @@ type callerContextBeginStore struct {
 	native       *storage.MemoryEngine
 }
 
-func (s *callerContextBeginStore) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (s *callerContextBeginStore) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	s.beginContext = ctx
-	return s.native.BeginTransaction(ctx)
+	return s.native.BeginTransaction(ctx, request)
 }
 
 func TestStorageAPIBeginContextOwnsAdmissionNotRetainedHandle(t *testing.T) {

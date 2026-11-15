@@ -70,13 +70,13 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 		tx.mu.Unlock()
 		return nil
 	}
-	if tx.commitReleaseWrite == nil {
+	if tx.commitLease == nil {
 		lease, err := engine.beginBarrierWrite(ctx, false, false)
 		if err != nil {
 			tx.mu.Unlock()
 			return err
 		}
-		tx.commitReleaseWrite = lease.releaseCallback()
+		tx.commitLease = &lease
 	}
 	if err := engine.pendingNamespaceConflict(namespace); err != nil {
 		tx.releaseWriteBarrierLocked()

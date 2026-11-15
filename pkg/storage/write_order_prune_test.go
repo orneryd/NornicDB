@@ -27,7 +27,7 @@ func TestPruneOrdersAfterBufferedRecreate(t *testing.T) {
 	require.NoError(t, b.DeleteNode(t.Context(), "test:p"))
 	require.NoError(t, b.FlushWriteBehind(context.Background()))
 
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.SetImplicit(true))

@@ -60,7 +60,7 @@ func requireAcceptedCloseReplay(t *testing.T, dir string) {
 
 func TestAcceptedCloseBeforeNativeSubmissionPreservesRecovery(t *testing.T) {
 	base, wal, _, dir := acceptedCloseFixture(t)
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}})
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestAcceptedCloseStopsRetryWorkAndReplays(t *testing.T) {
 			return nil, ErrConflict
 		}, nil
 	}, nil))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}})
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestAcceptedRecoveryCannotRestartWhileEngineCloses(t *testing.T) {
 	require.NoError(t, base.InitializeStoredEntityObserver("test", func(StoredEntitySnapshot) (StoredEntityObserver, error) {
 		return func(StoredEntityPublication) (func(), error) { return nil, ErrInvalidData }, nil
 	}, nil))
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}})
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestAcceptedRecoveryCannotRestartWhileEngineCloses(t *testing.T) {
 	require.ErrorIs(t, firstAccepted.Err, ErrInvalidData)
 	// This unrelated admitted frame holds the lifecycle barrier so Close can
 	// seal admission before the recovery call reaches the existing owner.
-	guard, err := base.BeginTransaction(t.Context())
+	guard, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = guard.CreateNode(t.Context(), &Node{ID: "guard:uncommitted"})
 	require.NoError(t, err)

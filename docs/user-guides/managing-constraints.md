@@ -392,12 +392,14 @@ with session.begin_transaction() as tx:
   tx.commit()
 ```
 
-Commit data migrations in a separate transaction. A schema transaction whose
-database data changed since its snapshot may fail with a transient conflict;
-retry the complete schema transaction rather than publishing an incomplete
-index backfill. Autocommit DDL continues to use the database's schema persister.
-Native decay/promotion declarations use their separate knowledge-policy
-transaction contract.
+Commit data migrations in a separate transaction. An explicit schema transaction
+whose database data changed since its snapshot may fail with a transient
+conflict; retry the complete schema transaction rather than publishing an
+incomplete index backfill. An autocommit DDL statement admits itself exclusively
+before it reads the schema and the stored population, so an unrelated data
+commit waits for that statement instead of invalidating it. Native
+decay/promotion declarations use their separate knowledge-policy transaction
+contract.
 
 Compatibility vector/fulltext schema creation/drop procedures follow the same
 commit/rollback lifetime as ordinary DDL. Relationship fulltext creation uses

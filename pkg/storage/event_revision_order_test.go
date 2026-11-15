@@ -163,7 +163,7 @@ func TestRevisionAndEventCountPerWrite(t *testing.T) {
 		wait()
 		revision, _ := view.GraphMutationVersion()
 		before := events.Load()
-		tx, err := base.BeginTransaction(context.Background())
+		tx, err := base.BeginTransaction(context.Background(), OrdinaryBegin)
 		require.NoError(t, err)
 		_, err = tx.CreateNode(context.Background(), &Node{ID: "delta:t1", Labels: []string{"Delta"}})
 		require.NoError(t, err)

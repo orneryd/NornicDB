@@ -44,7 +44,7 @@ func TestBadgerTransactionConstraintScanErrorsDoNotCommit(t *testing.T) {
 					}))
 					engine.cacheDeleteEdge("test:original")
 
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.CreateEdge(t.Context(), &Edge{
@@ -104,7 +104,7 @@ func TestBadgerTransactionPolicyLabelChangeErrorsDoNotCommit(t *testing.T) {
 						}))
 					}
 
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
@@ -148,7 +148,7 @@ func TestBadgerTransactionPolicyEndpointErrorsDoNotCommit(t *testing.T) {
 			_, decodeErr := engine.decodeNodeProjected(nil, "test", []byte("corrupt-record"), nil)
 			require.Error(t, decodeErr)
 
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{
@@ -185,7 +185,7 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 						Name: "policy", Type: ConstraintPolicy, EntityType: ConstraintEntityRelationship, Label: "REL",
 						SourceLabel: "Account", TargetLabel: "Account", PolicyMode: "ALLOWED",
 					}))
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
@@ -208,7 +208,7 @@ func TestBadgerTransactionDeferredPolicyLabelChanges(t *testing.T) {
 
 func TestBadgerTransactionPolicyMissingNodeLabels(t *testing.T) {
 	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -247,7 +247,7 @@ func TestBadgerTransactionDeferredPolicyLabelChangeUsesFinalEdges(t *testing.T) 
 					if outgoing {
 						anchor = "test:source"
 					}
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = tx.Rollback() })
 					require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))

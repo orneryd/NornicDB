@@ -29,7 +29,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			b := newWriteBehindTestEngine(t, time.Hour)
 			_, err := b.CreateNode(t.Context(), &Node{ID: "test:target", Properties: map[string]any{"payload": "before"}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			if testCase.create {
@@ -141,7 +141,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 			peer, err := b.GetNode(t.Context(), "test:acknowledged")
 			require.NoError(t, err)
 			assert.Equal(t, "peer", peer.Properties["payload"])
-			retry, err := b.BeginTransaction(t.Context())
+			retry, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = retry.Rollback() })
 			if testCase.create {
@@ -177,7 +177,7 @@ func TestCommitPreparationBufferedConflictAdmissionCancellation(t *testing.T) {
 
 func TestBufferedReceiptAndConflictScansObserveRealCancellation(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
-	begin, err := b.BeginTransaction(t.Context())
+	begin, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = begin.Rollback() })
 	for _, id := range []NodeID{"test:a", "test:b", "test:c"} {
@@ -240,7 +240,7 @@ func (c *bufferedOperationPollContext) Err() error {
 }
 func TestBufferedConflictPreparationCancelsAtInnerBulkPoll(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for i := range bulkReadCancellationInterval*2 + 1 {

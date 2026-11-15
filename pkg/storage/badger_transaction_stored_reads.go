@@ -10,6 +10,14 @@ func (tx *BadgerTransaction) GetStoredNode(ctx context.Context, id NodeID) (*Nod
 	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, transactionNodeRead{mvccEntityRead: mvccEntityRead{vectors: true, visibility: storedRead}})
 }
 
+// storedNodeWithoutVectors is GetStoredNode without stored embedding vectors:
+// the transaction's snapshot, pending writes and deletes, no suppression or
+// decay, and identity, labels and properties only. A derived-index backfill
+// needs nothing else from the body.
+func (tx *BadgerTransaction) storedNodeWithoutVectors(ctx context.Context, id NodeID) (*Node, error) {
+	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: storedRead}})
+}
+
 // GetStoredEdge is GetStoredNode for a relationship.
 func (tx *BadgerTransaction) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error) {
 	return readTransactionEntity(ctx, tx, id, (*BadgerTransaction).edgeReadState, cloneTransactionEdge, loadTransactionEdge, storedRead)

@@ -99,7 +99,7 @@ func TestRepeatedFilteredLabelScanRemembersTheLabel(t *testing.T) {
 
 	// A transaction: its writes are no one else's until it commits, and a
 	// rolled back transaction changes nothing.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "a:pending", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "pending"}})
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestRepeatedFilteredLabelScanRemembersTheLabel(t *testing.T) {
 	require.Len(t, remembered(), documents)
 	require.NoError(t, tx.Rollback())
 	require.Nil(t, first("pending"))
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "a:committed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "committed"}})
 	require.NoError(t, err)

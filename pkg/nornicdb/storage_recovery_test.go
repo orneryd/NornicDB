@@ -54,7 +54,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 	require.Equal(t, "value", node.Properties["key"])
 
 	// Sanity: run a small transactional read as well (exercise Badger reads).
-	tx, err := recovered.BeginTransaction(t.Context())
+	tx, err := recovered.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	require.NoError(t, tx.Rollback())

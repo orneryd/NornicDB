@@ -53,7 +53,7 @@ func stageTemporalEdgeTransactions(t *testing.T, engine *BadgerEngine, images []
 	t.Helper()
 	txs := make([]*BadgerTransaction, len(images))
 	for i, image := range images {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.CreateEdge(t.Context(), image), "stage %s", image.ID)
 		txs[i] = tx

@@ -37,7 +37,7 @@ func TestAdmittedWriteCompletesDuringCloseDrain(t *testing.T) {
 				target = "test:r"
 			}
 			// A prepared commit holds the target's entity authority.
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			if tc.edge {
 				edge, err := tx.GetStoredEdge(t.Context(), EdgeID(target))
@@ -158,7 +158,7 @@ func TestAdmittedUniqueValueWriteCompletesDuringCloseDrain(t *testing.T) {
 			return err
 		}},
 		{name: "commit", write: func(b *BadgerEngine) error {
-			tx, err := b.BeginTransaction(context.Background())
+			tx, err := b.BeginTransaction(context.Background(), OrdinaryBegin)
 			if err != nil {
 				return err
 			}

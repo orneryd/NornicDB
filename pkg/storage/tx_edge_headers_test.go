@@ -32,7 +32,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 		return txn.Set(outgoingIndexKey(aNum, e3Num), []byte{})
 	}))
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.NoError(t, tx.SetNamespace("test"))
@@ -83,7 +83,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	readTS := tx.readTS
 	tx.readTS = e4Head.Version
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e4", StartNode: "test:b", EndNode: "test:c", Type: "K", Properties: map[string]any{"w": int64(2)}}}))
-	tx2, err := eng.BeginTransaction(t.Context())
+	tx2, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx2.Rollback() }()
 	require.NoError(t, tx2.SetNamespace("test"))

@@ -33,7 +33,7 @@ func TestWrittenImageKeepsRuntimeEmbeddingIdentity(t *testing.T) {
 					writer.SetEmbeddingAttempt(attempt)
 					writer.Properties = map[string]any{"v": value}
 					if explicit {
-						tx, err := engine.BeginTransaction(t.Context())
+						tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 						require.NoError(t, err)
 						require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: writer, Policy: ClientNodeEdits}))
 						require.NoError(t, tx.Commit())

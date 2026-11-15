@@ -20,7 +20,7 @@ func TestBodyWriterAuthorityAllowsLiveMetadataAndIndependentEndpoints(t *testing
 				require.NoError(t, err)
 			}
 			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))

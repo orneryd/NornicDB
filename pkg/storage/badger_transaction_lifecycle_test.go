@@ -37,7 +37,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 	retainedUnique := committed.uniqueConstraints[nodePropertyKey{label: "Account", property: "retainedUID"}]
 	retainedComposite := committed.compositeIndexes["retained_composite"]
 	retainedRange, _ := committed.GetRangeIndex("retained_range")
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.ErrorContains(t, tx.StageSchemaChanges(), "require a transaction schema view")
 	require.NoError(t, tx.SetNamespace("schema_lifetime"))
@@ -82,7 +82,7 @@ func TestSchemaTransactionLifecycleAndRuntimeSnapshot(t *testing.T) {
 
 func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	engine := newTestMemoryEngine(t)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("schema_mutations"))
 	_, err = tx.Schema(OrdinarySchemaChanges)
@@ -108,7 +108,7 @@ func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	require.Error(t, err)
 	_, err = tx.Schema(OrdinarySchemaChanges)
 	require.Error(t, err)
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "schema_mutations:node"})
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestBeginTransaction_WithLifecycleAdmissionDoesNotDeadlock(t *testing.T) {
 	var tx *BadgerTransaction
 	var err error
 	go func() {
-		tx, err = engine.BeginTransaction(t.Context())
+		tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		if err == nil && tx != nil {
 			err = tx.SetNamespace("test")
 		}
@@ -249,7 +249,7 @@ func TestBeginTransaction_LifecycleAdmissionFailureReturnsError(t *testing.T) {
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	pinErr := tx.SetNamespace("test")
@@ -263,7 +263,7 @@ func TestTransaction_GracefulSnapshotExpirationCancelsWorkAndReleasesReader(t *t
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	// Pin the transaction so the snapshot reader is registered with the
@@ -286,7 +286,7 @@ func TestTransaction_HardSnapshotExpirationFailsCommitAndReleasesReader(t *testi
 	controller := &txLifecycleControllerStub{enabled: true}
 	engine.SetLifecycleController(controller)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 	require.NoError(t, tx.SetNamespace("nornic"))

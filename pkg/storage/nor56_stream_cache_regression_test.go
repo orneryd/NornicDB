@@ -12,7 +12,7 @@ func TestNOR56StreamFullNodeCacheRespectsSnapshot(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngine(), ErrStorageClosed))
 	_, err := engine.CreateNode(ctx, &Node{ID: "tenant:n", Properties: map[string]interface{}{"value": "old"}})
 	require.NoError(t, err)
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	before, err := engine.GetNode(ctx, "tenant:n")

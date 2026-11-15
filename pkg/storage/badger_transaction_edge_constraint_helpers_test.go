@@ -25,7 +25,7 @@ func TestBadgerTransaction_CheckEdgeUniqueness(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:committed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL", Properties: map[string]any{"k": "v", "k2": "v2"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("tenant"))
 	defer tx.Rollback()
@@ -63,7 +63,7 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:e1", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL", Properties: map[string]any{"key": "k1", "from": start1, "to": end1}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("tenant"))
 	defer tx.Rollback()
@@ -98,7 +98,7 @@ func TestBadgerTransaction_CheckEdgeCardinality(t *testing.T) {
 	err = engine.CreateEdge(t.Context(), &Edge{ID: "tenant:e1", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL"})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("tenant"))
 	defer tx.Rollback()

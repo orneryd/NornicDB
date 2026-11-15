@@ -48,7 +48,7 @@ func TestNumericWireSchemaTransactionRewrite(t *testing.T) {
 				}
 				check(engine, "original")
 				if mutation != "native_backup" {
-					tx, err := engine.BeginTransaction(ctx)
+					tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					require.NoError(t, tx.SetNamespace("test"))

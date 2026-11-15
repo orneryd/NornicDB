@@ -98,7 +98,7 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 	}
 	require.NoError(t, engine.DeleteNode(t.Context(), "ns:dropped"))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.GetNode(t.Context(), "ns:kept")

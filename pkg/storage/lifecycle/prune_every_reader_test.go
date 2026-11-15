@@ -238,7 +238,7 @@ func TestManualPruneWithLifecycleOffProtectsOpenTransactions(t *testing.T) {
 			at2 = f.write(n, v)
 			f.write(other, v)
 		}
-		tx, err := f.engine.BeginTransaction(context.Background())
+		tx, err := f.engine.BeginTransaction(context.Background(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		require.NoError(t, tx.SetNamespace("dba"))
@@ -262,7 +262,7 @@ func TestManualPruneWithLifecycleOffProtectsOpenTransactions(t *testing.T) {
 		f.write(end, 0)
 		e := storage.EdgeID("dba:e")
 		require.NoError(t, f.engine.CreateEdge(t.Context(), &storage.Edge{ID: e, StartNode: start, EndNode: end, Type: "LINK"}))
-		tx, err := f.engine.BeginTransaction(context.Background())
+		tx, err := f.engine.BeginTransaction(context.Background(), storage.OrdinaryBegin)
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback() }()
 		require.NoError(t, tx.SetNamespace("dba"))

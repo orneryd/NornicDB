@@ -96,7 +96,7 @@ func TestNativeSchemaPublicationGateSerializesDirectSchemaMutations(t *testing.T
 			const namespace = "publicationgate"
 			schema := engine.GetSchemaForNamespace(namespace)
 
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace(namespace))
 			view, err := tx.Schema(KnowledgePolicyChanges)
@@ -196,7 +196,7 @@ func TestNativeSchemaCommitCanceledWaitingForPublicationGate(t *testing.T) {
 	const namespace = "canceledpublication"
 	schema := engine.GetSchemaForNamespace(namespace)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace(namespace))
 	view, err := tx.Schema(KnowledgePolicyChanges)

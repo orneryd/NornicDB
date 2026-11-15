@@ -24,7 +24,7 @@ func TestReservedRelationshipUpdateRejectsStalePreimage(t *testing.T) {
 			}
 			require.NoError(t, b.CreateEdge(ctx, &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "COUNT", Properties: map[string]interface{}{"n": int64(0)}}))
 			require.NoError(t, b.FlushWriteBehind(ctx))
-			peer, err := b.BeginTransaction(ctx)
+			peer, err := b.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			defer peer.Rollback()
 			require.NoError(t, peer.SetNamespace("test"))
@@ -33,7 +33,7 @@ func TestReservedRelationshipUpdateRejectsStalePreimage(t *testing.T) {
 			edge.Properties["n"] = int64(1)
 			require.NoError(t, peer.UpdateEdge(ctx, EdgeUpdateRequest{After: edge}))
 			stageReservedPublication(t, peer)
-			stale, err := b.BeginTransaction(ctx)
+			stale, err := b.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			defer stale.Rollback()
 			require.NoError(t, stale.SetNamespace("test"))
@@ -58,7 +58,7 @@ func TestRelationshipObservationRejectsPeerUpdateBeforeStaging(t *testing.T) {
 	}
 	require.NoError(t, b.CreateEdge(ctx, &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "COUNT", Properties: map[string]interface{}{"n": int64(0)}}))
 	require.NoError(t, b.FlushWriteBehind(ctx))
-	stale, err := b.BeginTransaction(ctx)
+	stale, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	defer stale.Rollback()
 	require.NoError(t, stale.SetNamespace("test"))
@@ -144,7 +144,7 @@ func TestReservedRelationshipPublicationPreservesAcknowledgedIncrements(t *testi
 						return nil, nil
 					}, nil
 				}, nil))
-				peer, err := b.BeginTransaction(ctx)
+				peer, err := b.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				defer peer.Rollback()
 				require.NoError(t, peer.SetImplicit(true))
@@ -168,7 +168,7 @@ func TestReservedRelationshipPublicationPreservesAcknowledgedIncrements(t *testi
 				case <-time.After(10 * time.Second):
 					t.Fatal("peer did not reserve publication")
 				}
-				stale, err := b.BeginTransaction(ctx)
+				stale, err := b.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				defer stale.Rollback()
 				require.NoError(t, stale.SetImplicit(implicit))

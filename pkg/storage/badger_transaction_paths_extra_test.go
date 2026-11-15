@@ -31,7 +31,7 @@ func newTwoNodeNamespaceTransactionFixture(t *testing.T) *twoNodeNamespaceTransa
 // when the test ends.
 func (f *twoNodeNamespaceTransactionFixture) begin(t *testing.T) *BadgerTransaction {
 	t.Helper()
-	tx, err := f.engine.BeginTransaction(t.Context())
+	tx, err := f.engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
@@ -92,7 +92,7 @@ func TestBadgerTransaction_QueryAndMutationPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"k": "v"}}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -145,7 +145,7 @@ func TestBadgerTransaction_QueryAndMutationPaths(t *testing.T) {
 func TestBadgerTransaction_CreateNode_LargeEmbeddingChunk(t *testing.T) {
 	engine := newTestEngine(t)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 
@@ -168,7 +168,7 @@ func TestBadgerTransaction_CommitErrorBranches(t *testing.T) {
 	engine := newTestEngine(t)
 
 	t.Run("writes without namespace", func(t *testing.T) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer tx.Rollback()
 
@@ -179,7 +179,7 @@ func TestBadgerTransaction_CommitErrorBranches(t *testing.T) {
 	})
 
 	t.Run("flush buffered writes error", func(t *testing.T) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("test"))
 		defer tx.Rollback()

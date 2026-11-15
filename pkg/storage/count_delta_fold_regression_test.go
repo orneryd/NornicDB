@@ -127,7 +127,7 @@ func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
 			for i := worker; i < total; i += workers {
 				a := i % nodeCount
 				b := (i + 1) % nodeCount
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, err)

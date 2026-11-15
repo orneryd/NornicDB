@@ -121,7 +121,7 @@ func TestReviewR2ForeignIdentityWithoutObservedRemap(t *testing.T) {
 	t.Cleanup(func() { _ = capture.Close() })
 	source.SetBufferedCommitWAL(capture)
 	for i, name := range []string{"alpha", "beta"} {
-		tx, e := source.BeginTransaction(t.Context())
+		tx, e := source.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, e)
 		require.NoError(t, tx.SetNamespace("identity"))
 		require.NoError(t, tx.SetImplicit(true))

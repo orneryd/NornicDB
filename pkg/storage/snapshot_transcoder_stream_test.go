@@ -136,7 +136,7 @@ func TestSnapshotTranscoderOverlayDifferential(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind(context.Background()))
 	// The stored-read owner must keep an untouched committed body, shadow an
 	// updated body, omit an acknowledged deletion, and include a pending edge.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))

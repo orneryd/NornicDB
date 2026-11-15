@@ -123,13 +123,13 @@ func TestNodeCascadeValidationWindowBlocksPeerAcknowledgement(t *testing.T) {
 	setupCascadeBoundaryGraph(t, engine)
 	require.NotNil(t, engine.writeBehind)
 
-	primary, err := engine.BeginTransaction(ctx)
+	primary, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = primary.Rollback() })
 	require.NoError(t, primary.SetImplicit(true))
 	require.NoError(t, primary.DeleteGraphNode(ctx, "test:n3", CascadeEdges))
 
-	peer, err := engine.BeginTransaction(ctx)
+	peer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = peer.Rollback() })
 	require.NoError(t, peer.SetImplicit(true))
@@ -243,7 +243,7 @@ func TestNodeCascadeValidationBoundaryOrdersAcceptedWrites(t *testing.T) {
 				engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: !writeBehind})
 				setupCascadeBoundaryGraph(t, engine)
 
-				cascade, err := engine.BeginTransaction(ctx)
+				cascade, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = cascade.Rollback() })
 				require.NoError(t, cascade.SetImplicit(true))
@@ -261,7 +261,7 @@ func TestNodeCascadeValidationBoundaryOrdersAcceptedWrites(t *testing.T) {
 				engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{synchronous: !writeBehind})
 				setupCascadeBoundaryGraph(t, engine)
 
-				cascade, err := engine.BeginTransaction(ctx)
+				cascade, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = cascade.Rollback() })
 				require.NoError(t, cascade.SetImplicit(true))

@@ -172,7 +172,7 @@ func newRelationshipEqualityQualificationFixture(t testing.TB, arity int, popula
 	definitions := make([]relationshipEqualityQualificationDefinition, len(populations))
 	nodes := make(map[NodeID]bool)
 	for _, namespace := range namespaces {
-		tx, err := engine.BeginTransaction(ctx)
+		tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 		for _, at := range members[namespace] {

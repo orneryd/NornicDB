@@ -17,7 +17,7 @@ func TestNOR160TransactionEdgeNamespaceDeliveryIsIndependent(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, ns.CreateEdge(ctx, &storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "COHELD", Properties: map[string]any{"v": []int64{7}}}))
-	tx, err := base.BeginTransaction(ctx)
+	tx, err := base.BeginTransaction(ctx, storage.OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("delivery"))

@@ -249,7 +249,7 @@ func shapeJournal(t *testing.T, b *BadgerEngine, w *WAL, logicalID string, stage
 func shapeRead(t *testing.T, engine *BadgerEngine) shapeImage {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

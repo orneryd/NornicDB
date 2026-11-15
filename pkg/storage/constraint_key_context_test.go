@@ -52,7 +52,7 @@ func TestPreparedConstraintKeyCancellationReleasesAdditionalAuthority(t *testing
 	require.NoError(t, err)
 	schema := engine.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddConstraint(Constraint{Name: "prepared_tuple", Type: ConstraintUnique, Label: "PreparedTuple", Properties: []string{"a", "b"}}))
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))

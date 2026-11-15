@@ -84,7 +84,7 @@ func cardinalityDifferentialEngine(t *testing.T) *BadgerEngine {
 // failure the caller would see and committing the writes otherwise.
 func stagedCardinalityWrite(t *testing.T, engine *BadgerEngine, steps func(tx *BadgerTransaction) error) error {
 	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	if err := steps(tx); err != nil {

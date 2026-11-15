@@ -49,7 +49,7 @@ func TestAcceptedPreNativeWALFailureRetiresStaging(t *testing.T) {
 	fixture := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: time.Second})
 	fixture.engine.replicator.(*StandaloneReplicator).storage = &preNativeWALFaultStorage{Storage: fixture.adapter, adapter: fixture.adapter}
 	require.NoError(t, fixture.adapter.wal.Close())
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:pre-native", Properties: map[string]any{"v": "accepted"}})
 	require.NoError(t, err)

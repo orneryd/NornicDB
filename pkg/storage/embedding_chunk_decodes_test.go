@@ -478,7 +478,7 @@ func (f *commitImagesFixture) tick() time.Time {
 // buffered engine, through the engine's own commit.
 func (f *commitImagesFixture) commit(stage func(tx *BadgerTransaction)) *BadgerTransaction {
 	t := f.t
-	tx, err := f.base.BeginTransaction(t.Context())
+	tx, err := f.base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	stage(tx)

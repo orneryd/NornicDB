@@ -17,7 +17,7 @@ import (
 
 func prepareContextRetry(t *testing.T, b *BadgerEngine, id NodeID, value string) {
 	t.Helper()
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	node, err := tx.GetNode(t.Context(), id)
@@ -46,7 +46,7 @@ func TestPrepareEntityCommitStopsCanceledUniqueClassifierAdmission(t *testing.T)
 			require.NoError(t, schema.AddUniqueConstraint("doc_key", "Doc", "key"))
 			id, err := b.CreateNode(t.Context(), &Node{ID: "prep:doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"key": "before", "payload": "before"}})
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetValidationSetting(DeferredConstraintValidation, true))
@@ -174,7 +174,7 @@ func TestPrepareEntityCommitStopsChangeImageCaptureAfterCancellation(t *testing.
 		}
 		return err
 	}}))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for i := 0; i < population; i++ {
@@ -227,7 +227,7 @@ func TestCommitPreparationChangeCaptureLifetime(t *testing.T) {
 				}
 				return err
 			}}))
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			for i := range 8 {
@@ -301,7 +301,7 @@ func BenchmarkPublicEntityCommitPreparation(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				tx, err := engine.BeginTransaction(b.Context())
+				tx, err := engine.BeginTransaction(b.Context(), OrdinaryBegin)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -372,7 +372,7 @@ func TestCommitPreparationTemporalAndChangeKeyContext(t *testing.T) {
 				}
 				_, err := b.CreateNode(t.Context(), &Node{ID: "phase:n", Labels: []string{"Span"}, Properties: map[string]any{"key": "n", "from": base, "to": base.Add(time.Hour), "payload": "before"}})
 				require.NoError(t, err)
-				tx, err := b.BeginTransaction(t.Context())
+				tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				node, err := tx.GetNode(t.Context(), "phase:n")
@@ -420,7 +420,7 @@ func TestPrepareEntityCommitCaptureOverlayAdmissionCancellation(t *testing.T) {
 		}
 		return read()
 	}}))
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	node, err := tx.GetNode(t.Context(), "overlay:n")

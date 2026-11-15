@@ -20,7 +20,7 @@ func TestDeleteConnectedNode(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:cb", StartNode: "test:c", EndNode: "test:b", Type: "R"}))
 
 	// Its relationship deleted later in the transaction: the commit deletes it.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", RejectConnected))
 	require.ErrorIs(t, tx.DeleteGraphNode(t.Context(), "test:a", RejectConnected), ErrNotFound)
@@ -37,7 +37,7 @@ func TestDeleteConnectedNode(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// Still connected at commit: the commit fails and changes nothing.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:c", RejectConnected))
 	err = tx.Commit()
@@ -49,7 +49,7 @@ func TestDeleteConnectedNode(t *testing.T) {
 	_, err = engine.GetNode(t.Context(), "test:c")
 	require.NoError(t, err)
 
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.ErrorIs(t, tx.DeleteGraphNode(t.Context(), "", RejectConnected), ErrInvalidID)
 	require.ErrorIs(t, tx.DeleteGraphNode(t.Context(), "test:missing", RejectConnected), ErrNotFound)
@@ -65,18 +65,18 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	}
 
 	// A finished transaction, or a node of another namespace.
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
 	require.Error(t, tx.DeleteGraphNode(t.Context(), "test:a", RejectConnected))
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.Error(t, tx.DeleteGraphNode(t.Context(), "other:a", RejectConnected))
 	require.NoError(t, tx.Rollback())
 
 	// A relationship created in the transaction still leads into the node.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:b", RejectConnected))
@@ -85,7 +85,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	require.Equal(t, NodeID("test:b"), connected.NodeID)
 
 	// A pending relationship that can't be written fails the delete.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	tx.pendingEdges["test:bad"] = &Edge{ID: "test:bad", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"x": make(chan int)}}
 	tx.deferredEdgeWrites = map[EdgeID]struct{}{"test:bad": {}}
@@ -94,7 +94,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	require.NoError(t, tx.Rollback())
 
 	// A node that is gone by commit time fails it.
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	tx.connectedDeletes = map[NodeID]*Node{"test:ghost": nil}
 	tx.mu.Lock()
@@ -108,7 +108,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:ab"), []byte("corrupt-edge"))
 	}))
-	tx, err = engine.BeginTransaction(t.Context())
+	tx, err = engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	tx.connectedDeletes = map[NodeID]*Node{"test:a": {ID: "test:a"}}
 	tx.mu.Lock()

@@ -25,7 +25,7 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 		require.NoError(t, err)
 	}
 	inTx := func(commit bool) {
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		_, err = tx.CreateNode(t.Context(), &Node{ID: "test:fixed", Labels: []string{"Fixed"}})
 		require.NoError(t, err)

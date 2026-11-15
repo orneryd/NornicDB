@@ -19,7 +19,7 @@ func TestTransactionBulkCreateEdgesPreservesTokenOrder(t *testing.T) {
 					require.NoError(t, err)
 				}
 				require.NoError(t, base.EnsureNamespaceMVCC("tenant"))
-				tx, err := base.BeginTransaction(t.Context())
+				tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				require.NoError(t, tx.SetNamespace("tenant"))

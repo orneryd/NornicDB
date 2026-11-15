@@ -63,7 +63,7 @@ func TestProjectedFilteredLabelScanReadsTheLabel(t *testing.T) {
 // transaction's own writes are part of it as before.
 func TestTransactionFilteredLabelScanReadsTheLabel(t *testing.T) {
 	engine, _ := filteredLabelScanFixture(t, BadgerOptions{}, 40)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	scan := func(options StreamNodesOptions) []*Node {
@@ -130,7 +130,7 @@ func TestTransactionFilteredLabelScanReadsTheLabel(t *testing.T) {
 // nothing else, however often the scan repeats.
 func TestTransactionFilteredScanReturnsItsProjection(t *testing.T) {
 	engine, _ := filteredLabelScanFixture(t, BadgerOptions{}, 40)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	for round := 0; round < 3; round++ {

@@ -18,7 +18,7 @@ func TestBadgerTransaction_ReadEdgeAndAdjacency_ErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 
 	// pinNamespaceFromIDLocked failure through public read methods.
@@ -53,7 +53,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_PrimaryDecodeError(t *testing.
 		return txn.Set(edgeKey(badEdgeID), []byte("not-a-valid-edge-encoding"))
 	}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	tx.readTS = MVCCVersion{}
@@ -90,7 +90,7 @@ func runGetNodesByLabelLockedReadTSCases(t *testing.T, cases []getNodesByLabelLo
 			_, err := engine.CreateNode(t.Context(), &Node{ID: tc.nodeID, Labels: []string{tc.label}})
 			require.NoError(t, err)
 
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 			if tc.namespace != "" {
@@ -123,7 +123,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer func() { _ = tx.Rollback() }()
@@ -142,7 +142,7 @@ func TestBadgerTransaction_GetCommittedEdgeLocked_VisibleAtDecodeErrorPath(t *te
 	_, err = tx.getCommittedEdgeLocked(t.Context(), "test:e1")
 	require.NoError(t, err)
 
-	corruptReader, err := engine.BeginTransaction(t.Context())
+	corruptReader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, corruptReader.SetNamespace("test"))
 	defer func() { _ = corruptReader.Rollback() }()

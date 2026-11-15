@@ -164,7 +164,7 @@ func TestEncodeFailuresAreLocalized(t *testing.T) {
 	edge.Properties = bad
 	require.ErrorContains(t, engine.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}), "failed to encode edge")
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	require.ErrorContains(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{ID: nodes[0].ID, Labels: []string{"Bulk"}, Properties: bad}, Policy: ClientNodeEdits}), "failed to encode node")
@@ -180,7 +180,7 @@ func TestTransactionEdgeIDChecks(t *testing.T) {
 	existing := &Edge{ID: "test:chk-e", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R"}
 	require.NoError(t, engine.BulkCreateEdges(t.Context(), []*Edge{existing}))
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	// An edge the transaction deleted can be created again with its ID.
 	require.NoError(t, tx.DeleteEdge(t.Context(), existing.ID))

@@ -85,7 +85,7 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	require.NoError(t, err)
 	state.highWaterNanos.Store(time.Now().Add(2 * time.Second).UnixNano())
 
-	tx, err := e.BeginTransaction(t.Context())
+	tx, err := e.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: &Node{
 		ID:         "test:skew",

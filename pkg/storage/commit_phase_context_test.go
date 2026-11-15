@@ -16,7 +16,7 @@ func TestAcceptedPreparedCountAdmissionKeepsDetachedCompletion(t *testing.T) {
 		_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Phase"}})
 		require.NoError(t, err)
 	}
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:phase-edge", StartNode: "test:phase-a", EndNode: "test:phase-b", Type: "LINK"}))

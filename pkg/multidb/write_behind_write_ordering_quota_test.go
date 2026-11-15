@@ -34,7 +34,7 @@ func TestManagedWriteAfterBufferedCommitKeepsUsage(t *testing.T) {
 				require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "LINK"}))
 				require.NoError(t, engine.FlushWriteBehind(context.Background()))
 
-				tx, err := engine.BeginTransaction(t.Context())
+				tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				acknowledged := map[string]any{"v": "acknowledged and much longer than the later body"}

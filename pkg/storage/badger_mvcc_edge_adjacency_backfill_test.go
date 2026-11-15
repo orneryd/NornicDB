@@ -79,7 +79,7 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, storageVersionCurrent, version)
-	reader, err := engine.BeginTransaction(t.Context())
+	reader, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, reader.SetNamespace("repair"))
 	t.Cleanup(func() {

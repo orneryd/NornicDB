@@ -51,7 +51,7 @@ func TestManagedEngineCapabilityFailurePrecedesEveryWrite(t *testing.T) {
 	require.ErrorContains(t, err, "ManagedEntityEngine")
 	require.ErrorIs(t, tracker.BulkCreateNodes(t.Context(), []*storage.Node{{ID: storage.NodeID(db + ":bulk-a")}, {ID: storage.NodeID(db + ":bulk-b")}}), storage.ErrInvalidData)
 	require.EqualValues(t, 1, opaque.createCalls.Load(), "capability validation must not probe a different store or invoke a write")
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace(db))

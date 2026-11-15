@@ -30,7 +30,7 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, eng.CreateEdge(t.Context(), &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K", Properties: map[string]any{"w": int64(1)}}))
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.CreateEdge(t.Context(), &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L"}))
@@ -46,13 +46,13 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	// A type change and an endpoint change rewrite the entries, in and out of
 	// a transaction.
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "K2"}}))
-	tx, err = eng.BeginTransaction(t.Context())
+	tx, err = eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:c", Type: "L2"}}))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:c", Type: "K2"}}))
-	tx, err = eng.BeginTransaction(t.Context())
+	tx, err = eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NoError(t, tx.UpdateEdge(t.Context(), EdgeUpdateRequest{After: &Edge{ID: "test:e2", StartNode: "test:b", EndNode: "test:c", Type: "L2"}}))
@@ -201,7 +201,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 				return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
 			}))
 			if transactional {
-				tx, err := eng.BeginTransaction(t.Context())
+				tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("test"))
 				headers, err := tx.ReadEdges(context.Background(), AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
@@ -229,7 +229,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 				return eng.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentOutgoing, Node: "test:a", Headers: true})
 			}
 			if transactional {
-				tx, err := eng.BeginTransaction(t.Context())
+				tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback() }()
 				require.NoError(t, tx.SetNamespace("test"))
@@ -321,7 +321,7 @@ func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
 	require.NoError(t, eng.UpdateEdge(t.Context(), EdgeUpdateRequest{After: edge}))
 	same("engine update")
 
-	tx, err := eng.BeginTransaction(t.Context())
+	tx, err := eng.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	edge, err = tx.GetEdge(t.Context(), "test:e")

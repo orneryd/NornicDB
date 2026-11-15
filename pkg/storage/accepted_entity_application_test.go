@@ -165,7 +165,7 @@ func TestAcceptedApplicationPendingRecoverySettlesOnce(t *testing.T) {
 					return func() { publications.Add(1) }, nil
 				}, nil
 			}, nil))
-			tx, err := base.BeginTransaction(t.Context())
+			tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			_, err = tx.CreateNode(t.Context(), &Node{ID: "test:accepted", Properties: map[string]any{"v": "accepted"}})
 			require.NoError(t, err)

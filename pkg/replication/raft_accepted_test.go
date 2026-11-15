@@ -76,7 +76,7 @@ func TestRaftAcceptedEntityCommitOwnership(t *testing.T) {
 				require.EqualValues(t, 1, r.lastApplied)
 				return
 			}
-			tx, err := engine.BeginTransaction(t.Context())
+			tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace("wire"))
 			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "wire:accepted", Properties: map[string]any{"value": "once"}})

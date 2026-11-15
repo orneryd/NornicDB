@@ -25,7 +25,7 @@ func TestResidualWALAcceptanceAdmission(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			owner := NewWALEngine(b, wal)
 			t.Cleanup(func() { _ = owner.Close() })
-			tx, err := b.BeginTransaction(t.Context())
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("test"))

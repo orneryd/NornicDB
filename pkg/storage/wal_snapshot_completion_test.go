@@ -71,7 +71,7 @@ func TestRecoveryPublishesReplayedRelabelAndRelationshipCounts(t *testing.T) {
 	require.NoError(t, source.bufferedCommitWAL.Append(OpBulkNodes, WALBulkNodesData{Nodes: []*Node{{ID: first, Labels: []string{"Old"}}, {ID: second, Labels: []string{"End"}}}}))
 	require.NoError(t, source.bufferedCommitWAL.Append(OpBulkEdges, WALBulkEdgesData{Edges: []*Edge{copyEdge(edge)}}))
 	require.NoError(t, SaveSnapshot(&Snapshot{Timestamp: time.Now(), Version: "1.0", Sequence: source.bufferedCommitWAL.sequence.Load(), Nodes: []*Node{{ID: "a", Labels: []string{"Old"}}, {ID: "b", Labels: []string{"End"}}}, Edges: []*Edge{{ID: "r", StartNode: "a", EndNode: "b", Type: "OldR"}}}, snapshot))
-	tx, err := source.BeginTransaction(t.Context())
+	tx, err := source.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetImplicit(true))

@@ -16,7 +16,7 @@ func TestBadgerTransaction_ScanForUniqueViolation_HookNamespaceAndExclude(t *tes
 	_, err = engine.CreateNode(t.Context(), &Node{ID: "other:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@example.com"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
@@ -50,7 +50,7 @@ func TestBadgerTransaction_ScanForNodeKeyViolation_AndCheckNodeKeyConstraintBran
 	_, err := engine.CreateNode(t.Context(), &Node{ID: "test:k1", Labels: []string{"Account"}, Properties: map[string]any{"tenant": "t1", "ext": "e1"}})
 	require.NoError(t, err)
 
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()

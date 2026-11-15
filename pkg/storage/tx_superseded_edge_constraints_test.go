@@ -14,7 +14,7 @@ func TestTransactionEdgeConstraintsSkipSupersededRelationships(t *testing.T) {
 	day := func(month int) time.Time { return time.Date(2024, time.Month(month), 1, 0, 0, 0, 0, time.UTC) }
 	inTx := func(t *testing.T, engine *BadgerEngine, steps func(tx *BadgerTransaction) error) error {
 		t.Helper()
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		if err := steps(tx); err != nil {
 			_ = tx.Rollback()

@@ -23,7 +23,7 @@ func BenchmarkNOR418MixedImport(b *testing.B) {
 	for _, writeBehind := range []bool{false, true} {
 		stage := func(b *testing.B, engine *BadgerEngine, round int) *BadgerTransaction {
 			ctx := b.Context()
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			if err != nil {
 				b.Fatal(err)
 			}

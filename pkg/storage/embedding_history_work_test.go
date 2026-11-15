@@ -35,7 +35,7 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 
 				// Keep the public transaction open: the old keys/versions must stay
 				// readable, independently of compaction or cache timing.
-				old, err := engine.BeginTransaction(t.Context())
+				old, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, old.Rollback()) })
 				oldNode, err := old.GetNode(t.Context(), body.ID)
@@ -63,7 +63,7 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 				case "update":
 					require.NoError(t, engine.UpdateNode(t.Context(), NodeUpdateRequest{After: current}))
 				case "transaction":
-					tx, err := engine.BeginTransaction(t.Context())
+					tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: current, Policy: ClientNodeEdits}))
 					require.NoError(t, tx.Commit())

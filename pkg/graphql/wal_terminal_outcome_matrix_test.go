@@ -34,11 +34,11 @@ type graphqlMatrixEngine struct {
 }
 
 func (e *graphqlMatrixEngine) GetWAL() *storage.WAL { return e.wal }
-func (e *graphqlMatrixEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *graphqlMatrixEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	if e.begin != nil {
 		return nil, e.begin
 	}
-	return e.MemoryEngine.BeginTransaction(ctx)
+	return e.MemoryEngine.BeginTransaction(ctx, request)
 }
 
 // graphqlMatrixSuppression rejects the post-commit suppression action, which

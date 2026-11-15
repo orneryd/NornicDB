@@ -101,7 +101,7 @@ func TestNOR160PartialLabelScanReplayHonorsLiveSuppression(t *testing.T) {
 		_, err := engine.CreateNode(ctx, &Node{ID: id, Labels: []string{"Held"}})
 		require.NoError(t, err)
 	}
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
@@ -142,7 +142,7 @@ func TestNOR160PendingLabelRowHonorsLiveSuppression(t *testing.T) {
 			engine := newTestMemoryEngine(t)
 			ctx := context.Background()
 			hidden, kept := nor160LabelScanFixture(t, engine)
-			tx, err := engine.BeginTransaction(ctx)
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 

@@ -28,7 +28,7 @@ func TestSnapshotOverlayQueryNodeVectorModes(t *testing.T) {
 						require.Zero(t, b.writeBehind.PendingOps())
 					}
 					b.invalidateCachesAfterRestore()
-					tx, err := b.BeginTransaction(t.Context())
+					tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 					require.NoError(t, err)
 					defer tx.Rollback()
 					for _, read := range []func(NodeID) (*Node, error){func(id NodeID) (*Node, error) { return b.GetQueryNode(t.Context(), id) }, func(id NodeID) (*Node, error) { return tx.GetQueryNode(t.Context(), id) }} {

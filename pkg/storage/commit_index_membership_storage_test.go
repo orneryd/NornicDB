@@ -48,7 +48,7 @@ func TestCommitIndexMembershipStorageOrigins(t *testing.T) {
 					require.Equal(t, 2, e)
 				}
 				observe(engine)
-				tx, err := engine.BeginTransaction(context.Background())
+				tx, err := engine.BeginTransaction(context.Background(), OrdinaryBegin)
 				require.NoError(t, err)
 				defer tx.Rollback()
 				require.NoError(t, tx.SetNamespace("test"))

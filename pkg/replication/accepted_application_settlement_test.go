@@ -95,7 +95,7 @@ func TestAcceptedReplicaPendingApplicationRecovery(t *testing.T) {
 					return func() {}, nil
 				}, nil
 			}, nil))
-			tx, err := base.BeginTransaction(t.Context())
+			tx, err := base.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 			require.NoError(t, err)
 			_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:accepted", Properties: map[string]any{"v": "committed"}})
 			require.NoError(t, err)

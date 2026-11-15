@@ -29,11 +29,11 @@ type httpMatrixEngine struct {
 }
 
 func (e *httpMatrixEngine) GetWAL() *storage.WAL { return e.wal }
-func (e *httpMatrixEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
+func (e *httpMatrixEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
 	if e.begin != nil {
 		return nil, e.begin
 	}
-	return e.MemoryEngine.BeginTransaction(ctx)
+	return e.MemoryEngine.BeginTransaction(ctx, request)
 }
 func (e *httpMatrixEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	if e.commit != nil {

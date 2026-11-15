@@ -28,7 +28,7 @@ func TestResidualFlushWaitCancellation(t *testing.T) {
 		})
 	}
 	ack := func(id NodeID) {
-		tx, err := b.BeginTransaction(t.Context())
+		tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		defer tx.Rollback()
 		require.NoError(t, tx.SetNamespace("test"))

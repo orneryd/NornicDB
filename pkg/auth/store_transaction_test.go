@@ -202,8 +202,8 @@ func (e *transactionStartEngine) FlushWriteBehind(ctx context.Context) error {
 	return e.memory.FlushWriteBehind(ctx)
 }
 
-func (e *transactionStartEngine) BeginTransaction(ctx context.Context) (*storage.BadgerTransaction, error) {
-	tx, err := e.memory.BeginTransaction(ctx)
+func (e *transactionStartEngine) BeginTransaction(ctx context.Context, request storage.BeginRequest) (*storage.BadgerTransaction, error) {
+	tx, err := e.memory.BeginTransaction(ctx, request)
 	if err == nil && e.pinnedNamespace != "" {
 		err = tx.SetNamespace(e.pinnedNamespace)
 	}

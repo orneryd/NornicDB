@@ -396,7 +396,7 @@ func TestChangeDataCaptureSelectorFields(t *testing.T) {
 	require.NoError(t, err)
 	capture, _ := storage.ChangeCaptureOf(store)
 	engine := capture.(*storage.BadgerEngine)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetMetadata(map[string]interface{}{"app": "pd", "n": int64(1)}))
 	_, err = tx.CreateNode(t.Context(), &storage.Node{ID: "test:m", Labels: []string{"M"}, Properties: map[string]any{"k": int64(3)}})
