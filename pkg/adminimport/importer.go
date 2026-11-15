@@ -2,6 +2,7 @@ package adminimport
 
 import (
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/csv"
@@ -375,7 +376,33 @@ func importRelationshipSource(ctx context.Context, engine storage.Engine, opts O
 	return nil
 }
 
-func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int, anonymousSeq int, namedEmbeddingDims map[string]int) (*storage.Node, string, error) {
+// csvField is one field of a parsed CSV record: the text encoding/csv decoded
+// and whether the source quoted it. The CSV convention writes a property the
+// entity does not hold as an unquoted empty cell and the empty string as the
+// quoted empty cell "", so encoding/csv decodes both to the same text and the
+// quoted flag is what keeps them apart.
+type csvField struct {
+	Text   string
+	Quoted bool
+}
+
+// Absent reports whether the source wrote no value for the field: an empty cell
+// it did not quote.
+func (f csvField) Absent() bool { return f.Text == "" && !f.Quoted }
+
+// csvRecord is one parsed CSV data record.
+type csvRecord []csvField
+
+// fieldTexts returns the decoded text of every field.
+func (r csvRecord) fieldTexts() []string {
+	texts := make([]string, len(r))
+	for i := range r {
+		texts[i] = r[i].Text
+	}
+	return texts
+}
+
+func nodeFromRecord(record csvRecord, filePath string, cols []columnSpec, idCols []int, prefixLabels []string, opts Options, line int, anonymousSeq int, namedEmbeddingDims map[string]int) (*storage.Node, string, error) {
 	props := make(map[string]any)
 	named := make(map[string][]float32)
 	labels := append([]string{}, prefixLabels...)
@@ -385,7 +412,7 @@ func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols 
 		if i >= len(record) {
 			continue
 		}
-		value := record[i]
+		value := record[i].Text
 		switch col.Kind {
 		case kindID:
 			if value == "" {
@@ -406,6 +433,11 @@ func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols 
 			}
 			labels = append(labels, splitList(value, opts.ArrayDelimiter)...)
 		case kindProperty:
+			// The bare empty cell holds no value; only the quoted empty cell is the
+			// empty string.
+			if record[i].Absent() {
+				continue
+			}
 			if value == "" {
 				if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
 					continue
@@ -455,7 +487,7 @@ func nodeFromRecord(record []string, filePath string, cols []columnSpec, idCols 
 	return node, lookupKey, nil
 }
 
-func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCols, endCols, typeCols, relIDCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
+func edgeFromRecord(record csvRecord, filePath string, cols []columnSpec, startCols, endCols, typeCols, relIDCols []int, prefixType []string, opts Options, state *importState, line int, edgeSeq int, report *Report) (*storage.Edge, bool, error) {
 	props := make(map[string]any)
 	edgeID := fmt.Sprintf("rel_%d", edgeSeq)
 	startValues, startSpaces, startCol, err := idValuesFromRecord(record, cols, startCols, opts)
@@ -487,8 +519,8 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 		edgeType = prefixType[0]
 	}
 	for _, idx := range typeCols {
-		if idx < len(record) && record[idx] != "" {
-			edgeType = record[idx]
+		if idx < len(record) && record[idx].Text != "" {
+			edgeType = record[idx].Text
 		}
 	}
 	if edgeType == "" {
@@ -513,7 +545,10 @@ func edgeFromRecord(record []string, filePath string, cols []columnSpec, startCo
 		if col.Kind != kindProperty {
 			continue
 		}
-		value := record[i]
+		value := record[i].Text
+		if record[i].Absent() {
+			continue
+		}
 		if value == "" {
 			if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
 				continue
@@ -550,17 +585,17 @@ func badRelationship(opts Options, report *Report, line int, missingStart bool) 
 	return false, newImportError(ExitBadRelationship, localization.AdminImportBadEndRelationship(line), nil)
 }
 
-func idValuesFromRecord(record []string, cols []columnSpec, indexes []int, opts Options) ([]string, []string, int, error) {
+func idValuesFromRecord(record csvRecord, cols []columnSpec, indexes []int, opts Options) ([]string, []string, int, error) {
 	values := make([]string, 0, len(indexes))
 	spaces := make([]string, 0, len(indexes))
 	for _, idx := range indexes {
 		if idx >= len(record) {
 			return nil, nil, idx, fmt.Errorf("missing ID column")
 		}
-		if record[idx] == "" {
+		if record[idx].Text == "" {
 			return nil, nil, idx, fmt.Errorf("missing ID value")
 		}
-		value, err := canonicalID(record[idx], opts.IDType)
+		value, err := canonicalID(record[idx].Text, opts.IDType)
 		if err != nil {
 			return nil, nil, idx, err
 		}
@@ -757,10 +792,12 @@ type csvSourceReader struct {
 	opts        Options
 	currentFile int
 	reader      *csv.Reader
+	raw         *csvRawInput
 	closer      io.Closer
 	rowInFile   int
 	headerRead  bool
 	currentPath string
+	recordStart int64
 }
 
 func openCSVSource(files []string, opts Options) (*csvSourceReader, error) {
@@ -834,16 +871,16 @@ func (s *csvSourceReader) ReadHeader() ([]string, error) {
 	if err := s.openCurrent(); err != nil {
 		return nil, err
 	}
-	header, err := s.reader.Read()
+	header, err := s.readRecord()
 	if err != nil {
 		return nil, err
 	}
 	s.headerRead = true
 	s.rowInFile = 1
-	return header, nil
+	return header.fieldTexts(), nil
 }
 
-func (s *csvSourceReader) Read() ([]string, string, int, error) {
+func (s *csvSourceReader) Read() (csvRecord, string, int, error) {
 	if !s.headerRead {
 		return nil, s.currentPath, 0, io.EOF
 	}
@@ -851,7 +888,7 @@ func (s *csvSourceReader) Read() ([]string, string, int, error) {
 		if err := s.openCurrent(); err != nil {
 			return nil, s.currentPath, s.rowInFile + 1, err
 		}
-		record, err := s.reader.Read()
+		record, err := s.readRecord()
 		if errors.Is(err, io.EOF) {
 			if err := s.advanceFile(); err != nil {
 				return nil, s.currentPath, s.rowInFile + 1, err
@@ -878,15 +915,137 @@ func (s *csvSourceReader) openCurrent() error {
 	if err != nil {
 		return err
 	}
-	r := csv.NewReader(reader)
+	raw := newCSVRawInput(reader)
+	r := csv.NewReader(raw)
 	r.Comma = s.opts.Delimiter
 	r.LazyQuotes = false
 	r.FieldsPerRecord = -1
 	s.reader = r
+	s.raw = raw
 	s.closer = closer
 	s.currentPath = path
 	s.rowInFile = 0
+	s.recordStart = 0
 	return nil
+}
+
+// readRecord reads one CSV record and reports, per field, whether the source
+// quoted it.
+func (s *csvSourceReader) readRecord() (csvRecord, error) {
+	s.raw.beginRecord(s.recordStart)
+	fields, err := s.reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	s.recordStart = s.reader.InputOffset()
+	if err := s.raw.checkReadAhead(s.recordStart); err != nil {
+		return nil, err
+	}
+	record := make(csvRecord, len(fields))
+	for i, field := range fields {
+		line, column := s.reader.FieldPos(i)
+		quoted, err := s.raw.fieldQuoted(line, column)
+		if err != nil {
+			return nil, err
+		}
+		record[i] = csvField{Text: field, Quoted: quoted}
+	}
+	return record, nil
+}
+
+// csvRawReadAhead bounds the bytes the recorder keeps past the record the parser
+// just delivered. encoding/csv reads through a 4096-byte buffer, so retaining
+// more than this past a record end means the recorder kept bytes of records it
+// had already handed out.
+const csvRawReadAhead = 64 << 10
+
+// csvRawInput records the bytes encoding/csv reads from one decompressed source
+// file so the reader can inspect the positions FieldPos reports. The byte at a
+// field's start is the only place the CSV convention still separates a property
+// the entity does not hold from an empty string, because encoding/csv decodes
+// both cells to an empty field. The recorder keeps the record being parsed plus
+// the parser's read-ahead, and discards every consumed byte at the next record
+// boundary.
+type csvRawInput struct {
+	src    io.Reader
+	buf    []byte // retained bytes, from start to offset
+	start  int64  // absolute offset of buf[0], always a line start
+	line   int    // 1-based line number of buf[0]
+	offset int64  // absolute offset of the next byte src delivers
+}
+
+func newCSVRawInput(src io.Reader) *csvRawInput {
+	return &csvRawInput{src: src, line: 1}
+}
+
+func (r *csvRawInput) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	r.buf = append(r.buf, p[:n]...)
+	r.offset += int64(n)
+	return n, err
+}
+
+// beginRecord discards the bytes of every record before offset, where the parser
+// reported the previous record ended.
+func (r *csvRawInput) beginRecord(offset int64) {
+	if offset <= r.start || offset > r.offset {
+		return
+	}
+	consumed := offset - r.start
+	r.line += bytes.Count(r.buf[:consumed], []byte{'\n'})
+	if cap(r.buf) > 2*csvRawReadAhead {
+		// Do not keep a large completed record alive while subsequent small
+		// records are imported. Only the parser's unread tail is still needed.
+		r.buf = bytes.Clone(r.buf[consumed:])
+	} else {
+		r.buf = append(r.buf[:0], r.buf[consumed:]...)
+	}
+	r.start = offset
+}
+
+// checkReadAhead reports a recorder that kept bytes past the parser's
+// read-ahead, which means it retained records it had already delivered.
+func (r *csvRawInput) checkReadAhead(recordEnd int64) error {
+	if r.offset-recordEnd > int64(csvRawReadAhead) {
+		return fmt.Errorf("csv: retained %d bytes past the record ending at offset %d", r.offset-recordEnd, recordEnd)
+	}
+	return nil
+}
+
+// fieldQuoted reports whether the parser read the field at the given position as
+// a quoted value. encoding/csv rejects a quote inside an unquoted field, so a
+// field whose source text starts with the quote character was quoted.
+func (r *csvRawInput) fieldQuoted(line, column int) (bool, error) {
+	offset, err := r.fieldStart(line, column)
+	if err != nil {
+		return false, err
+	}
+	if offset == r.offset {
+		// The file ended on an empty field, so there is no byte to inspect.
+		return false, nil
+	}
+	if offset < r.start || offset > r.offset {
+		return false, fmt.Errorf("csv: field at line %d column %d is outside the retained input", line, column)
+	}
+	return r.buf[offset-r.start] == '"', nil
+}
+
+// fieldStart translates a parser position into an absolute byte offset. The
+// parser counts lines from the start of the input and columns in bytes from the
+// start of the line.
+func (r *csvRawInput) fieldStart(line, column int) (int64, error) {
+	if line < r.line || column < 1 {
+		return 0, fmt.Errorf("csv: field position line %d column %d precedes the retained input at line %d", line, column, r.line)
+	}
+	offset := r.start
+	for l := r.line; l < line; l++ {
+		next := bytes.IndexByte(r.buf[offset-r.start:], '\n')
+		if next < 0 {
+			return 0, fmt.Errorf("csv: retained input ends before line %d", line)
+		}
+		offset += int64(next) + 1
+	}
+	return offset + int64(column-1), nil
 }
 
 func (s *csvSourceReader) advanceFile() error {

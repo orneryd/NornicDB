@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,6 +32,15 @@ type Neo4jCSVExportOptions struct {
 
 const Neo4jCSVSchemaFileName = "schema.cypher"
 const Neo4jCSVNornicSchemaFileName = "schema.nornic.json"
+
+// csvExportCell is one cell of an exported CSV file: the text the reader must
+// decode, or absent when the entity holds no value for the column. The Neo4j CSV
+// convention writes an absent property as an unquoted empty cell and a present
+// empty string as the quoted empty cell "".
+type csvExportCell struct {
+	Text   string
+	Absent bool
+}
 
 type inferredColumn struct {
 	Header     string
@@ -164,34 +175,51 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 
 func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptions) error {
 	columns := inferNodeColumns(nodes)
-	header := []string{":ID", ":LABEL"}
-	for _, col := range columns {
-		header = append(header, col.Header)
-	}
-	rows := make([][]string, 0, len(nodes))
-	for _, node := range nodes {
-		row := []string{string(node.ID), strings.Join(node.Labels, string(opts.ArrayDelimiter))}
-		for _, col := range columns {
-			row = append(row, formatNodeColumnValue(node, col, opts))
+	cells := make([][]csvExportCell, len(nodes))
+	for i, node := range nodes {
+		cells[i] = make([]csvExportCell, len(columns))
+		for j, col := range columns {
+			cells[i][j] = nodePropertyCell(node, col, opts)
 		}
-		rows = append(rows, row)
 	}
-	return writeCSV(path, header, rows, opts.Delimiter)
+	return writeEntityCSV(path, []string{":ID", ":LABEL"}, columns, cells, opts, func(i int) []csvExportCell {
+		return []csvExportCell{
+			{Text: string(nodes[i].ID)},
+			{Text: strings.Join(nodes[i].Labels, string(opts.ArrayDelimiter))},
+		}
+	})
 }
 
 func exportRelationshipsCSV(path string, edges []*storage.Edge, opts Neo4jCSVExportOptions) error {
 	columns := inferEdgeColumns(edges)
-	header := []string{":ID", ":START_ID", ":END_ID", ":TYPE"}
+	cells := make([][]csvExportCell, len(edges))
+	for i, edge := range edges {
+		cells[i] = make([]csvExportCell, len(columns))
+		for j, col := range columns {
+			cells[i][j] = propertyCell(edge.Properties[col.Property], col, opts)
+		}
+	}
+	return writeEntityCSV(path, []string{":ID", ":START_ID", ":END_ID", ":TYPE"}, columns, cells, opts, func(i int) []csvExportCell {
+		return []csvExportCell{
+			{Text: string(edges[i].ID)},
+			{Text: string(edges[i].StartNode)},
+			{Text: string(edges[i].EndNode)},
+			{Text: edges[i].Type},
+		}
+	})
+}
+
+// writeEntityCSV writes one exported entity file: the lead columns, then one
+// column per inferred property.
+func writeEntityCSV(path string, leadHeader []string, columns []inferredColumn, cells [][]csvExportCell, opts Neo4jCSVExportOptions, lead func(entity int) []csvExportCell) error {
+	header := make([]string, 0, len(leadHeader)+len(columns))
+	header = append(header, leadHeader...)
 	for _, col := range columns {
 		header = append(header, col.Header)
 	}
-	rows := make([][]string, 0, len(edges))
-	for _, edge := range edges {
-		row := []string{string(edge.ID), string(edge.StartNode), string(edge.EndNode), edge.Type}
-		for _, col := range columns {
-			row = append(row, formatPropertyValue(edge.Properties[col.Property], col, opts))
-		}
-		rows = append(rows, row)
+	rows := make([][]csvExportCell, len(cells))
+	for i := range cells {
+		rows[i] = append(lead(i), cells[i]...)
 	}
 	return writeCSV(path, header, rows, opts.Delimiter)
 }
@@ -261,13 +289,13 @@ func inferValueShape(value any) (kind string, scalarType string, dims int) {
 	case []float32:
 		return "vector", "vector", len(v)
 	case []float64:
-		return "vector", "vector", len(v)
+		return "array", "double", 0
 	case []any:
 		if len(v) == 0 {
 			return "array", "string", 0
 		}
-		if allFloatLike(v) {
-			return "vector", "vector", len(v)
+		if floats, wide := floatListShape(v); floats {
+			return floatListColumn(wide, len(v))
 		}
 		_, scalarType, _ = inferValueShape(v[0])
 		if scalarType == "vector" {
@@ -300,8 +328,8 @@ func inferValueShape(value any) (kind string, scalarType string, dims int) {
 			if rv.Len() == 0 {
 				return "array", "string", 0
 			}
-			if allFloatLikeReflect(rv) {
-				return "vector", "vector", rv.Len()
+			if floats, wide := floatReflectShape(rv); floats {
+				return floatListColumn(wide, rv.Len())
 			}
 			first := rv.Index(0).Interface()
 			_, inferredScalar, _ := inferValueShape(first)
@@ -327,11 +355,23 @@ func sortColumns(cols map[string]inferredColumn) []inferredColumn {
 	return out
 }
 
-func formatNodeColumnValue(node *storage.Node, col inferredColumn, opts Neo4jCSVExportOptions) string {
+// nodePropertyCell is one property cell of a node: a named embedding column
+// writes the embedding's coordinates, and every other column writes the stored
+// property.
+func nodePropertyCell(node *storage.Node, col inferredColumn, opts Neo4jCSVExportOptions) csvExportCell {
 	if col.Kind == "embedding" {
-		return formatVector(node.NamedEmbeddings[col.EmbedKey], opts.VectorDelimiter)
+		return csvExportCell{Text: formatVector(node.NamedEmbeddings[col.EmbedKey], opts.VectorDelimiter)}
 	}
-	return formatPropertyValue(node.Properties[col.Property], col, opts)
+	return propertyCell(node.Properties[col.Property], col, opts)
+}
+
+// propertyCell is one property cell of an entity from its stored value: absent
+// when the entity holds no value for the column.
+func propertyCell(value any, col inferredColumn, opts Neo4jCSVExportOptions) csvExportCell {
+	if value == nil {
+		return csvExportCell{Absent: true}
+	}
+	return csvExportCell{Text: formatPropertyValue(value, col, opts)}
 }
 
 func formatPropertyValue(value any, col inferredColumn, opts Neo4jCSVExportOptions) string {
@@ -368,6 +408,12 @@ func formatPropertyValue(value any, col inferredColumn, opts Neo4jCSVExportOptio
 			return strings.Join(parts, string(opts.ArrayDelimiter))
 		case []string:
 			return strings.Join(v, string(opts.ArrayDelimiter))
+		case []float64:
+			parts := make([]string, 0, len(v))
+			for _, item := range v {
+				parts = append(parts, formatScalar(item, col.ScalarType))
+			}
+			return strings.Join(parts, string(opts.ArrayDelimiter))
 		case []bool:
 			parts := make([]string, 0, len(v))
 			for _, item := range v {
@@ -453,49 +499,249 @@ func formatVector(vector []float32, delim rune) string {
 	return strings.Join(parts, string(delim))
 }
 
-func allFloatLike(values []any) bool {
-	for _, value := range values {
-		switch value.(type) {
-		case float32, float64:
-		default:
-			return false
-		}
+// floatListColumn is the export shape of a list of float coordinates. A list
+// whose coordinates need 64 bits exports as double[], which the import parses
+// back as float64 coordinates, so no coordinate is narrowed. A list of float32
+// coordinates keeps the float coordinate vector type, which the import already
+// reads back as float32.
+func floatListColumn(wide bool, dims int) (kind string, scalarType string, vectorDims int) {
+	if wide {
+		return "array", "double", 0
 	}
-	return len(values) > 0
+	return "vector", "vector", dims
 }
 
-func allFloatLikeReflect(values reflect.Value) bool {
+// floatListShape reports whether a list holds only float coordinates, and
+// whether any of them needs 64 bits.
+func floatListShape(values []any) (floats bool, wide bool) {
+	for _, value := range values {
+		switch value.(type) {
+		case float32:
+		case float64:
+			wide = true
+		default:
+			return false, false
+		}
+	}
+	return len(values) > 0, wide
+}
+
+// floatReflectShape reports whether a reflected slice holds only float
+// coordinates, and whether any of them needs 64 bits.
+func floatReflectShape(values reflect.Value) (floats bool, wide bool) {
 	if !values.IsValid() || values.Kind() != reflect.Slice || values.Len() == 0 {
-		return false
+		return false, false
 	}
 	for i := 0; i < values.Len(); i++ {
 		switch values.Index(i).Kind() {
-		case reflect.Float32, reflect.Float64:
+		case reflect.Float32:
+		case reflect.Float64:
+			wide = true
 		default:
-			return false
+			return false, false
 		}
 	}
-	return true
+	return true, wide
 }
 
-func writeCSV(path string, header []string, rows [][]string, delimiter rune) error {
+// writeCSV writes one exported CSV file. encoding/csv owns field quoting,
+// escaping, the delimiter and the multi-line grammar. The one cell it cannot
+// write is a present empty string: the Neo4j CSV convention writes it as the
+// quoted empty cell "" so that a reader keeps it distinct from the bare empty
+// cell of an absent property, and encoding/csv never quotes an empty field.
+// writeCSV therefore encodes each field on its own - the encoding of a field does
+// not depend on the other fields of its record - and writes the quoted empty
+// cell itself.
+func writeCSV(path string, header []string, rows [][]csvExportCell, delimiter rune) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	writer := csv.NewWriter(file)
-	writer.Comma = delimiter
-	if err := writer.Write(header); err != nil {
+	out := bufio.NewWriter(file)
+	writer := newCSVExportWriter(out, delimiter)
+	if err := writer.writeRecord(csvExportHeader(header)); err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if err := writer.Write(row); err != nil {
+		if err := writer.writeRecord(row); err != nil {
 			return err
 		}
 	}
-	writer.Flush()
-	return writer.Error()
+	return out.Flush()
+}
+
+// csvExportHeader is the header record of an exported file. A header cell names
+// a column rather than holding a value, so every cell carries text.
+func csvExportHeader(header []string) []csvExportCell {
+	record := make([]csvExportCell, len(header))
+	for i, name := range header {
+		record[i] = csvExportCell{Text: name}
+	}
+	return record
+}
+
+// csvExportWriter writes exported CSV records.
+type csvExportWriter struct {
+	out       *bufio.Writer
+	encode    *csv.Writer
+	fields    csvFieldTailWriter
+	field     [1]string
+	delimiter rune
+}
+
+func newCSVExportWriter(out *bufio.Writer, delimiter rune) *csvExportWriter {
+	w := &csvExportWriter{out: out, delimiter: delimiter}
+	w.fields.out = out
+	w.encode = csv.NewWriter(&w.fields)
+	w.encode.Comma = delimiter
+	return w
+}
+
+// csvFieldTailWriter streams one encoded CSV field to the export sink while
+// withholding the field's final byte. encoding/csv terminates every encoded
+// field with a record newline, and csvExportWriter owns the record terminator,
+// so the withheld byte is dropped once encoding/csv has flushed the field.
+// Streaming the field this way keeps a large value from being copied: each chunk
+// encoding/csv produces goes straight to the sink, and WriteString forwards a
+// string chunk without turning it into a byte slice.
+type csvFieldTailWriter struct {
+	out  io.Writer
+	tail byte
+	held bool
+}
+
+// The adapter is a genuine io.Writer and io.StringWriter, so bufio hands it a
+// large field string instead of converting that string to a byte slice.
+var (
+	_ io.Writer       = (*csvFieldTailWriter)(nil)
+	_ io.StringWriter = (*csvFieldTailWriter)(nil)
+)
+
+// Write streams one byte chunk of an encoded field, withholding its final byte.
+func (w *csvFieldTailWriter) Write(p []byte) (int, error) {
+	return writeWithheldTail(w, p, func(body []byte) (int, error) {
+		return w.out.Write(body)
+	})
+}
+
+// WriteString streams one string chunk of an encoded field, withholding its
+// final byte.
+func (w *csvFieldTailWriter) WriteString(s string) (int, error) {
+	return writeWithheldTail(w, s, func(body string) (int, error) {
+		return io.WriteString(w.out, body)
+	})
+}
+
+// withheldTailChunk is one chunk of an encoded field: the byte slice Write
+// receives or the string WriteString receives.
+type withheldTailChunk interface {
+	~[]byte | ~string
+}
+
+// writeWithheldTail is the one withheld-tail state machine behind Write and
+// WriteString. It forwards chunk's leading bytes and retains its final byte,
+// which may be the record newline encoding/csv appends to the field. A later
+// chunk releases the retained byte first: more data arrived, so that byte is
+// field text. An empty chunk changes nothing, and the byte count a caller is
+// told covers the bytes this adapter consumed, retained final byte included.
+func writeWithheldTail[T withheldTailChunk](w *csvFieldTailWriter, chunk T, stream func(T) (int, error)) (int, error) {
+	size := len(chunk)
+	if size == 0 {
+		return 0, nil
+	}
+	if w.held {
+		if err := w.releaseTail(); err != nil {
+			return 0, err
+		}
+	}
+	if size == 1 {
+		w.tail = chunk[0]
+		w.held = true
+		return 1, nil
+	}
+	forwarded, err := stream(chunk[:size-1])
+	if err == nil && forwarded < size-1 {
+		// A sink that reports fewer bytes than it was handed fails the field.
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return forwarded, err
+	}
+	w.tail = chunk[size-1]
+	w.held = true
+	return size, nil
+}
+
+// releaseTail forwards the byte withheld from an earlier chunk before the
+// current chunk's bytes, so the field reaches the sink in order.
+func (w *csvFieldTailWriter) releaseTail() error {
+	if bw, ok := w.out.(io.ByteWriter); ok {
+		if err := bw.WriteByte(w.tail); err != nil {
+			return err
+		}
+	} else {
+		n, err := w.out.Write([]byte{w.tail})
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return io.ErrShortWrite
+		}
+	}
+	w.held = false
+	return nil
+}
+
+// discardTail drops the withheld final byte of the field encoding/csv flushed:
+// it is the field's record newline, which writeRecord writes itself.
+func (w *csvFieldTailWriter) discardTail() {
+	w.held = false
+	w.tail = 0
+}
+
+// writeRecord writes one record: an absent cell stays a bare empty cell, a
+// present empty string becomes the quoted empty cell, and every other value is
+// written as encoding/csv encodes it.
+func (w *csvExportWriter) writeRecord(record []csvExportCell) error {
+	for i, cell := range record {
+		if i > 0 {
+			if _, err := w.out.WriteRune(w.delimiter); err != nil {
+				return err
+			}
+		}
+		if err := w.writeCell(cell); err != nil {
+			return err
+		}
+	}
+	return w.out.WriteByte('\n')
+}
+
+func (w *csvExportWriter) writeCell(cell csvExportCell) error {
+	if cell.Absent {
+		return nil
+	}
+	if cell.Text == "" {
+		_, err := w.out.WriteString(`""`)
+		return err
+	}
+	return w.encodeField(cell.Text)
+}
+
+// encodeField streams encoding/csv's encoding of one field into the record. The
+// field's own record newline is dropped: writeRecord writes the record
+// terminator itself.
+func (w *csvExportWriter) encodeField(text string) error {
+	w.field[0] = text
+	if err := w.encode.Write(w.field[:]); err != nil {
+		return err
+	}
+	w.encode.Flush()
+	if err := w.encode.Error(); err != nil {
+		return err
+	}
+	w.fields.discardTail()
+	return nil
 }
 
 func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) error {

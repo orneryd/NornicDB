@@ -98,6 +98,15 @@ nornicdb-admin database export neo4j-csv mydb \
 
 When schema exists, the export also writes `schema.cypher` alongside the CSV files.
 
+Export preserves absent properties as bare empty CSV cells and present empty
+strings as quoted empty cells (`""`). Import keeps that distinction;
+`--ignore-empty-strings` discards quoted empty strings too. Ordinary float64 lists
+use `double[]` headers and keep their precision; float32 vector properties and
+named embeddings retain their existing coordinate format.
+
+Older exports that encoded absence and empty strings identically cannot recover
+that distinction. Re-export the original database for a lossless round trip.
+
 Typical output:
 
 - `nodes.csv`
