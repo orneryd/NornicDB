@@ -1,5 +1,13 @@
 package storage
 
+// adjacencyReadAuthorityLocked selects the common committed view for full
+// adjacency and projected between matching. Only a write-owned latest read
+// grants its returned relationships/endpoints last-committed point authority.
+func (tx *BadgerTransaction) adjacencyReadAuthorityLocked(nodeID NodeID) (latest, locked bool) {
+	locked = tx.readsLockedAdjacencyLatestLocked(nodeID)
+	return tx.readTS.IsZero() || tx.engine.writeBehind != nil || locked, locked
+}
+
 // readsLockedAdjacencyLatestLocked reports whether the transaction reads
 // nodeID's relationships as last committed instead of at its snapshot
 // (NOR-213). It does once it holds the node's write lock: its statements then
@@ -23,12 +31,11 @@ func (tx *BadgerTransaction) readsLockedAdjacencyLatestLocked(nodeID NodeID) boo
 	if tx.entityLocks.find(entityWriteLockKey(bufferedNodeEntity, string(nodeID))) == nil {
 		return false
 	}
-	// The same "no commit followed the snapshot" test the lock's property
-	// refresh makes (entityCommittedAfterSnapshot); saturated sequences and
-	// in-flight begin frames count as a later commit.
-	current := tx.readTS.CommitSequence < maxMVCCCommitSequence && tx.inflightAtBegin == nil && tx.namespace != "" &&
-		tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence == tx.readTS.CommitSequence
-	return !current
+	// The same "no commit followed the snapshot" proof the lock's property
+	// refresh makes (entityCommittedAfterSnapshot): saturated sequences and
+	// in-flight begin frames count as a later commit. The snapshot guarded
+	// above is known non-zero, so that proof is this function's proof exactly.
+	return !tx.namespaceSnapshotCurrentLocked()
 }
 
 // recordLatestEndpointsLocked records the relationships a read of locked node

@@ -100,7 +100,7 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	edge, err := engine.GetEdgeBetween(t.Context(), "test:a", "test:b", "LINK")
 	require.NoError(t, err)
 	require.Nil(t, edge)
-	require.NotContains(t, edgeIDs(engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LINK", nil, all)), EdgeID("test:r"))
+	require.NotContains(t, edgeIDs(engine.MatchEdgesBetween(context.Background(), "test:a", "test:b", "LINK", nil, all, SnapshotEdgeMatch)), EdgeID("test:r"))
 
 	// Stored reads return them, as the buffer holds them.
 	stored, err := engine.GetStoredNode(t.Context(), "test:h")

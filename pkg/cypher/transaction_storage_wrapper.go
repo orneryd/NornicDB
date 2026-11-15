@@ -700,9 +700,9 @@ func (w *transactionStorageWrapper) ReadStoredAdjacentEdges(ctx context.Context,
 // MatchEdgesBetween matches the transaction's edges of one type between two
 // nodes, reading only the listed properties to match
 // (storage.EdgesBetweenMatcher).
-func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
+func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool, policy storage.EdgeMatchReadPolicy) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		edges, err := w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match)
+		edges, err := w.tx.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match, policy)
 		profileRelationshipBetweenRead(ctx, edges, err)
 		return edges, err
 	}
@@ -712,7 +712,7 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(ctx context.Context, start
 		candidate.ID = w.unprefixEdgeID(edge.ID)
 		candidate.StartNode, candidate.EndNode = startID, endID
 		return match(&candidate)
-	})
+	}, policy)
 	// Matching and projection share the caller lifetime.
 	edges, err = projectTransactionRead(ctx, w, edges, err, readOwnAdjacency)
 	profileRelationshipBetweenRead(ctx, edges, err)
@@ -1040,21 +1040,80 @@ func (w *transactionStorageWrapper) Close() error {
 // counters below are: the committed count while the transaction has staged
 // no node change, otherwise a count of the nodes it sees (#1076).
 func (w *transactionStorageWrapper) NodeCount(ctx context.Context) (int64, error) {
-	if w.countersDescribeTransaction() && !w.tx.HasPendingNodeMutations() {
-		return w.underlying.NodeCount(ctx)
+	if w.nodeCountCountersCertified() {
+		count, err := w.underlying.NodeCount(ctx)
+		if err != nil {
+			return 0, err
+		}
+		// The committed total is a live counter, so it counts a commit that
+		// landed while it was read. Certify again: once a commit of the
+		// transaction's namespace moved past its read version the count holds
+		// rows the transaction does not read, and those rows answer it.
+		if w.nodeCountCountersCertified() {
+			return count, nil
+		}
 	}
 	return countOfRead(w.AllNodes(ctx))
+}
+
+// nodeCountCountersCertified reports whether the committed total node counter,
+// read now, counts the rows this transaction reads: no staged node change, and
+// storage's certification that the namespace's counters are still at this
+// transaction's read version (nodeLabelCountersCertified).
+func (w *transactionStorageWrapper) nodeCountCountersCertified() bool {
+	return w.countersDescribeTransaction() && !w.tx.HasPendingNodeMutations() && w.nodeLabelCountersCertified()
+}
+
+// nodeLabelCountersCertified reports whether storage certifies that the
+// committed label and type counters, read now, count the rows this transaction
+// reads.
+//
+// Storage owns that decision: its derived-counter accessors answer it beside
+// the staged delta they report, and decline once a commit of the transaction's
+// namespace has moved past the transaction's read version
+// (storage.BadgerTransaction.committedCountersDescribeRowsLocked). The total
+// counts have no staged delta of their own, so only that certification is
+// taken here; it is namespace-wide, and the empty name it is asked about
+// stages nothing. A wrapper whose reads span the whole engine keeps the
+// committed counters, which span it too.
+func (w *transactionStorageWrapper) nodeLabelCountersCertified() bool {
+	if w.namespace == "" {
+		return true
+	}
+	_, described := w.tx.PendingNodeLabelCountDelta(w.namespace, "")
+	return described
+}
+
+// edgeTypeCountersCertified is nodeLabelCountersCertified for the committed
+// relationship counters.
+func (w *transactionStorageWrapper) edgeTypeCountersCertified() bool {
+	if w.namespace == "" {
+		return true
+	}
+	_, described := w.tx.PendingEdgeTypeCountDelta(w.namespace, "")
+	return described
 }
 
 // The derived counters (node label counts; relationship type and positional
 // (label, type) counts, issue #638) keep the count-only fast paths available
 // inside an explicit transaction. What the transaction sees is the committed
 // counter plus the delta its own staged writes will apply at commit
-// (storage.BadgerTransaction.Pending*CountDelta), Neo4j's read-committed
-// view, so a count stays O(1) after the transaction writes (#683). When the
-// counters don't describe the transaction's namespace, a transaction with
-// staged changes counts by scanning its visible nodes or relationships
-// (the *Scan methods, which the fast paths are tested against).
+// (storage.BadgerTransaction.Pending*CountDelta), so a count stays O(1) after
+// the transaction writes (#683). Storage owns whether that counter still counts
+// the rows the transaction reads: once a commit of the transaction's namespace
+// moves past its begin boundary the committed counter holds rows the
+// transaction's snapshot does not (a peer creation) or no longer holds rows it
+// does (a peer deletion), and the count is answered from the rows the
+// transaction reads instead (the *Scan methods, which the fast paths are
+// tested against). A wrapper whose reads span the whole engine keeps the
+// committed counter, which spans it too, while the transaction has staged no
+// change.
+//
+// A committed counter is read live, so storage can only certify it before and
+// after that read: every fast path asks twice and takes the second answer's
+// delta. A peer commit that lands between the two answers is in the counter and
+// not in the transaction's snapshot, so the answer stays unproven and the rows
+// decide it.
 
 // countersDescribeTransaction reports whether the underlying counters count
 // the transaction's namespace.
@@ -1066,17 +1125,34 @@ func (w *transactionStorageWrapper) countersDescribeTransaction() bool {
 func (w *transactionStorageWrapper) NodeCountByLabel(ctx context.Context, label string) (int64, error) {
 	if w.countersDescribeTransaction() {
 		if counter, ok := w.underlying.(storage.LabelStatsEngine); ok {
-			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
-			if tracked || !w.tx.HasPendingNodeMutations() {
+			if _, described := w.nodeLabelCountDelta(label); described {
 				count, err := counter.NodeCountByLabel(ctx, label)
 				if err != nil {
 					return 0, err
 				}
-				return count + delta, nil
+				if delta, described := w.nodeLabelCountDelta(label); described {
+					return count + delta, nil
+				}
 			}
 		}
 	}
 	return w.nodeCountByLabelScan(ctx, label)
+}
+
+// nodeLabelCountDelta reports what the transaction's staged writes add to the
+// committed label counter, and whether that counter plus the delta counts the
+// rows the transaction reads. Storage answers both
+// (storage.BadgerTransaction.PendingNodeLabelCountDelta). A wrapper whose
+// reads span the whole engine keeps the committed counter, as its read does,
+// while the transaction has staged no node change.
+func (w *transactionStorageWrapper) nodeLabelCountDelta(label string) (int64, bool) {
+	if delta, described := w.tx.PendingNodeLabelCountDelta(w.namespace, label); described {
+		return delta, true
+	}
+	if w.namespace == "" && !w.tx.HasPendingNodeMutations() {
+		return 0, true
+	}
+	return 0, false
 }
 
 func (w *transactionStorageWrapper) nodeCountByLabelScan(ctx context.Context, label string) (int64, error) {
@@ -1084,10 +1160,20 @@ func (w *transactionStorageWrapper) nodeCountByLabelScan(ctx context.Context, la
 }
 
 // ReadCountStore answers the label-presence probe for the transaction's
-// scope, which is the one its counts describe: the committed engine's label
-// counts plus the labels the transaction's own staged writes add, the same two
-// halves its NodeCountByLabel adds. Unproven is left to the caller as unproven,
-// never as an empty scope.
+// scope, which is the one its counts describe: the counter at the transaction's
+// own snapshot plus what its staged writes add, the same two halves its
+// NodeCountByLabel adds. Unproven is left to the caller as unproven, never as an
+// empty scope.
+//
+// The snapshot read is what keeps the count in the counter keyspace after a
+// peer commits into the transaction's namespace: the committed counter then
+// holds rows this transaction's reads do not return, so only a counter read at
+// the transaction's own snapshot describes them (snapshotCountStoreRead). It is
+// the read this method tries first, and where storage can plan it there it is
+// the answer: that counter cannot move, and storage composes it with the
+// transaction's staged contribution under the transaction's lock. A reader that
+// does not consume the snapshot capability leaves its answer unproven, which is
+// the caller's to answer from the rows.
 func (w *transactionStorageWrapper) ReadCountStore(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, error) {
 	if !w.countersDescribeTransaction() {
 		return storage.CountStoreRead{}, nil
@@ -1097,46 +1183,107 @@ func (w *transactionStorageWrapper) ReadCountStore(ctx context.Context, request 
 		return storage.CountStoreRead{}, nil
 	}
 	request.Namespace = w.namespace
-	pending := storage.CountStoreRead{DescribesRows: true}
-	if w.tx.HasPendingNodeMutations() || w.tx.HasPendingEdgeMutations() {
-		var tracked bool
-		var pendingErr error
-		pending, tracked, pendingErr = w.tx.PendingCountStoreDelta(ctx, request)
-		if pendingErr != nil {
-			return storage.CountStoreRead{}, pendingErr
-		}
-		if !tracked || !pending.DescribesRows {
-			return storage.CountStoreRead{}, nil
-		}
+	if answer, planned, err := w.snapshotCountStoreRead(ctx, reader, request); planned || err != nil {
+		return answer, err
+	}
+	// Storage could not plan the read at the transaction's own snapshot, so
+	// the committed counter answers it - and only where that counter is
+	// certified to count the rows this transaction reads. The certification is
+	// asked before the read and again after it, as the other fast paths ask it:
+	// the counter is live, so only the delta staged by the time it was read
+	// describes it, and a commit that landed while it was read leaves the
+	// answer unproven.
+	if _, described, err := w.countStoreDelta(ctx, request); err != nil {
+		return storage.CountStoreRead{}, err
+	} else if !described {
+		return storage.CountStoreRead{}, nil
 	}
 	answer, err := reader.ReadCountStore(ctx, request)
 	if err != nil || !answer.DescribesRows {
 		return answer, err
 	}
-	answer.Count += pending.Count
+	// The committed counter is live, so it counts a commit that landed while it
+	// was read. Certify again, and take the staged delta from this second
+	// answer: an unproven count is the caller's to answer from the rows.
+	after, described, err := w.countStoreDelta(ctx, request)
+	if err != nil {
+		return storage.CountStoreRead{}, err
+	}
+	if !described || !after.DescribesRows {
+		return storage.CountStoreRead{}, nil
+	}
+	answer.Count += after.Count
 	return answer, nil
+}
+
+// countStoreDelta reports the transaction's staged contribution to request and
+// whether the committed counter plus that contribution counts the rows the
+// transaction reads. Storage owns both answers
+// (storage.BadgerTransaction.PendingCountStoreDelta): it declines once a commit
+// of the transaction's namespace has moved past that transaction's begin
+// boundary, so the count is answered from the rows the transaction reads. A
+// wrapper whose reads span the whole engine keeps the committed counter, which
+// spans it too, while the transaction has staged no change. It is asked again
+// after the counter read: the delta that describes the counter is the one
+// staged by then.
+func (w *transactionStorageWrapper) countStoreDelta(ctx context.Context, request storage.CountStoreReadRequest) (storage.CountStoreRead, bool, error) {
+	answer, described, err := w.tx.PendingCountStoreDelta(ctx, request)
+	if err != nil || described {
+		return answer, described, err
+	}
+	if w.namespace != "" || w.tx.HasPendingNodeMutations() || w.tx.HasPendingEdgeMutations() {
+		return storage.CountStoreRead{}, false, nil
+	}
+	return storage.CountStoreRead{DescribesRows: true}, true, nil
 }
 
 // EdgeCount is the transaction-visible number of relationships, as
 // NodeCount is (#1076).
 func (w *transactionStorageWrapper) EdgeCount(ctx context.Context) (int64, error) {
-	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() {
-		return w.underlying.EdgeCount(ctx)
+	if w.edgeCountCountersCertified() {
+		count, err := w.underlying.EdgeCount(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if w.edgeCountCountersCertified() {
+			return count, nil
+		}
 	}
 	return countOfRead(w.AllEdges(ctx))
+}
+
+// edgeCountCountersCertified is nodeCountCountersCertified for the committed
+// total relationship counter.
+func (w *transactionStorageWrapper) edgeCountCountersCertified() bool {
+	return w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() && w.edgeTypeCountersCertified()
 }
 
 // EdgeCountByType is the transaction-visible count of relationships of
 // edgeType.
 func (w *transactionStorageWrapper) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
 	if w.countersDescribeTransaction() {
-		delta, tracked := w.tx.PendingEdgeTypeCountDelta(w.namespace, edgeType)
-		if tracked || !w.tx.HasPendingEdgeMutations() {
+		if _, described := w.edgeTypeCountDelta(edgeType); described {
 			count, err := w.underlying.EdgeCountByType(ctx, edgeType)
-			return count + delta, err
+			if err != nil {
+				return 0, err
+			}
+			if delta, described := w.edgeTypeCountDelta(edgeType); described {
+				return count + delta, nil
+			}
 		}
 	}
 	return w.edgeCountByTypeScan(ctx, edgeType)
+}
+
+// edgeTypeCountDelta is nodeLabelCountDelta for relationship type counters.
+func (w *transactionStorageWrapper) edgeTypeCountDelta(edgeType string) (int64, bool) {
+	if delta, described := w.tx.PendingEdgeTypeCountDelta(w.namespace, edgeType); described {
+		return delta, true
+	}
+	if w.namespace == "" && !w.tx.HasPendingEdgeMutations() {
+		return 0, true
+	}
+	return 0, false
 }
 
 func (w *transactionStorageWrapper) edgeCountByTypeScan(ctx context.Context, edgeType string) (int64, error) {
@@ -1160,12 +1307,54 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabel(ctx context.Context
 	// The staged positional deltas are not used: DETACH DELETE of a node whose
 	// relationship the same transaction created stages them wrong (#741).
 	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() && !w.tx.HasPendingNodeMutations() {
-		if start {
-			return w.underlying.EdgeCountByStartLabel(ctx, label, edgeType)
+		described, err := w.positionalCountDescribed(ctx, label, edgeType, start)
+		if err != nil {
+			return 0, err
 		}
-		return w.underlying.EdgeCountByEndLabel(ctx, label, edgeType)
+		if described {
+			count, err := w.edgeCountByEndpointLabelCounter(ctx, label, edgeType, start)
+			if err != nil {
+				return 0, err
+			}
+			described, err = w.positionalCountDescribed(ctx, label, edgeType, start)
+			if err != nil {
+				return 0, err
+			}
+			if described {
+				return count, nil
+			}
+		}
 	}
 	return w.edgeCountByEndpointLabelScan(ctx, label, edgeType, start)
+}
+
+// edgeCountByEndpointLabelCounter reads the committed positional counter one
+// endpoint-label count asks for.
+func (w *transactionStorageWrapper) edgeCountByEndpointLabelCounter(ctx context.Context, label, edgeType string, start bool) (int64, error) {
+	if start {
+		return w.underlying.EdgeCountByStartLabel(ctx, label, edgeType)
+	}
+	return w.underlying.EdgeCountByEndLabel(ctx, label, edgeType)
+}
+
+// positionalCountDescribed reports whether the committed positional counter
+// counts the rows the transaction reads. Storage owns that answer
+// (storage.BadgerTransaction.PendingCountStoreDelta), the same decision its
+// label and type counters use; only the described or unproven answer is taken
+// here, never the staged positional delta (#741). A wrapper whose reads span
+// the whole engine keeps the committed counter, which spans it too.
+func (w *transactionStorageWrapper) positionalCountDescribed(ctx context.Context, label, edgeType string, start bool) (bool, error) {
+	kind := storage.CountStoreRelationshipsByEndLabel
+	if start {
+		kind = storage.CountStoreRelationshipsByStartLabel
+	}
+	_, described, err := w.tx.PendingCountStoreDelta(ctx, storage.CountStoreReadRequest{
+		Kind: kind, Namespace: w.namespace, Name: label, Types: []string{edgeType},
+	})
+	if err != nil {
+		return false, err
+	}
+	return described || w.namespace == "", nil
 }
 
 func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(ctx context.Context, label, edgeType string, start bool) (int64, error) {

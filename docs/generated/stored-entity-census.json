@@ -3339,8 +3339,8 @@
     {
       "field": "pkg/storage.CountStoreRead.Count",
       "class": "count-store read answer (detached result value)",
-      "func": "pkg/storage.BadgerEngine.readCountStoreSnapshot$1",
-      "pos": "pkg/storage/badger_count_store_read.go:76"
+      "func": "pkg/storage.BadgerEngine.readCountStoreAt$1",
+      "pos": "pkg/storage/badger_count_store_read.go:95"
     },
     {
       "field": "pkg/storage.WriteBehindBuffer.curInterval",

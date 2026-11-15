@@ -91,7 +91,7 @@ func TestBadgerEdgeReadsRejectCorruption(t *testing.T) {
 			return err
 		},
 		"matching": func(b *BadgerEngine) error {
-			_, err := b.MatchEdgesBetween(context.Background(), "test:a", "test:z", "R", []string{"x"}, func(*Edge) bool { return true })
+			_, err := b.MatchEdgesBetween(context.Background(), "test:a", "test:z", "R", []string{"x"}, func(*Edge) bool { return true }, SnapshotEdgeMatch)
 			return err
 		},
 	}

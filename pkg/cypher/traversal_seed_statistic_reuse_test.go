@@ -31,6 +31,14 @@ func TestTraversalSeedStatisticsAreReusedAcrossInputRows(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, seedRowKeys(traversalSeedReuseRows(fixture.documents)), seedRowKeys(result.Rows))
 					require.NotEmpty(t, counter.requests, "each execution reads its own statistics")
+					for _, request := range counter.requests {
+						if explicit {
+							require.NotNil(t, request.Scope)
+							require.True(t, request.Scope.DescribesSnapshot())
+						} else {
+							require.Nil(t, request.Scope)
+						}
+					}
 					for _, want := range []storage.CountStoreReadRequest{
 						{Kind: storage.CountStoreNodesByLabel, Name: "PDDocument"},
 						{Kind: storage.CountStoreNodesByLabel, Name: "PDCollection"},
