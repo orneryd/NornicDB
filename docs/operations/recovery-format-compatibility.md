@@ -149,12 +149,17 @@ materialized JSON readers also reject it. Keep a pre-upgrade snapshot and its
 matching WAL before upgrading; an old binary cannot restore a new version 2
 snapshot. No automatic rewrite of existing backups or user data is required.
 
-Materialized snapshots retain support for entity records above the 16 MiB
-streaming-export limit. File-based load/recovery accepts framing lengths up to
-`uint32` (4 GiB minus 1 byte per encoded entity); practical storage limits may
-be lower. Public `ReadSnapshot` and streaming export retain the 16 MiB bound.
-Large file payloads are read progressively rather than preallocating a claimed
-length from an untrusted header.
+Materialized and streaming snapshots accept framing lengths up to `uint32`
+(4 GiB minus 1 byte per encoded entity). `WriteSnapshot` and `ReadSnapshot` use
+that same default bound; `SnapshotOptions.MaxRecordBytes` can lower it. Large
+file payloads are read progressively rather than preallocating a claimed length
+from an untrusted header. Encoding still requires memory for the entity record.
+
+Snapshot framing does not raise the destination engine’s per-value capacity.
+The ordinary server and full admin import select the 256 MiB disk profile;
+the balanced embedded profile allows 128 MiB and low-memory allows 32 MiB per
+encoded stored value. Restoring a larger accepted value into a smaller-capacity
+engine fails rather than truncating it. See [admin value capacity](admin-tool.md#value-capacity).
 
 Snapshot identifiers use the established `database:local-id` representation.
 An ID containing a colon is treated as qualified, not as a bare default-database
