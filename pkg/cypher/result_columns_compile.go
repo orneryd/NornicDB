@@ -549,13 +549,27 @@ func (compilation *boundCompilation) enterClause(ctx context.Context, clause *bo
 	case pipelineClauseForeach:
 		clause.step.Kind = resultmetadata.ClauseWrite
 		inner := copyBindingNames(clause.before)
-		inner[syntaxSymbolName(source.syntax.ChildRule(cypherantlr.CypherParserRULE_symbol))] = struct{}{}
-		clause.body.incomingIDs = cloneBindingIDs(branch.ids)
 		iterator := source.syntax.ChildRule(cypherantlr.CypherParserRULE_symbol)
+		inner[syntaxSymbolName(iterator)] = struct{}{}
+		// Reuse the binding owner that makes retained CALL inputs readable.
+		// When it copied the maps, they are private and can be transferred to
+		// this body without another copy. Ordinary members remain wildcard
+		// members; retained imports remain readable-only.
+		readable, ids, private := clause.readableBindings(clause.before, branch.ids)
+		retained := resultmetadata.Known(nil)
+		if private {
+			for name := range inner {
+				delete(readable, name)
+			}
+			retained = projectedMapNames(readable)
+		} else {
+			ids = cloneBindingIDs(ids)
+		}
+		clause.body.incomingIDs = ids
 		from, to := iterator.Span()
 		clause.body.incomingIDs[syntaxSymbolName(iterator)] = compilation.define(syntaxSymbolName(iterator), from, to)
 		clause.body.incoming = projectedMapNames(inner)
-		clause.body.retained = resultmetadata.Known(nil)
+		clause.body.retained = retained
 		clause.body.graph = branch.graph
 	case pipelineClauseDelete, pipelineClauseSet, pipelineClauseRemove:
 		clause.step.Kind = resultmetadata.ClauseWrite
@@ -596,7 +610,7 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 		}
 		reserved := clause.before
 		if clause.branch.body.role != boundImplicitCallBody {
-			reserved, _ = clause.readableBindings(reserved, clause.beforeIDs)
+			reserved, _, _ = clause.readableBindings(reserved, clause.beforeIDs)
 		}
 		compilation.product.calls[clause.source.syntax.ID()] = boundCallProgram{call: call, reserved: projectedMapNames(reserved)}
 		call.Statement = program.statement
@@ -699,7 +713,7 @@ func (compilation *boundCompilation) finishBody(body *boundBody) {
 
 func (compilation *boundCompilation) callImports(ctx context.Context, clause *boundClause) {
 	descriptor := scopeClauseFromSyntax(clause.source.syntax)
-	before, beforeIDs := clause.readableBindings(clause.before, clause.branch.ids)
+	before, beforeIDs, _ := clause.readableBindings(clause.before, clause.branch.ids)
 	mode := resultmetadata.ImportNone
 	var imports []string
 	if descriptor.scoped {
@@ -890,7 +904,8 @@ func (compilation *boundCompilation) failUndefined(position int, name string) {
 
 // readableBindings adds CALL's retained inputs without making them wildcard
 // members. Current declarations override retained identities in the same frame.
-func (clause *boundClause) readableBindings(names map[string]struct{}, ids map[string]statementBindingID) (map[string]struct{}, map[string]statementBindingID) {
+// The final result reports whether both returned maps are private copies.
+func (clause *boundClause) readableBindings(names map[string]struct{}, ids map[string]statementBindingID) (map[string]struct{}, map[string]statementBindingID, bool) {
 	copied := false
 	for name, id := range clause.branch.retainedIDs {
 		if _, current := names[name]; current && ids[name] != 0 {
@@ -902,7 +917,7 @@ func (clause *boundClause) readableBindings(names map[string]struct{}, ids map[s
 		}
 		names[name], ids[name] = struct{}{}, id
 	}
-	return names, ids
+	return names, ids, copied
 }
 
 func (compilation *boundCompilation) expressionBindings(clause *boundClause, node cypherantlr.SyntaxNode) (map[string]struct{}, map[string]statementBindingID, bool) {
@@ -940,7 +955,7 @@ func (compilation *boundCompilation) expressionBindings(clause *boundClause, nod
 			input, ids = clause.combinedBindings()
 		}
 	}
-	input, ids = clause.readableBindings(input, ids)
+	input, ids, _ = clause.readableBindings(input, ids)
 	start, _ := node.Span()
 	// Ordinary expression ancestry fits on the stack. Deeper expressions
 	// still grow normally, without imposing a grammar depth limit.
@@ -989,6 +1004,11 @@ func (compilation *boundCompilation) completeBody(ctx context.Context, body *bou
 		incoming = resultmetadata.Known(nil)
 	}
 	body.incoming, body.retained = incoming, retained
+	if body.role == boundImplicitCallBody {
+		// A separately compiled transactional body selects its importing WITH
+		// from the actual frame, just as a nested CALL selects its parent frame.
+		body.legacyInput = incoming
+	}
 	body.incomingIDs = map[string]statementBindingID{}
 	input := projectedNameMap(addProjectedNames(incoming, retained))
 	var inputNames []string

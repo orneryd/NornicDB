@@ -87,7 +87,7 @@ func (compilation *boundCompilation) usedInputs(body *boundBody, firstUse int) m
 // Legacy WITH * uses only current members outside an implicit caller.
 func (clause *boundClause) importableBindings() map[string]struct{} {
 	if clause.branch.body.role == boundScopedCallBody {
-		names, _ := clause.readableBindings(clause.before, clause.branch.ids)
+		names, _, _ := clause.readableBindings(clause.before, clause.branch.ids)
 		return names
 	}
 	if clause.branch.body.role != boundImplicitCallBody {
