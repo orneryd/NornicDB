@@ -158,10 +158,11 @@ func replayManagedVectorAnchor(ctx context.Context, engine Engine, entry WALEntr
 	if err := validateManagedVectorAnchorSource(source, stored); err != nil {
 		return err
 	}
-	// The restore image carries the committed body and the anchor's managed
-	// state, with no runtime identity of any kind: the sidecar owner binds the
-	// current one after its own source validation.
+	// Preserve the current stored node's provenance, never the historical
+	// anchor's runtime identity. The sidecar owner validates this source and
+	// binds the current embedding revision before publishing its vectors.
 	restore := &Node{
+		runtime:         stored.runtime,
 		ID:              stored.ID,
 		Labels:          stored.Labels,
 		Properties:      stored.Properties,
