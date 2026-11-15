@@ -42,19 +42,26 @@ func (o WALV4UpgradeOptions) records() *v4UpgradeRecords {
 	return &v4UpgradeRecords{policy: policy, transform: o.Transform}
 }
 
-// backupV4WALDirectory publishes a durable, immutable copy before any source
-// file is replaced. Only its own newly created staging directory is removed.
-func backupV4WALDirectory(source, backup string) error {
+// stageV4WALBackup copies source into a durable, immutable staging directory
+// beside backup and returns its path. The copy is synced and marked complete,
+// but it is not published: UpgradeWALV4 renames it to backup only after every
+// file of the journal has converted, so a conversion that fails changes no file
+// and leaves no backup. Only its own staging directory is removed here.
+func stageV4WALBackup(source, backup string) (stage string, resultErr error) {
 	if _, err := os.Lstat(backup); err == nil {
-		return fmt.Errorf("wal: V4 backup already exists: %s", backup)
+		return "", fmt.Errorf("wal: V4 backup already exists: %s", backup)
 	} else if !os.IsNotExist(err) {
-		return err
+		return "", err
 	}
 	stage, err := os.MkdirTemp(filepath.Dir(backup), ".wal-v4-backup-*")
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer os.RemoveAll(stage)
+	defer func(allocatedStage string) {
+		if resultErr != nil {
+			_ = os.RemoveAll(allocatedStage)
+		}
+	}(stage)
 	var directories []string
 	err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -111,29 +118,21 @@ func backupV4WALDirectory(source, backup string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	marker, err := os.OpenFile(filepath.Join(stage, v4WALBackupComplete), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := errors.Join(marker.Sync(), marker.Close()); err != nil {
-		return err
+		return "", err
 	}
 	for i := len(directories) - 1; i >= 0; i-- {
 		if err := syncDir(directories[i]); err != nil {
-			return err
+			return "", err
 		}
 	}
-	if _, err := os.Lstat(backup); err == nil {
-		return fmt.Errorf("wal: V4 backup already exists: %s", backup)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Rename(stage, backup); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(backup))
+	return stage, nil
 }
 
 func v4WALFilesEqual(left, right string) (bool, error) {
@@ -171,9 +170,11 @@ func v4WALFilesEqual(left, right string) (bool, error) {
 	return string(a.Sum(nil)) == string(b.Sum(nil)), nil
 }
 
-// UpgradeWALV4 stages every converted file before publication. A
-// crash after any replacement is resumed from the durable pre-upgrade backup;
-// an externally changed file is rejected rather than overwritten.
+// UpgradeWALV4 stages every converted file before publication, and publishes
+// the durable pre-upgrade backup only once every file has converted. A crash
+// after any replacement is resumed from that backup; an externally changed
+// file is rejected rather than overwritten, and a failed conversion leaves
+// every source file as it was with no backup published.
 func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 	info, err := os.Lstat(dir)
 	if os.IsNotExist(err) {
@@ -195,16 +196,25 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		return false, err
 	}
 	backup := dir + v4WALBackupSuffix
+	// Every file is converted from one immutable copy of the journal: the
+	// published pre-upgrade backup when an earlier attempt made one, or a
+	// staged copy of the current files. The staged copy becomes the backup only
+	// after every file has converted, so a conversion that fails changes no
+	// file and publishes no backup.
+	source, backedUp := backup, true
 	if _, err := os.Lstat(backup); os.IsNotExist(err) {
-		if err := backupV4WALDirectory(dir, backup); err != nil {
+		staged, err := stageV4WALBackup(dir, backup)
+		if err != nil {
 			return false, fmt.Errorf("wal: V4 backup: %w", err)
 		}
+		defer os.RemoveAll(staged)
+		source, backedUp = staged, false
 	} else if err != nil {
 		return false, err
 	} else if marker, err := os.Lstat(filepath.Join(backup, v4WALBackupComplete)); err != nil || !marker.Mode().IsRegular() {
 		return false, fmt.Errorf("wal: existing V4 backup is incomplete")
 	}
-	manifest, err := accessWALManifest(backup, walReadManifest, nil)
+	manifest, err := accessWALManifest(source, walReadManifest, nil)
 	if err != nil {
 		return false, err
 	}
@@ -221,7 +231,7 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		}
 	}
 	for _, rel := range []string{filepath.Join("segments", "manifest.json"), "wal.log"} {
-		original, prior := filepath.Join(dir, rel), filepath.Join(backup, rel)
+		original, prior := filepath.Join(dir, rel), filepath.Join(source, rel)
 		_, originalErr := os.Lstat(original)
 		_, priorErr := os.Lstat(prior)
 		if (originalErr == nil) != (priorErr == nil) || originalErr != nil && !os.IsNotExist(originalErr) || priorErr != nil && !os.IsNotExist(priorErr) {
@@ -239,13 +249,13 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 	}
 	var paths []string
 	for _, segment := range manifest.Segments {
-		if _, err := resolveWALSegmentPath(backup, segment.Path); err != nil {
+		if _, err := resolveWALSegmentPath(source, segment.Path); err != nil {
 			return false, err
 		}
 		paths = append(paths, filepath.Join("segments", segment.Path))
 	}
 	sort.Strings(paths)
-	if _, err := os.Stat(walActivePath(backup)); err == nil {
+	if _, err := os.Stat(walActivePath(source)); err == nil {
 		paths = append(paths, "wal.log")
 	} else if !os.IsNotExist(err) {
 		return false, err
@@ -260,11 +270,11 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 			return false, err
 		}
-		if err := upgradeWALFileV4(filepath.Join(backup, rel), dest, rel == "wal.log", records); err != nil {
+		if err := upgradeWALFileV4(filepath.Join(source, rel), dest, rel == "wal.log", records); err != nil {
 			return false, fmt.Errorf("wal: convert %s: %w", rel, err)
 		}
 		original, converted := filepath.Join(dir, rel), dest
-		matchesOriginal, err := v4WALFilesEqual(original, filepath.Join(backup, rel))
+		matchesOriginal, err := v4WALFilesEqual(original, filepath.Join(source, rel))
 		if err != nil {
 			return false, err
 		}
@@ -274,6 +284,19 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		}
 		if !matchesOriginal && !matchesConverted {
 			return false, fmt.Errorf("wal: source changed since V4 backup: %s", rel)
+		}
+	}
+	if !backedUp {
+		if _, err := os.Lstat(backup); err == nil {
+			return false, fmt.Errorf("wal: V4 backup already exists: %s", backup)
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+		if err := os.Rename(source, backup); err != nil {
+			return false, err
+		}
+		if err := syncDir(filepath.Dir(backup)); err != nil {
+			return false, err
 		}
 	}
 	for _, rel := range paths {

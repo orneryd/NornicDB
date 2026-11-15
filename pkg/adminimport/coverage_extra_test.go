@@ -138,9 +138,10 @@ func TestDefaultNeo4jCSVPaths_UseConstantFileNames(t *testing.T) {
 func TestInferValueShape_CoversEveryTypeArm(t *testing.T) {
 	// Reflect-slice arm: a custom slice type that does not match any explicit
 	// type switch arm forces inferValueShape to fall through to the reflect
-	// path (and exercises allFloatLikeReflect on a non-empty non-float slice).
+	// path (and exercises floatReflectShape on a non-empty non-float slice).
 	type strSlice []string
 	type floatSlice []float32
+	type wideSlice []float64
 
 	cases := []struct {
 		name       string
@@ -150,9 +151,11 @@ func TestInferValueShape_CoversEveryTypeArm(t *testing.T) {
 		dims       int
 	}{
 		{"float32 slice → vector", []float32{1, 2, 3}, "vector", "vector", 3},
-		{"float64 slice → vector", []float64{1, 2}, "vector", "vector", 2},
+		{"float64 slice → double array", []float64{1, 2}, "array", "double", 0},
 		{"empty []any → empty string array", []any{}, "array", "string", 0},
-		{"[]any of float → vector inferred", []any{float64(1), float64(2)}, "vector", "vector", 2},
+		{"[]any of float32 → vector inferred", []any{float32(1), float32(2)}, "vector", "vector", 2},
+		{"[]any of float64 → double array", []any{float64(1), float64(2)}, "array", "double", 0},
+		{"[]any of mixed float widths → double array", []any{float32(1), float64(2)}, "array", "double", 0},
 		{"[]any mixed → array with scalar from first element", []any{"a", "b"}, "array", "string", 0},
 		{"[]any whose first element is a vector demotes to string scalar",
 			[]any{[]float32{1, 2}, []float32{3, 4}}, "array", "string", 0},
@@ -178,6 +181,7 @@ func TestInferValueShape_CoversEveryTypeArm(t *testing.T) {
 		{"unrecognised scalar falls back to string", struct{ X int }{1}, "property", "string", 0},
 		{"reflect slice of strings → array string", strSlice{"a", "b"}, "array", "string", 0},
 		{"reflect slice of float32 → vector", floatSlice{1, 2, 3}, "vector", "vector", 3},
+		{"reflect slice of float64 → double array", wideSlice{1, 2}, "array", "double", 0},
 		{"reflect slice empty → empty string array", strSlice{}, "array", "string", 0},
 	}
 
@@ -192,28 +196,43 @@ func TestInferValueShape_CoversEveryTypeArm(t *testing.T) {
 }
 
 // ============================================================================
-// allFloatLikeReflect — every branch of the reflect-based predicate.
+// floatReflectShape — every branch of the reflect-based predicate.
 // ============================================================================
 
-func TestAllFloatLikeReflect_HandlesEdgeCases(t *testing.T) {
-	t.Run("invalid value returns false", func(t *testing.T) {
+func TestFloatReflectShape_HandlesEdgeCases(t *testing.T) {
+	t.Run("invalid value is not a float list", func(t *testing.T) {
 		var zero reflect.Value
-		require.False(t, allFloatLikeReflect(zero))
+		floats, wide := floatReflectShape(zero)
+		require.False(t, floats)
+		require.False(t, wide)
 	})
-	t.Run("non-slice returns false", func(t *testing.T) {
-		require.False(t, allFloatLikeReflect(reflect.ValueOf("nope")))
+	t.Run("non-slice is not a float list", func(t *testing.T) {
+		floats, _ := floatReflectShape(reflect.ValueOf("nope"))
+		require.False(t, floats)
 	})
-	t.Run("empty slice returns false", func(t *testing.T) {
-		require.False(t, allFloatLikeReflect(reflect.ValueOf([]float32{})))
+	t.Run("empty slice is not a float list", func(t *testing.T) {
+		floats, _ := floatReflectShape(reflect.ValueOf([]float32{}))
+		require.False(t, floats)
 	})
-	t.Run("float32 slice returns true", func(t *testing.T) {
-		require.True(t, allFloatLikeReflect(reflect.ValueOf([]float32{1, 2})))
+	t.Run("float32 slice keeps its width", func(t *testing.T) {
+		floats, wide := floatReflectShape(reflect.ValueOf([]float32{1, 2}))
+		require.True(t, floats)
+		require.False(t, wide)
 	})
-	t.Run("float64 slice returns true", func(t *testing.T) {
-		require.True(t, allFloatLikeReflect(reflect.ValueOf([]float64{1, 2})))
+	t.Run("float64 slice needs 64 bits", func(t *testing.T) {
+		floats, wide := floatReflectShape(reflect.ValueOf([]float64{1, 2}))
+		require.True(t, floats)
+		require.True(t, wide)
 	})
-	t.Run("mixed-type element returns false at first non-float", func(t *testing.T) {
-		require.False(t, allFloatLikeReflect(reflect.ValueOf([]any{float64(1), "x"})))
+	t.Run("interface elements are not float coordinates", func(t *testing.T) {
+		// A list of any values is decided by the explicit []any arm, which can
+		// inspect the element types.
+		floats, _ := floatReflectShape(reflect.ValueOf([]any{float32(1), float64(2)}))
+		require.False(t, floats)
+	})
+	t.Run("non-float element is not a float list", func(t *testing.T) {
+		floats, _ := floatReflectShape(reflect.ValueOf([]any{float64(1), "x"}))
+		require.False(t, floats)
 	})
 }
 
@@ -1183,12 +1202,12 @@ func TestCSVSourceReader_ReadAdvancesAcrossFilesAndReturnsEOF(t *testing.T) {
 
 	first1, _, _, err := src.Read()
 	require.NoError(t, err)
-	require.Equal(t, []string{"n1", "Alice"}, first1)
+	require.Equal(t, []string{"n1", "Alice"}, first1.fieldTexts())
 
 	// The reader transparently advances to the second (header-less) file.
 	first2, _, _, err := src.Read()
 	require.NoError(t, err)
-	require.Equal(t, []string{"n2", "Bob"}, first2)
+	require.Equal(t, []string{"n2", "Bob"}, first2.fieldTexts())
 
 	_, _, _, eof := src.Read()
 	require.ErrorIs(t, eof, io.EOF)
@@ -1494,14 +1513,17 @@ func TestInferNodeColumns_DropsRedundantIDAndCapturesEmbedding(t *testing.T) {
 func TestWriteCSV_BubblesUpOpenAndWriteErrors(t *testing.T) {
 	t.Run("path under non-existent directory errors", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "nope", "x.csv")
-		err := writeCSV(bad, []string{"a"}, [][]string{{"1"}}, ',')
+		err := writeCSV(bad, []string{"a"}, [][]csvExportCell{{{Text: "1"}}}, ',')
 		require.Error(t, err)
 	})
 
 	t.Run("happy path writes header and rows", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "ok.csv")
-		require.NoError(t, writeCSV(path, []string{"a", "b"}, [][]string{{"1", "2"}, {"3", "4"}}, ','))
+		require.NoError(t, writeCSV(path, []string{"a", "b"}, [][]csvExportCell{
+			{{Text: "1"}, {Text: "2"}},
+			{{Text: "3"}, {Text: "4"}},
+		}, ','))
 		raw, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.Equal(t, "a,b\n1,2\n3,4\n", string(raw))

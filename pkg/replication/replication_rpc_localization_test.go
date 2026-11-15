@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
 
 type replicationRPCFailingConn struct {
-	writeErr error
+	fixtureowner.ErrorWriter
 }
 
 func (c *replicationRPCFailingConn) Read([]byte) (int, error)         { return 0, io.EOF }
-func (c *replicationRPCFailingConn) Write([]byte) (int, error)        { return 0, c.writeErr }
 func (c *replicationRPCFailingConn) Close() error                     { return nil }
 func (c *replicationRPCFailingConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
 func (c *replicationRPCFailingConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
@@ -60,7 +60,7 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 
 	t.Run("write preserves cause", func(t *testing.T) {
 		cause := errors.New("forced write failure")
-		netConn := &replicationRPCFailingConn{writeErr: cause}
+		netConn := &replicationRPCFailingConn{ErrorWriter: fixtureowner.ErrorWriter{Err: cause}}
 		connection := &ClusterConnection{
 			clusterLifecycle: clusterLifecycle[connectionResources]{resources: connectionResources{conn: netConn}},
 			writer:           bufio.NewWriter(netConn),

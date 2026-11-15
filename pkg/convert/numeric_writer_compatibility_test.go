@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/jsontext"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
@@ -178,7 +179,7 @@ func TestNumericWireWriterErrors(t *testing.T) {
 		}
 	}
 	boom := errors.New("writer failed")
-	output := &numericErrorWriter{err: boom}
+	output := &testfixture.ErrorWriter{Err: boom}
 	encoder := convert.PropertyJSON.NewEncoder(output)
 	if err := encoder.Encode(map[string]any{"v": float64(2)}); !errors.Is(err, boom) {
 		t.Fatal(err)
@@ -186,8 +187,8 @@ func TestNumericWireWriterErrors(t *testing.T) {
 	if err := encoder.Encode(make(chan int)); !errors.Is(err, boom) {
 		t.Fatalf("writer error was not sticky: %v", err)
 	}
-	if output.calls != 1 {
-		t.Fatalf("failed writer invoked %d times", output.calls)
+	if output.Calls.Load() != 1 {
+		t.Fatalf("failed writer invoked %d times", output.Calls.Load())
 	}
 }
 
@@ -210,14 +211,4 @@ func TestNumericWireWriterIgnoredStringOption(t *testing.T) {
 	if decoded.Properties["whole"] != float64(2) || decoded.Properties["signed"] != int64(9007199254740993) || decoded.Values[0] != float64(3) || decoded.Values[1] != math.SmallestNonzeroFloat64 {
 		t.Fatalf("an ignored ,string option changed numeric types: %s", data)
 	}
-}
-
-type numericErrorWriter struct {
-	err   error
-	calls int
-}
-
-func (writer *numericErrorWriter) Write(data []byte) (int, error) {
-	writer.calls++
-	return 0, writer.err
 }

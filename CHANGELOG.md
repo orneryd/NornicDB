@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completion lifetime even after request cancellation.
 - Native automatic snapshot compaction releases the mutation barrier before file
   serialization while preserving the captured population and post-cut recovery.
+- Admin CSV round trips distinguish absent properties from empty strings and
+  preserve float64 list coordinates without narrowing them to float32.
 
 - Property-index reads keep pending deletions and relabels hidden when an older
   write-behind generation retires its final candidate entries.
@@ -89,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search and Cypher result caches through the canonical installation owner.
 
 ### Fixed
+
+- Historical WAL upgrades stage every converted file before publishing their
+  recovery backup. Failed preparation leaves source files unchanged and cleans
+  its staging directories; interrupted publication still resumes from backup.
+
 
 - Embedded Cypher transactions now retain their WAL publication owner when
   committing native storage. Durable create, update, delete and relationship
