@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use the normal server storage profile for full CSV import so exported large values remain importable. Explicitly smaller embedded and low-memory capacities are unchanged.
+
 - Property updates reuse matching managed embedding sidecars instead of rewriting
   unchanged vector chunks and dropping their sidecar metadata.
 - Scoped CALL subqueries retain their imported variables inside FOREACH, and
