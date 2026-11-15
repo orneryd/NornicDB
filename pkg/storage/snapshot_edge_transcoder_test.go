@@ -67,7 +67,10 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 	if strip != "" {
 		ids = NewNamespacedEngine(engine, strings.TrimSuffix(strip, ":"))
 	}
-	fast, err := transcoder.writeBody(engine, edge.ID, body, ids, func(kind byte, value any) error { return frames.write(kind, value, defaultSnapshotRecordSize) })
+	// A body this test just encoded belongs to no stored snapshot: nil is the
+	// existing detached read-point boundary, so the binding resolution is the
+	// engine's current dictionary, exactly as the strict decoder's is here.
+	fast, err := transcoder.writeBody(engine, nil, edge.ID, body, ids, func(kind byte, value any) error { return frames.write(kind, value, defaultSnapshotRecordSize) })
 	require.NoError(t, err)
 	if !fast {
 		require.Zero(t, got.Len(), "fallback must not emit a partial frame")

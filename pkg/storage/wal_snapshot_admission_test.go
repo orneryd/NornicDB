@@ -43,7 +43,7 @@ func TestSnapshotCompactionAdmissionDistinguishesCloseFromCancellation(t *testin
 				cancel()
 			}
 			sequence := wal.Sequence()
-			err = owner.createSnapshotAndCompact(ctx)
+			err = owner.createSnapshotAndCompact(ctx, saveCompactionSnapshot)
 			require.ErrorIs(t, err, want)
 			require.Equal(t, sequence, wal.Sequence(), "rejected admission must not append a checkpoint")
 			files, err := os.ReadDir(owner.snapshotDir)

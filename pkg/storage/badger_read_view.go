@@ -219,6 +219,13 @@ func (b *BadgerEngine) withReadView(ctx context.Context, capture func(*WriteBehi
 	return view.readAndClose(ctx, read)
 }
 
+// scanRead runs one scan body inside a captured read view. A caller's own scan
+// passes badgerReadView.readAndClose, whose view lives for that one scan; a
+// pinned stored snapshot passes badgerReadView.withView, whose view lives until
+// the snapshot closes. The node and edge scan kernels take their committed side
+// this way, so one scan body serves both read points.
+type scanRead func(ctx context.Context, read func(*badger.Txn) error) error
+
 func (v *badgerReadView) readAndClose(ctx context.Context, read func(*badger.Txn) error) error {
 	defer v.Close()
 	return recoverBadgerClosedPanic(func() error { return v.withView(ctx, read) })

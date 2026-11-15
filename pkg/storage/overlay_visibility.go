@@ -216,3 +216,42 @@ func (presence *transactionBeginPresence) readBufferedBeginPresence(kind buffere
 	}
 	return state.found, state.found && !state.deleted, nil
 }
+
+// capturedNodes is the write-behind node overlay read at one scan's read point:
+// the buffered nodes of the scan's prefix, filtered by its visibility, and the
+// IDs they shadow. One owner captures it for the engine's own node scan and for
+// the pinned stored snapshot.
+type capturedNodes struct {
+	nodes   []*Node
+	touched map[NodeID]bool
+}
+
+func (c *capturedNodes) capture(ctx context.Context, b *BadgerEngine, w *WriteBehindBuffer, v readVisibility, prefix string) error {
+	pending, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+	if err != nil {
+		return err
+	}
+	c.nodes, c.touched = pending.nodes, pending.nodesTouched
+	return nil
+}
+
+// capturedEdges is capturedNodes for relationships: the buffered edges of the
+// scan's scope, and of one type when the scan names one, with the IDs they
+// shadow.
+type capturedEdges struct {
+	edges   []*Edge
+	touched map[EdgeID]bool
+}
+
+func (c *capturedEdges) capture(ctx context.Context, b *BadgerEngine, w *WriteBehindBuffer, v readVisibility, scope, edgeType string) error {
+	request := bufferedEntityRead{kind: bufferedEdges, prefix: scope}
+	if edgeType != "" {
+		request = bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope}
+	}
+	pending, err := b.readBufferedEntities(ctx, w, v, request)
+	if err != nil {
+		return err
+	}
+	c.edges, c.touched = pending.edges, pending.edgesTouched
+	return nil
+}

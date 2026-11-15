@@ -143,45 +143,53 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 	// Write-behind overlay: acknowledged-but-unflushed edges replace or
 	// shadow committed rows for their IDs and are visited after the scan.
 	// An empty edgeType streams every edge, so it uses the whole-buffer
-	// edge overlay.
-	var overlay []*Edge
-	var touched map[EdgeID]bool
+	// edge overlay. The capture runs inside the read view, so the overlay and
+	// the committed rows are one point; the scan body that merges them is
+	// shared with the pinned stored snapshot.
+	overlay := &capturedEdges{}
 	var captureErr error
 	capture := func(w *WriteBehindBuffer) {
-		request := bufferedEntityRead{kind: bufferedEdges, prefix: scope}
-		if edgeType != "" {
-			request = bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope}
-		}
-		pendingEdges, err := b.readBufferedEntities(ctx, w, v, request)
-		if err != nil {
+		if err := overlay.capture(ctx, b, w, v, scope, edgeType); err != nil {
 			captureErr = err
-			return
 		}
-		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
+	view, err := b.captureReadView(ctx, capture, readViewOptions{scope: scope, scopeKind: readPrefixScope})
+	if err != nil {
+		return err
+	}
+	if captureErr != nil {
+		view.Close() // the canceled capture retires the scan
+		return captureErr
+	}
+	return b.streamEdgesByTypeInScopeAtView(ctx, view.readAndClose, overlay, scope, edgeType, v, visit, body)
+}
 
+// streamEdgesByTypeInScopeAtView is the one capture+merge body of a scoped edge
+// type scan: the candidates of one read view, with the write-behind edges
+// captured at that same point shadowing their committed rows and visited after
+// the scan. streamEdgesByTypeInScopeWithBodies reads the engine's current point;
+// the pinned stored snapshot source reads its own, with the same visibility,
+// scope and optional body consumer. overlay is the capture taken with this view.
+func (b *BadgerEngine) streamEdgesByTypeInScopeAtView(ctx context.Context, read scanRead, overlay *capturedEdges, scope, edgeType string, v readVisibility, visit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	nowNanos := DecayScoringTime()
 	emit := func(edge *Edge) error {
 		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
 			return nil
 		}
-		if len(touched) > 0 && touched[edge.ID] {
+		if len(overlay.touched) > 0 && overlay.touched[edge.ID] {
 			return nil // the overlay shadows committed rows for this ID
 		}
 		return visit(edge)
 	}
-	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
-		if captureErr != nil {
-			return captureErr // the canceled capture retires the scan
-		}
+	err := read(ctx, func(txn *badger.Txn) error {
 		if edgeType == "" {
 			var offer storedEdgeBodyVisitor
 			if body != nil && v == storedRead {
-				offer = func(id EdgeID, data []byte) (bool, error) {
-					if touched[id] {
+				offer = func(txn *badger.Txn, id EdgeID, data []byte) (bool, error) {
+					if overlay.touched[id] {
 						return true, nil
 					}
-					return body(id, data)
+					return body(txn, id, data)
 				}
 			}
 			return b.streamAllEdgesInScopeTxnWithBodies(ctx, txn, scope, emit, offer)
@@ -215,11 +223,11 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, s
 			}
 		}
 		return nil
-	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
+	})
 	if err != nil {
 		return err
 	}
-	for _, e := range overlay {
+	for _, e := range overlay.edges {
 		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
@@ -254,7 +262,9 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 // storedEdgeBodyVisitor consumes a borrowed body inside Item.Value, or returns
 // false to request the ordinary strict reader. The caller owns visibility and
 // captured-overlay shadowing before it offers a body to this optional consumer.
-type storedEdgeBodyVisitor func(EdgeID, []byte) (bool, error)
+// txn is the read view the body came from: the consumer resolves every binding
+// the body stores (node identities, property names) in that same physical view.
+type storedEdgeBodyVisitor func(*badger.Txn, EdgeID, []byte) (bool, error)
 
 func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	prefix := []byte{prefixEdge}
@@ -277,7 +287,7 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, t
 		if err := it.Item().Value(func(val []byte) error {
 			if body != nil {
 				var err error
-				handled, err = body(edgeID, val)
+				handled, err = body(txn, edgeID, val)
 				if err != nil || handled {
 					return err
 				}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"math"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -101,19 +100,6 @@ func (l *rrvLab) regenerate() {
 	l.t.Helper()
 	_, err := l.journal.ClearAllEmbeddingsForPrefix("test:")
 	require.NoError(l.t, err)
-}
-
-// snapshotPeriodic takes the snapshot automatic compaction takes, and
-// truncates the journal as it does.
-func (l *rrvLab) snapshotPeriodic() string {
-	l.t.Helper()
-	l.journal.snapshotDir = filepath.Join(l.dir, "snapshots")
-	require.NoError(l.t, os.MkdirAll(l.journal.snapshotDir, 0o755))
-	require.NoError(l.t, l.journal.createSnapshotAndCompact(context.Background()))
-	entries, err := os.ReadDir(l.journal.snapshotDir)
-	require.NoError(l.t, err)
-	require.Len(l.t, entries, 1)
-	return filepath.Join(l.journal.snapshotDir, entries[0].Name())
 }
 
 // snapshotFull takes a snapshot that also holds the vectors stored beside
@@ -287,7 +273,7 @@ func TestRebuildDoesNotPresentReplacedVectorsAsCurrent(t *testing.T) {
 					shape.seed(lab)
 					snapshot := ""
 					if periodic {
-						snapshot = lab.snapshotPeriodic()
+						snapshot = takePeriodicSnapshot(t, lab.journal, lab.dir)
 					} else {
 						snapshot = lab.snapshotFull()
 					}

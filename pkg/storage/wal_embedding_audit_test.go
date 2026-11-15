@@ -69,7 +69,7 @@ func TestLargeWALEmbeddingOutcomesRemainBounded(t *testing.T) {
 			require.Equal(t, 1, audits)
 			engine.snapshotDir = filepath.Join(root, "snapshots")
 			require.NoError(t, os.MkdirAll(engine.snapshotDir, 0755))
-			require.NoError(t, engine.createSnapshotAndCompact(t.Context()))
+			require.NoError(t, engine.createSnapshotAndCompact(t.Context(), saveCompactionSnapshot))
 			_, err = ReadWALEntriesFromDir(t.Context(), filepath.Join(root, "wal"))
 			require.NoError(t, err, "compaction must leave a readable WAL")
 			integrity, err := CheckWALIntegrity(filepath.Join(root, "wal", "wal.log"))

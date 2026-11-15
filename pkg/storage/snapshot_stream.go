@@ -65,6 +65,23 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	if !ok {
 		return ErrStreamingSnapshotUnsupported
 	}
+	if err := checkNativeSnapshotPublication(engine); err != nil {
+		return err
+	}
+	return writeSnapshotPopulation(ctx, writer, options,
+		func(ctx context.Context, visit func(*Node) error) error {
+			return StreamStoredNodes(ctx, engine, StreamNodesOptions{WithEmbeddings: true}, visit)
+		},
+		func(ctx context.Context, write func(byte, any) error) error {
+			return writeSnapshotEdges(ctx, engine, write)
+		})
+}
+
+// writeSnapshotPopulation encodes one selected population through the existing
+// frame owner. Acquisition determines whether that population is pinned.
+func writeSnapshotPopulation(ctx context.Context, writer io.Writer, options SnapshotOptions,
+	nodes func(context.Context, func(*Node) error) error,
+	edges func(context.Context, func(byte, any) error) error) error {
 	maxRecordBytes := options.MaxRecordBytes
 	if maxRecordBytes == 0 {
 		maxRecordBytes = materializedSnapshotRecordSize
@@ -73,21 +90,17 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", materializedSnapshotRecordSize)
 	}
 
-	if err := checkNativeSnapshotPublication(engine); err != nil {
-		return err
-	}
-
 	// A snapshot holds what storage holds: the entities the visibility
 	// layer hides from reads are stored data too, and the WAL is truncated
 	// once the snapshot is written.
 	return writeSnapshotRecords(writer, options.Sequence, time.Now(), maxRecordBytes, nil,
 		func(write func(byte, any) error) error {
-			if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+			if err := nodes(ctx, func(node *Node) error {
 				return write(streamSnapshotNode, snapshotNodeVectorMetadata(node))
 			}); err != nil {
 				return fmt.Errorf("stream snapshot nodes: %w", err)
 			}
-			if err := writeSnapshotEdges(ctx, engine, write); err != nil {
+			if err := edges(ctx, write); err != nil {
 				return fmt.Errorf("stream snapshot edges: %w", err)
 			}
 			return nil
@@ -97,6 +110,14 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 // SaveStreamingSnapshot writes a framed snapshot using temp-file, sync, and
 // atomic-rename durability semantics.
 func SaveStreamingSnapshot(ctx context.Context, engine Engine, path string, options SnapshotOptions) error {
+	return saveSnapshotFile(path, func(writer io.Writer) error {
+		return WriteSnapshot(ctx, engine, writer, options)
+	})
+}
+
+// saveSnapshotFile owns the durable temporary-file publication for either
+// live or pinned entity enumeration; both use the same encoding and cleanup.
+func saveSnapshotFile(path string, write func(io.Writer) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("wal: failed to create snapshot directory: %w", err)
@@ -113,7 +134,7 @@ func SaveStreamingSnapshot(ctx context.Context, engine Engine, path string, opti
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if err := WriteSnapshot(ctx, engine, file, options); err != nil {
+	if err := write(file); err != nil {
 		return fmt.Errorf("wal: failed to encode snapshot: %w", err)
 	}
 	if err := file.Sync(); err != nil {

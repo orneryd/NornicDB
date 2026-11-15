@@ -294,14 +294,14 @@ func rsvSnapshotNode(snapshot *storage.Snapshot, label string, key any) *storage
 	return nil
 }
 
-// awaitSnapshotInFlight returns the temporary file of a periodic snapshot
-// that is being written and has already written node records (more than the
-// writer's 4 KiB buffer), so it reads the store as it was before now. While
-// no snapshot is being written it writes internal marker nodes, so that the
-// next periodic snapshot is not skipped as having nothing new.
-func (l *rsvLab) awaitSnapshotInFlight() string {
+// awaitSnapshotInFlight returns the temporary name and a retained hard link
+// for one snapshot that has written node records beyond its 4 KiB buffer. The
+// caller waits for the temporary name to retire before reading the retained
+// file. While idle it writes markers so periodic compaction has work to do.
+func (l *rsvLab) awaitSnapshotInFlight() (writingPath, retainedPath string) {
 	l.t.Helper()
 	dir := filepath.Join(l.root, "snapshots")
+	retainedPath = filepath.Join(l.root, "observed-periodic-snapshot")
 	deadline := time.Now().Add(2 * time.Minute)
 	lastTick := time.Time{}
 	for {
@@ -313,7 +313,15 @@ func (l *rsvLab) awaitSnapshotInFlight() string {
 			}
 			writing = true
 			if info, err := entry.Info(); err == nil && info.Size() > 4096 {
-				return filepath.Join(dir, entry.Name())
+				writingPath = filepath.Join(dir, entry.Name())
+				// Retain this exact inode without an open handle that could
+				// obstruct rename on Windows. Later retention cannot remove it.
+				if err := os.Link(writingPath, retainedPath); os.IsNotExist(err) {
+					continue // this file completed before we could capture it
+				} else {
+					require.NoError(l.t, err)
+				}
+				return writingPath, retainedPath
 			}
 		}
 		require.True(l.t, time.Now().Before(deadline), "no periodic snapshot was seen being written")
@@ -563,28 +571,32 @@ func TestRebuildFromSnapshotDoesNotPresentReplacedVectorsAsCurrent(t *testing.T)
 	})
 }
 
-// The recovery fixture's snapshot holds the fixture's writes even when a
-// periodic snapshot is already being written as the node is created: that
-// snapshot reads the store as it was before the node existed, and a rebuild
-// from it alone has no node. The snapshot boundary itself orders the phases:
-// a periodic snapshot holds the store's write barrier while it writes, so the
-// statement that creates the node is admitted only after that snapshot
-// completed, and the file that snapshot writes cannot hold a node created
-// after its own cut. The store is filled first so that writing a snapshot
-// takes long enough to reach it while it is under way; the provider and its
-// indexes are set up before, so creating the node is one statement.
+// The fixture must choose a completed snapshot that contains its writes. A
+// snapshot captured before node creation excludes that node, even when the
+// create completes while serialization is still in flight. Retain that exact
+// file and observe its completion explicitly; foreground write completion no
+// longer implies that the snapshot file has been renamed. The deterministic
+// storage overlap test separately parks file output to prove that writes proceed.
 func TestRebuildFixtureSnapshotHoldsWritesMadeDuringASnapshot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "data")
 	lab := rsvOpen(t, root)
 	lab.setProvider(&rsvProvider{chunks: 3})
 	lab.exec("UNWIND range(1, $n) AS i CREATE (:_Fill {i: i, pad: $pad})", map[string]any{"n": 20000, "pad": strings.Repeat("p", 1024)})
-	// The snapshot being written now cut the store before the statement below,
-	// and that statement is admitted only once this snapshot released the
-	// store, so the file this snapshot writes holds no node.
-	inFlight := lab.awaitSnapshotInFlight()
+	// This snapshot captured its population before the node exists.
+	inFlight, retained := lab.awaitSnapshotInFlight()
 	key := "d"
 	lab.exec("CREATE (:Doc {key:$key, text:'small text'}) WITH EMBEDDING", map[string]any{"key": key})
-	during, err := storage.LoadSnapshot(context.Background(), strings.TrimSuffix(inFlight, ".tmp"))
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		_, err := os.Stat(inFlight)
+		if os.IsNotExist(err) {
+			break // successful rename, or a failed write that the read will expose
+		}
+		require.NoError(t, err)
+		require.True(t, time.Now().Before(deadline), "in-flight snapshot did not finish")
+		time.Sleep(time.Millisecond)
+	}
+	during, err := storage.LoadSnapshot(context.Background(), retained)
 	require.NoError(t, err, "the snapshot that was being written when the node was created completed")
 	require.Nil(t, rsvSnapshotDoc(during, key), "the snapshot that was being written when the node was created holds no node")
 	vectors := rsvPrint(lab.node(key).ChunkEmbeddings)
