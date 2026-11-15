@@ -385,6 +385,11 @@ var pipelineStructuralReads = map[string]pipelineStructuralRead{
 // The declaration is read from the live registration when the statement is
 // planned; a replacement completed before planning supplies its own demand.
 func pipelineCallInputOf(name string) pipelineCallInput {
+	// Aggregates own their arguments independently of scalar registrations.
+	// count(entity) consumes existence/identity, not the entity's property body.
+	if name == "count" {
+		return pipelineCallHeader
+	}
 	if image, registered := cypherfn.InputImageOf(name); registered {
 		switch image {
 		case cypherfn.ArgumentInputImage, cypherfn.MetadataArgumentInputImage:

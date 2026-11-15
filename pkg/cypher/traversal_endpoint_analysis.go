@@ -4,18 +4,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
-
-// traversalAggregateHeaderArguments are the aggregates whose argument the
-// aggregate path reads as a row rather than as a value: count(v) asks whether
-// the row exists, so the projection needs the image's header alone (#1110).
-// An aggregate is implemented by the aggregate owner, not by a scalar
-// registration, so this planner names it here and a scalar registration of the
-// same name never changes an aggregate's demand.
-var traversalAggregateHeaderArguments = map[string]bool{
-	"count": true,
-}
 
 // traversalCallReadsHeaderOnly reports whether a call of name reads only
 // identity, labels and existence from each argument value: a registered
@@ -26,11 +15,7 @@ var traversalAggregateHeaderArguments = map[string]bool{
 // values or any visible binding, so it is not header-only here either.
 func traversalCallReadsHeaderOnly(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if traversalAggregateHeaderArguments[name] {
-		return true
-	}
-	image, registered := cypherfn.InputImageOf(name)
-	return registered && image == cypherfn.HeaderInputImage
+	return pipelineCallInputOf(name) == pipelineCallHeader
 }
 
 // traversalUnusedPropertyVariables computes, for every named node variable of

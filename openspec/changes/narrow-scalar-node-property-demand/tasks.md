@@ -41,6 +41,6 @@
       statement image owner; retain metadata-only ordinary reads.
 - [x] Retire the duplicate row identity evaluator and dispatch through the
       registered canonical implementation instead.
-- [ ] Rebase onto current release and repeat affected focused/package checks.
-- [ ] Qualify remaining allocation checks on the updated release baseline.
+- [x] Rebase onto current release and repeat affected focused checks.
+- [x] Restore the unchanged cold-count allocation guard and record paired eager-count profiles on the updated release baseline.
 - [ ] Publish and complete exact-head CI; review duplicate/audit findings.
