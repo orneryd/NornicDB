@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prepared write-behind commits reserve memory before journal acceptance, so
   refused writes cannot reappear during recovery. Accepted accounting uses the
   completion lifetime even after request cancellation.
+- Native automatic snapshot compaction releases the mutation barrier before file
+  serialization while preserving the captured population and post-cut recovery.
 - Admin CSV round trips distinguish absent properties from empty strings and
   preserve float64 list coordinates without narrowing them to float32.
 

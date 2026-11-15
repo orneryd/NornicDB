@@ -900,22 +900,35 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return err
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
-	// committed rows for their IDs and are visited after the scan.
-	var overlay []*Node
-	var touched map[NodeID]bool
-	v := storedRead
-	if opts.ApplyDecayFilter {
-		v = visibleRead
-	}
+	// committed rows for their IDs and are visited after the scan. The capture
+	// runs inside the read view, so the overlay and the committed rows are one
+	// point; the scan body that merges them is shared with the pinned stored
+	// snapshot.
+	overlay := &capturedNodes{}
 	var captureErr error
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes, err := b.readBufferedEntities(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
-		if err != nil {
+		if err := overlay.capture(ctx, b, w, opts.readVisibility(), opts.Prefix); err != nil {
 			captureErr = err
-			return
 		}
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
+	view, err := b.captureReadView(ctx, capture, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
+	if err != nil {
+		return err
+	}
+	if captureErr != nil {
+		view.Close() // the canceled capture retires the scan
+		return captureErr
+	}
+	return b.streamNodesWithOptionsAtView(ctx, view.readAndClose, overlay, opts, fn)
+}
+
+// streamNodesWithOptionsAtView is the one capture+merge body of an
+// options-driven node scan: the committed rows of one read view, with the
+// write-behind nodes captured at that same point shadowing their committed rows
+// and visited after the scan. StreamNodesWithOptions reads the engine's current
+// point; the pinned stored snapshot source reads its own, with the same options,
+// projection and hydration. overlay is the capture taken with this view.
+func (b *BadgerEngine) streamNodesWithOptionsAtView(ctx context.Context, read scanRead, overlay *capturedNodes, opts StreamNodesOptions, fn func(*Node) error) error {
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
@@ -926,7 +939,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if node == nil {
 			return nil
 		}
-		if len(touched) > 0 && touched[node.ID] {
+		if len(overlay.touched) > 0 && overlay.touched[node.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
 		err := fn(node)
@@ -935,19 +948,16 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		}
 		return err
 	}
-	err := b.withReadView(ctx, capture, func(txn *badger.Txn) error {
-		if captureErr != nil {
-			return captureErr // the canceled capture retires the scan
-		}
+	err := read(ctx, func(txn *badger.Txn) error {
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
-	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
+	})
 	if err != nil {
 		return err
 	}
 	if stopped {
 		return nil
 	}
-	for _, node := range overlay {
+	for _, node := range overlay.nodes {
 		if !inScope(node.ID) {
 			continue
 		}

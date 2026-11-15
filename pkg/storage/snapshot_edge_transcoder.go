@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 )
@@ -27,27 +28,47 @@ type snapshotEdgeTranscoder struct {
 	properties []snapshotRawProperty
 }
 
+// snapshotEdgeBodyWriter is the one snapshot record body consumer: it lets the
+// stored body transcoder write the record, or asks for the strict reader by
+// returning false. The transcoder belongs to one stream, as before.
+func snapshotEdgeBodyWriter(b *BadgerEngine, transcoder *snapshotEdgeTranscoder, ids *NamespacedEngine, write func(byte, any) error) storedEdgeBodyVisitor {
+	return func(txn *badger.Txn, id EdgeID, data []byte) (bool, error) {
+		return transcoder.writeBody(b, txn, id, data, ids, write)
+	}
+}
+
 // writeBody expands the V2 header and dictionary names, copying property bytes
 // only when the strict property reader would reproduce them exactly. Complex
 // values whose normalization has not been proved are decoded instead; both
 // reach the same encodeSnapshotEdge.
-func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, id EdgeID, body []byte, ids *NamespacedEngine, write func(byte, any) error) (bool, error) {
+//
+// txn is the read view the body came from. A snapshot's serialization runs with
+// the file writer unlocked, so the current dictionaries may no longer hold the
+// bindings the body stored: every name is resolved through readStoredBinding,
+// the canonical physical-view read, exactly as the strict decoder does.
+func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, txn *badger.Txn, id EdgeID, body []byte, ids *NamespacedEngine, write func(byte, any) error) (bool, error) {
 	namespace := namespaceForEdgeID(id)
 	edge := &t.edge
 	start, end, offset, err := decodeEdgeCompactHeaderInto(body, edgeFormatCompactV2, edge)
 	if err != nil {
 		return false, err
 	}
-	var ok bool
-	edge.ID = id
-	edge.StartNode, ok = b.idDict.lookupNodeIDByNum(start)
+	startNode, ok, err := b.readStoredBinding(txn, storedBinding{kind: nodeIdentityBinding, number: start})
+	if err != nil {
+		return false, err
+	}
 	if !ok {
 		return false, fmt.Errorf("compact edge: start numID %d not in dict", start)
 	}
-	edge.EndNode, ok = b.idDict.lookupNodeIDByNum(end)
+	endNode, ok, err := b.readStoredBinding(txn, storedBinding{kind: nodeIdentityBinding, number: end})
+	if err != nil {
+		return false, err
+	}
 	if !ok {
 		return false, fmt.Errorf("compact edge: end numID %d not in dict", end)
 	}
+	edge.ID = id
+	edge.StartNode, edge.EndNode = NodeID(startNode), NodeID(endNode)
 	t.properties = t.properties[:0]
 	defer func() {
 		clear(t.properties)
@@ -70,7 +91,10 @@ func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, id EdgeID, body []by
 			if err != nil {
 				return false, err
 			}
-			name, found := b.propKeyDict.lookup(namespace, token)
+			name, found, err := b.readStoredBinding(txn, storedBinding{kind: propertyNameBinding, namespace: namespace, number: token})
+			if err != nil {
+				return false, err
+			}
 			if !found {
 				return false, fmt.Errorf("property key id %d not in dictionary for namespace %q", token, namespace)
 			}

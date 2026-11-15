@@ -286,7 +286,7 @@ func TestWALNativeLargeFinalJournalAndRecovery(t *testing.T) {
 			require.Len(t, entries, 1)
 			require.Equal(t, OpEntityCommit, entries[0].Operation)
 			if failFinal {
-				require.ErrorIs(t, wrapped.createSnapshotAndCompact(t.Context()), injected)
+				require.ErrorIs(t, wrapped.createSnapshotAndCompact(t.Context(), saveCompactionSnapshot), injected)
 				_, snapshotErr := wal.CreateSnapshot(native)
 				require.ErrorIs(t, snapshotErr, injected)
 				var snapshot bytes.Buffer
