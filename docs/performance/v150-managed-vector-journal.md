@@ -1,7 +1,8 @@
 # Managed-vector journal qualification
 
-These generated tests measure journal bytes for property-only updates. They do
-not establish throughput or heap-allocation improvements.
+Generated tests measure journal bytes for property-only updates. The paired
+local sample below also measures one repeated-update workload; it is not
+production-ingest or replication qualification.
 
 A complete first anchor preserves exact vectors for recovery. Each client update
 then carries a fingerprint and complete properties, metadata and named vectors.
@@ -38,9 +39,31 @@ record policies: the anchor spans frames while the client record remains below
 
 The test fixtures are disposable. The dogfood database is not used.
 
+## Paired local runtime sample
+
+The existing `BenchmarkPropertyUpdateVectorJournal/FlagUpdate` reads and updates
+one node holding 1 MiB of managed vectors and a 256-float named vector. Both
+checkouts used the same test fixture, 50 updates per sample and three samples,
+with CPU and heap profiles enabled. Baseline production source was release
+`a492f2acd`; candidate was `0592c181a`. Hardware: Apple M2 Max, Go arm64.
+
+| Median per update | Release baseline | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Time | 13.800 ms | 9.628 ms | −30.2% |
+| Allocated bytes | 12,119,841 | 9,089,864 | −25.0% |
+| Allocations | 20,892 | 20,909 | +17 (+0.08%) |
+
+These short sequential samples include the first anchor amortized across 50
+updates. They do not separate first-use and steady-state costs. Other development
+work could contend for resources, so the time result is preliminary. The small
+allocation-count increase is reported, not dismissed as a proven no-regression
+result. Candidate CPU samples still concentrate in vector decoding, runtime and
+Badger work; compact journal records do not remove the caller's vector-bearing
+read or its mutable result copy.
+
 ## Remaining qualification
 
-Runtime allocations, CPU profiles, first-use versus steady-state timings and
-working sets exceeding the proof cache remain unqualified. Portable replication
-still carries complete images; these results claim no replication bandwidth gain.
-Full CI and duplicate-review dispositions are separate gates.
+Separate first-use and steady-state measurements, allocation-count attribution,
+and working sets exceeding the 64-entry proof cache remain unqualified. Portable
+replication still carries complete images; these results claim no replication
+bandwidth gain. Full CI and duplicate-review dispositions are separate gates.
