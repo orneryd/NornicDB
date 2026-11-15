@@ -63,6 +63,19 @@ discarded. The `pr1826-direct-string-mixed` receipts document that experiment;
 those results do not describe code retained in the PR. No conclusion about
 Northwind memory improvement follows from this experiment.
 
+A second experiment retained the encoded body with a version-matched partial
+cache entry, accounting for it within the existing cache budget. A preliminary
+storage benchmark reduced timed widening allocations from about 6.35 MB to
+4.51 MB per 128-node batch, but excludes the cost of initially retaining the
+encoded bodies. Its first four-pair mixed run overlapped a full package suite
+and is recorded in `pr1826-raw-cache-mixed`; it is not clean timing evidence.
+After stopping that superseded suite, four more alternating pairs in
+`pr1826-raw-cache-clean` had matching fingerprints. Widening median p95 was
+0.971 ms before versus 0.952 ms after (-2.0%), while mixed-point median p95
+was 0.761 versus 0.953 ms (+25.3%). One widening trial reached 3.275 ms p95
+with the experiment. These runs do not establish a reliable improvement or
+acceptable memory tradeoff, so this experiment was also discarded.
+
 JSON receipts are grouped by run in this directory. The separate Northwind
 memory profiles in the parent report were captured before this rebase; their
 allocation breakdown is useful for diagnosis but has not been requalified
