@@ -246,8 +246,7 @@ func TestTemporalConstraintBackfillRejectsForeignSchemaTransactionView(t *testin
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 	commitNodes(t, engine, currentFact("pre", int64(1), -2*time.Hour, 2*time.Hour))
-	foreign := NewMemoryEngine()
-	t.Cleanup(func() { require.NoError(t, foreign.Close()) })
+	foreign := newTestMemoryEngine(t)
 
 	t.Run("another engine's transaction", func(t *testing.T) {
 		tx, err := foreign.BeginTransaction(ctx, OrdinaryBegin)

@@ -2,11 +2,8 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
-
-	"github.com/dgraph-io/badger/v4"
 )
 
 // A temporal constraint's history index becomes complete when the entries of
@@ -103,12 +100,7 @@ func (tx *BadgerTransaction) ownsSchemaView(engine Engine, schema *SchemaManager
 // its own snapshot with its pending writes over it. The schema is the isolated
 // view holding the constraint the statement is creating.
 func (tx *BadgerTransaction) stagedTemporalRebuild() temporalRebuildView {
-	return temporalRebuildView{
-		write:   tx.stageTemporalRebuildKey,
-		schema:  tx.temporalRebuildSchema,
-		stored:  tx.storedNodeWithoutVectors,
-		current: tx.temporalRebuildCurrentPointer,
-	}
+	return temporalRebuildView{transaction: tx}
 }
 
 // temporalRebuildSchema is the staged backfill's schema for a node's database:
@@ -155,19 +147,5 @@ func (tx *BadgerTransaction) temporalRebuildCurrentPointer(key []byte) (NodeID, 
 	if tx.pendingDeletes[string(key)] {
 		return "", false, nil
 	}
-	item, err := tx.badgerTx.Get(key)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	var current NodeID
-	if err := item.Value(func(val []byte) error {
-		current = NodeID(append([]byte(nil), val...))
-		return nil
-	}); err != nil {
-		return "", false, err
-	}
-	return current, true, nil
+	return readTemporalCurrentPointer(tx.badgerTx, key)
 }

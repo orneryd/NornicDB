@@ -669,47 +669,65 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 // The pass's key construction, target choice and current-version choice are the
 // same in both, because they are this view's only difference.
 type temporalRebuildView struct {
-	// write stores one derived key.
-	write func(key, value []byte) error
-	// schema is the schema a node's labels are read as: the engine's live
-	// manager for a physical pass, the statement's isolated view for a staged
-	// one.
-	schema func(namespace string) *SchemaManager
-	// stored reads a node's stored body without embedding vectors.
-	stored func(ctx context.Context, nodeID NodeID) (*Node, error)
-	// current reads the node a current-version key holds; false when it holds
-	// none.
-	current func(key []byte) (NodeID, bool, error)
+	engine      *BadgerEngine
+	physical    *badger.Txn
+	transaction *BadgerTransaction
 }
 
-// physicalTemporalRebuild is the view of a rebuild of the engine's own stored
-// nodes: every derived key is written into txn, and every read is that
-// transaction's snapshot.
+// physicalTemporalRebuild keeps the physical read and write handles together.
 func (b *BadgerEngine) physicalTemporalRebuild(txn *badger.Txn) temporalRebuildView {
-	return temporalRebuildView{
-		write:  txn.Set,
-		schema: b.GetSchemaForNamespace,
-		stored: func(_ context.Context, nodeID NodeID) (*Node, error) {
-			return b.loadNodeForTemporalTxn(txn, nodeID, false)
-		},
-		current: func(key []byte) (NodeID, bool, error) {
-			item, err := txn.Get(key)
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				return "", false, nil
-			}
-			if err != nil {
-				return "", false, err
-			}
-			var existingID NodeID
-			if err := item.Value(func(val []byte) error {
-				existingID = NodeID(append([]byte(nil), val...))
-				return nil
-			}); err != nil {
-				return "", false, err
-			}
-			return existingID, true, nil
-		},
+	return temporalRebuildView{engine: b, physical: txn}
+}
+
+// Set writes a derived key through this view's actual transaction owner. The
+// concrete view makes both ownership and static write reachability explicit;
+// no callback can substitute a foreign writer or outlive its staged frame.
+func (view temporalRebuildView) Set(key, value []byte) error {
+	if view.transaction != nil {
+		return view.transaction.stageTemporalRebuildKey(key, value)
 	}
+	return view.physical.Set(key, value)
+}
+
+func (view temporalRebuildView) schema(namespace string) *SchemaManager {
+	if view.transaction != nil {
+		return view.transaction.temporalRebuildSchema(namespace)
+	}
+	return view.engine.GetSchemaForNamespace(namespace)
+}
+
+func (view temporalRebuildView) stored(ctx context.Context, id NodeID) (*Node, error) {
+	if view.transaction != nil {
+		return view.transaction.storedNodeWithoutVectors(ctx, id)
+	}
+	return view.engine.loadNodeForTemporalTxn(view.physical, id, false)
+}
+
+func (view temporalRebuildView) current(key []byte) (NodeID, bool, error) {
+	if view.transaction != nil {
+		return view.transaction.temporalRebuildCurrentPointer(key)
+	}
+	return readTemporalCurrentPointer(view.physical, key)
+}
+
+// readTemporalCurrentPointer owns decoding the physical pointer in either view.
+// A staged caller holds its transaction lock before borrowing the snapshot.
+func readTemporalCurrentPointer(txn *badger.Txn, key []byte) (NodeID, bool, error) {
+	item, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var current NodeID
+	if err := item.Value(func(value []byte) error {
+		current = NodeID(append([]byte(nil), value...))
+		return nil
+	}); err != nil {
+		return "", false, err
+	}
+	return current, true, nil
 }
 
 // rebuildTemporalNodeInTxn indexes one stored node for a temporal rebuild or a
@@ -741,7 +759,7 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, view tempor
 		if !ok {
 			continue
 		}
-		if err := view.write(temporalHistoryKey(target.desc, start, node.ID), []byte{}); err != nil {
+		if err := view.Set(temporalHistoryKey(target.desc, start, node.ID), []byte{}); err != nil {
 			return err
 		}
 		if !nodeMatchesTemporalLookup(node, constraint, target.keyValue, asOf) {
@@ -764,7 +782,7 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(ctx context.Context, view tempor
 				}
 			}
 		}
-		if err := view.write(currentKey, []byte(node.ID)); err != nil {
+		if err := view.Set(currentKey, []byte(node.ID)); err != nil {
 			return err
 		}
 	}
