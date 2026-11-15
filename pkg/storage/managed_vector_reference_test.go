@@ -194,7 +194,7 @@ func TestManagedVectorReferencesDoNotAnchorStagedReplacement(t *testing.T) {
 	engine, wrapped := newPropertyUpdateVectorEngine(t, WALRecordsLarge)
 	const id NodeID = "test:staged-replacement"
 	seedPropertyUpdateVectorNode(t, engine, wrapped, id, 16)
-	tx, err := engine.BeginTransaction(t.Context())
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	defer tx.Rollback()
 	require.NoError(t, tx.SetNamespace("test"))

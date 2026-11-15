@@ -169,7 +169,7 @@ func historicalAmbiguousRecordsFramed(t *testing.T, applied bool, framingVersion
 		// Re-arm the pending delay: an earlier explicit flush adapts it, and a batch
 		// this fixture leaves unapplied must stay pending until the crash close.
 		engine.writeBehind.SetDelayBounds(time.Hour, time.Hour)
-		tx, err := engine.BeginTransaction(t.Context())
+		tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 		require.NoError(t, err)
 		require.NoError(t, tx.SetNamespace("hist"))
 		require.NoError(t, tx.SetImplicit(true))
