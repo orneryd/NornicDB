@@ -10,10 +10,10 @@ branch='feature/projected-reads-v1.5.0'
 labels={'document_projection':'Document point','northwind_projection':'Product point','mixed_projection':'50/50 mixed point','document_batch_projection':'Batch: 16 documents','document_full_control':'Widen to large fields','document_full_warm_control':'Repeat large fields'}
 
 def paired(name):
- folder=root/name; meta=json.loads((folder/'metadata.json').read_text()); groups={}
+ folder=root/name; meta=json.loads((folder/'metadata.json').read_text(encoding="utf-8")); groups={}
  field='queries' if meta['workload']=='northwind' else 'phases'
  for clients in meta['clients']:
-  groups[clients]={side:[json.loads((folder/f'{side}-{clients}-{trial}.json').read_text()) for trial in meta['trials']] for side in ['old','new']}
+  groups[clients]={side:[json.loads((folder/f'{side}-{clients}-{trial}.json').read_text(encoding="utf-8")) for trial in meta['trials']] for side in ['old','new']}
   for old,new in zip(groups[clients]['old'],groups[clients]['new']):
    assert [x['name'] for x in old[field]]==[x['name'] for x in new[field]]
    for a,b in zip(old[field],new[field]):
@@ -62,7 +62,7 @@ def render(pr=False):
   text+=[f'Northwind median sampled peak RSS: **{rss["old"]:,.0f} → {rss["new"]:,.0f} MiB**.','']
  else:text+=['Paired timing trials are still running. No memory-pass latency numbers are substituted here.','']
  text+=['### Memory profiles','']
- memory=json.loads((root/'memory-summary.json').read_text());rows=[]
+ memory=json.loads((root/'memory-summary.json').read_text(encoding="utf-8"));rows=[]
  for name,title in [('mixed-memory','Mixed: 20,000 calls + 64 warm-ups, 8 clients'),('northwind-memory','Northwind: reference + 1 measured call/query')]:
   a,b=memory[name]['old'],memory[name]['new'];rows.append([f'[{title}]({folder_link(name+"/")})',f'{a["alloc_bytes"]/1048576:,.1f} → {b["alloc_bytes"]/1048576:,.1f}',f'{delta(a["alloc_bytes"],b["alloc_bytes"]):+.1f}%',f'{a["heap_bytes"]/1048576:,.1f} → {b["heap_bytes"]/1048576:,.1f}',f'{delta(a["heap_bytes"],b["heap_bytes"]):+.1f}%'])
  text+=[table(['Separate profiling pass','Allocated MiB: release → PR','Change','Retained heap MiB: release → PR','Change'],rows),'','Allocated bytes are cumulative sampled allocations, not live RAM. Heap snapshots follow two explicit GCs. Northwind allocations are essentially unchanged and its sampled retained heap is slightly higher; no Northwind memory reduction is established. Profiling-pass latency fields are excluded from timing tables. Raw `.pb.gz` snapshots and allocation/heap top reports are linked in the dataset folders above.','']
