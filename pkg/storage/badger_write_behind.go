@@ -121,7 +121,22 @@ func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 // append flushes the journal out of the process (AppendBufferedCommit); a
 // commit that leaves the record out calls the journal's flush itself
 // (flushAppended).
-func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context, admitted, journaled bool) error {
+//
+// preparedContinuation is a prepared commit's handoff to the owner that
+// journals and accepts it (PublishCommit's private preparation callback). It
+// runs after this commit's memory reservation and before the journal holds any
+// record of the commit, and returns the detached completion context the
+// accepted command owns; an ordinary commit passes nil. The returned
+// publication hold is released by the caller's existing defer, after this
+// transaction's mutex and write locks.
+func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Context, admitted, journaled bool, preparedContinuation func(context.Context) (context.Context, error)) (publication *commitNotification, commitErr error) {
+	// Publication position: an ordinary commit reserves it first, before the
+	// accounting callback that may replay the buffer and before any stripe. A
+	// prepared commit reserves it only once its handoff accepts, so an
+	// unaccepted preparation never parks the publication queue.
+	if preparedContinuation == nil {
+		publication = tx.engine.holdPublication()
+	}
 	// The commit is acknowledged under its entities' write-order stripes, so
 	// a write of the same entities that commits to Badger itself
 	// (orderAfterBufferedCommits) falls wholly before or after it. They are
@@ -131,29 +146,36 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	var stripes, deletions orderStripeSet
 	entities, err := operationEntities(preparationContext, tx.operations)
 	if err != nil {
-		return tx.abortCommitLocked(err)
+		return publication, tx.abortCommitLocked(err)
 	}
 	stripes.entities(entities)
 	for _, id := range entities.deletedNodes {
 		deletions.add(string(id))
 	}
 	if err := tx.engine.writeBehind.order.lockMixedContext(preparationContext, &stripes, &deletions); err != nil {
-		return tx.abortCommitLocked(err)
+		return publication, tx.abortCommitLocked(err)
 	}
-	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+	// held is the exact stripe state: a parked preparation releases it and the
+	// accepted completion lifetime reacquires the same computed sets.
+	held := true
+	defer func() {
+		if held {
+			tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+		}
+	}()
 	if err := tx.revalidateEndpointsLocked(preparationContext); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
+		return publication, err
 	}
 	physicalOps := tx.physicalOperationsLocked()
 	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
 		tx.releaseSnapshotReaderLocked()
 		tx.closeLocked(TxStatusCommitted, true, nil)
-		return nil
+		return publication, nil
 	}
 	if tx.namespace == "" {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return localizedError(localization.StorageTransactionCommitNamespaceMissing(), nil)
+		return publication, localizedError(localization.StorageTransactionCommitNamespaceMissing(), nil)
 	}
 
 	// Ownership transfer, not copies: this is an implicit autocommit, the
@@ -175,7 +197,7 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	// transaction's snapshot — no backdating or flush-time ordering games.
 	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now()); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
+		return publication, err
 	} else {
 		c.version = version
 	}
@@ -223,22 +245,35 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	if tx.commitLogicalID != "" {
 		logicalID = tx.commitLogicalID
 	}
+	// The stored-entity accounting this commit announces. A raw commit
+	// announces it here, before its route decisions; a prepared commit
+	// announces the accepted image after its handoff, where
+	// captureStoredEntityChanges reuses that image instead of reading the
+	// touched entities again.
 	var accounting func()
-	if registry := tx.engine.storedEntityObservers.Load(); registry != nil {
-		if observer := (*registry)[tx.namespace].observer; observer != nil {
-			changes, err := tx.engine.captureStoredEntityChanges(preparationContext, storedEntityCapture{staged: tx})
-			if err != nil {
-				tx.closeLocked(TxStatusRolledBack, true, nil)
-				return err
-			}
-			accounting, err = observer(StoredEntityPublication{Namespace: tx.namespace, LogicalID: logicalID, Changes: changes})
-			if err == nil {
-				err = preparationContext.Err()
-			}
-			if err != nil {
-				tx.closeLocked(TxStatusRolledBack, true, nil)
-				return err
-			}
+	captureAccounting := func(accountingContext context.Context) error {
+		registry := tx.engine.storedEntityObservers.Load()
+		if registry == nil {
+			return nil
+		}
+		observer := (*registry)[tx.namespace].observer
+		if observer == nil {
+			return nil
+		}
+		changes, err := tx.engine.captureStoredEntityChanges(accountingContext, storedEntityCapture{staged: tx})
+		if err != nil {
+			return err
+		}
+		accounting, err = observer(StoredEntityPublication{Namespace: tx.namespace, LogicalID: logicalID, Changes: changes})
+		if err != nil {
+			return err
+		}
+		return accountingContext.Err()
+	}
+	if preparedContinuation == nil {
+		if err := captureAccounting(preparationContext); err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return publication, err
 		}
 	}
 
@@ -246,15 +281,43 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	omitRecord := admitted && journaled && forecast > maxBufferedWALPayloadBytes
 	if forecast > maxBufferedWALPayloadBytes && !omitRecord {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
+		return publication, fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
 	}
 	if policy := tx.engine.memoryPolicy; policy != nil {
 		lease, err := policy.Reserve(forecast)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
-			return bufferedMemoryError(err)
+			return publication, bufferedMemoryError(err)
 		}
 		c.memoryLease = lease
+	}
+	// The reservation precedes the prepared handoff: a commit the policy
+	// refuses is refused before the journal owner holds any record of it, and
+	// the acknowledged generation retains this same lease.
+	completionContext := preparationContext
+	if preparedContinuation != nil {
+		// A parked preparation must not hold this commit's mixed stripes: its
+		// journal acceptance and quorum wait run without them, and the same
+		// computed sets are reacquired under the accepted completion lifetime.
+		tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+		held = false
+		accepted, err := preparedContinuation(preparationContext)
+		if err != nil {
+			return publication, tx.abortCommitLocked(err)
+		}
+		// The handoff accepted this commit: reserve its place in the
+		// notification order before buffer publication and accounting callbacks.
+		publication = tx.engine.holdPublication()
+		completionContext = accepted
+		if err := tx.engine.writeBehind.order.lockMixedContext(completionContext, &stripes, &deletions); err != nil {
+			return publication, tx.abortCommitLocked(err)
+		}
+		held = true
+		// The accepted prepared image is this commit's stored-entity
+		// accounting; captureStoredEntityChanges reuses it.
+		if err := captureAccounting(completionContext); err != nil {
+			return publication, tx.abortCommitLocked(err)
+		}
 	}
 	// Durability boundary: write the commit's full payload to the WAL and
 	// push it to the kernel page cache BEFORE acknowledging. If the process
@@ -264,7 +327,7 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	// kill -9 loss window without reintroducing the per-commit fsync the
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
-	if err := DecidePublication(preparationContext, func() error {
+	if err := DecidePublication(completionContext, func() error {
 		if tx.engine.bufferedCommitWAL != nil {
 			recorded := false
 			if !omitRecord {
@@ -314,10 +377,10 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 		return nil
 	}); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
+		return publication, err
 	}
 	tx.closeLocked(TxStatusCommitted, true, nil)
-	return nil
+	return publication, nil
 }
 
 // persistReplayTxnCounters makes one generation's property-key tokens
