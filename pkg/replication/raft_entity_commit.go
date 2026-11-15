@@ -28,6 +28,9 @@ func (r *RaftReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command
 	if err != nil {
 		return nil, err
 	}
+	if err := checkCommandCapacity(ctx, r.storage, cmd); err != nil {
+		return nil, err
+	}
 	// The producer is accepted work: Shutdown's retirement drains the queue
 	// only after every accepted producer and consumer has returned.
 	release, accepted := r.enter()

@@ -106,7 +106,7 @@ func (r *managedRouteReplicator) SubmitAcceptedCommand(ctx context.Context, cmd 
 		}
 		return receipt, nil
 	}
-	return submitAcceptedByApply(ctx, cmd, settle, func() error {
+	return submitAcceptedByApply(ctx, r.peer, cmd, settle, func() error {
 		if r.reject {
 			return ErrNotLeader
 		}

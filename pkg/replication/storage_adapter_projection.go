@@ -8,6 +8,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+const replicationWALOperation storage.OperationType = "replication_command"
+
 // projectionIdentity is one accepted command's journal identity: the database
 // that accepted the command and the caller's logical ID inside that database.
 // Logical IDs are only unique per database, so two databases reusing one ID are
@@ -36,7 +38,7 @@ func (a *StorageAdapter) appendProjectionLocked(record replicationWALRecord, ide
 			return position, nil
 		}
 	}
-	position, err := a.wal.AppendReturningSeq(storage.OperationType("replication_command"), record)
+	position, err := a.wal.AppendReturningSeq(replicationWALOperation, record)
 	if err != nil {
 		return 0, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 	}
