@@ -111,3 +111,45 @@ func (db *DB) refreshEmbedFailureRedactor() {
 		return observability.RedactClientError(failure, config.APIURL, config.APIKey)
 	})
 }
+
+// SetDatabaseEmbeddingsEnabled applies the persisted managed-generation setting.
+// Enabling requests a background pending-index refresh so records written while
+// disabled become eligible without blocking the admin request on a full scan.
+func (db *DB) SetDatabaseEmbeddingsEnabled(database string, enabled bool) {
+	engine := unwrapToBadgerEngine(db.baseStorage)
+	if engine == nil {
+		return
+	}
+	changed := engine.SetDatabaseEmbeddingsEnabled(database, enabled)
+	db.mu.RLock()
+	queue := db.embedQueue
+	db.mu.RUnlock()
+	if queue != nil && changed {
+		if enabled {
+			queue.pendingScanRequested.Store(true)
+		}
+		queue.signalAllWorkers()
+	}
+}
+
+func (db *DB) managedEmbeddingAllowed(id storage.NodeID) bool {
+	database, _, qualified := splitQualifiedID(string(id))
+	if !qualified {
+		database = db.defaultDatabaseName()
+	}
+	engine := unwrapToBadgerEngine(db.baseStorage)
+	return engine == nil || engine.IsDatabaseEmbeddingsEnabled(database)
+}
+
+func (ew *EmbedWorker) setEmbeddingAdmission(admit func(storage.NodeID) bool) {
+	if admit == nil {
+		ew.embeddingAdmission.Store(nil)
+	} else {
+		ew.embeddingAdmission.Store(&admit)
+	}
+}
+
+func (ew *EmbedWorker) admitsEmbedding(id storage.NodeID) bool {
+	admit := ew.embeddingAdmission.Load()
+	return admit == nil || (*admit)(id)
+}

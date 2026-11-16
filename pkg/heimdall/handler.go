@@ -303,8 +303,14 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"model":  h.announcedModel(),
+		"status":               "ok",
+		"model":                h.announcedModel(),
+		"context_window":       h.config.ContextSize,
+		"max_output_tokens":    h.config.MaxTokens,
+		"context_source":       "configured runtime limit",
+		"max_attachment_bytes": MaxConversationAttachmentBytes,
+		"image_input":          false,
+		"conversation_compaction":true,
 		"heimdall": map[string]interface{}{
 			"enabled": h.config.Enabled,
 			"stats":   stats,
@@ -699,6 +705,10 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	// Ignore requested model and normalize to the single announced model.
 	req.Model = h.announcedModel()
+	if req.ConversationID != "" {
+		h.handleConversationTurn(w, r, req)
+		return
+	}
 
 	// Extract user message for lifecycle context
 	userMessage := ""
@@ -806,14 +816,18 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 // When StreamWriter is set (streaming + tools path), the agentic loop sends
 // PreExecute/PostExecute notifications as SSE chunks and the handler streams the final response.
 type requestLifecycle struct {
-	promptCtx     *PromptContext
-	requestID     string
-	database      DatabaseRouter
-	metrics       MetricsReader
-	compatMode    bool
-	StreamWriter  http.ResponseWriter // optional: for streaming notifications during agentic loop
-	StreamFlusher http.Flusher        // optional: flush after each SSE chunk
-	StreamModel   string              // optional: model name for SSE chunk payloads
+	contextTokens, contextLimit int
+	tools                       []ConversationTool
+	streamedAnswer              strings.Builder
+	reasoning                   strings.Builder
+	promptCtx                   *PromptContext
+	requestID                   string
+	database                    DatabaseRouter
+	metrics                     MetricsReader
+	compatMode                  bool
+	StreamWriter                http.ResponseWriter // optional: for streaming notifications during agentic loop
+	StreamFlusher               http.Flusher        // optional: flush after each SSE chunk
+	StreamModel                 string              // optional: model name for SSE chunk payloads
 	// RBAC: from request context (set by server when Bifrost is behind auth)
 	principalRoles         []string
 	databaseAccessMode     auth.DatabaseAccessMode
@@ -882,8 +896,19 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userMessage},
 	}
+	if lifecycle.promptCtx.ConversationID != "" {
+		messages = messages[:1]
+		for _, message := range lifecycle.promptCtx.Messages {
+			messages = append(messages, ToolRoundMessage{Role: message.Role, Content: message.Content})
+		}
+	}
 	var lastContent string
 	for round := 0; round < MaxAgenticRounds; round++ {
+		if lifecycle.promptCtx.ConversationID != "" {
+			if err := lifecycle.updateContextUsage(EstimateToolRoundMessagesTokens(messages), params.MaxTokens); err != nil {
+				return "", err
+			}
+		}
 		content, toolCalls, err := h.manager.GenerateWithTools(ctx, messages, tools, params)
 		if err != nil {
 			return "", err
@@ -938,10 +963,12 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 				paramsMap = preExecResult.ModifiedParams
 			}
 			startTime := time.Now()
+			toolIndex := lifecycle.beginTool(tc.Name, paramsMap)
 			var toolContent string
 			if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), tc.Name) {
 				dbName := lifecycle.database.DefaultDatabaseName()
 				raw, execErr := h.inMemoryRunner.CallTool(ctx, tc.Name, paramsMap, dbName)
+				lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 				toolContent = FormatInMemoryToolResult(raw, execErr)
 				execDuration := time.Since(startTime)
 				h.logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
@@ -964,6 +991,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 					ResolvedAccess:     lifecycle.resolvedAccessResolver,
 				}
 				result, execErr := ExecuteAction(tc.Name, actCtx)
+				lifecycle.endTool(toolIndex, result, execErr, time.Since(startTime))
 				execDuration := time.Since(startTime)
 				h.logToolResult(lifecycle.requestID, tc.Name, execDuration, execErr)
 				if execErr != nil {
@@ -1048,11 +1076,22 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 		}
 	}
 	prompt += "\nUser: " + userMessage + "\n\n" + answerFromContextHint
+	conversation := []ChatMessage{{Role: "system", Content: systemPrompt}}
+	if lifecycle.promptCtx.ConversationID != "" {
+		conversation = append(conversation, lifecycle.promptCtx.Messages...)
+		prompt = BuildModelPrompt(h.announcedModel(), conversation, lifecycle.promptCtx.Thinking)
+	}
 	var lastResponse string
 	for round := 0; round < MaxAgenticRounds; round++ {
-		response, err := h.manager.Generate(ctx, prompt, params)
+		var response string
+		var err error
+		if lifecycle.promptCtx.ConversationID != "" {
+			response, err = h.generateConversationRound(ctx, lifecycle, prompt, params)
+		} else {
+			response, err = h.manager.Generate(ctx, prompt, params)
+		}
 		if err != nil {
-			return "", err
+			return response, err
 		}
 		lastResponse = response
 		parsedAction, actionError := h.tryParseAction(response)
@@ -1094,11 +1133,13 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 			paramsToUse = preExecResult.ModifiedParams
 		}
 		h.logToolCall(lifecycle.requestID, parsedAction.Action, paramsToUse)
+		toolIndex := lifecycle.beginTool(parsedAction.Action, paramsToUse)
 		startTime := time.Now()
 		var resultStr string
 		if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
 			dbName := lifecycle.database.DefaultDatabaseName()
 			raw, execErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, paramsToUse, dbName)
+			lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 			resultStr = FormatInMemoryToolResult(raw, execErr)
 			execDuration := time.Since(startTime)
 			h.logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
@@ -1119,6 +1160,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 				ResolvedAccess:     lifecycle.resolvedAccessResolver,
 			}
 			result, execErr := ExecuteAction(parsedAction.Action, actCtx)
+			lifecycle.endTool(toolIndex, result, execErr, time.Since(startTime))
 			execDuration := time.Since(startTime)
 			h.logToolResult(lifecycle.requestID, parsedAction.Action, execDuration, execErr)
 			if execErr != nil {
@@ -1129,6 +1171,10 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 			resultStr = FormatActionResultForModel(result)
 		}
 		prompt = prompt + response + "\n\nTool result: " + resultStr + "\n\nOutput exactly one line: either {\"action\": \"<name>\", \"params\": {...}} or a brief direct answer to the user. No thinking, no examples, no repetition.\n\nAssistant: "
+		if lifecycle.promptCtx.ConversationID != "" {
+			conversation = append(conversation, ChatMessage{Role: "assistant", Content: response}, ChatMessage{Role: "user", Content: "Tool result: " + resultStr + "\nAnswer the original question using these results, or select another registered tool if needed."})
+			prompt = BuildModelPrompt(h.announcedModel(), conversation, lifecycle.promptCtx.Thinking)
+		}
 	}
 	return lastResponse, nil
 }

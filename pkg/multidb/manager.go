@@ -96,6 +96,7 @@ type DatabaseInfo struct {
 	ID           string           `json:"id"`
 	Name         string           `json:"name"`
 	CreatedAt    time.Time        `json:"created_at"`
+	PrivateOwner string           `json:"private_owner,omitempty"`
 	CreatedBy    string           `json:"created_by,omitempty"`
 	Status       string           `json:"status"` // "online", "offline"
 	Type         string           `json:"type"`   // "standard", "system"
@@ -447,6 +448,16 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 			return ErrDatabaseExists
 		}
 
+		// Ownership and creation publish in the same catalog receipt. An owner
+		// has one assistant workspace; concurrent provisioning cannot create two.
+		if request.PrivateOwner != "" {
+			for _, existing := range m.databases {
+				if existing.PrivateOwner == request.PrivateOwner {
+					return ErrDatabaseExists
+				}
+			}
+		}
+
 		// Check limit
 		if m.config.MaxDatabases > 0 && len(m.databases) >= m.config.MaxDatabases {
 			return ErrMaxDatabasesReached
@@ -466,13 +477,14 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 		}
 		// Create metadata
 		m.databases[request.Name] = &DatabaseInfo{
-			Name:      request.Name,
-			Options:   options,
-			CreatedAt: time.Now(),
-			Status:    "online",
-			Type:      "standard",
-			IsDefault: false,
-			UpdatedAt: time.Now(),
+			Name:         request.Name,
+			PrivateOwner: request.PrivateOwner,
+			Options:      options,
+			CreatedAt:    time.Now(),
+			Status:       "online",
+			Type:         "standard",
+			IsDefault:    false,
+			UpdatedAt:    time.Now(),
 		}
 
 		return nil
@@ -922,6 +934,7 @@ func cloneDatabaseInfo(info *DatabaseInfo, pendingDrop bool, purpose databaseSna
 		Name:            info.Name,
 		CreatedAt:       info.CreatedAt,
 		CreatedBy:       info.CreatedBy,
+		PrivateOwner:    info.PrivateOwner,
 		Status:          status,
 		Type:            info.Type,
 		IsDefault:       info.IsDefault,
@@ -1313,4 +1326,34 @@ func (m *DatabaseManager) lifetime() *lifecycle.WorkLifetime {
 	}
 	m.work.CompareAndSwap(nil, &lifecycle.WorkLifetime{})
 	return m.work.Load()
+}
+
+// PrivateDatabaseOwner returns immutable ownership from the live catalog,
+// resolving aliases before reading the physical database's metadata.
+func (m *DatabaseManager) PrivateDatabaseOwner(name string) string {
+	canonical, err := m.ResolveDatabase(name)
+	if err != nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if info := m.databases[canonical]; info != nil {
+		return info.PrivateOwner
+	}
+	return ""
+}
+
+// PrivateWorkspace returns the catalog snapshot belonging to this principal.
+func (m *DatabaseManager) PrivateWorkspace(owner string) *DatabaseInfo {
+	if owner == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, info := range m.databases {
+		if info.PrivateOwner == owner {
+			return cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible)
+		}
+	}
+	return nil
 }

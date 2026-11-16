@@ -3,8 +3,8 @@ import { useEffect, useId, useState, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router-dom";
 import { Terminal, Sparkles, Database, Share2 } from "lucide-react";
 import { useAppStore } from "../store/appStore";
-import { Bifrost } from "../../Bifrost";
 import { api } from "../utils/api";
+import { ManagedEmbeddingDatabases } from "../components/browser/ManagedEmbeddingDatabases";
 import { DatabaseSummary } from "../components/browser/DatabaseSummary";
 import { useUrlState, useViewState } from "../utils/useUrlState";
 import {graphFromQuery} from "../utils/queryGraph";
@@ -104,7 +104,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   });
   const [embedTriggering, setEmbedTriggering] = useState(false);
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
-  const showAIChat = params.get('assistant') === 'open';
   const setShowAIChat = (open: boolean) => patch({assistant: open ? 'open' : null});
   const showRegenerateConfirm = params.get('confirm') === 'regenerate';
   const setShowRegenerateConfirm = (open: boolean) => patch({confirm: open ? 'regenerate' : null});
@@ -306,24 +305,29 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
         onAIChatClick={() => setShowAIChat(true)}
       />
 
-      {maintenance ? <section className="max-w-4xl mx-auto w-full p-6 space-y-6">
+      {maintenance ? <section className="mx-auto w-full min-w-0 p-6 space-y-6">
         <h1 className="text-2xl font-semibold text-white">Embeddings</h1>
-        <p className="text-norse-silver">Worker statistics below are server-wide. Regeneration targets only the database you choose.</p>
+        <ManagedEmbeddingDatabases workerEnabled={embedData.enabled} />
+        <details open={params.get('embeddingStats') === 'open'} onToggle={event=>{const value=event.currentTarget.open?'open':null;if(value!==params.get('embeddingStats'))patch({embeddingStats:value});}} className="border border-norse-rune p-4 rounded-sm">
+          <summary className="cursor-pointer text-white">Server-wide worker statistics</summary>
+          <p className="my-3 text-sm text-norse-silver">These totals cover all databases.</p>
         <dl className="grid grid-cols-2 gap-4 text-norse-silver">
           <div><dt>Status</dt><dd>{embedData.stats?.running ? 'Processing' : embedData.enabled ? 'Idle' : 'Disabled'}</dd></div>
           <div><dt>Embeddings</dt><dd>{embedData.totalEmbeddings.toLocaleString()}</dd></div>
           <div><dt>Pending nodes</dt><dd>{embedData.pendingNodes.toLocaleString()}</dd></div>
           <div><dt>Current session</dt><dd>{embedData.stats?.processed ?? 0} processed · {embedData.stats?.failed ?? 0} failed</dd></div>
         </dl>
+        </details>
+        <details open={params.get('maintenance') === 'open'} onToggle={e => {const value=e.currentTarget.open ? 'open' : null;if(value !== params.get('maintenance'))patch({maintenance:value});}} className="rounded-lg border border-norse-rune p-4">
+          <summary className="cursor-pointer text-white">Maintenance</summary>
         <label className="block text-sm text-norse-silver">Database to regenerate
           <select value={selectedDatabase ?? ''} onChange={event=>patch({database:event.target.value || null})} className="block mt-2 w-full rounded-lg bg-norse-stone border border-norse-rune p-2 text-white">
             <option value="">Choose a database</option>
             {databaseList.map(name=><option key={name} value={name}>{name}</option>)}
           </select>
         </label>
-        <details open={params.get('maintenance') === 'open'} onToggle={e => {const value=e.currentTarget.open ? 'open' : null;if(value !== params.get('maintenance'))patch({maintenance:value});}} className="rounded-lg border border-norse-rune p-4">
-          <summary className="cursor-pointer text-white">Maintenance</summary>
-          <p className="my-3 text-norse-silver">Clear managed embeddings in the selected database and regenerate them in the background. Other databases keep their embeddings.</p>
+
+          <p className="my-3 text-norse-silver">Clear managed embeddings in the selected database and regenerate them in the background. Other databases keep their embeddings. If generation is off for this database, turn it on above first.</p>
           <button type="button" disabled={embedTriggering || !selectedDatabase} onClick={()=>setShowRegenerateConfirm(true)} className="px-3 py-2 rounded border border-red-500/40 text-red-400 disabled:opacity-50">{embedTriggering ? 'Starting…' : 'Regenerate database embeddings'}</button>
         </details>
         {embedMessage && <p role="status" className="text-norse-silver">{embedMessage}</p>}
@@ -506,7 +510,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
 
       </>}
       {/* AI Assistant Chat */}
-      <Bifrost isOpen={showAIChat} onClose={() => setShowAIChat(false)} />
 
       {/* Regenerate Embeddings Confirmation Dialog */}
       <RegenerateConfirmModal

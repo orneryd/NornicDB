@@ -1,625 +1,134 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React,{useEffect,useRef,useState,useMemo} from 'react';
+import {AssistantRuntimeProvider,useExternalStoreRuntime,useAuiState,ThreadPrimitive,MessagePrimitive,ComposerPrimitive,ActionBarPrimitive,type ThreadMessageLike,type AppendMessage,type TextMessagePartProps,type ReasoningMessagePartProps} from '@assistant-ui/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {X,Plus,Archive,Trash2,Search,MessageSquare,ExternalLink} from 'lucide-react';
+import {Link,useLocation,useNavigate} from 'react-router-dom';
+import {useUrlState,useViewState} from '../src/utils/useUrlState';
+import {Modal} from '../src/components/common/Modal';
+import {api,type DatabaseInfo} from '../src/utils/api';
+import {chatClient,sendChat,type ChatWorkspace,type ChatThread,type ChatMessage,type AssistantStatus,type ChatSource,type ChatStreamEvent,type ChatToolTrace,type ChatAttachment} from './client';
+import {AttachmentLimits,AttachmentThread,DraftAttachment,MessageAttachments,privateAttachmentAdapter} from './Attachments';
+import {ContextUsage} from './ContextUsage';
 import './Bifrost.css';
 
-interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system' | 'heimdall';
-  content: string;
-  timestamp: Date;
-  streaming?: boolean;
+interface BifrostProps{isOpen:boolean;onClose:()=>void;modelName?:string;apiEndpoint?:string;onActivityChange?:(count:number)=>void}
+type Run={running:boolean;contextTokens?:number;contextLimit?:number;error?:string;events:{title:string;message?:string}[];sources:ChatSource[];navigation:{title:string;path:string}[];compacted?:boolean;retry?:{id:string;content:string;attachments:ChatAttachment[]}};
+const idleRun=():Run=>({running:false,events:[],sources:[],navigation:[]});
+const MarkdownText=({text}:TextMessagePartProps)=><ReactMarkdown remarkPlugins={[remarkGfm]} components={{a:({href,children})=>href&&(href.startsWith('/')||href.startsWith('?'))?<Link to={href}>{children}</Link>:<a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,img:({src,alt})=><a href={typeof src==='string'?src:undefined} target="_blank" rel="noopener noreferrer">{alt||'Open image'}</a>}}>{text}</ReactMarkdown>;
+function UserMessage(){return <MessagePrimitive.Root className="assistant-message assistant-message-user"><strong className="assistant-speaker">You</strong><MessageAttachments/><MessagePrimitive.Content components={{Text:MarkdownText}}/><MessageActions/></MessagePrimitive.Root>}
+function ReasoningText({text}:ReasoningMessagePartProps){const id=useAuiState(state=>state.message.id);const [open,setOpen]=useViewState(`thinking.${id}`,false);return <details className="assistant-reasoning" open={open} onToggle={event=>{if(event.currentTarget.open!==open)setOpen(event.currentTarget.open)}}><summary>Model thinking</summary><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></details>}
+function ToolCall({tool}:{tool:ChatToolTrace}){const [open,setOpen]=useViewState(`tool.${tool.id}`,false);return <details className="assistant-tool" open={open} onToggle={event=>{if(event.currentTarget.open!==open)setOpen(event.currentTarget.open)}}><summary><span>{tool.name}</span><span>{tool.status}{tool.duration_ms!==undefined?` · ${tool.duration_ms} ms`:''}</span></summary><h4>Arguments / query</h4><pre>{JSON.stringify(tool.input,null,2)}</pre>{tool.error&&<p role="alert">{tool.error}</p>}{tool.result!==undefined&&<><h4>Result set</h4><pre>{JSON.stringify(tool.result,null,2)}</pre></>}</details>}
+function ToolCalls(){const tools=useAuiState(state=>state.message.metadata.custom.toolCalls) as ChatToolTrace[]|undefined;return tools?.map(tool=><ToolCall key={tool.id} tool={tool}/>)}
+function AssistantMessage(){return <MessagePrimitive.Root className="assistant-message"><strong className="assistant-speaker">Assistant</strong><ToolCalls/><MessagePrimitive.Content components={{Text:MarkdownText,Reasoning:ReasoningText}}/><MessageActions/></MessagePrimitive.Root>}
+function MessageActions(){return <ActionBarPrimitive.Root className="assistant-message-actions"><ActionBarPrimitive.Copy aria-label="Copy message">Copy</ActionBarPrimitive.Copy></ActionBarPrimitive.Root>}
+const convertMessage=(message:ChatMessage):ThreadMessageLike=>({id:message.id,role:message.role,content:[...(message.reasoning_content?[{type:'reasoning' as const,text:message.reasoning_content}]:[]),{type:'text',text:message.content}],createdAt:new Date(message.created_at),metadata:{custom:{toolCalls:message.tool_calls??[],attachments:message.attachments??[]}}});
+
+function ChatPane({threadId,messages,run,draft,draftFiles,onDraft,onSend,onStop,onNavigate,onHistory,status,disabled}:{threadId:string;messages:ChatMessage[];run:Run;draft:string;draftFiles:File[];onDraft:(value:string,files:File[])=>void;onSend:(text:string,id?:string,attachments?:ChatAttachment[])=>Promise<void>;onStop:()=>void;onNavigate:(path:string)=>void;onHistory:(id:string)=>void;status:AssistantStatus|null;disabled:boolean}){
+ const [uploading,setUploading]=useState(''),[oversized,setOversized]=useState(false);
+ const maxBytes=status?.max_attachment_bytes??8*1024*1024;
+ const files=useMemo(()=>privateAttachmentAdapter(threadId,maxBytes,setUploading),[threadId,maxBytes]);
+ useEffect(()=>()=>files.dispose(),[files]);
+ const runtime=useExternalStoreRuntime({messages,convertMessage,isSendDisabled:disabled||run.running||Boolean(uploading)||oversized,isRunning:run.running,adapters:{attachments:status?.max_attachment_bytes?files.adapter:undefined},onNew:async(message:AppendMessage)=>{const text=message.content.filter(part=>part.type==='text').map(part=>part.type==='text'?part.text:'').join('\n');const attached=(message.attachments??[]).map(item=>files.metadata.get(item.id)).filter((file):file is ChatAttachment=>Boolean(file));if(text.trim()||attached.length)await onSend(text.trim()?text:'Please review the attached files.',undefined,attached);},onCancel:async()=>onStop()});
+ useEffect(()=>{runtime.thread.composer.setText(draft);for(const file of draftFiles)void runtime.thread.composer.addAttachment(file);const sync=()=>setOversized(runtime.thread.composer.getState().attachments.some(attachment=>(attachment.file?.size??0)>maxBytes));sync();const unsubscribe=runtime.thread.composer.subscribe(sync);return()=>{unsubscribe();const state=runtime.thread.composer.getState();onDraft(state.text,state.attachments.map(attachment=>attachment.file).filter((file):file is File=>Boolean(file)));};},[runtime]);
+ return <AttachmentThread.Provider value={threadId}><AttachmentLimits.Provider value={{contextTokens:status?.context_window??8192,maxBytes,imageInput:status?.image_input??false}}><AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Root className="assistant-thread">
+  <ThreadPrimitive.Viewport className="assistant-messages">
+   <ThreadPrimitive.Empty><div className="assistant-welcome"><h3>What would you like to inspect?</h3><p>Ask about your data, schema, database health or previous chats.</p><button type="button" onClick={()=>runtime.thread.composer.setText('Explain the schema of the selected database.')}>Explain this database</button></div></ThreadPrimitive.Empty>
+   <ThreadPrimitive.Messages components={{UserMessage,AssistantMessage}}/>
+   {run.events.length>0&&<details className="assistant-activity"><summary>Activity · {run.events.length}</summary><ol>{run.events.map((event,index)=><li key={index}><strong>{event.title}</strong>{event.message&&<p>{event.message}</p>}</li>)}</ol></details>}
+   {run.sources.length>0&&<details className="assistant-context"><summary>Retrieved context · {run.sources.length} sources</summary><ul>{run.sources.map((source,index)=><li key={index}>{source.conversation_id?<button type="button" onClick={()=>onHistory(source.conversation_id!)}>{source.title||'Previous chat'}</button>:<span>{source.title||'Database context'}</span>}<span>{source.method}</span></li>)}</ul></details>}
+   {run.navigation.map(item=><button key={item.path} type="button" className="assistant-navigation" onClick={()=>onNavigate(item.path)}>{item.title}<ExternalLink size={14}/></button>)}
+   {run.error&&<div role="alert" className="assistant-error"><p>{run.error}</p>{run.retry&&<button type="button" disabled={run.running} onClick={()=>void onSend(run.retry!.content,run.retry!.id)}>Retry response</button>}</div>}
+   {run.running&&<p role="status" className="assistant-working">Working…</p>}
+  </ThreadPrimitive.Viewport>
+  <ThreadPrimitive.ScrollToBottom className="assistant-scroll-bottom">Latest message</ThreadPrimitive.ScrollToBottom>
+  <ComposerPrimitive.AttachmentDropzone className="assistant-dropzone"><ComposerPrimitive.Root className="assistant-composer"><ComposerPrimitive.Attachments components={{Attachment:DraftAttachment}}/>{uploading&&<p role="status">Uploading {uploading}…</p>}<ComposerPrimitive.Input aria-label="Message the assistant" placeholder="Ask a question about your database…" rows={3}/><div><ComposerPrimitive.AddAttachment type="button" aria-label="Attach files">Attach files</ComposerPrimitive.AddAttachment><span>Paste or drop files · Enter to send</span>{run.running?<ComposerPrimitive.Cancel>Stop response</ComposerPrimitive.Cancel>:<ComposerPrimitive.Send>Send message</ComposerPrimitive.Send>}</div></ComposerPrimitive.Root></ComposerPrimitive.AttachmentDropzone>
+ </ThreadPrimitive.Root></AssistantRuntimeProvider></AttachmentLimits.Provider></AttachmentThread.Provider>;
 }
 
-interface BifrostProps {
-  isOpen: boolean;
-  onClose: () => void;
-  modelName?: string;
-  apiEndpoint?: string;
-}
-
-/**
- * Bifrost - AI Chat Interface
- * 
- * A terminal-style chat interface for interacting with NornicDB's
- * built-in AI assistant. Provides natural language access to
- * database management, diagnostics, and intelligent operations.
- * 
- * Uses OpenAI-compatible SSE streaming API.
- */
-// Session storage key for persisting chat history
-const BIFROST_MESSAGES_KEY = 'bifrost-messages';
-const BIFROST_COMMAND_HISTORY_KEY = 'bifrost-command-history';
-
-// Load messages from session storage
-const loadSessionMessages = (): Message[] => {
-  try {
-    const stored = sessionStorage.getItem(BIFROST_MESSAGES_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Restore Date objects
-      return parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
-    }
-  } catch (e) {
-    // Ignore storage errors
-  }
-  return [{ 
-    id: '0', 
-    role: 'system', 
-    content: '✓ AI Assistant Connected\n\nReady for database operations.\nType /help for available commands.', 
-    timestamp: new Date() 
-  }];
+export const Bifrost:React.FC<BifrostProps>=({isOpen,onClose,modelName,apiEndpoint,onActivityChange})=>{
+ const {params,patch}=useUrlState();const location=useLocation(),navigate=useNavigate();
+ const [active,setActive]=useViewState('chat','');const [view,setView]=useViewState('chatView','active');const [query,setQuery]=useViewState('chatSearch','');
+ const [thinking,setThinking]=useViewState('chat.thinking',false);
+ const [compacting,setCompacting]=useState<Set<string>>(new Set());
+ const [workspace,setWorkspace]=useState<ChatWorkspace|null>(null),[verified,setVerified]=useState(false),[databaseName,setDatabaseName]=useState('');
+ const [threads,setThreads]=useState<ChatThread[]>([]),[messages,setMessages]=useState<Record<string,ChatMessage[]>>({}),[runs,setRuns]=useState<Record<string,Run>>({});
+ const [draftFiles,setDraftFiles]=useState<Record<string,File[]>>({});
+ const [drafts,setDrafts]=useState<Record<string,string>>({}),[status,setStatus]=useState<AssistantStatus|null>(null),[modelError,setModelError]=useState('');
+ const [databases,setDatabases]=useState<DatabaseInfo[]>([]),[newSource,setNewSource]=useState<string|null>(null),[sources,setSources]=useState<ChatSource[]>([]);
+ const [error,setError]=useState(''),[loading,setLoading]=useState(false),[creating,setCreating]=useState(false),[deleteTarget,setDeleteTarget]=useState<ChatThread|null>(null);
+ const controllers=useRef(new Map<string,AbortController>()),identity=useRef(''),verification=useRef(0),activeRef=useRef(active);activeRef.current=active;
+ const activeThread=threads.find(thread=>thread.id===active);const activeRun=runs[active]??idleRun();
+ const routeDatabase=(()=>{const match=location.pathname.match(/^\/workspace\/([^/]+)/);try{return match?decodeURIComponent(match[1]):''}catch{return ''}})();
+ const updateRun=(id:string,apply:(run:Run)=>Run)=>setRuns(previous=>({...previous,[id]:apply(previous[id]??idleRun())}));
+ const verify=async()=>{
+  const attempt=++verification.current;setVerified(false);setLoading(true);setError('');
+  try{const profile=await chatClient.workspace();if(attempt!==verification.current)return;if(identity.current&&identity.current!==profile.username){controllers.current.forEach(controller=>controller.abort());controllers.current.clear();setThreads([]);setMessages({});setRuns({});setDrafts({});setDraftFiles({});setCompacting(new Set());setSources([]);setDeleteTarget(null);setNewSource(null);patch({chat:null,chatSearch:null});}
+   identity.current=profile.username;setWorkspace(profile);setDatabaseName(profile.suggested_database);setVerified(true);
+  }catch(failure){if(attempt===verification.current){setWorkspace(null);setError(failure instanceof Error?failure.message:'Could not load your chat workspace.');}}finally{if(attempt===verification.current)setLoading(false);}
+ };
+ useEffect(()=>{if(isOpen)void verify();},[isOpen]);
+ useEffect(()=>{if(!isOpen)return;let live=true;const refresh=async()=>{try{const current=await chatClient.status();if(live){setStatus(current);setModelError('');}}catch(failure){if(live){setStatus(null);setModelError(failure instanceof Error?failure.message:'Assistant unavailable');}}};void refresh();const timer=setInterval(()=>void refresh(),15000);return()=>{live=false;clearInterval(timer)};},[isOpen]);
+ useEffect(()=>()=>{controllers.current.forEach(controller=>controller.abort());},[]);
+ useEffect(()=>{if(!verified||!workspace?.configured)return;let live=true;setLoading(true);chatClient.list(view==='archived').then(list=>{if(live)setThreads(previous=>{const selected=previous.find(thread=>thread.id===activeRef.current);return selected&&!list.some(thread=>thread.id===selected.id)?[selected,...list]:list;});}).catch(failure=>{if(live)setError(failure.message)}).finally(()=>{if(live)setLoading(false)});return()=>{live=false};},[verified,workspace?.database,view]);
+ useEffect(()=>{if(!verified||!workspace?.configured)return;void api.listDatabases().then(list=>setDatabases(list.filter(db=>db.name!=='system'&&db.name!==workspace.database&&db.type!=='composite'))).catch(failure=>setError(failure.message));},[verified,workspace?.database]);
+ useEffect(()=>{if(!verified||!active||controllers.current.has(active))return;let live=true;setLoading(true);chatClient.read(active).then(data=>{if(live){setMessages(previous=>({...previous,[active]:data.messages??[]}));setThreads(previous=>previous.some(thread=>thread.id===active)?previous.map(thread=>thread.id===active?data.thread:thread):[data.thread,...previous]);}}).catch(failure=>{if(live)setError(failure.message)}).finally(()=>{if(live)setLoading(false)});return()=>{live=false};},[active,verified]);
+ useEffect(()=>{if(!verified||!workspace?.configured||!query.trim()){setSources([]);return;}let live=true;const timer=setTimeout(()=>{void chatClient.search(query).then(items=>{if(live)setSources(items)}).catch(failure=>{if(live)setError(failure.message)});},300);return()=>{live=false;clearTimeout(timer)};},[query,workspace?.database,verified]);
+ useEffect(()=>{if(!verified)return;const ids=threads.filter(thread=>thread.compaction_status==='running').map(thread=>thread.id);if(!ids.length)return;let live=true;const refresh=()=>{void Promise.allSettled(ids.slice(0,4).map(async id=>{const thread=await chatClient.context(id);if(live)setThreads(previous=>previous.map(item=>item.id===id?thread:item));}));};const timer=setInterval(refresh,2000);return()=>{live=false;clearInterval(timer)};},[verified,threads.map(thread=>`${thread.id}:${thread.compaction_status}`).join(',')]);
+ const compactContext=async()=>{if(!activeThread)return;const id=activeThread.id,owner=identity.current;setCompacting(previous=>new Set(previous).add(id));try{await chatClient.compact(id);if(identity.current===owner)setThreads(previous=>previous.map(thread=>thread.id===id?{...thread,compaction_status:'running',compaction_error:''}:thread));}catch(failure){if(identity.current===owner)setError(failure instanceof Error?failure.message:'Could not compact context.')}finally{if(identity.current===owner)setCompacting(previous=>{const next=new Set(previous);next.delete(id);return next})}};
+ const createWorkspace=async(event:React.FormEvent)=>{event.preventDefault();setCreating(true);setError('');try{setWorkspace(await chatClient.provision(databaseName));}catch(failure){setError(failure instanceof Error?failure.message:'Could not create workspace.')}finally{setCreating(false)}};
+ const createChat=async()=>{setCreating(true);setError('');try{const thread=await chatClient.create(newSource??routeDatabase);setThreads(previous=>[thread,...previous.filter(item=>item.id!==thread.id)]);setMessages(previous=>({...previous,[thread.id]:[]}));patch({chat:thread.id,chatView:null,chatSearch:null});}catch(failure){setError(failure instanceof Error?failure.message:'Could not create chat.')}finally{setCreating(false)}};
+ const send=async(threadId:string,content:string,existingId?:string,files?:ChatAttachment[])=>{
+  if(controllers.current.has(threadId))return;
+  const attachments=files??(existingId?runs[threadId]?.retry?.attachments:[])??[];
+  const owner=identity.current;const messageId=existingId??crypto.randomUUID(),assistantId='assistant-'+messageId,now=new Date().toISOString(),controller=new AbortController();controllers.current.set(threadId,controller);
+  setMessages(previous=>{const prior=previous[threadId]??[];return {...previous,[threadId]:[...prior.filter(message=>message.id!==assistantId),...(!prior.some(message=>message.id===messageId)?[{id:messageId,role:'user' as const,content,attachments,created_at:now}]:[]),{id:assistantId,role:'assistant',content:'',created_at:now,status:'running'}]}});
+  setRuns(previous=>({...previous,[threadId]:{...idleRun(),running:true,retry:{id:messageId,content,attachments}}}));
+  let responseError:string|undefined;
+  const event=(value:ChatStreamEvent)=>{
+   if(identity.current!==owner)return;
+   if(value.type==='text')setMessages(previous=>({...previous,[threadId]:(previous[threadId]??[]).map(message=>message.id===assistantId?{...message,content:message.content+value.text}:message)}));
+   if(value.type==='reasoning')setMessages(previous=>({...previous,[threadId]:(previous[threadId]??[]).map(message=>message.id===assistantId?{...message,reasoning_content:(message.reasoning_content??'')+value.text}:message)}));
+   if(value.type==='usage')updateRun(threadId,run=>({...run,contextTokens:value.tokens,contextLimit:value.limit}));
+   if(value.type==='tool')setMessages(previous=>({...previous,[threadId]:(previous[threadId]??[]).map(message=>message.id===assistantId?{...message,tool_calls:[...(message.tool_calls??[]).filter(tool=>tool.id!==value.tool.id),value.tool]}:message)}));
+   if(value.type==='activity')updateRun(threadId,run=>({...run,events:[...run.events,{title:value.title,message:value.message}]}));
+   if(value.type==='context')updateRun(threadId,run=>({...run,sources:value.sources,compacted:value.compacted}));
+   if(value.type==='navigation')updateRun(threadId,run=>({...run,navigation:[...run.navigation,{title:value.title,path:value.path}]}));
+   if(value.type==='error')responseError=value.message;
+  };
+  try{await sendChat(threadId,messageId,content,event,controller.signal,apiEndpoint,thinking,attachments.map(file=>file.id));if(responseError)throw new Error(responseError);const saved=await chatClient.read(threadId);if(identity.current!==owner)return;if(!saved.messages.some(message=>message.id===messageId)||!saved.messages.some(message=>message.id===assistantId))throw new Error('The server did not retain this turn. Your response is still shown here; retry to save it.');setMessages(previous=>({...previous,[threadId]:saved.messages}));setThreads(previous=>previous.map(thread=>thread.id===threadId?saved.thread:thread));updateRun(threadId,run=>({...run,running:false,retry:undefined}));}
+  catch(failure){if(identity.current!==owner)return;const stopped=controller.signal.aborted;updateRun(threadId,run=>({...run,running:false,error:stopped?'Response stopped.':failure instanceof Error?failure.message:'Chat request failed.'}));setMessages(previous=>({...previous,[threadId]:(previous[threadId]??[]).map(message=>message.id===assistantId?{...message,status:stopped?'cancelled':'error'}:message)}));}
+  finally{controllers.current.delete(threadId);}
+ };
+ const changeThread=async(change:{archived?:boolean;database?:string;title?:string})=>{if(!activeThread)return;try{const next=await chatClient.update(activeThread.id,change);setThreads(previous=>previous.map(thread=>thread.id===next.id?next:thread));}catch(failure){setError(failure instanceof Error?failure.message:'Could not update chat.')}};
+ const removeChat=async()=>{if(!deleteTarget)return;const id=deleteTarget.id;controllers.current.get(id)?.abort();try{await chatClient.remove(id);setThreads(previous=>previous.filter(thread=>thread.id!==id));setMessages(previous=>{const next={...previous};delete next[id];return next;});if(active===id)setActive('');setDeleteTarget(null);}catch(failure){setError(failure instanceof Error?failure.message:'Could not delete chat.')}};
+ const navigateTo=(path:string)=>{if(!/^\/(workspace|databases|schema|embeddings|backups|security|demos)(\/|\?|$)/.test(path))return;const target=new URL(path,window.location.origin);const next=new URLSearchParams(params);target.searchParams.forEach((value,key)=>next.set(key,value));next.delete('assistant');navigate({pathname:target.pathname,search:next.toString()});};
+ const visibleThreads=threads.filter(thread=>thread.archived===(view==='archived'));
+ const sourceValue=activeThread?.database??newSource??routeDatabase;
+ const runningCount=Object.values(runs).filter(run=>run.running).length;
+ useEffect(()=>{onActivityChange?.(runningCount)},[runningCount,onActivityChange]);
+ if(!isOpen)return null;
+ return <aside className="bifrost-panel" data-chat-active={Boolean(active)} aria-label="AI assistant">
+  <header className="bifrost-header">{active&&<button type="button" className="assistant-mobile-chats" onClick={()=>setActive('')}>Chats</button>}<div><strong>AI workspace</strong><span>{verified?workspace?.username:'Verifying account…'}{runningCount?` · ${runningCount} running`:''}</span></div><button type="button" onClick={onClose} aria-label="Close AI assistant"><X size={20}/></button></header>
+  {error&&<div role="alert" className="assistant-error assistant-global-error"><span>{error}</span><button type="button" onClick={()=>{setError('');void verify();}}>Retry</button></div>}
+  {!verified?<div className="assistant-setup"><p role="status">{loading?'Loading your private workspace…':'Your workspace could not be loaded.'}</p></div>:!workspace?.configured?<form className="assistant-setup" onSubmit={createWorkspace}><MessageSquare size={28}/><h2>Set up your AI workspace</h2><p>Chats will be stored in a dedicated NornicDB database. Only your account and database administrators can access it.</p><label>Chat database name<input required value={databaseName} onChange={event=>setDatabaseName(event.target.value)} autoComplete="off"/></label><button type="submit" disabled={creating}>{creating?'Creating workspace…':'Create private workspace'}</button></form>:<div className="assistant-workspace">
+   <nav className="assistant-chat-list" aria-label="Chats"><button type="button" className="assistant-new-chat" onClick={()=>void createChat()} disabled={creating}><Plus size={16}/>New chat</button><label className="assistant-history-search"><Search size={15}/><span className="sr-only">Search previous chats</span><input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search previous chats"/></label><div className="assistant-list-tabs"><button type="button" aria-pressed={view!=='archived'} onClick={()=>setView('active')}>Chats</button><button type="button" aria-pressed={view==='archived'} onClick={()=>setView('archived')}>Archived</button></div>
+    {loading&&<p className="assistant-small" role="status">Loading…</p>}
+    <ul>{query.trim()?sources.map((source,index)=><li key={index}><button type="button" onClick={()=>source.conversation_id&&setActive(source.conversation_id)}><strong>{source.title||'Chat result'}</strong><span>{source.content?.slice(0,100)}</span></button></li>):visibleThreads.map(thread=><li key={thread.id}><button type="button" aria-current={active===thread.id?'page':undefined} onClick={()=>{setError('');setActive(thread.id)}}><strong>{thread.title||'New chat'}</strong><span>{runs[thread.id]?.running?'Generating…':thread.archived?'Archived':new Date(thread.updated_at).toLocaleDateString()}</span></button></li>)}</ul>
+    {!loading&&!query.trim()&&!visibleThreads.length&&<p className="assistant-small">{view==='archived'?'No archived chats.':'No chats yet.'}</p>}
+    <p className="assistant-storage">Stored in <code>{workspace.database}</code></p>
+   </nav>
+   <section className="assistant-conversation" aria-label="Conversation">
+    <header className="assistant-conversation-header"><div><h2>{activeThread?.title||'Your private assistant'}</h2><span>{status?.model||modelName||'Model unavailable'}{status?.context_window?` · ${status.context_window.toLocaleString()} token context`:''}{activeRun.compacted?' · Context compacted':''}</span></div>{activeThread&&<div><button type="button" onClick={()=>void changeThread({archived:!activeThread.archived})} aria-label={activeThread.archived?'Restore chat':'Archive chat'}><Archive size={16}/></button><button type="button" onClick={()=>setDeleteTarget(activeThread)} aria-label="Delete chat"><Trash2 size={16}/></button></div>}</header>
+    <label className="assistant-source">Database context<select value={sourceValue} disabled={activeRun.running} onChange={event=>activeThread?void changeThread({database:event.target.value}):setNewSource(event.target.value)}><option value="">No database selected</option>{databases.map(database=><option key={database.name} value={database.name}>{database.name}</option>)}</select></label>
+    {modelError&&<p className="assistant-model-error">Inference is unavailable: {modelError}. Your saved chats remain available.</p>}
+    <label className="assistant-thinking-option"><input type="checkbox" checked={thinking} disabled={activeRun.running} onChange={event=>setThinking(event.target.checked)}/>Enable model thinking <span>Uses more tokens. Available when supported by the model.</span></label>
+    {activeThread?.archived?<div className="assistant-archived"><p>This chat is archived.</p><button type="button" onClick={()=>void changeThread({archived:false})}>Restore to continue</button></div>:null}
+    {activeThread&&<ContextUsage used={(activeRun.running?activeRun.contextTokens:activeThread.context_tokens)??activeThread.context_tokens??activeRun.contextTokens??0} limit={(activeRun.running?activeRun.contextLimit:undefined)||status?.context_window||activeThread.context_limit||8192} reserved={status?.max_output_tokens??1024} status={compacting.has(active)?'running':activeThread.compaction_status} error={activeThread.compaction_error} disabled={activeRun.running||compacting.has(active)||!status?.conversation_compaction} onCompact={()=>void compactContext()}/>}
+    {activeThread?<div className={`assistant-chat-body ${activeThread.archived||!status?'assistant-chat-disabled':''}`}><ChatPane key={active} threadId={active} status={status} disabled={Boolean(activeThread.archived)||!status||activeThread.compaction_status==='running'||compacting.has(active)} draftFiles={draftFiles[active]??[]} messages={messages[active]??[]} run={activeRun} draft={drafts[active]??''} onDraft={(value,files)=>{if(identity.current!==workspace?.username)return;setDrafts(previous=>({...previous,[active]:value}));setDraftFiles(previous=>({...previous,[active]:files}));}} onSend={(text,id,files)=>send(active,text,id,files)} onStop={()=>controllers.current.get(active)?.abort()} onNavigate={navigateTo} onHistory={setActive}/></div>:<div className="assistant-welcome"><h2>Start a conversation</h2><p>Inspect databases, ask for read-only queries, or retrieve context from earlier chats.</p><button type="button" onClick={()=>void createChat()} disabled={creating}>New chat</button></div>}
+   </section>
+  </div>}
+  <Modal isOpen={Boolean(deleteTarget)} onClose={()=>setDeleteTarget(null)} title="Delete chat?"><p>This permanently deletes “{deleteTarget?.title}” and its messages from your chat database.</p><div className="assistant-delete-actions"><button type="button" data-autofocus onClick={()=>setDeleteTarget(null)}>Keep chat</button><button type="button" onClick={()=>void removeChat()}>Delete chat permanently</button></div></Modal>
+ </aside>;
 };
-
-const loadCommandHistory = (): string[] => {
-  try {
-    const stored = sessionStorage.getItem(BIFROST_COMMAND_HISTORY_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch (e) {
-    // Ignore storage errors
-  }
-  return [];
-};
-
-type ContentSegment = { type: 'thinking'; text: string } | { type: 'content'; text: string };
-
-function parseContentWithThinking(raw: string): ContentSegment[] {
-  if (!raw) return [];
-  const segments: ContentSegment[] = [];
-  const openTag = '<think>';
-  const closeTag = '</think>';
-  let pos = 0;
-  while (pos < raw.length) {
-    const openIdx = raw.indexOf(openTag, pos);
-    if (openIdx === -1) {
-      const rest = raw.slice(pos).trim();
-      if (rest) segments.push({ type: 'content', text: raw.slice(pos) });
-      break;
-    }
-    const before = raw.slice(pos, openIdx).trim();
-    if (before) segments.push({ type: 'content', text: raw.slice(pos, openIdx) });
-    const contentStart = openIdx + openTag.length;
-    const closeIdx = raw.indexOf(closeTag, contentStart);
-    if (closeIdx === -1) {
-      segments.push({ type: 'thinking', text: raw.slice(contentStart) });
-      break;
-    }
-    segments.push({ type: 'thinking', text: raw.slice(contentStart, closeIdx) });
-    pos = closeIdx + closeTag.length;
-  }
-  return segments;
-}
-
-/** Strip leading think-close tag from content so it doesn't show in the message. */
-function stripLeadingThinkClose(text: string): string {
-  const closeTag = '</think>';
-  const trimmed = text.trimStart();
-  if (trimmed.startsWith(closeTag)) {
-    return trimmed.slice(closeTag.length).trimStart();
-  }
-  return text;
-}
-
-const CollapsibleThinkingBlock: React.FC<{ text: string; streaming?: boolean }> = ({ text, streaming }) => {
-  const [expanded, setExpanded] = useState(false);
-  const preview = text.trim().slice(0, 80);
-  const hasMore = text.trim().length > 80;
-  return (
-    <div className="bifrost-thinking-block">
-      <button
-        type="button"
-        className="bifrost-thinking-toggle"
-        onClick={() => setExpanded(e => !e)}
-        aria-expanded={expanded}
-      >
-        <span className="bifrost-thinking-icon">{expanded ? '▼' : '▶'}</span>
-        <span className="bifrost-thinking-label">Thinking</span>
-        {!expanded && hasMore && <span className="bifrost-thinking-preview"> — {preview}…</span>}
-      </button>
-      {expanded && (
-        <pre className="bifrost-thinking-content">
-          {text.trim()}
-          {streaming && <span className="bifrost-cursor">▊</span>}
-        </pre>
-      )}
-    </div>
-  );
-};
-
-export const Bifrost: React.FC<BifrostProps> = ({ 
-  isOpen, 
-  onClose,
-  modelName = 'qwen3-0.6b-instruct',
-  apiEndpoint = '/api/bifrost/chat/completions'
-}) => {
-  const [messages, setMessages] = useState<Message[]>(loadSessionMessages);
-  const [input, setInput] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [commandHistory, setCommandHistory] = useState<string[]>(loadCommandHistory);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [selectedModel, setSelectedModel] = useState(modelName);
-  const [connectionStatus, setConnectionStatus] = useState<'ready' | 'streaming' | 'error'>('ready');
-  
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Auto-scroll to bottom when messages change
-  const messagesLength = messages.length;
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messagesLength]);
-
-  // Persist messages to session storage (survives closing/reopening Bifrost panel)
-  useEffect(() => {
-    try {
-      // Only save non-streaming messages
-      const toSave = messages.filter(m => !m.streaming);
-      sessionStorage.setItem(BIFROST_MESSAGES_KEY, JSON.stringify(toSave));
-    } catch (e) {
-      // Ignore storage errors
-    }
-  }, [messages]);
-
-  // Persist command history to session storage
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(BIFROST_COMMAND_HISTORY_KEY, JSON.stringify(commandHistory));
-    } catch (e) {
-      // Ignore storage errors
-    }
-  }, [commandHistory]);
-
-  // Focus input when opened
-  useEffect(() => {
-    if (isOpen && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [isOpen]);
-
-  // Check Heimdall status on open
-  useEffect(() => {
-    if (isOpen) {
-      checkStatus();
-    }
-    return () => {
-      // Cancel any ongoing stream when closing
-      abortControllerRef.current?.abort();
-    };
-  }, [isOpen]);
-
-  // NOTE: Heimdall notifications are now sent inline with streaming responses
-  // No separate EventSource needed - this simplifies the architecture and ensures
-  // proper ordering of notifications with chat content
-
-  const checkStatus = async () => {
-    try {
-      const res = await fetch('/api/bifrost/status');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.heimdall?.enabled) {
-          setConnectionStatus('ready');
-          setSelectedModel(data.model || modelName);
-        } else {
-          setConnectionStatus('error');
-          setMessages(prev => [...prev, {
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: '⚠️ AI Assistant is not enabled. Set NORNICDB_HEIMDALL_ENABLED=true to activate.',
-            timestamp: new Date()
-          }]);
-        }
-      }
-    } catch (err) {
-      setConnectionStatus('error');
-    }
-  };
-
-  const handleBuiltInCommand = (cmd: string): boolean => {
-    const command = cmd.toLowerCase().trim();
-    
-    if (command === '/help') {
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `Available commands:
-  /help     - Show this help message
-  /clear    - Clear chat history
-  /health   - Check database health
-  /stats    - Get graph statistics
-  /status   - Show connection status
-  /model    - Show current model`,
-        timestamp: new Date()
-      }]);
-      return true;
-    }
-    
-    if (command === '/clear') {
-      setMessages([{
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: '✓ Chat cleared',
-        timestamp: new Date()
-      }]);
-      return true;
-    }
-    
-    if (command === '/status') {
-      checkStatus();
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `Status: ${connectionStatus}\nModel: ${selectedModel}`,
-        timestamp: new Date()
-      }]);
-      return true;
-    }
-    
-    if (command === '/model') {
-      setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `Current model: ${selectedModel}`,
-        timestamp: new Date()
-      }]);
-      return true;
-    }
-    
-    return false;
-  };
-
-  // Send message using OpenAI-compatible SSE streaming
-  const sendMessage = useCallback(async () => {
-    if (!input.trim() || isStreaming) return;
-    
-    const trimmedInput = input.trim();
-    
-    // Check for built-in commands
-    if (trimmedInput.startsWith('/')) {
-      if (handleBuiltInCommand(trimmedInput)) {
-        setCommandHistory(prev => [...prev, trimmedInput]);
-        setHistoryIndex(-1);
-        setInput('');
-        return;
-      }
-    }
-    
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmedInput,
-      timestamp: new Date()
-    };
-    
-    // Add to history
-    setCommandHistory(prev => [...prev, trimmedInput]);
-    setHistoryIndex(-1);
-    
-    // Add user message
-    setMessages(prev => [...prev, userMessage]);
-    
-    // Add placeholder for assistant response
-    const assistantId = crypto.randomUUID();
-    const assistantMessage: Message = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-      streaming: true
-    };
-    setMessages(prev => [...prev, assistantMessage]);
-    
-    setInput('');
-    setIsStreaming(true);
-    setConnectionStatus('streaming');
-    
-    // Create abort controller for cancellation
-    abortControllerRef.current = new AbortController();
-    
-    try {
-      // Single-shot messaging: only send current user message, no context
-      // History is kept in UI for display purposes only
-      const response = await fetch(apiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: [{ role: 'user', content: trimmedInput }],
-          stream: true,
-          max_tokens: 512,
-          temperature: 0.1
-        }),
-        signal: abortControllerRef.current.signal
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      
-      if (!reader) {
-        throw new Error('No response body');
-      }
-      
-      let fullContent = '';
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            
-            if (data === '[DONE]') {
-              // Stream complete
-              setMessages(prev => prev.map(m => 
-                m.id === assistantId 
-                  ? { ...m, streaming: false, content: fullContent }
-                  : m
-              ));
-              break;
-            }
-            
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta;
-              
-              // Check if this is a Heimdall notification (inline with stream)
-              if (delta?.role === 'heimdall' && delta?.content) {
-                // Insert Heimdall message before the current assistant message
-                setMessages(prev => {
-                  const heimdallMsg: Message = {
-                    id: crypto.randomUUID(),
-                    role: 'heimdall',
-                    content: delta.content.trim(),
-                    timestamp: new Date()
-                  };
-                  // Find the streaming assistant message and insert before it
-                  const idx = prev.findIndex(m => m.id === assistantId);
-                  if (idx > 0) {
-                    return [...prev.slice(0, idx), heimdallMsg, ...prev.slice(idx)];
-                  }
-                  return [...prev, heimdallMsg];
-                });
-              } else if (delta?.content) {
-                // Regular assistant content
-                fullContent += delta.content;
-                setMessages(prev => prev.map(m => 
-                  m.id === assistantId 
-                    ? { ...m, content: fullContent }
-                    : m
-                ));
-              }
-            } catch (e) {
-              // Ignore parse errors for incomplete JSON
-            }
-          }
-        }
-      }
-      
-      setConnectionStatus('ready');
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        // User cancelled
-        setMessages(prev => prev.map(m => 
-          m.id === assistantId 
-            ? { ...m, streaming: false, content: m.content || '(cancelled)' }
-            : m
-        ));
-      } else {
-        setMessages(prev => [
-          ...prev.filter(m => m.id !== assistantId),
-          { 
-            id: crypto.randomUUID(), 
-            role: 'system', 
-            content: `❌ Error: ${err.message}`, 
-            timestamp: new Date() 
-          }
-        ]);
-        setConnectionStatus('error');
-      }
-    } finally {
-      setIsStreaming(false);
-      abortControllerRef.current = null;
-    }
-  }, [input, isStreaming, messages, apiEndpoint, selectedModel]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
-        const newIndex = historyIndex + 1;
-        setHistoryIndex(newIndex);
-        setInput(commandHistory[commandHistory.length - 1 - newIndex]);
-      }
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (historyIndex > 0) {
-        const newIndex = historyIndex - 1;
-        setHistoryIndex(newIndex);
-        setInput(commandHistory[commandHistory.length - 1 - newIndex]);
-      } else if (historyIndex === 0) {
-        setHistoryIndex(-1);
-        setInput('');
-      }
-    } else if (e.key === 'Escape') {
-      if (isStreaming) {
-        abortControllerRef.current?.abort();
-      } else {
-        onClose();
-      }
-    }
-  };
-
-  const formatTimestamp = (date: Date) => {
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    });
-  };
-
-  const getStatusColor = () => {
-    switch (connectionStatus) {
-      case 'ready': return 'ready';
-      case 'streaming': return 'streaming';
-      case 'error': return 'error';
-      default: return '';
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="bifrost-portal">
-      <div 
-        className="bifrost-overlay" 
-        onClick={onClose}
-        onKeyDown={(e) => e.key === 'Escape' && onClose()}
-        role="button"
-        tabIndex={0}
-        aria-label="Close AI Assistant"
-      />
-      
-      <div className="bifrost-container">
-        {/* Header */}
-        <div className="bifrost-header">
-          <div className="bifrost-title">
-            <svg className="bifrost-logo" viewBox="0 0 40 40" width="28" height="28">
-              {/* Heimdall - The Watchman */}
-              {/* Helmet silhouette */}
-              <path d="M 12 28 Q 10 20 12 14 Q 14 8 20 6 Q 26 8 28 14 Q 30 20 28 28 Q 25 31 20 32 Q 15 31 12 28"
-                    fill="var(--frost-ice)"/>
-              {/* Helmet crest */}
-              <path d="M 20 5 L 20 9"
-                    fill="none" stroke="var(--frost-ice)" strokeWidth="3" strokeLinecap="round"/>
-              {/* Helmet wings */}
-              <path d="M 10 13 Q 6 10 4 6"
-                    fill="none" stroke="var(--frost-ice)" strokeWidth="2" strokeLinecap="round"/>
-              <path d="M 30 13 Q 34 10 36 6"
-                    fill="none" stroke="var(--frost-ice)" strokeWidth="2" strokeLinecap="round"/>
-              {/* All-Seeing Eye */}
-              <ellipse cx="20" cy="18" rx="6" ry="4" fill="none" stroke="var(--valhalla-gold)" strokeWidth="1.5"/>
-              <circle cx="20" cy="18" r="3" fill="var(--valhalla-gold)"/>
-              <circle cx="20" cy="18" r="1.5" fill="var(--norse-night)"/>
-              {/* Sight rays */}
-              <line x1="27" y1="17" x2="32" y2="16" stroke="var(--valhalla-gold)" strokeWidth="1" opacity="0.6"/>
-              <line x1="13" y1="17" x2="8" y2="16" stroke="var(--valhalla-gold)" strokeWidth="1" opacity="0.6"/>
-              {/* Gjallarhorn */}
-              <path d="M 32 22 Q 35 19 36 14"
-                    fill="none" stroke="var(--frost-ice)" strokeWidth="2" strokeLinecap="round"/>
-              <circle cx="36" cy="14" r="1.5" fill="var(--valhalla-gold)"/>
-            </svg>
-            <span>AI Assistant</span>
-            <span className="bifrost-subtitle">NornicDB</span>
-            <div className={`bifrost-status ${getStatusColor()}`} />
-          </div>
-          <div className="bifrost-controls">
-            <span className="bifrost-model">{selectedModel}</span>
-            <button 
-              type="button"
-              className="bifrost-close" 
-              onClick={onClose}
-              title="Close (Esc)"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-        
-        {/* Messages */}
-        <div className="bifrost-messages" ref={scrollRef}>
-          {messages.map((message) => (
-            <div 
-              key={message.id} 
-              className={`bifrost-message bifrost-message-${message.role}`}
-            >
-              <div className="bifrost-message-header">
-                <span className="bifrost-message-role">
-                  {message.role === 'user' ? '>' : 
-                   message.role === 'assistant' ? '◈' : 
-                   message.role === 'heimdall' ? '⛊' : '⚙'}
-                </span>
-                <span className="bifrost-message-time">
-                  {formatTimestamp(message.timestamp)}
-                </span>
-              </div>
-              <div className="bifrost-message-content">
-                {(message.role === 'assistant' || message.role === 'heimdall' || message.role === 'system') ? (
-                  (() => {
-                    const segments = parseContentWithThinking(message.content || '');
-                    if (segments.length === 0) {
-                      return message.streaming ? <span className="bifrost-cursor">▊</span> : null;
-                    }
-                    return (
-                      <>
-                        {segments.map((seg, i) =>
-                          seg.type === 'thinking' ? (
-                            <CollapsibleThinkingBlock
-                              key={`${message.id}-thinking-${i}`}
-                              text={seg.text}
-                              streaming={message.streaming && i === segments.length - 1}
-                            />
-                          ) : (
-                            <div key={`${message.id}-content-${i}`} className="bifrost-markdown">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {stripLeadingThinkClose(seg.text)}
-                              </ReactMarkdown>
-                            </div>
-                          )
-                        )}
-                        {message.streaming && (segments.length === 0 || segments[segments.length - 1].type === 'content') && (
-                          <span className="bifrost-cursor">▊</span>
-                        )}
-                      </>
-                    );
-                  })()
-                ) : (
-                  message.content
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        
-        {/* Input */}
-        <div className="bifrost-input-container">
-          <span className="bifrost-prompt">{'>'}</span>
-          <textarea
-            ref={inputRef}
-            className="bifrost-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={isStreaming ? 'Processing...' : 'Ask about database operations...'}
-            disabled={isStreaming}
-            rows={1}
-          />
-          <button
-            className="bifrost-send"
-            onClick={sendMessage}
-            disabled={isStreaming || !input.trim()}
-            type="button"
-          >
-            {isStreaming ? '⏳' : '⏎'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export default Bifrost;

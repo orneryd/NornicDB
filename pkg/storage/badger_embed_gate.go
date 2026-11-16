@@ -1,8 +1,9 @@
 package storage
 
 type embeddingLabelPolicy struct {
-	include map[string]struct{}
-	exclude map[string]struct{}
+	disabled bool
+	include  map[string]struct{}
+	exclude  map[string]struct{}
 }
 
 type embeddingLabelPolicies map[string]embeddingLabelPolicy
@@ -20,19 +21,52 @@ func (b *BadgerEngine) SetEmbeddingLabelPolicy(namespace string, include, exclud
 	for _, label := range exclude {
 		policy.exclude[label] = struct{}{}
 	}
+	b.updateEmbeddingLabelPolicy(namespace, func(current embeddingLabelPolicy) embeddingLabelPolicy {
+		policy.disabled = current.disabled
+		return policy
+	})
+}
+
+// SetDatabaseEmbeddingsEnabled changes admission for one database without
+// deleting its existing vectors. Returns whether the setting changed.
+func (b *BadgerEngine) SetDatabaseEmbeddingsEnabled(namespace string, enabled bool) bool {
+	previous := b.updateEmbeddingLabelPolicy(namespace, func(policy embeddingLabelPolicy) embeddingLabelPolicy {
+		policy.disabled = !enabled
+		return policy
+	})
+	return previous.disabled == enabled
+}
+
+// updateEmbeddingLabelPolicy owns copy-on-write publication. A retry reapplies
+// only the caller's fields to the latest policy, preserving concurrent edits.
+func (b *BadgerEngine) updateEmbeddingLabelPolicy(namespace string, update func(embeddingLabelPolicy) embeddingLabelPolicy) embeddingLabelPolicy {
 	for {
 		old := b.embeddingLabelPolicies.Load()
 		updated := make(embeddingLabelPolicies)
 		if old != nil {
-			for name, existing := range *old {
-				updated[name] = existing
+			for name, policy := range *old {
+				updated[name] = policy
 			}
 		}
-		updated[namespace] = policy
+		previous := updated[namespace]
+		updated[namespace] = update(previous)
 		if b.embeddingLabelPolicies.CompareAndSwap(old, &updated) {
-			return
+			return previous
 		}
 	}
+}
+
+// IsDatabaseEmbeddingsEnabled reports per-database generation admission.
+func (b *BadgerEngine) IsDatabaseEmbeddingsEnabled(namespace string) bool {
+	policies := b.embeddingLabelPolicies.Load()
+	if policies == nil {
+		return true
+	}
+	policy, ok := (*policies)[namespace]
+	if !ok {
+		policy = (*policies)[""]
+	}
+	return !policy.disabled
 }
 
 func (b *BadgerEngine) embeddingLabelsAllowed(node *Node) bool {
@@ -46,6 +80,9 @@ func (b *BadgerEngine) embeddingLabelsAllowed(node *Node) bool {
 		if !ok {
 			return true
 		}
+	}
+	if policy.disabled {
+		return false
 	}
 	matched := len(policy.include) == 0
 	for _, label := range node.Labels {

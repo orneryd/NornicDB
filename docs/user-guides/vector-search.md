@@ -26,6 +26,23 @@ NornicDB provides vector search with:
 
 ---
 
+## Managed generation by database
+
+Open **Embeddings** in the browser to compare database generation settings. Each standard database has an immediate On/Off switch, name/status filters, and save feedback. Database administrators can change these settings without restarting. System databases are excluded; configure each constituent of a composite database separately.
+
+Turning generation off does not delete existing embeddings. Work already claimed may finish. Turning it on requests a background pending-index scan, including eligible records written while generation was off. Label inclusion/exclusion rules still apply. The server must have an enabled, configured embedding worker; a database switch does not start or configure the provider.
+
+The API uses the same setting. `PATCH` changes only submitted overrides and preserves other settings:
+
+```bash
+curl -X PATCH http://localhost:7474/admin/databases/mydb/config \
+  -u admin \
+  -H 'Content-Type: application/json' \
+  -d '{"overrides":{"db.nornic.embedding.enabled":"false"}}'
+```
+
+Enter the admin password when prompted. Use `"true"` to resume. `GET /admin/databases/mydb/config` reports the active value in `effective`. These settings persist across restarts. `PUT` retains its existing full-replacement semantics. Disabling generation does not disable vector search or change embedding-provider configuration.
+
 ## How Vector Search Works
 
 ### Two Types of Indexes

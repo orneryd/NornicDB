@@ -26,9 +26,10 @@ const (
 type HotReloadMode string
 
 const (
-	HotReloadNone          HotReloadMode = ""
-	HotReloadSearchRebuild HotReloadMode = "search-rebuild"
-	HotReloadSearchCache   HotReloadMode = "search-cache"
+	HotReloadNone              HotReloadMode = ""
+	HotReloadManagedEmbeddings HotReloadMode = "managed-embeddings"
+	HotReloadSearchRebuild     HotReloadMode = "search-rebuild"
+	HotReloadSearchCache       HotReloadMode = "search-cache"
 	// HotReloadTransactionMemory applies new transaction memory limits to
 	// the statements that start afterwards (#1343).
 	HotReloadTransactionMemory HotReloadMode = "transaction-memory"
@@ -53,7 +54,7 @@ type SettingDefinition struct {
 }
 
 var settingsRegistry = []SettingDefinition{
-	{Name: "db.nornic.embedding.enabled", EnvironmentVariable: "NORNICDB_EMBEDDING_ENABLED", Type: "boolean", Category: "Embeddings", Scope: ScopeDatabase, RestartLevel: RestartProcess},
+	{Name: "db.nornic.embedding.enabled", EnvironmentVariable: "NORNICDB_EMBEDDING_ENABLED", Type: "boolean", Category: "Embeddings", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadManagedEmbeddings},
 	{Name: "db.nornic.embedding.provider", EnvironmentVariable: "NORNICDB_EMBEDDING_PROVIDER", Type: "string", Category: "Embeddings", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
 	{Name: "db.nornic.embedding.model", EnvironmentVariable: "NORNICDB_EMBEDDING_MODEL", Type: "string", Category: "Embeddings", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},
 	{Name: "db.nornic.embedding.api.url", EnvironmentVariable: "NORNICDB_EMBEDDING_API_URL", Type: "string", Category: "Embeddings", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchRebuild},

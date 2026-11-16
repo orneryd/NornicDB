@@ -510,7 +510,7 @@ export function DatabaseAccess() {
         }
       />
 
-      <main className="max-w-5xl mx-auto p-6 space-y-8">
+      <main className="w-full min-w-0 mx-auto p-6 space-y-8">
         {error && (
           <Alert type="error" message={error} dismissible onDismiss={() => setError('')} />
         )}

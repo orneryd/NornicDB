@@ -3,7 +3,7 @@
 #
 # This image includes:
 # - BGE-M3 embedding model for vector search
-# - qwen3-0.6b-Instruct (Q4_K_M) for Heimdall (cognitive database guardian)
+# - Qwen3.5-0.8B (Q4_K_M) for Heimdall (cognitive database guardian)
 #
 # Build:
 #   docker build -f docker/Dockerfile.arm64-metal-heimdall -t timothyswt/nornicdb-arm64-metal-bge-heimdall .
@@ -80,7 +80,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget && rm -rf /var/lib/apt/lists/* && \
+    ca-certificates tzdata wget jq && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /data /app/models
 
 COPY --from=builder /build/nornicdb /app/
@@ -94,8 +94,10 @@ RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh
 # Prefer local models from the build context and fall back to downloads when absent.
 ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
 ARG BGE_RERANKER_URL=https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf
-ARG QWEN_MODEL_URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-RUN \
+COPY pkg/heimdall/default_model.json /app/models/default-heimdall.json
+ARG QWEN_MODEL_URL
+RUN QWEN_MODEL_NAME="$(jq -r .name /app/models/default-heimdall.json)" && \
+    QWEN_MODEL_URL="${QWEN_MODEL_URL:-$(jq -r .url /app/models/default-heimdall.json)}" && \
     echo "=== Embedding models for batteries-included deployment ===" && \
         if [ -f /tmp/local-models/bge-m3.gguf ]; then \
             cp /tmp/local-models/bge-m3.gguf /app/models/bge-m3.gguf && \
@@ -114,12 +116,12 @@ RUN \
             wget -q --show-progress -O /app/models/bge-reranker-v2-m3.gguf "$BGE_RERANKER_URL" && \
             echo "✓ Downloaded bge-reranker-v2-m3.gguf ($(du -h /app/models/bge-reranker-v2-m3.gguf | cut -f1))"; \
         fi && \
-        if [ -f /tmp/local-models/qwen3-0.6b-instruct.gguf ]; then \
-            cp /tmp/local-models/qwen3-0.6b-instruct.gguf /app/models/qwen3-0.6b-instruct.gguf && \
-            echo "✓ Using local qwen3-0.6b-instruct.gguf ($(du -h /app/models/qwen3-0.6b-instruct.gguf | cut -f1))"; \
+        if [ -f /tmp/local-models/${QWEN_MODEL_NAME}.gguf ]; then \
+            cp /tmp/local-models/${QWEN_MODEL_NAME}.gguf /app/models/${QWEN_MODEL_NAME}.gguf && \
+            echo "✓ Using local ${QWEN_MODEL_NAME}.gguf ($(du -h /app/models/${QWEN_MODEL_NAME}.gguf | cut -f1))"; \
         else \
-            wget -q --show-progress -O /app/models/qwen3-0.6b-instruct.gguf "$QWEN_MODEL_URL" && \
-            echo "✓ Downloaded qwen3-0.6b-instruct.gguf ($(du -h /app/models/qwen3-0.6b-instruct.gguf | cut -f1))"; \
+            wget -q --show-progress -O /app/models/${QWEN_MODEL_NAME}.gguf "$QWEN_MODEL_URL" && \
+            echo "✓ Downloaded ${QWEN_MODEL_NAME}.gguf ($(du -h /app/models/${QWEN_MODEL_NAME}.gguf | cut -f1))"; \
         fi && \
     echo "=== Model embedding complete ===" && \
     ls -lh /app/models/
@@ -147,7 +149,6 @@ ENV NORNICDB_DATA_DIR=/data \
     NORNICDB_SEARCH_RERANK_MODEL=bge-reranker-v2-m3.gguf \
     # Heimdall configuration (cognitive guardian)
     NORNICDB_HEIMDALL_ENABLED=true \
-    NORNICDB_HEIMDALL_MODEL=qwen3-0.6b-instruct \
     NORNICDB_HEIMDALL_GPU_LAYERS=-1 \
     NORNICDB_HEIMDALL_MAX_TOKENS=512 \
     NORNICDB_HEIMDALL_TEMPERATURE=0.1 \

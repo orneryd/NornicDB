@@ -73,7 +73,9 @@ type EmbedWorker struct {
 	inFlight  atomic.Int64
 	// restoreHolds counts the restores holding the worker (holdForRestore);
 	// while one does, it claims no nodes and doesn't scan the store.
-	restoreHolds atomic.Int32
+	restoreHolds         atomic.Int32
+	pendingScanRequested atomic.Bool
+	embeddingAdmission   atomic.Pointer[func(storage.NodeID) bool] // per-database generation gate
 
 	// Recently processed node IDs to prevent re-processing before DB commit is visible
 	// This prevents the same node being processed multiple times in quick succession
@@ -800,7 +802,8 @@ func (ew *EmbedWorker) worker(gen *lifecycle.WorkLifetime) {
 			// Run this once for the whole worker pool to avoid duplicate startup scans/logs.
 			ew.initialScanMu.Lock()
 			ew.mu.Lock()
-			doInitialScan := !ew.initialScanDone
+			requestedScan := ew.pendingScanRequested.Swap(false)
+			doInitialScan := !ew.initialScanDone || requestedScan
 			if doInitialScan {
 				ew.initialScanDone = true
 			}
@@ -891,6 +894,9 @@ func (ew *EmbedWorker) processUntilEmpty() embedBatchResult {
 		if ew.currentEmbedder() == nil {
 			ew.reconcileClusteringProgress(batchProcessed, false)
 			return embedBatchIdle
+		}
+		if !ew.embeddingPaused() && ew.pendingScanRequested.Swap(false) {
+			ew.refreshEmbeddingIndexIfDue(true)
 		}
 		select {
 		case <-ew.ctx.Done():

@@ -2157,7 +2157,7 @@ func TestHeimdallCoverage_LoadLocalGeneratorDefaultDiscovery(t *testing.T) {
 	tmpDir := t.TempDir()
 	modelsDir := filepath.Join(tmpDir, "models")
 	require.NoError(t, os.MkdirAll(modelsDir, 0o755))
-	modelPath := filepath.Join(modelsDir, "qwen3-0.6b-instruct.gguf")
+	modelPath := filepath.Join(modelsDir, DefaultLocalModel()+".gguf")
 	require.NoError(t, os.WriteFile(modelPath, []byte("model"), 0o600))
 	t.Chdir(tmpDir)
 
@@ -2176,7 +2176,7 @@ func TestHeimdallCoverage_LoadLocalGeneratorDefaultDiscovery(t *testing.T) {
 
 	gen, resolvedPath, err := loadLocalGenerator(Config{GPULayers: 5, ContextSize: 4096, BatchSize: 1024})
 	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(resolvedPath, "qwen3-0.6b-instruct.gguf"))
+	require.True(t, strings.HasSuffix(resolvedPath, DefaultLocalModel()+".gguf"))
 	require.Equal(t, resolvedPath, capturedModelPath)
 	require.Equal(t, 5, capturedGPULayers)
 	require.Equal(t, 4096, capturedContextSize)

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   createBrowserRouter,
   RouterProvider,
@@ -24,7 +24,7 @@ import {Demos} from './pages/Demos';
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BASE_PATH } from "./utils/basePath";
 import { AppNavigation } from "./components/common/AppNavigation";
-import {UrlStateProvider} from './utils/useUrlState';
+import {useUrlState,UrlStateProvider} from './utils/useUrlState';
 import {DemoSeedProvider} from './components/common/DemoSeed';
 
 // /demo pulls in three.js + 3d-force-graph; lazy so the main bundle stays lean.
@@ -56,13 +56,23 @@ function TrailingSlashCanonicalizer() {
   return null;
 }
 
+const Assistant = lazy(()=>import('../Bifrost').then(module=>({default:module.Bifrost})));
+function AssistantRoot({onActivityChange}:{onActivityChange:(count:number)=>void}) {
+ const {params,patch}=useUrlState();const location=useLocation();
+ const open=params.get('assistant')==='open'&&location.pathname.replace(/\/$/,'')!=='/login';
+ const [activated,setActivated]=useState(false);
+ useEffect(()=>{if(open)setActivated(true);if(location.pathname.replace(/\/$/,'')==='/login'){setActivated(false);onActivityChange(0);}},[open,location.pathname,onActivityChange]);
+ return activated?<Suspense fallback={null}><Assistant isOpen={open} onClose={()=>patch({assistant:null})} onActivityChange={onActivityChange}/></Suspense>:null;
+}
+
 function AppContent() {
+  const [assistantRunning,setAssistantRunning]=useState(0);
   return (
       <UrlStateProvider>
       <DemoSeedProvider>
       <TrailingSlashCanonicalizer />
       <div className="application-shell">
-      <AppNavigation />
+      <AppNavigation assistantRunning={assistantRunning} />
       <div id="workspace" className="min-w-0 flex-1" tabIndex={-1}>
       <Suspense fallback={<p role="status" className="p-6 text-norse-silver">Loading demo…</p>}>
       <Routes>
@@ -203,6 +213,7 @@ function AppContent() {
       </Suspense>
       </div>
       </div>
+      <AssistantRoot onActivityChange={setAssistantRunning}/>
       </DemoSeedProvider>
       </UrlStateProvider>
   );

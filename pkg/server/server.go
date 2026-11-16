@@ -1797,6 +1797,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 					continue
 				}
 				resolved := dbconfig.Resolve(globalConfig, dbConfigStore.GetOverrides(info.Name))
+				db.SetDatabaseEmbeddingsEnabled(info.Name, resolved.Effective["db.nornic.embedding.enabled"] == "true")
 				db.SetEmbeddingLabelPolicy(info.Name,
 					parseEmbeddingLabelList(resolved.Effective["db.nornic.embedding.labels.include"]),
 					parseEmbeddingLabelList(resolved.Effective["db.nornic.embedding.labels.exclude"]))
