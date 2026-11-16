@@ -648,14 +648,7 @@ func EstimateTokens(text string) int {
 // ActionPrompt is ALWAYS first and immutable.
 // Falls back to minimal prompt if full prompt exceeds budget.
 func (p *PromptContext) BuildFinalPrompt() string {
-	if p.ConversationID != "" {
-		return p.buildConversationSystemPrompt(false)
-	}
-	fullPrompt := p.buildFullPrompt()
-	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens() {
-		return fullPrompt
-	}
-	return p.buildMinimalPrompt()
+	return p.buildFinalPrompt(false)
 }
 
 // BuildFinalPromptForTools constructs the system prompt when the provider uses native tool calling.
@@ -663,10 +656,21 @@ func (p *PromptContext) BuildFinalPrompt() string {
 // the context contains the answer; use tools only when an action is needed. Plugins inject context
 // via AdditionalInstructions (e.g. order status); the model should use it and reply in plain text.
 func (p *PromptContext) BuildFinalPromptForTools() string {
+	return p.buildFinalPrompt(true)
+}
+
+// buildFinalPrompt owns conversation dispatch and the stateless prompt budget.
+// Provider-specific builders retain their different action contracts.
+func (p *PromptContext) buildFinalPrompt(nativeTools bool) string {
 	if p.ConversationID != "" {
-		return p.buildConversationSystemPrompt(true)
+		return p.buildConversationSystemPrompt(nativeTools)
 	}
-	fullPrompt := p.buildFullPromptForTools()
+	var fullPrompt string
+	if nativeTools {
+		fullPrompt = p.buildFullPromptForTools()
+	} else {
+		fullPrompt = p.buildFullPrompt()
+	}
 	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens() {
 		return fullPrompt
 	}
@@ -714,19 +718,7 @@ IMPORTANT: Prefer a direct answer when context has the information. Always compl
 `)
 
 	// === MUTABLE SECTION (from plugins) ===
-	if p.AdditionalInstructions != "" {
-		sb.WriteString("ADDITIONAL CONTEXT:\n")
-		sb.WriteString(p.AdditionalInstructions)
-		sb.WriteString("\n\n")
-	}
-
-	// === EXAMPLES ===
-	if len(p.Examples) > 0 {
-		sb.WriteString("EXAMPLES:\n")
-		for _, ex := range p.Examples {
-			sb.WriteString(fmt.Sprintf("User: \"%s\"\n→ %s\n\n", ex.UserSays, ex.ActionJSON))
-		}
-	}
+	p.appendPromptContext(&sb)
 
 	// === FINAL INSTRUCTION (strict for small models: one line only, no thinking) ===
 	sb.WriteString("If ADDITIONAL CONTEXT above answers the question: reply with one short sentence only. Do not call any action.\n")
@@ -792,6 +784,15 @@ Your role is to help users by answering from context or by using tools when an a
 
 `)
 
+	p.appendPromptContext(&sb)
+
+	sb.WriteString("Reply with natural language when you can answer from context; otherwise use the appropriate tool.\n")
+
+	return sb.String()
+}
+
+// appendPromptContext serializes plugin context and examples in both provider modes.
+func (p *PromptContext) appendPromptContext(sb *strings.Builder) {
 	if p.AdditionalInstructions != "" {
 		sb.WriteString("ADDITIONAL CONTEXT:\n")
 		sb.WriteString(p.AdditionalInstructions)
@@ -805,9 +806,6 @@ Your role is to help users by answering from context or by using tools when an a
 		}
 	}
 
-	sb.WriteString("Reply with natural language when you can answer from context; otherwise use the appropriate tool.\n")
-
-	return sb.String()
 }
 
 // buildMinimalPrompt creates a minimal fallback prompt when full prompt is too large.
