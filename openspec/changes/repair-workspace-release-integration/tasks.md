@@ -14,6 +14,7 @@
 - [x] Migrate workspace JSON reads/writes to canonical domains and test exact envelope/persisted bytes.
 - [x] Give the embedded model manifest one named canonical JSON reader; preserve startup failure behavior.
 - [x] Independently test resolver defaults/live visibility and protected stream-span boundaries.
-- [ ] Apply pending approved exact numeric-domain records and two pinned byte/oracle boundaries.
-- [ ] Apply pending approved endpoint-owner fingerprints and exact non-egress records.
-- [ ] Re-run pure audits/rejection controls and exact-head CI on the complete source.
+- [x] Apply approved exact numeric-domain records and two pinned byte/oracle boundaries; numeric mutation/rejection controls pass.
+- [x] Apply approved endpoint-owner fingerprints and exact non-egress records; missing/stale-entry rejection controls pass.
+- [ ] Apply the six derived lexical records after approval and re-run the lexical guard.
+- [ ] Run exact-head CI on the complete source; retain the prior failure record.
