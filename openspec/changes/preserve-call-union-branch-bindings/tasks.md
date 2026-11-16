@@ -8,6 +8,6 @@
 - [x] Pass affected CALL/UNION scope race checks, public Execute/Bolt/HTTP auto/explicit matrix, and transaction-parameter controls.
 - [x] Independent source review; retire the unused branch-local classifier and its two helper-only assertions.
 - [x] Apply approved exact inventory retirement; missing-entry and false-owner controls reject; restored source passes.
-- [ ] Fresh focused compilation after dead-code retirement; affected-package vet.
+- [x] Fresh focused compilation after dead-code retirement; affected-package vet.
 - [ ] Paired affected-CALL allocation/timing sample with no other local tests running.
 - [ ] Exact-head CI, duplicate dispositions, PR/Linear evidence and readiness cleanup.

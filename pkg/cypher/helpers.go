@@ -55,7 +55,8 @@ func containsOutsideStrings(s, substr string) bool {
 // It uses the same lexical walk as symbol lookup, including when normalization
 // is disabled, so admission does not add a second pass over ordinary statements.
 func inspectOutsideStrings(s, substr string) (bool, int) {
-	return cyphertext.FindOutside(s, substr)
+	index, bad := cyphertext.FindOutside(s, substr)
+	return index >= 0, bad
 }
 
 // ========================================

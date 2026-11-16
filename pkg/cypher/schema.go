@@ -593,8 +593,9 @@ func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok boo
 		return schemaPatternTarget{}, false
 	}
 
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
+	// A bracket within a quoted label belongs to that name, not an edge.
+	bracketStart, _ := cyphertext.FindOutside(forClause, "[")
+	if bracketStart >= 0 {
 		inside, rest, bracketed := extractBracketSection(forClause[bracketStart:])
 		if !bracketed {
 			return schemaPatternTarget{}, false
@@ -650,7 +651,7 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 	target, ok := parseForPatternTarget(forClause)
 	if !ok {
 		clause := "node FOR"
-		if strings.Contains(forClause, "[") {
+		if found, _ := inspectOutsideStrings(forClause, "["); found {
 			clause = "relationship FOR"
 		}
 		return "", "", false, localizedError(localization.CypherSchemaInvalidClause(clause), nil)

@@ -23,11 +23,11 @@ func GapEnd(text string, index int) (int, int) {
 	return index, -1
 }
 
-// FindOutside searches outside quoted and comment spans, retaining lexical
-// comment failure rather than silently discarding malformed source.
-func FindOutside(text, needle string) (bool, int) {
+// FindOutside returns the first match index outside quoted and comment spans,
+// or -1, plus the unfinished-comment index or -1. It retains lexical failures.
+func FindOutside(text, needle string) (int, int) {
 	if needle == "" {
-		return false, -1
+		return -1, -1
 	}
 	for index := 0; index < len(text); {
 		if IsQuote(text[index]) {
@@ -37,17 +37,17 @@ func FindOutside(text, needle string) (bool, int) {
 		}
 		if end, closed := CommentEndStatus(text, index); end >= 0 {
 			if !closed {
-				return false, index
+				return -1, index
 			}
 			index = end
 			continue
 		}
 		if strings.HasPrefix(text[index:], needle) {
-			return true, -1
+			return index, -1
 		}
 		index++
 	}
-	return false, -1
+	return -1, -1
 }
 
 // CommentReplacement projects a consumed comment without changing line breaks.

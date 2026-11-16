@@ -712,6 +712,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
+	// The map and projection boundary is read before anything rewrites a pattern
+	// property map into WHERE predicates: {key: value,} is a syntax error on
+	// every route, including one whose MATCH never produces a row.
+	if err := validateStaticMapKeys(ctx, cypher); err != nil {
+		return nil, err
+	}
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates the local evaluator reads. Route source Cypher first: remote
 	// evaluators do not implement our internal functions. The result's columns and

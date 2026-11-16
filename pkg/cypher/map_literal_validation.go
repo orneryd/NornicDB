@@ -8,7 +8,10 @@ import (
 
 // validateStaticMapKeys rejects malformed symbolic map keys before either
 // parser frontend or executor can normalize them. Braces without a top-level
-// key/value separator are ignored because they may delimit a subquery.
+// key/value separator are ignored because they may delimit a subquery. It is
+// also the one owner of the map literal / map projection boundary: a brace a
+// variable precedes is a projection, whose entries include a bare variable
+// selector, and an empty entry is malformed in either shape.
 func validateStaticMapKeys(ctx context.Context, query string) error {
 	upper := upperASCII(strings.TrimSpace(query))
 	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(ctx, query, "OPTIONS") >= 0 {
@@ -17,6 +20,37 @@ func validateStaticMapKeys(ctx context.Context, query string) error {
 	if strings.HasPrefix(upper, "CREATE CONSTRAINT") &&
 		findKeywordIndex(ctx, query, "REQUIRE") >= 0 {
 		return nil
+	}
+	// braceAfterVariable reports whether the brace at braceIndex immediately
+	// follows a variable reference: the boundary between a map literal and a
+	// map projection. The predecessor is the shared lexical owner's last live
+	// token, so a comment gap (n /*c*/ {…}) still follows its variable, while a
+	// clause keyword (RETURN {…}) or a property qualifier (a.b{…}) introduces a
+	// literal.
+	braceAfterVariable := func(braceIndex int) bool {
+		end, quotedStart := expressionPredecessor(query, braceIndex)
+		if end < 0 {
+			return false
+		}
+		start := end
+		switch {
+		case quotedStart >= 0 && isCypherBacktickByte(query[quotedStart]):
+			// An escaped variable name is one reference (`a b`{.k}).
+			start = quotedStart
+		case cyphertext.NamePartAt(query, end):
+			for start > 0 && cyphertext.NamePartAt(query, start-1) {
+				start--
+			}
+			name := query[start : end+1]
+			if !cyphertext.IsIdentifier(name) || isCypherKeyword(name) {
+				return false
+			}
+		default:
+			return false
+		}
+		// A qualified name is a property access, not the projected variable.
+		before, _ := expressionPredecessor(query, start)
+		return !isPropertyDotAt(query, before)
 	}
 	var patternContext *mapPatternContext
 	// Carry the predecessor through this lexical pass. Re-reading from byte
@@ -66,15 +100,26 @@ func validateStaticMapKeys(ctx context.Context, query string) error {
 		}
 		parts := splitTopLevelCommaKeepEmpty(query[index+1 : close])
 		mapLiteral := false
-		projection := false
 		for _, part := range parts {
 			if findTopLevelMapKeyValueSeparator(part) >= 0 {
 				mapLiteral = true
 			}
-			_, selector := mapProjectionPropertySelector(strings.TrimSpace(part))
-			projection = projection || selector || strings.TrimSpace(part) == ".*"
 		}
-		if mapLiteral || projection {
+		// A map projection (variable{…}) is the boundary that admits a bare
+		// variable selector (n{.*, score}); a pattern's property map is a
+		// literal even after its variable.
+		projection := braceAfterVariable(index)
+		if projection {
+			if patternContext == nil {
+				patternContext = newMapPatternContext(query)
+			}
+			projection = !patternContext.insidePatternDelimiter(ctx, query, index) || inProjectionClause(ctx, query, index)
+		}
+		// An empty entry is malformed in every entry list: a map literal ({,},
+		// {a: 1,}), a map projection (n{,}) and a comma-only body alike, so it is
+		// rejected before any reader folds the entries. A quantifier's {m,} is
+		// not an entry list; it holds a bound.
+		if mapLiteral || projection || commaOnlyEntryList(parts) {
 			for _, part := range parts {
 				if strings.TrimSpace(part) == "" {
 					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "map entries cannot be empty")
@@ -97,19 +142,32 @@ func validateStaticMapKeys(ctx context.Context, query string) error {
 			}
 			continue
 		}
+		// A bare name is a map projection's variable selector (n{.*, score,
+		// active: true}); a map literal's entries are all key-value pairs.
 		for _, part := range parts {
 			trimmedPart := strings.TrimSpace(part)
 			if _, selector := mapProjectionPropertySelector(trimmedPart); trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && selector) {
 				continue
 			}
 			separator := findTopLevelMapKeyValueSeparator(part)
-			if separator <= 0 || !validMapLiteralKey(strings.TrimSpace(part[:separator])) {
-				return newSemanticError(
-					"Neo.ClientError.Statement.SyntaxError",
-					"UnexpectedSyntax",
-					"map literal keys must be valid symbolic names",
-				)
+			if separator > 0 {
+				if !validMapLiteralKey(strings.TrimSpace(part[:separator])) {
+					return newSemanticError(
+						"Neo.ClientError.Statement.SyntaxError",
+						"UnexpectedSyntax",
+						"map literal keys must be valid symbolic names",
+					)
+				}
+				continue
 			}
+			if projection && (cyphertext.IsIdentifier(trimmedPart) || isBacktickQuotedName(trimmedPart)) {
+				continue
+			}
+			return newSemanticError(
+				"Neo.ClientError.Statement.SyntaxError",
+				"UnexpectedSyntax",
+				"map literal keys must be valid symbolic names",
+			)
 		}
 	}
 	return nil
@@ -266,6 +324,21 @@ func inProjectionClause(ctx context.Context, query string, position int) bool {
 		return true
 	}
 	return false
+}
+
+// commaOnlyEntryList reports whether a brace group's body holds only top-level
+// commas: every entry is empty. Such a body is no quantifier bound and no map
+// or projection entry list.
+func commaOnlyEntryList(parts []string) bool {
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validMapLiteralKey(key string) bool {

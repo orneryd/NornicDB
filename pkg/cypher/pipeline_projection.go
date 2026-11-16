@@ -654,16 +654,15 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	// An aggregate is a function call: without a parenthesis there is none.
-	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
+	// An aggregate is one whole function call, and its name is the canonical
+	// callable reader's: an escaped name (`count`(x)) is the same call as
+	// count(x). Without a parenthesis there is none.
+	var facts functionCallFacts
+	if !inspectFunctionCall(expr, qualifiedFunctionCall, "", &facts) || !aggregateCallName(facts.name) {
 		return "", "", false, false
 	}
-	open := strings.Index(expr, "(")
-	if open < 0 {
-		return "", "", false, false
-	}
-	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
+	name = lowerASCII(facts.name)
+	inner = strings.TrimSpace(facts.inner)
 	argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
 	inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
 	distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier

@@ -119,6 +119,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce Bolt read requests across transaction statements and dynamically executed queries while allowing nested reads and EXPLAIN.
+- Preserve quoted property chains, quoted schema names and mixed map-projection selectors; reject malformed maps before execution rewrites.
+- Report MVCC lifecycle startup as enabled only when retention actually enables it.
+
 - Historical WAL upgrades stage every converted file before publishing their
   recovery backup. Failed preparation leaves source files unchanged and cleans
   its staging directories; interrupted publication still resumes from backup.
