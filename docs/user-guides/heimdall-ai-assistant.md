@@ -298,6 +298,15 @@ The `model` field is accepted but ignored — Heimdall always uses the configure
 
 **Tool calling** is supported. When Heimdall's backend supports native tool calling (OpenAI, Ollama), the response may include `tool_calls` in the assistant message. You can pass `tools` in the request body using the standard OpenAI tool definition format.
 
+Heimdall chooses its internal tool path automatically from the configured backend
+adapter. If the adapter implements native tool calling and tools are available, it
+uses that API. Otherwise, it asks the text generator to emit a JSON action envelope.
+You do not select this internal mode in the chat request.
+
+The capability check does not probe the selected model. A backend adapter advertising
+tool support still requires a compatible model; if that model rejects a native-tool
+request, Heimdall reports the error rather than retrying in JSON-action mode.
+
 ### curl Examples
 
 ```bash

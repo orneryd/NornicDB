@@ -1,14 +1,15 @@
 package heimdall
 
 import (
-	"encoding/json"
 	"fmt"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 func (l *requestLifecycle) updateContextUsage(tokens, reservedOutput int) error {
 	l.contextTokens = tokens
 	if l.StreamWriter != nil {
-		data, _ := json.Marshal(map[string]interface{}{"input_tokens_estimated": tokens, "context_window": l.contextLimit, "reserved_output_tokens": reservedOutput, "estimated": true})
+		data, _ := valueconvert.PropertyJSON.Marshal(map[string]interface{}{"input_tokens_estimated": tokens, "context_window": l.contextLimit, "reserved_output_tokens": reservedOutput, "estimated": true})
 		fmt.Fprintf(l.StreamWriter, "event: nornic.usage\ndata: %s\n\n", data)
 		l.StreamFlusher.Flush()
 	}

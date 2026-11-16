@@ -2,13 +2,13 @@ package heimdall
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	guardian "github.com/orneryd/nornicdb/pkg/heimdall"
 )
 
@@ -44,7 +44,7 @@ func (p *WatcherPlugin) OpenTurn(ctx context.Context, conversationID, messageID,
 	if _, _, err := attachmentReferences(ctx, host, conversationID, ids, &checkBudget); err != nil {
 		return nil, err
 	}
-	encodedIDs, err := json.Marshal(ids)
+	encodedIDs, err := convert.PropertyJSON.Marshal(ids)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func (p *WatcherPlugin) OpenTurn(ctx context.Context, conversationID, messageID,
 	}
 	turn := &guardian.ConversationTurn{Messages: messages, Database: database, Release: release}
 	turn.Complete = func(saveCtx context.Context, reply guardian.ConversationReply) error {
-		tools, err := json.Marshal(reply.Tools)
+		tools, err := convert.PropertyJSON.Marshal(reply.Tools)
 		if err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ func (p *WatcherPlugin) privateConversationPrompt(ctx *guardian.PromptContext) e
 		for _, statement := range []string{"CALL db.labels() YIELD label RETURN label LIMIT 40", "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType LIMIT 40", "CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey LIMIT 60"} {
 			rows, err := database.Query(schemaCtx, ctx.SourceDatabase, statement, nil)
 			if err == nil {
-				encoded, _ := json.Marshal(rows)
+				encoded, _ := convert.PropertyJSON.Marshal(rows)
 				ctx.AdditionalInstructions += "\nSchema metadata (bounded): " + string(encoded)
 			}
 		}

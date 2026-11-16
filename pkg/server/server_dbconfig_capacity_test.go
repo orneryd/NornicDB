@@ -81,6 +81,9 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	before, authenticator, database := openPersistentDBConfigTestServer(t, dataDir)
 	require.NoError(t, before.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "images"}))
+	// Managed generation admission is per-database and inherits the process
+	// embedding setting, which this fixture leaves disabled. Enable it for both
+	// databases under test so the persisted label policy is the only gate.
 	token := getAuthToken(t, authenticator, "admin")
 	for _, testCase := range []struct {
 		name, include, exclude string
@@ -90,6 +93,7 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	} {
 		response := makeRequest(t, before, http.MethodPut, "/admin/databases/"+testCase.name+"/config",
 			map[string]any{"overrides": map[string]string{
+				"db.nornic.embedding.enabled":        "true",
 				"db.nornic.embedding.labels.include": testCase.include,
 				"db.nornic.embedding.labels.exclude": testCase.exclude,
 			}}, "Bearer "+token)

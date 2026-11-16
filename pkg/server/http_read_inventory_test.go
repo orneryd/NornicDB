@@ -34,6 +34,7 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 /mcp/{database} /mcp/{database}/initialize /mcp/{database}/tools/list /mcp/{database}/tools/call
 /graphql /graphql/playground
 /api/bifrost/status /api/bifrost/chat/completions /api/bifrost/autocomplete /api/bifrost/events
+/api/bifrost/workspace /api/bifrost/conversations /api/bifrost/conversations/
 /v1/models /v1/chat/completions
 `)
 	disposition := map[string]string{}
@@ -43,6 +44,9 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 	for _, path := range protocols {
 		disposition[path] = "delegated public MCP / GraphQL / Heimdall inventories"
 	}
+	// Private workspace and conversation routes are exercised by the public
+	// assistant workspace, attachment and compaction transport tests. They are
+	// application readers owned by the Heimdall protocol, not metadata exemptions.
 	for _, tc := range rule73HTTPInventory() {
 		path := strings.SplitN(tc.path("{database}"), "?", 2)[0]
 		disposition[path] = "public HTTP admission/population regression"

@@ -669,5 +669,125 @@
     "calls": {
       "property.NewEncoder": 1
     }
+  },
+  "pkg/heimdall/conversation_handler.go:Handler.handleConversationTurn": {
+    "write_domain": "property",
+    "contract": "Successful/error conversation HTTP and SSE envelopes; strings and typed control fields retain their prior bytes.",
+    "calls": {
+      "property.Marshal": 2,
+      "property.NewEncoder": 3
+    }
+  },
+  "pkg/heimdall/conversation_stream.go:Handler.generateConversationRound": {
+    "write_domain": "property",
+    "contract": "Typed content/reasoning SSE result documents; framing and flush remain transport-owned.",
+    "calls": {
+      "property.Marshal": 2
+    }
+  },
+  "pkg/heimdall/conversation_tools.go:requestLifecycle.publishTool": {
+    "write_domain": "property",
+    "contract": "Tool-event document with typed controls and pre-encoded opaque input/result fragments; raw fragments retain their existing bytes.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/heimdall/conversation_usage.go:requestLifecycle.updateContextUsage": {
+    "write_domain": "property",
+    "contract": "Existing token-budget estimates serialized as a result event with integer and boolean fields.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "pkg/heimdall/default_model.go:loadLocalModelDefaults": {
+    "read_domain": "property",
+    "contract": "Decode the embedded deployment manifest into typed model defaults; preserve invalid-manifest startup failure and unchanged default values.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleChatCompletions": {
+    "read_domain": "input",
+    "contract": "External chat request body; typed numeric controls retain their current decoding/error behavior and dynamic values use the canonical external-input policy.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleNonStreamingResponse": {
+    "write_domain": "property",
+    "contract": "Typed chat completion and pass-through tool-call result envelopes; existing exact-byte controls cover public responses.",
+    "calls": {
+      "property.NewEncoder": 2
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleStatus": {
+    "write_domain": "property",
+    "contract": "Runtime status result with typed model/time/counter/capability values.",
+    "calls": {
+      "property.NewEncoder": 1
+    }
+  },
+  "pkg/heimdall/handler.go:Handler.handleStreamingWithTools": {
+    "write_domain": "property",
+    "contract": "Typed streaming error/final/finish result documents; SSE framing remains unchanged.",
+    "calls": {
+      "property.Marshal": 3
+    }
+  },
+  "pkg/server/server_assistant_api.go:Server.handleAssistantConversations": {
+    "read_domain": "input",
+    "contract": "External create/update conversation request bodies; operation routing and per-owner authorization remain separate.",
+    "calls": {
+      "input.NewDecoder": 2
+    }
+  },
+  "pkg/server/server_assistant_api.go:Server.handleAssistantWorkspace": {
+    "read_domain": "input",
+    "contract": "External workspace request; typed database-name input with the existing malformed/type-error contract.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "pkg/server/server_dbconfig.go:Server.handleDbConfig": {
+    "read_domain": "input",
+    "contract": "External database configuration request; string override values retain their existing validation and persistence semantics.",
+    "calls": {
+      "input.NewDecoder": 1
+    }
+  },
+  "plugins/heimdall/conversation_compaction.go:WatcherPlugin.compactConversation": {
+    "write_domain": "property",
+    "contract": "Existing stored message rows rendered into model context; no persisted document is rewritten.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "plugins/heimdall/conversation_compaction.go:loadConversationContext": {
+    "read_domain": "property",
+    "contract": "Read existing persisted attachment-ID document strings into typed string lists; old documents remain readable without migration.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
+  },
+  "plugins/heimdall/conversation_turn.go:WatcherPlugin.OpenTurn": {
+    "write_domain": "property",
+    "contract": "Persist typed attachment-ID and tool-call document strings with prior standard-JSON bytes, including opaque raw tool payloads.",
+    "calls": {
+      "property.Marshal": 2
+    }
+  },
+  "plugins/heimdall/conversation_turn.go:WatcherPlugin.privateConversationPrompt": {
+    "write_domain": "property",
+    "contract": "Existing schema result values rendered into model context, not a new request parser or stored-format owner.",
+    "calls": {
+      "property.Marshal": 1
+    }
+  },
+  "plugins/heimdall/conversations.go:WatcherPlugin.Conversation": {
+    "read_domain": "property",
+    "contract": "Read existing persisted attachment-ID document strings through the property owner into typed lists.",
+    "calls": {
+      "property.Unmarshal": 1
+    }
   }
 }

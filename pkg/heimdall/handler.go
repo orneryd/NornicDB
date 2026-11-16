@@ -302,15 +302,15 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":               "ok",
-		"model":                h.announcedModel(),
-		"context_window":       h.config.ContextSize,
-		"max_output_tokens":    h.config.MaxTokens,
-		"context_source":       "configured runtime limit",
-		"max_attachment_bytes": MaxConversationAttachmentBytes,
-		"image_input":          false,
-		"conversation_compaction":true,
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
+		"status":                  "ok",
+		"model":                   h.announcedModel(),
+		"context_window":          h.config.ContextSize,
+		"max_output_tokens":       h.config.MaxTokens,
+		"context_source":          "configured runtime limit",
+		"max_attachment_bytes":    MaxConversationAttachmentBytes,
+		"image_input":             false,
+		"conversation_compaction": true,
 		"heimdall": map[string]interface{}{
 			"enabled": h.config.Enabled,
 			"stats":   stats,
@@ -698,7 +698,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeLocalizedError(w, r, localization.HeimdallInvalidRequestBody(), http.StatusBadRequest)
 		return
 	}
@@ -746,8 +746,16 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// === Phase 2: Build final prompt ===
-	// ActionPrompt is always at the start (immutable)
-	systemContent := promptCtx.BuildFinalPrompt()
+	// ActionPrompt is always at the start (immutable).
+	// The response contract is chosen before building, and the built prompt is handed to
+	// the generation path below rather than rebuilding it in each response adapter.
+	mode := h.promptModeForProvider()
+	if mode == PromptModeNativeTools && !req.Stream && len(ActionsAsMCPTools()) == 0 {
+		// Without registered actions a non-streaming request runs prompt-based rounds,
+		// so it keeps the JSON action contract.
+		mode = PromptModeJSONAction
+	}
+	systemContent := promptCtx.BuildFinalPrompt(mode)
 	systemMsg := ChatMessage{Role: "system", Content: systemContent}
 
 	// Validate token budget before proceeding
@@ -803,12 +811,12 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 
 	if req.Stream {
 		if h.manager.SupportsTools() {
-			h.handleStreamingWithTools(w, ctx, prompt, params, req.Model, lifecycleCtx)
+			h.handleStreamingWithTools(w, ctx, systemContent, params, req.Model, lifecycleCtx)
 		} else {
 			h.handleStreamingResponse(w, ctx, prompt, params, req.Model, lifecycleCtx)
 		}
 	} else {
-		h.handleNonStreamingResponse(w, ctx, prompt, params, req.Model, lifecycleCtx)
+		h.handleNonStreamingResponse(w, ctx, systemContent, params, req.Model, lifecycleCtx)
 	}
 }
 
@@ -1179,13 +1187,20 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 	return lastResponse, nil
 }
 
+// promptModeForProvider selects the response contract for the active generator.
+// Providers without native tool calling always receive the JSON action contract.
+func (h *Handler) promptModeForProvider() PromptMode {
+	if h.manager.SupportsTools() {
+		return PromptModeNativeTools
+	}
+	return PromptModeJSONAction
+}
+
 // handleNonStreamingResponse generates complete response with lifecycle hooks.
 // Uses agentic loop for any provider: execute actions, feed results back, LLM infers and formats final response.
-func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.Context, prompt string, params GenerateParams, model string, lifecycle *requestLifecycle) {
-	systemPrompt := lifecycle.promptCtx.BuildFinalPrompt()
-	if h.manager.SupportsTools() && len(ActionsAsMCPTools()) > 0 {
-		systemPrompt = lifecycle.promptCtx.BuildFinalPromptForTools()
-	}
+// systemPrompt is already built for this request's PromptMode, so the mode decision and
+// the single prompt build stay with the caller.
+func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.Context, systemPrompt string, params GenerateParams, model string, lifecycle *requestLifecycle) {
 	finalResponse, err := h.runAgenticLoop(ctx, lifecycle, systemPrompt, lifecycle.promptCtx.UserMessage, params)
 	if err != nil {
 		h.writeLocalizedContextError(w, ctx, localization.HeimdallGenerationFailed(err), http.StatusInternalServerError)
@@ -1210,7 +1225,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 					}},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 				return
 			}
 		}
@@ -1237,14 +1252,14 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 }
 
 // handleStreamingWithTools runs the agentic loop (tools path) and streams the final response.
 // Used when stream=true and the provider supports tools (OpenAI/Ollama). The LLM sees tool
 // results and produces a final answer (e.g. "Here's what a node looks like: ..."); we stream
 // that answer and send PreExecute/PostExecute notifications during the loop.
-func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Context, prompt string, params GenerateParams, model string, lifecycle *requestLifecycle) {
+func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Context, systemPrompt string, params GenerateParams, model string, lifecycle *requestLifecycle) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1262,8 +1277,8 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 	lifecycle.StreamModel = model
 	h.sendStreamNotifications(lifecycle, lifecycle.promptCtx.DrainNotifications())
 
-	// Use tools-friendly prompt so the model answers from context when possible instead of calling tools
-	systemPrompt := lifecycle.promptCtx.BuildFinalPromptForTools()
+	// systemPrompt already carries the native tool contract, so the model answers from
+	// context when possible instead of calling tools.
 	finalResponse, err := h.runAgenticLoop(ctx, lifecycle, systemPrompt, lifecycle.promptCtx.UserMessage, params)
 	if err != nil {
 		chunk := ChatResponse{
@@ -1273,7 +1288,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: fmt.Sprintf("Error: %v", err)},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	} else if finalResponse != "" {
@@ -1288,7 +1303,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: finalResponse},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1298,7 +1313,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 		ID: lifecycle.requestID, Object: "chat.completion.chunk", Model: model, Created: time.Now().Unix(),
 		Choices: []ChatChoice{{Index: 0, Delta: &ChatMessage{}, FinishReason: "stop"}},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
