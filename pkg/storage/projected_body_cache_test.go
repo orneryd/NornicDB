@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
@@ -76,6 +77,32 @@ func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
 	b.nodeBodyCacheMu.RLock()
 	require.Same(t, complete, b.nodeBodyCache[id], "a partial admission must retain an existing complete image")
 	b.nodeBodyCacheMu.RUnlock()
+}
+
+func TestProjectedReadsPhysicalSnapshotPreservesEmbeddingMetadata(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	id := NodeID("test:projection-physical-snapshot")
+	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "one"}})
+	require.NoError(t, err)
+	writeback := embeddingWriteback(t, b, id, [][]float32{{1, 2, 3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(t.Context(), writeback))
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	// Exercise the pinned physical-snapshot route used when no MVCC cutoff is
+	// available; it must hydrate metadata without returning vector payloads.
+	tx.readTS = MVCCVersion{}
+	node, err := tx.GetNodeProjected(t.Context(), id, []string{"key", "has_embedding"})
+	require.NoError(t, err)
+	require.Equal(t, "one", node.Properties["key"])
+	require.Equal(t, true, node.EmbedMeta["has_embedding"])
+	require.Empty(t, node.ChunkEmbeddings)
+	// Also exercise the physical snapshot owner itself when the engine's
+	// write-behind shortcut is enabled for ordinary transaction reads.
+	node, err = tx.getNodeFromBadgerSnapshotProjectedLocked(id, []string{"key", "has_embedding"})
+	require.NoError(t, err)
+	require.Equal(t, true, node.EmbedMeta["has_embedding"])
+	require.Empty(t, node.ChunkEmbeddings)
 }
 
 func TestProjectedReadsProjectedBodyCacheSnapshotAndInvalidation(t *testing.T) {
