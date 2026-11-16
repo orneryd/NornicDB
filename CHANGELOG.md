@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Periodic iteration honors configured parameters and returns failed-batch messages instead of empty error maps.
 - Stop repeated-endpoint traversals once LIMIT is satisfied by qualifying self-loop paths, rather than materializing the whole population.
+- Projected node streams apply property filters to the same selected map on cold and cached reads.
 
 - Use the normal server storage profile for full CSV import so exported large values remain importable. Explicitly smaller embedded and low-memory capacities are unchanged.
 - Reduce temporary identity-table allocations when copying large cached query results while preserving detached mutable outputs.
