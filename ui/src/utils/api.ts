@@ -1686,6 +1686,13 @@ class NornicDBClient {
     return res.json();
   }
 
+  /** Apply only these overrides without replacing unrelated configuration. */
+  async patchDatabaseConfig(dbName:string, overrides:Record<string,string>):Promise<{effective:Record<string,string>;overrides:Record<string,string>;pendingRestart:boolean}> {
+    const res=await fetch(joinBasePath(BASE_PATH,`/admin/databases/${encodeURIComponent(dbName)}/config`),{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides})});
+    if(!res.ok){const error=await res.json().catch(()=>({}));throw new Error(error.message??`Failed to save config: ${res.status}`);}
+    return res.json();
+  }
+
   /** Allowed per-DB config keys with type and category (admin only). */
   async getDatabaseConfigKeys(): Promise<
     Array<{ key: string; type: string; category: string }>

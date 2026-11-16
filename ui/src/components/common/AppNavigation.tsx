@@ -41,7 +41,7 @@ const groups = [
   ],
 ] as const;
 
-export function AppNavigation() {
+export function AppNavigation({assistantRunning=0}:{assistantRunning?:number}) {
   const { params, patch } = useUrlState();
   const mobile = useMediaQuery("(max-width: 767px)");
   const { pathname, search } = useLocation();
@@ -96,7 +96,7 @@ export function AppNavigation() {
                   to={
                     to === "/" && workspace
                       ? `/workspace/${workspace[1]}${search}`
-                      : to
+                      : (()=>{const shared=new URLSearchParams();for(const key of ["assistant","chat","chatView","chatSearch"]){const value=params.get(key);if(value)shared.set(key,value);}return to+(shared.size?"?"+shared.toString():"");})()
                   }
                   aria-current={active ? "page" : undefined}
                   className={`block rounded-lg px-3 py-2 text-sm ${active ? "bg-nornic-primary/15 text-nornic-primary" : "text-norse-silver hover:bg-norse-rune hover:text-white"}`}
@@ -107,6 +107,7 @@ export function AppNavigation() {
             })}
           </section>
         ))}
+        <button type="button" className="assistant-app-launcher" onClick={()=>patch({assistant:"open"})}>AI assistant{assistantRunning>0&&<span>{assistantRunning} running</span>}</button>
       </details>
     </nav>
   );

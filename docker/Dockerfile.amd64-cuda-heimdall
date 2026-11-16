@@ -3,7 +3,7 @@
 #
 # This image includes:
 # - BGE-M3 embedding model for vector search
-# - qwen3-0.6b-Instruct (Q4_K_M) for Heimdall (cognitive database guardian)
+# - Qwen3.5-0.8B (Q4_K_M) for Heimdall (cognitive database guardian)
 #
 # Build:
 #   docker build -f docker/Dockerfile.amd64-cuda-heimdall -t timothyswt/nornicdb-amd64-cuda-bge-heimdall .
@@ -88,7 +88,7 @@ WORKDIR /app
 
 # Install gcc for CUDA stub compilation (graceful fallback when no GPU)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget libgomp1 gcc libc6-dev && rm -rf /var/lib/apt/lists/* && \
+    ca-certificates tzdata wget jq libgomp1 gcc libc6-dev && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /data /app/models
 
 COPY --from=builder /build/nornicdb /app/
@@ -102,16 +102,18 @@ RUN chmod +x /app/entrypoint.sh /app/entrypoint-real.sh /app/healthcheck.sh
 # Embed BGE-M3 (embeddings), BGE-Reranker (search), and Qwen (Heimdall)
 ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
 ARG BGE_RERANKER_URL=https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf
-ARG QWEN_MODEL_URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-RUN \
+COPY pkg/heimdall/default_model.json /app/models/default-heimdall.json
+ARG QWEN_MODEL_URL
+RUN QWEN_MODEL_NAME="$(jq -r .name /app/models/default-heimdall.json)" && \
+    QWEN_MODEL_URL="${QWEN_MODEL_URL:-$(jq -r .url /app/models/default-heimdall.json)}" && \
     echo "Embedding BGE-M3 model..." && \
     wget -q --show-progress -O /app/models/bge-m3.gguf "$BGE_MODEL_URL" && \
     echo "✓ Downloaded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))" && \
     wget -q --show-progress -O /app/models/bge-reranker-v2-m3.gguf "$BGE_RERANKER_URL" && \
     echo "✓ Downloaded bge-reranker-v2-m3.gguf ($(du -h /app/models/bge-reranker-v2-m3.gguf | cut -f1))" && \
     echo "Embedding Heimdall SLM model..." && \
-    wget -q --show-progress -O /app/models/qwen3-0.6b-instruct.gguf "$QWEN_MODEL_URL" && \
-    echo "✓ Downloaded qwen3-0.6b-instruct.gguf ($(du -h /app/models/qwen3-0.6b-instruct.gguf | cut -f1))" && \
+    wget -q --show-progress -O /app/models/${QWEN_MODEL_NAME}.gguf "$QWEN_MODEL_URL" && \
+    echo "✓ Downloaded ${QWEN_MODEL_NAME}.gguf ($(du -h /app/models/${QWEN_MODEL_NAME}.gguf | cut -f1))" && \
     echo "✓ Heimdall cognitive features + reranker enabled"
 
 EXPOSE 7473 7474 7687 6334 9091
@@ -136,7 +138,6 @@ ENV NORNICDB_DATA_DIR=/data \
     NORNICDB_SEARCH_RERANK_PROVIDER=local \
     NORNICDB_SEARCH_RERANK_MODEL=bge-reranker-v2-m3.gguf \
     NORNICDB_HEIMDALL_ENABLED=true \
-    NORNICDB_HEIMDALL_MODEL=qwen3-0.6b-instruct \
     NORNICDB_HEIMDALL_PLUGINS_DIR=/app/plugins/heimdall \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \

@@ -478,7 +478,7 @@ export function AdminUsers() {
       />
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto p-6">
+      <main className="w-full min-w-0 mx-auto p-6">
         {error && <Alert type="error" message={error} className="mb-6" dismissible onDismiss={() => setError('')} />}
 
         {/* Create User Form */}

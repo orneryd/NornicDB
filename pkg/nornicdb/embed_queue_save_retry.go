@@ -272,7 +272,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) (storag
 					state = nil
 				}
 			}
-			if state == nil && !claimed && storage.NodeNeedsEmbedding(node) {
+			if state == nil && !claimed && ew.admitsEmbedding(node.ID) && storage.NodeNeedsEmbedding(node) {
 				fresh = node.ID
 				return storage.ErrIterationStopped
 			}
@@ -292,7 +292,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) (storag
 	var order uint64
 	for id, state := range ew.nodeRetries {
 		_, claimed := ew.claimedNodes[string(id)]
-		if !claimed && !now.Before(state.retryAt) && (due == "" || state.order < order) {
+		if !claimed && ew.admitsEmbedding(id) && !now.Before(state.retryAt) && (due == "" || state.order < order) {
 			due, order = id, state.order
 		}
 	}
@@ -305,7 +305,7 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 	defer ew.claimMu.Unlock()
 	ew.applyNodeUpdatesLocked()
 	for id, state := range ew.nodeRetries {
-		if _, claimed := ew.claimedNodes[string(id)]; claimed {
+		if _, claimed := ew.claimedNodes[string(id)]; claimed || !ew.admitsEmbedding(id) {
 			continue
 		}
 		remaining := time.Until(state.retryAt)

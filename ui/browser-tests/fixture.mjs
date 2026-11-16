@@ -2,7 +2,7 @@ export async function fixture(page) {
  const users=[{username:'alex',email:'alex@example.test',roles:['admin'],disabled:false,last_login:'2026-01-01T12:00:00Z'},{username:'sam',email:'sam@example.test',roles:['viewer'],disabled:false}];
  const databases=[{name:'catalog',status:'online',default:true,type:'standard',nodeCount:12840,edgeCount:56210},{name:'research',status:'online',default:false,type:'standard',nodeCount:320,edgeCount:840}];
  const node={id:'record-1',labels:['Document'],properties:{title:'Getting started',published:true,revision:3},created_at:''};
- const state={users,databases,node,updates:[],failSave:false,requests:[],queries:[],demoDatabases:new Map(),queryGraph:false,failSeed:false,seedBatches:0,failSeedAfter:Infinity,seedDelay:0,roles:['admin'],tokens:[],operations:[],failOperation:false,denySchema:false,policyWrites:[],failBinding:false,
+ const state={users,databases,node,configChanges:[],databaseConfigs:{catalog:{'db.nornic.embedding.enabled':'true'},research:{'db.nornic.embedding.enabled':'false'}},failConfig:false,configDelay:0,updates:[],failSave:false,requests:[],queries:[],demoDatabases:new Map(),queryGraph:false,failSeed:false,seedBatches:0,failSeedAfter:Infinity,seedDelay:0,roles:['admin'],tokens:[],operations:[],failOperation:false,denySchema:false,policyWrites:[],failBinding:false,
  schema:{indexes:[{name:'document_title',type:'RANGE',labelsOrTypes:['Document'],properties:['title']}],constraints:[{name:'document_id',type:'UNIQUENESS',labelsOrTypes:['Document'],properties:['id']}]},profiles:[{kind:'bundle',Name:'memory_retention',HalfLifeSeconds:604800,VisibilityThreshold:0.1,ScoreFloor:0,Function:'exponential',Scope:'NODE',DecayEnabled:true,ScoreFrom:'VERSION',Enabled:true}],bindings:[]};
  await page.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),p=url.pathname.replace(/\/$/,'') || '/';
@@ -84,6 +84,16 @@ export async function fixture(page) {
   else if(p==='/admin/retention/policies')data=[{id:'documents',name:'Documents',description:'Retain published documentation for one year.',category:'USER',retention_period:{Duration:31536000000000000,Indefinite:false},archive_before_delete:false,active:true}];
   else if(p==='/admin/retention/holds' || p==='/admin/retention/erasures')data=[];
   else if(p.startsWith('/auth/access/') || p==='/auth/entitlements' || p==='/auth/role-entitlements')data=[];
+  else if(/^\/admin\/databases\/[^/]+\/config$/.test(p)){
+   const name=decodeURIComponent(p.split('/')[3]);
+   if(!state.roles.includes('admin')){status=403;data={message:'Database administrator permission required'};}
+   else if(request.method()==='PATCH'){
+    if(state.configDelay)await new Promise(resolve=>setTimeout(resolve,state.configDelay));
+    state.configChanges.push({database:name,...request.postDataJSON()});
+    if(state.failConfig){status=503;data={message:'Configuration storage unavailable'};}
+    else {state.databaseConfigs[name]={...state.databaseConfigs[name],...request.postDataJSON().overrides};data={overrides:state.databaseConfigs[name],effective:state.databaseConfigs[name],pendingRestart:false};}
+   }else data={overrides:state.databaseConfigs[name]??{},effective:state.databaseConfigs[name]??{'db.nornic.embedding.enabled':'true'}};
+  }
   else if(p.includes('/config/keys'))data=[];
   else if(p.includes('/config'))data={effective:{},overrides:{}};
   else if(/^\/(auth|admin|nornicdb|db|api)(\/|$)/.test(p) && !request.isNavigationRequest()){status=404;data={message:'Fixture endpoint not configured: '+p};}

@@ -1,0 +1,21 @@
+import {test,expect} from '@playwright/test';
+import {fixture} from './fixture.mjs';
+test('compact grids filter, restore and clear without constraining wide pages',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:1920,height:1080});await page.goto('/security/admin');
+ const grid=page.locator('.nornic-grid').last();await expect(grid).toBeVisible();
+ expect((await grid.boundingBox()).width).toBeGreaterThan(1400);
+ const cell=page.locator('.body-cell[data-row=alex][data-column=username]');
+ const text=page.getByText('alex',{exact:true});
+ const box=await cell.boundingBox(),content=await text.boundingBox();
+ expect(Math.abs((content.y+content.height/2)-(box.y+box.height/2))).toBeLessThanOrEqual(3);
+ const filters=grid.locator('.filter-cell input');await expect(filters.first()).toBeVisible();
+ await filters.first().fill('alex');await expect(page).toHaveURL(/grid\./);await expect(grid.getByText('1 active filter',{exact:true})).toBeVisible();
+ await expect(page).toHaveURL(/grid\./);await page.reload();
+ await expect(filters.first()).toHaveValue('alex');await page.screenshot({path:'review/prototype/25-active-grid-filters.png',fullPage:false});await grid.getByRole('button',{name:'Clear filters',exact:true}).click();
+ await expect(filters.first()).toHaveValue('');await expect(grid.getByText('Filter by column',{exact:true})).toBeVisible();
+ await page.screenshot({path:'review/prototype/23-compact-users-wide.png',fullPage:false});
+ await page.setViewportSize({width:390,height:844});
+ await expect(page.locator('.body-cell[data-row=alex][data-column=actions]')).not.toHaveCSS('position','sticky');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+ await page.screenshot({path:'review/prototype/24-compact-users-mobile.png',fullPage:false});
+});

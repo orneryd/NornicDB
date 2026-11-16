@@ -12,7 +12,7 @@ import (
 // Collect ALL representations before matching any of them. Matches refer to
 // the original input; replacing a shorter prefix or an offset overlap must not
 // destroy the evidence needed to cover the rest of another owned credential.
-func redactOwnedCredentials(text string, credentials []string) string {
+func ownedCredentialForms(credentials []string) []string {
 	forms := make(map[string]struct{})
 	add := func(secret string) {
 		if secret == "" {
@@ -44,7 +44,7 @@ func redactOwnedCredentials(text string, credentials []string) string {
 		}
 	}
 	if len(forms) == 0 {
-		return text
+		return nil
 	}
 	ordered := make([]string, 0, len(forms))
 	for form := range forms {
@@ -56,6 +56,15 @@ func redactOwnedCredentials(text string, credentials []string) string {
 		}
 		return strings.Compare(a, b)
 	})
+	return ordered
+}
+
+func redactOwnedCredentials(text string, credentials []string) string {
+	ordered := ownedCredentialForms(credentials)
+	if len(ordered) == 0 {
+		return text
+	}
+
 	var covered []bool
 	mark := func(view string, starts, ends []int) {
 		for _, form := range ordered {

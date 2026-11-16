@@ -1801,6 +1801,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	// Create embed queue against the un-namespaced base storage so it can pull work
 	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
 	db.embedQueue = NewEmbedQueue(embedder, db.baseStorage, db.embedWorkerConfig)
+	db.embedQueue.setEmbeddingAdmission(db.managedEmbeddingAllowed)
 	if db.embedQueueYieldFn != nil {
 		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 	}

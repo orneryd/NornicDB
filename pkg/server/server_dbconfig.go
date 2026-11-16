@@ -60,7 +60,7 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.Method {
-		case http.MethodGet, http.MethodPut:
+		case http.MethodGet, http.MethodPut, http.MethodPatch:
 			s.handleDbConfig(w, r, dbName)
 		default:
 			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
@@ -201,7 +201,7 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, nil)
 		return
 	}
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.General.BadRequest")
 		return
 	}
@@ -217,10 +217,18 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	}
 	body.Overrides = dbconfig.CanonicalizeOverrides(body.Overrides)
 	previousOverrides := s.dbConfigStore.GetOverrides(dbName)
+	if r.Method == http.MethodPatch {
+		merged := cloneStringMap(previousOverrides)
+		for key, value := range body.Overrides {
+			merged[key] = value
+		}
+		body.Overrides = merged
+	}
 	previousResolved := dbconfig.Resolve(s.processConfig, previousOverrides)
 	hasSearchRebuildChange := false
 	hasSearchCacheChange := false
 	hasTransactionMemoryChange := false
+	hasManagedEmbeddingChange := false
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
@@ -254,6 +262,8 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		}
 		changedDefinitions = append(changedDefinitions, definition)
 		switch definition.HotReload {
+		case dbconfig.HotReloadManagedEmbeddings:
+			hasManagedEmbeddingChange = true
 		case dbconfig.HotReloadSearchCache:
 			hasSearchCacheChange = true
 		case dbconfig.HotReloadSearchRebuild:
@@ -273,6 +283,9 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
+	if hasManagedEmbeddingChange {
+		s.db.SetDatabaseEmbeddingsEnabled(dbName, nextResolved.Effective["db.nornic.embedding.enabled"] == "true")
+	}
 	if hasTransactionMemoryChange {
 		s.applyTransactionMemoryLimits(dbName, body.Overrides, nextResolved)
 	}

@@ -1,12 +1,31 @@
 # Heimdall Context & Token Budget Guide
 
-This guide explains how Heimdall manages context and token allocation with the default qwen3-0.6b-instruct model.
+This guide covers private conversation context and stateless command budgets. The packaged local model is Qwen3.5-0.8B.
 
 ## Overview
 
-Heimdall uses a **single-shot command architecture** - each request is independent with no conversation history accumulation. This maximizes the available context for rich system prompts while keeping responses fast.
+Private assistant chats retain their transcript in the caller's dedicated database. Stateless commands remain independent requests.
 
-## Token Budget Allocation
+## Private conversation context
+
+The context meter shows estimated input tokens, the configured runtime window, space reserved for the reply, and remaining capacity. It is an estimate, not a tokenizer measurement. Changing the runtime window updates the meter for existing chats too.
+
+Select **Compact context** to summarize older turns in the background. The next prompt uses that summary and recent turns; the full transcript remains stored and visible. Progress and failures appear beside the meter. Other chats remain available while that conversation is being compacted. Compaction uses the caller's identity and private workspace.
+
+Automatic compaction attempts to summarize older turns when estimated input reaches 75% of the configured window. Requests that still exceed the window fail with guidance rather than silently dropping their database scope or transcript.
+
+Qwen3.5-0.8B supports a native context window of 262,144 tokens. To use it in the local runtime:
+
+```bash
+NORNICDB_HEIMDALL_CONTEXT_SIZE=262144
+NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS=262144
+NORNICDB_HEIMDALL_MAX_USER_TOKENS=261120
+NORNICDB_HEIMDALL_MAX_TOKENS=1024
+```
+
+These settings require a model reload. The input budget includes system instructions and tool results; the reserved output must also fit. Larger windows allocate more KV-cache memory. See the [model's published context limit](https://huggingface.co/Qwen/Qwen3.5-0.8B) before configuring another model.
+
+## Stateless Command Budget Allocation
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

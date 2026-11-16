@@ -110,8 +110,9 @@ func (s *Server) isRBACEnforced() bool {
 // serverDatabaseAccessMode binds roles to the live allowlist and the existing
 // direct-operation admission owner. No map or permission result is copied.
 type serverDatabaseAccessMode struct {
-	server *Server
-	roles  []string
+	server    *Server
+	roles     []string
+	principal string
 }
 
 func (m *serverDatabaseAccessMode) CanSeeDatabase(database string) bool {
@@ -120,6 +121,16 @@ func (m *serverDatabaseAccessMode) CanSeeDatabase(database string) bool {
 func (m *serverDatabaseAccessMode) CanAccessDatabase(database string) bool {
 	if !m.server.isRBACEnforced() {
 		return true
+	}
+	if m.server.dbManager != nil {
+		if owner := m.server.dbManager.PrivateDatabaseOwner(database); owner != "" {
+			for _, role := range m.roles {
+				if auth.NormalizeRoleName(role) == "admin" {
+					return true
+				}
+			}
+			return m.principal != "" && m.principal == owner
+		}
 	}
 	return m.server.allowlistStore != nil && m.server.allowlistStore.CanAccessDatabaseForRoles(m.roles, database)
 }
@@ -135,7 +146,7 @@ func (s *Server) getDatabaseAccessMode(claims *auth.JWTClaims) auth.DatabaseAcce
 		return auth.DenyAllDatabaseAccessMode
 	}
 	if s.allowlistStore != nil {
-		return &serverDatabaseAccessMode{server: s, roles: claims.Roles}
+		return &serverDatabaseAccessMode{server: s, roles: claims.Roles, principal: auth.PrincipalID(claims)}
 	}
 	return auth.DenyAllDatabaseAccessMode
 }
@@ -332,7 +343,7 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 		}
 		return r
 	}
-	ctx := r.Context()
+	ctx := auth.WithRequestIdentity(r.Context(), auth.RequestIdentity{ID: auth.PrincipalID(claims), Username: claims.Username})
 	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
