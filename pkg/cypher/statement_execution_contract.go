@@ -53,6 +53,16 @@ func (c statementExecutionContract) effect() statementEffect {
 }
 
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
+	if err := ctx.Err(); err != nil {
+		return statementExecutionContract{}, err
+	}
+	// Execution removes the digit grouping of a numeric literal (1.0_0 ->
+	// 1.00) once, before it parses or admits the statement, on every route. The
+	// effect owner reads that same canonical statement: the grammar accepts a
+	// grouped integer but not a grouped fraction, exponent or radix digit, so
+	// classifying the client's spelling would classify a statement execution
+	// never runs.
+	query, _ = canonicalizeNumericLiterals(query)
 	mode, body := parseExecutionMode(query)
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
