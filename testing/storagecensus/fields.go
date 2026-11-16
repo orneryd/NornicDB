@@ -33,6 +33,8 @@ var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": t
 // Author: declared-list-owners lane (Claude), 2026-10-30: one row per
 // ownership group that several fields share.
 var (
+	// Exact empty-range indexes share one transaction-local publication owner.
+	adjacencyDecisionIndexRow = fieldRow{class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.observeEmptyAdjacencyLocked"}}
 	// Acknowledged write-behind counts not yet applied.
 	bufferedCardinalityRow = fieldRow{class: "entity-count", owners: []string{"pkg/storage.bufferedCardinalityDeltas.add"}, readers: []string{"pkg/storage.bufferedCardinalityDeltas.count"}}
 	// The cached stored bytes of each database.
@@ -92,8 +94,8 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.entityWriteLocks.latest": {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.lockEntityForWrite"}, readers: []string{"pkg/storage.BadgerTransaction.readsLatestLocked", "pkg/storage.BadgerTransaction.enrollCommittedWriteLocked", "pkg/storage.writeOwnedReadImagesLocked[pkg/storage.NodeID, *pkg/storage.Node]", "pkg/storage.writeOwnedReadImagesLocked[pkg/storage.EdgeID, *pkg/storage.Edge]", "pkg/storage.BadgerTransaction.mergePendingAdjacentEdgesLocked"}},
 	"pkg/storage.entityWriteLocks.index":  {class: "publication-order", owners: []string{"pkg/storage.entityWriteLocks.add"}, readers: []string{"pkg/storage.entityWriteLocks.find"}},
 	// Exact empty-range lookup metadata is written and read only by its transaction owner.
-	"pkg/storage.entityWriteLocks.absenceIndex":      {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.observeEmptyAdjacencyLocked"}},
-	"pkg/storage.entityWriteLocks.absenceCollisions": {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.observeEmptyAdjacencyLocked"}},
+	"pkg/storage.entityWriteLocks.absenceIndex":      adjacencyDecisionIndexRow,
+	"pkg/storage.entityWriteLocks.absenceCollisions": adjacencyDecisionIndexRow,
 
 	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
 	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},
