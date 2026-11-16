@@ -204,7 +204,11 @@ func TestBadgerStats_IterateAndStreamDecodeBranches(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled)
 
 		err = engine.StreamEdges(context.Background(), func(*Edge) error { return nil })
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "edge body empty", "an unreadable prefix-only record must not disappear from a successful scan")
+		require.NoError(t, engine.withUpdate(t.Context(), updateRequest{}, func(txn *badger.Txn) error { return txn.Delete([]byte{prefixEdge}) }))
+		err = engine.StreamEdges(t.Context(), func(*Edge) error { return nil })
+		require.ErrorContains(t, err, `reading relationship "test:bad-edge"`)
+		require.ErrorContains(t, err, "unexpected format byte")
 	})
 }
 

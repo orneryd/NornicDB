@@ -13,9 +13,10 @@ import (
 
 type fulltextReadFaultStore struct {
 	*storage.BadgerEngine
-	openErr, rowErr error
-	edgeScanErr     error
-	scans           atomic.Int64
+	openErr     error
+	closeRows   bool
+	edgeScanErr error
+	scans       atomic.Int64
 }
 
 func (s *fulltextReadFaultStore) GetInnerEngine() storage.Engine { return s.BadgerEngine }
@@ -32,24 +33,12 @@ func (s *fulltextReadFaultStore) OpenReadSnapshot(ctx context.Context) (storage.
 	if err != nil {
 		return nil, err
 	}
-	reader, ok := view.(storage.EntityReadSnapshot)
-	if !ok {
+	// Close only this call's captured native frame. Point materialization
+	// then fails through the real shared snapshot owner for either entity kind.
+	if s.closeRows {
 		view.Close()
-		return nil, storage.ErrReadSnapshotUnsupported
 	}
-	return &fulltextReadFaultSnapshot{EntityReadSnapshot: reader, store: s}, nil
-}
-
-type fulltextReadFaultSnapshot struct {
-	storage.EntityReadSnapshot
-	store *fulltextReadFaultStore
-}
-
-func (s *fulltextReadFaultSnapshot) ReadNode(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
-	if s.store.rowErr != nil {
-		return nil, s.store.rowErr
-	}
-	return s.EntityReadSnapshot.ReadNode(ctx, id)
+	return view, nil
 }
 
 func (s *fulltextReadFaultStore) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
@@ -58,13 +47,6 @@ func (s *fulltextReadFaultStore) StreamEdges(ctx context.Context, visit func(*st
 		return err
 	}
 	return s.edgeScanErr
-}
-
-func (s *fulltextReadFaultSnapshot) ReadEdge(ctx context.Context, id storage.EdgeID) (*storage.Edge, error) {
-	if s.store.rowErr != nil {
-		return nil, s.store.rowErr
-	}
-	return s.EntityReadSnapshot.ReadEdge(ctx, id)
 }
 
 func TestFulltextRetainedReadDoesNotHideStorageFailures(t *testing.T) {
@@ -105,12 +87,13 @@ func TestFulltextRetainedReadDoesNotHideStorageFailures(t *testing.T) {
 				}
 				require.NoError(t, read())
 				before := store.scans.Load()
-				failure := errors.New("controlled fulltext storage I/O failure")
+				var failure error = errors.New("controlled fulltext storage I/O failure")
 				switch phase {
 				case "capture":
 					store.openErr = failure
 				case "row":
-					store.rowErr = failure
+					store.closeRows = true
+					failure = storage.ErrStorageClosed
 				case "scan":
 					store.edgeScanErr = failure
 				}
@@ -120,7 +103,8 @@ func TestFulltextRetainedReadDoesNotHideStorageFailures(t *testing.T) {
 				} else {
 					require.Greater(t, store.scans.Load(), before, "the failing relationship stream must actually be consumed")
 				}
-				store.openErr, store.rowErr, store.edgeScanErr = nil, nil, nil
+				store.openErr, store.edgeScanErr = nil, nil
+				store.closeRows = false
 				require.NoError(t, read(), "a failed read must not poison the next read")
 			})
 		}
