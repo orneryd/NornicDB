@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve local bindings in CALL UNION branches after nested CALLs.
+
 - Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
 - Fix composite-index estimate undercounts when write-behind flushes between committed and pending reads.
 - Align grouped numeric literal statement classification with execution without changing permission requirements.

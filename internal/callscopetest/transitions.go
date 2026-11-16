@@ -35,14 +35,35 @@ type TransitionStep struct {
 	Current, Readable []string
 }
 
-// TransitionRegressions are the three counterexamples from the scope review.
+// TransitionRegressions pin scope-review and nested UNION branch counterexamples.
 // Their expected outcomes follow the approved Neo4j 5.26 contract.
 func TransitionRegressions() []TransitionCase {
-	return []TransitionCase{
+	cases := []TransitionCase{
 		{DesignCase: DesignCase{"delete_retained", "CREATE (n:R73Delete) WITH n CALL (n) { WITH 1 AS marker DELETE n } RETURN count(*) AS kept", []string{"kept"}, [][]interface{}{{int64(1)}}}, Neo4jKnown: true},
 		{DesignCase: DesignCase{"read_union", "WITH 1 AS a CALL (a) { UNWIND [a] AS z RETURN * UNION RETURN 2 AS z } RETURN a,z", nil, nil}, Code: "Neo.ClientError.Statement.SyntaxError", Neo4jKnown: true},
 		{DesignCase: DesignCase{"nested_local", "WITH 1 AS a CALL (a) { CALL () { WITH 2 AS a RETURN a AS b } RETURN * UNION RETURN 3 AS b } RETURN a,b ORDER BY b", []string{"a", "b"}, [][]interface{}{{int64(1), int64(2)}, {int64(1), int64(3)}}}, Neo4jKnown: true},
 	}
+	for index, inner := range []struct{ name, text string }{
+		{"constant", "CALL () { RETURN 1 AS k }"},
+		{"same-name-local", "CALL () { MATCH (n:$LABEL) RETURN count(n) AS k }"},
+		{"different-name-local", "CALL () { MATCH (x:$LABEL) RETURN count(x) AS k }"},
+		{"projected-local", "CALL () { WITH 1 AS n RETURN n AS k }"},
+	} {
+		for outer := 0; outer < 2; outer++ {
+			label := fmt.Sprintf("ScopeUnionBranch%d%d", index, outer)
+			selectOuter, value := "MATCH (n:"+label+" {v:1})", "n.v"
+			if outer == 1 {
+				selectOuter, value = "WITH 1 AS n", "n"
+			}
+			query := "CREATE (:" + label + " {v:1}), (:" + label + " {v:2}) WITH 1 AS seed " + selectOuter +
+				" CALL { " + strings.ReplaceAll(inner.text, "$LABEL", label) + " MATCH (n:" + label + ") RETURN n.v AS v UNION WITH n RETURN " + value + " AS v } RETURN v ORDER BY v"
+			cases = append(cases, TransitionCase{DesignCase: DesignCase{
+				Name: fmt.Sprintf("union-branch/%s/outer=%d", inner.name, outer), Query: query,
+				Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}, {int64(2)}},
+			}, Neo4jKnown: true})
+		}
+	}
+	return cases
 }
 
 // TransitionCases generates a bounded Cartesian product of import forms,
