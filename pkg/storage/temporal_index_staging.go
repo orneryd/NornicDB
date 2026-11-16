@@ -24,7 +24,7 @@ import (
 // nothing it derives reaches storage before the statement commits. engine is
 // that transaction's view: the population and each stored body are read through
 // it, in its namespace.
-func (b *BadgerEngine) stageTemporalBackfillForLabel(ctx context.Context, tx *BadgerTransaction, engine Engine, label string) error {
+func stageTemporalBackfillForLabel(ctx context.Context, tx *BadgerTransaction, engine Engine, label string) error {
 	// The population is the transaction's own label stream, read as IDs: the
 	// indexed entities are then read once, without vectors, through the same
 	// view. The view hands back the namespace-free IDs of its database; the
@@ -48,7 +48,7 @@ func (b *BadgerEngine) stageTemporalBackfillForLabel(ctx context.Context, tx *Ba
 		if err != nil {
 			return err
 		}
-		if err := b.rebuildTemporalNodeInTxn(ctx, view, node, asOf); err != nil {
+		if err := tx.stageTemporalRebuildNodeInTxn(ctx, node, asOf); err != nil {
 			return err
 		}
 	}
@@ -130,6 +130,37 @@ func (tx *BadgerTransaction) stageTemporalRebuildKey(key, value []byte) error {
 	}
 	tx.bufferSet(key, value)
 	return nil
+}
+
+// stageTemporalRebuildNodeInTxn stages one stored node's derived temporal
+// entries in this statement's transaction. The entries are the plan's
+// derivation, the same one the maintenance backfill writes
+// (rebuildTemporalNodeInTxn); this owner's writes are the statement's buffered
+// writes, so the staged key writes below are reachable only from schema
+// transaction staging, and they publish with the statement or not at all.
+func (tx *BadgerTransaction) stageTemporalRebuildNodeInTxn(ctx context.Context, node *Node, asOf time.Time) error {
+	plan, err := tx.stagedTemporalRebuild().plan(ctx, node, asOf)
+	if err != nil {
+		return err
+	}
+	for {
+		entry, ok, err := plan.nextEntry(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := tx.stageTemporalRebuildKey(entry.history, []byte{}); err != nil {
+			return err
+		}
+		if entry.current == nil {
+			continue
+		}
+		if err := tx.stageTemporalRebuildKey(entry.current, entry.currentID); err != nil {
+			return err
+		}
+	}
 }
 
 // temporalRebuildCurrentPointer reads the node a current-version key holds as

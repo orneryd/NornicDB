@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Separate temporal-index derivation from its write owners while preserving schema staging and release audit verification.
+
 - Periodic iteration honors configured parameters and returns failed-batch messages instead of empty error maps.
 - Stop repeated-endpoint traversals once LIMIT is satisfied by qualifying self-loop paths, rather than materializing the whole population.
 - Evaluate volatile chained-pattern predicates only on complete paths, including spaced, quoted and plugin function calls.
