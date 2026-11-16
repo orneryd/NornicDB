@@ -68,7 +68,14 @@ func permissionRequirementsOfSource(ctx context.Context, source *cyphertext.Sour
 	}
 	if !requirements.Schema && !requirements.Admin {
 		_, body := parseExecutionMode(query)
-		contract, _ := readStatementExecutionContract(ctx, body)
+		contract, err := readStatementExecutionContract(ctx, body)
+		if err != nil {
+			// A statement the effect owner cannot read has no proven effect, so
+			// it is not a read: require every permission rather than authorize
+			// the unreadable statement as one. Cancellation keeps its own
+			// answer from the caller's context check (AuthorizeQuery).
+			return PermissionRequirements{Read: true, Write: true, Schema: true, Admin: true}
+		}
 		requirements.Write = contract.writes
 	}
 
