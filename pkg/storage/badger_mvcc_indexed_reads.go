@@ -101,22 +101,11 @@ func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, versi
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				node = decoded
-				return nil
-			}); err != nil {
+			node, err := b.readProjectedNodeItemInTxn(txn, item, id, projection.properties, include, nodeBodyDetached)
+			if err != nil {
 				return nil, err
 			}
-			if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
+			if node == nil || b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -150,7 +139,7 @@ func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, versi
 		return nil, ErrNotFound
 	}
 	node := projectCachedNodeForRead(record.Node, projection.properties, true)
-	if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
+	if node == nil || b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil

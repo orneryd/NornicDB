@@ -82,7 +82,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 		}
 	}
 	if tx.readTS.IsZero() {
-		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
+		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, projection.properties)
 	}
 	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, projection, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
@@ -94,7 +94,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 		return nil, ErrNotFound
 	}
 	if err == ErrNotFound {
-		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
+		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, projection.properties)
 		if fallbackErr == nil {
 			return fallbackNode, nil
 		}
@@ -114,23 +114,18 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 // transaction's pinned snapshot, projecting to the requested properties. The
 // decode runs inside the snapshot view so the body's property tokens resolve
 // through the names that snapshot holds.
-func (tx *BadgerTransaction) getNodeFromBadgerSnapshotProjectedLocked(nodeID NodeID, include map[string]struct{}) (*Node, error) {
+func (tx *BadgerTransaction) getNodeFromBadgerSnapshotProjectedLocked(nodeID NodeID, properties []string) (*Node, error) {
 	key := nodeKey(nodeID)
 	var node *Node
-	var decodeErr error
 	err := tx.withSnapshotViewLocked(func(rtxn *badger.Txn) error {
 		item, err := rtxn.Get(key)
 		if err != nil {
 			return err
 		}
-		return item.Value(func(val []byte) error {
-			node, decodeErr = tx.engine.decodeNodeProjected(rtxn, namespaceForNodeID(nodeID), val, include)
-			return nil
-		})
+		node, err = tx.engine.readProjectedNodeItemInTxn(rtxn, item, nodeID, properties, propertyProjectionSet(properties), nodeBodyDetached)
+		return err
 	})
 	switch {
-	case decodeErr != nil:
-		return nil, decodeErr
 	case err == badger.ErrKeyNotFound:
 		return nil, ErrNotFound
 	case err != nil:
