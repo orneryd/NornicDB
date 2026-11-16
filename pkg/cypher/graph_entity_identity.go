@@ -267,7 +267,7 @@ func (v *graphIdentityStorage) ReadAdjacentEdges(ctx context.Context, request st
 	} else {
 		return nil, nil
 	}
-	if request.Direction == storage.AdjacentBetween {
+	if request.Other != "" {
 		if id, ok := storage.EntityIdentityFromKey(string(request.Other)).NodeLookupID(v.Engine); ok {
 			qualified.Other = id
 		} else {

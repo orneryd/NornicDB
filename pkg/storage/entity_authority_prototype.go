@@ -116,6 +116,32 @@ func (tx *BadgerTransaction) pendingEntityAuthorityKeysLocked(ctx context.Contex
 			endpoints = append(endpoints, fact.StartNode, fact.EndNode)
 		}
 	}
+	// A write-owned empty-range decision must remain empty through acceptance.
+	// The existing node identity key excludes concurrent relationship creates
+	// (their endpoint authority is shared), including an anchor whose empty SET
+	// acquired a body lock without producing a node image.
+	var guarded map[NodeID]struct{}
+	for _, request := range tx.entityLocks.absent {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, nil, err
+		}
+		if tx.ownsAdjacencyDecisionLocked(request.Node) {
+			if _, exists := tx.pendingNodes[request.Node]; exists {
+				continue
+			}
+			if _, exists := tx.deletedNodes[request.Node]; exists {
+				continue
+			}
+			if _, exists := guarded[request.Node]; exists {
+				continue
+			}
+			if guarded == nil {
+				guarded = make(map[NodeID]struct{})
+			}
+			guarded[request.Node] = struct{}{}
+			nodes = append(nodes, request.Node)
+		}
+	}
 	return nodes, edges, endpoints, nil
 }
 

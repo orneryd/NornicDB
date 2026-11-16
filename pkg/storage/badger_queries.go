@@ -1427,11 +1427,22 @@ func (b *BadgerEngine) ReadStoredAdjacentEdges(ctx context.Context, request Adja
 }
 
 // readAdjacentEdges is the engine's one adjacency kernel: it answers a between
-// request from the between index and every other direction from the native
+// bounded directional request from the between index and unbounded directions from the native
 // adjacency capture.
 func (b *BadgerEngine) readAdjacentEdges(ctx context.Context, request AdjacentEdgeRead, v readVisibility) ([]*Edge, error) {
 	if err := request.validate(); err != nil {
 		return nil, err
+	}
+	if request.Other != "" {
+		if request.Direction == AdjacentBoth {
+			return readBothAdjacentEdges(ctx, request, func(half AdjacentEdgeRead) ([]*Edge, error) {
+				return b.readAdjacentEdges(ctx, half, v)
+			})
+		}
+		if request.Direction == AdjacentIncoming {
+			request.Node, request.Other = request.Other, request.Node
+		}
+		request.Direction = AdjacentBetween
 	}
 	if request.Direction == AdjacentBetween {
 		return b.readAdjacentEdgesBetween(ctx, request, v)

@@ -25,7 +25,7 @@ func readAdjacentEdges(ctx context.Context, engine Engine, request AdjacentEdgeR
 	if namespace, ok := engine.(*NamespacedEngine); ok {
 		qualified := request
 		qualified.Node = namespace.PrefixNodeID(request.Node)
-		if request.Direction == AdjacentBetween {
+		if request.Other != "" {
 			qualified.Other = namespace.PrefixNodeID(request.Other)
 		}
 		edges, err := readAdjacentEdges(ctx, namespace.inner, qualified, version, visibility)

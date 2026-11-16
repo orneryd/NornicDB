@@ -174,16 +174,24 @@ func recordAdjacentPopulation(ctx context.Context, request storage.AdjacentEdgeR
 // direction ("outgoing" or "incoming"). The pattern's types select them at the
 // storage read, so a step lists only the relationships its type can match, and
 // headers are requested when the statement needs no relationship properties.
-func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
+func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, direction storage.AdjacentEdgeDirection) []*storage.Edge {
 	request := storage.AdjacentEdgeRead{
-		Node:    nodeID,
-		Types:   ctx.relTypes,
-		Headers: ctx.relationshipsNeedOnlyHeaders,
+		Direction: direction,
+		Node:      nodeID,
+		Types:     ctx.relTypes,
+		Headers:   ctx.relationshipsNeedOnlyHeaders,
 	}
-	if !outgoing {
-		request.Direction = storage.AdjacentIncoming
+	if ctx.maxHops == 1 && ctx.endNodeID != "" {
+		other, valid := storage.EntityIdentityFromKey(string(ctx.endNodeID)).NodeLookupID(e.storage)
+		if !valid {
+			return nil
+		}
+		request.Other = other
 	}
-	edges, err := e.storage.ReadAdjacentEdges(ctx.cancelCtx, request)
+	edges, err := e.storage.ReadAdjacentEdges(ctx.cancelCtx, statementAdjacentRead(ctx.cancelCtx, request))
+	if err == nil {
+		err = ctx.cancelCtx.Err()
+	}
 	if err != nil {
 		recordExpressionFailure(ctx.cancelCtx, err)
 		return edges
@@ -2151,18 +2159,11 @@ func (e *StorageExecutor) findPaths(
 		// Get edges based on direction
 		switch ctx.direction {
 		case "outgoing":
-			edges = e.traversalEdges(ctx, lookupID, true)
+			edges = e.traversalEdges(ctx, lookupID, storage.AdjacentOutgoing)
 		case "incoming":
-			edges = e.traversalEdges(ctx, lookupID, false)
+			edges = e.traversalEdges(ctx, lookupID, storage.AdjacentIncoming)
 		case "both":
-			var err error
-			request := storage.AdjacentEdgeRead{Direction: storage.AdjacentBoth, Node: lookupID, Types: ctx.relTypes, Headers: ctx.relationshipsNeedOnlyHeaders}
-			edges, err = undirectedIncidentEdges(ctx.cancelCtx, e.storage, request)
-			if err != nil {
-				recordExpressionFailure(ctx.cancelCtx, err)
-				return results
-			}
-			recordAdjacentPopulation(ctx.cancelCtx, request, edges)
+			edges = e.traversalEdges(ctx, lookupID, storage.AdjacentBoth)
 		}
 	}
 

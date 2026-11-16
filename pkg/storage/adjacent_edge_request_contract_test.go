@@ -51,14 +51,20 @@ func TestAdjacentEdgeRequestDirectionsTypesAndSelfLoops(t *testing.T) {
 								direction AdjacentEdgeDirection
 								types     []string
 								want      []string
+								other     NodeID
 							}{
-								{AdjacentOutgoing, []string{"R"}, []string{"test:out", "test:self"}},
-								{AdjacentIncoming, []string{"S"}, []string{"test:in"}},
-								{AdjacentBoth, []string{"R", "S"}, []string{"test:in", "test:out", "test:self"}},
-								{AdjacentBetween, []string{"R"}, []string{"test:out"}},
-								{AdjacentOutgoing, []string{"missing"}, []string{}},
+								{AdjacentOutgoing, []string{"R"}, []string{"test:out", "test:self"}, ""},
+								{AdjacentIncoming, []string{"S"}, []string{"test:in"}, ""},
+								{AdjacentBoth, []string{"R", "S"}, []string{"test:in", "test:out", "test:self"}, ""},
+								{AdjacentBetween, []string{"R"}, []string{"test:out"}, "test:b"},
+								{AdjacentOutgoing, []string{"missing"}, []string{}, ""},
+								{AdjacentOutgoing, []string{"R"}, []string{"test:out"}, "test:b"},
+								{AdjacentIncoming, []string{"S"}, []string{"test:in"}, "test:c"},
+								{AdjacentBoth, []string{"R"}, []string{"test:self"}, "test:a"},
+								{AdjacentBoth, []string{"R", "S"}, []string{"test:out"}, "test:b"},
+								{AdjacentOutgoing, []string{"R"}, []string{}, "test:c"},
 							} {
-								edges, err := read.call(t.Context(), AdjacentEdgeRead{Node: "test:a", Other: "test:b", Direction: tc.direction, Types: tc.types, Headers: headers})
+								edges, err := read.call(t.Context(), AdjacentEdgeRead{Node: "test:a", Other: tc.other, Direction: tc.direction, Types: tc.types, Headers: headers})
 								require.NoError(t, err, "%s headers=%v direction=%v", read.name, headers, tc.direction)
 								require.Equal(t, tc.want, sortedEdgeIDStrings(edges), "self loops occur once and type alternatives are a union")
 								if !headers {

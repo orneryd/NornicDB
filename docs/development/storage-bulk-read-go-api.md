@@ -94,7 +94,9 @@ model scoring and inference retain the caller's values and cancellation.
 
 ## Adjacent-edge request migration
 
-Directional and header-only reads now share `storage.AdjacentEdgeRead`. Use `ReadAdjacentEdges(ctx, request)` on an engine and `tx.ReadEdges(ctx, request)` on a native transaction. `Direction` selects `AdjacentOutgoing`, `AdjacentIncoming`, `AdjacentBoth` or `AdjacentBetween`; `Types` selects a type union and `Other` supplies the other endpoint for a between request. Empty `Types` means all types. `Headers: true` permits omitting relationship properties; consumers that need properties must request full records. Visibility decisions may still require full records for a header request.
+Directional and header-only reads share `storage.AdjacentEdgeRead`. Use `ReadAdjacentEdges(ctx, request)` on an engine and `tx.ReadEdges(ctx, request)` on a native transaction. `Direction` selects `AdjacentOutgoing`, `AdjacentIncoming`, `AdjacentBoth` or `AdjacentBetween`. `Types` selects a type union; empty means all types. `Other`, when nonempty, restricts the far endpoint in **every direction**. `AdjacentBetween` requires it and means an outgoing pair. Go callers that formerly supplied an ignored `Other` for other directions must clear it to retain an unbounded endpoint read.
+
+`Headers: true` permits omitting relationship properties; consumers that need properties must request full records. Visibility decisions may still require full records for a header request. `ReadPolicy` defaults to `SnapshotEdgeMatch`, preserving the native transaction's existing snapshot/write-behind rules. `CurrentEdgeMatch` reads current committed relationships plus staged writes. Entities returned by that current read retain coherent by-ID resolution in the transaction.
 
 ```go
 edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{
@@ -104,3 +106,11 @@ edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{
 ```
 
 Stored/integrity readers use `ReadStoredAdjacentEdges`; versioned readers use `ReadAdjacentEdgesVisibleAt` with the existing version argument. This replaces the old outgoing/incoming/header entry points, their capability interfaces and directional enum. Go consumers/plugins must migrate and rebuild; no forwarding aliases remain. Transaction between requests and write-behind retain their existing view semantics. Badger keys, persisted records, WAL and storage version are unchanged.
+
+Cypher mutation decisions select the current relationship policy from their
+admitted statement contract. If an empty range's anchor becomes write-owned,
+the transaction rechecks that range after lock waits and under final commit
+admission. A peer filling it returns a genuine retryable transaction conflict
+(`Neo.TransientError.Transaction.Outdated` over Bolt), not a fabricated deadlock.
+This is not a uniqueness constraint: an unowned guard can still permit
+concurrent creates, as Neo4j does. Ordinary snapshot reads are unchanged.

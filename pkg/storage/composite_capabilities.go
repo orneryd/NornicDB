@@ -304,7 +304,7 @@ func (c *CompositeEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, reques
 		}
 		return engine.ReadAdjacentEdges(ctx, local)
 	}
-	if request.Direction == AdjacentBetween {
+	if request.Other != "" {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
