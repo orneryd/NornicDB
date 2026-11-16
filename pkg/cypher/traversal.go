@@ -1831,8 +1831,7 @@ func (e *StorageExecutor) newChainPrefixPrune(ctx context.Context, match *Traver
 // chainPrefixDecides reports whether conjunct can be decided on a path prefix
 // that binds bound.
 func chainPrefixDecides(ctx context.Context, conjunct string, bound map[string]bool, pathVariable string) bool {
-	lower := strings.ToLower(conjunct)
-	if strings.Contains(lower, "rand(") || strings.Contains(lower, "randomuuid(") || referencesVariable(conjunct, pathVariable) {
+	if referencesVariable(conjunct, pathVariable) || !chainConjunctIsStable(ctx, conjunct) {
 		return false
 	}
 	// A subquery expression (EXISTS / COUNT / COLLECT { … }) reads outer
@@ -1852,6 +1851,47 @@ func chainPrefixDecides(ctx context.Context, conjunct string, bound map[string]b
 		}
 	}
 	return true
+}
+
+// chainConjunctIsStable reports whether every function call in conjunct returns
+// the same value when the statement evaluates it again. The function catalog's
+// volatility declarations own that decision, so no spelling of a call decides
+// it: a call the catalog does not declare (a plugin's function, for example) or
+// declares volatile is not stable, and neither is a function that is volatile
+// only without arguments unless the call has one.
+func chainConjunctIsStable(ctx context.Context, conjunct string) bool {
+	stable := true
+	err := forEachFunctionInvocation(ctx, conjunct, func(name, normalized string, open int) error {
+		if !stable {
+			return nil
+		}
+		volatility, args, known := stableFunctionInvocation(conjunct, normalized, open)
+		if !known {
+			stable = false
+			return nil
+		}
+		if PluginFunctionLookup != nil {
+			if _, opaque := PluginFunctionLookup(name); opaque {
+				stable = false
+				return nil
+			}
+		}
+		if volatility == functionTemporalConstructor {
+			for _, argument := range args {
+				value, known := compileExecutionInput(argument, 1)
+				if !known || value.bound {
+					stable = false
+					return nil
+				}
+				if _, text := value.literal.(string); !text {
+					stable = false
+					return nil
+				}
+			}
+		}
+		return nil
+	})
+	return err == nil && stable
 }
 
 // chainPrefixMatch is match's first k segments as a pattern of their own, so
