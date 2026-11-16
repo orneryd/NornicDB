@@ -95,40 +95,25 @@ func TestPromptContext_SetBifrost_Broadcast(t *testing.T) {
 }
 
 func TestPromptContext_BuildFinalPrompt_WithContext(t *testing.T) {
-	ctx := &PromptContext{
-		Context:                t.Context(),
-		ActionPrompt:           "available actions: query, status",
-		UserMessage:            "show me all nodes",
-		AdditionalInstructions: "The user has admin access.",
-		Examples: []PromptExample{
-			{UserSays: "count nodes", ActionJSON: `{"action":"query","params":{"cypher":"MATCH (n) RETURN count(n)"}}`},
-		},
+	for _, tc := range []struct {
+		name                               string
+		mode                               PromptMode
+		actions, userMessage, instructions string
+		example                            PromptExample
+	}{
+		{"json actions", PromptModeJSONAction, "available actions: query, status", "show me all nodes", "The user has admin access.", PromptExample{UserSays: "count nodes", ActionJSON: `{"action":"query","params":{"cypher":"MATCH (n) RETURN count(n)"}}`}},
+		{"native tools", PromptModeNativeTools, "actions: store, recall", "store this memory", "Context from plugin.", PromptExample{UserSays: "remember X", ActionJSON: `{"action":"store","params":{}}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &PromptContext{Context: t.Context(), ActionPrompt: tc.actions, UserMessage: tc.userMessage, AdditionalInstructions: tc.instructions, Examples: []PromptExample{tc.example}}
+			prompt := ctx.BuildFinalPrompt(tc.mode)
+			assert.NotEmpty(t, prompt)
+			assert.Contains(t, prompt, "Heimdall")
+			assert.Contains(t, prompt, tc.actions)
+			assert.Contains(t, prompt, tc.instructions)
+			assert.Contains(t, prompt, tc.example.UserSays)
+		})
 	}
-
-	prompt := ctx.BuildFinalPrompt(PromptModeJSONAction)
-	assert.NotEmpty(t, prompt)
-	assert.Contains(t, prompt, "Heimdall")
-	assert.Contains(t, prompt, "query, status")
-	assert.Contains(t, prompt, "admin access")
-	assert.Contains(t, prompt, "count nodes")
-}
-
-func TestPromptContext_BuildFinalPromptNativeTools_WithContext(t *testing.T) {
-	ctx := &PromptContext{
-		Context:                t.Context(),
-		ActionPrompt:           "actions: store, recall",
-		UserMessage:            "store this memory",
-		AdditionalInstructions: "Context from plugin.",
-		Examples: []PromptExample{
-			{UserSays: "remember X", ActionJSON: `{"action":"store","params":{}}`},
-		},
-	}
-
-	prompt := ctx.BuildFinalPrompt(PromptModeNativeTools)
-	assert.NotEmpty(t, prompt)
-	assert.Contains(t, prompt, "Heimdall")
-	assert.Contains(t, prompt, "store, recall")
-	assert.Contains(t, prompt, "Context from plugin")
 }
 
 func TestPromptContext_BuildFinalPrompt_FallsBackToMinimalWhenHuge(t *testing.T) {

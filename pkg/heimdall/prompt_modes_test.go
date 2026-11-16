@@ -13,33 +13,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The prompt owner renders exactly one response contract per PromptMode.
+// One matrix owns the shared context assertions and the distinct mode contracts.
 func TestPromptModesRetainContextAndTheirActionContract(t *testing.T) {
-	p := &PromptContext{
-		ActionPrompt:           "inspect_schema",
-		AdditionalInstructions: "The selected database contains Person nodes.",
-		Examples:               []PromptExample{{UserSays: "Show the schema", ActionJSON: `{"action":"inspect_schema"}`}},
+	for _, tc := range []struct {
+		name, conversationID, jsonRule, nativeRule string
+	}{
+		{"stateless", "", "ACTION MODE", "RESPONSE RULES"},
+		{"conversation", "private-chat", "output only", "Use registered tools when needed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &PromptContext{ActionPrompt: "inspect_schema", AdditionalInstructions: "The selected database contains Person nodes.", Examples: []PromptExample{{UserSays: "Show the schema", ActionJSON: `{"action":"inspect_schema"}`}}, ConversationID: tc.conversationID, SourceDatabase: "catalog"}
+			jsonPrompt := p.BuildFinalPrompt(PromptModeJSONAction)
+			for _, mode := range []PromptMode{PromptModeJSONAction, PromptModeNativeTools} {
+				prompt := p.BuildFinalPrompt(mode)
+				require.Contains(t, prompt, p.AdditionalInstructions)
+				require.Contains(t, prompt, p.ActionPrompt)
+				own, other := tc.jsonRule, tc.nativeRule
+				if mode == PromptModeNativeTools {
+					own, other = other, own
+				}
+				require.Contains(t, prompt, own)
+				require.NotContains(t, prompt, other)
+				if tc.conversationID == "" {
+					require.True(t, strings.HasPrefix(prompt, "You are Heimdall"))
+					require.Equal(t, 1, strings.Count(prompt, p.AdditionalInstructions))
+					require.Equal(t, 1, strings.Count(prompt, `User: "Show the schema"`))
+					require.Equal(t, 1, strings.Count(prompt, own))
+				} else {
+					require.Contains(t, prompt, "Selected database: catalog")
+					require.Contains(t, prompt, "CURRENT DATABASE CONTEXT AND INSTRUCTIONS:")
+					require.NotEqual(t, p.buildMinimalPrompt(), prompt)
+				}
+			}
+			var zero PromptMode
+			require.Equal(t, jsonPrompt, p.BuildFinalPrompt(zero))
+		})
 	}
-
-	jsonPrompt := p.BuildFinalPrompt(PromptModeJSONAction)
-	nativePrompt := p.BuildFinalPrompt(PromptModeNativeTools)
-
-	// Both modes keep the immutable action list, the mutable context and the examples once.
-	for _, prompt := range []string{jsonPrompt, nativePrompt} {
-		require.True(t, strings.HasPrefix(prompt, "You are Heimdall"))
-		require.Equal(t, 1, strings.Count(prompt, p.AdditionalInstructions))
-		require.Equal(t, 1, strings.Count(prompt, `User: "Show the schema"`))
-		require.Contains(t, prompt, "inspect_schema")
-	}
-
-	// Each mode renders its own instructions and never mixes in the other contract.
-	require.Equal(t, 1, strings.Count(jsonPrompt, "ACTION MODE"))
-	require.NotContains(t, jsonPrompt, "RESPONSE RULES")
-	require.Equal(t, 1, strings.Count(nativePrompt, "RESPONSE RULES"))
-	require.NotContains(t, nativePrompt, "ACTION MODE")
-
-	var zero PromptMode
-	require.Equal(t, jsonPrompt, p.BuildFinalPrompt(zero))
 }
 
 // Both modes share the same stateless token-budget fallback.
@@ -51,32 +60,6 @@ func TestBuildFinalPromptBudgetFallbackIsSharedByBothModes(t *testing.T) {
 	minimal := p.buildMinimalPrompt()
 	require.Equal(t, minimal, p.BuildFinalPrompt(PromptModeJSONAction))
 	require.Equal(t, minimal, p.BuildFinalPrompt(PromptModeNativeTools))
-}
-
-// Conversations keep their database-scoped prompt and only swap the action instruction.
-func TestBuildFinalPromptKeepsConversationRulesPerMode(t *testing.T) {
-	p := &PromptContext{
-		ActionPrompt:           "inspect_schema",
-		AdditionalInstructions: "The selected database contains Person nodes.",
-		ConversationID:         "private-chat",
-		SourceDatabase:         "catalog",
-	}
-
-	jsonPrompt := p.BuildFinalPrompt(PromptModeJSONAction)
-	nativePrompt := p.BuildFinalPrompt(PromptModeNativeTools)
-
-	for _, prompt := range []string{jsonPrompt, nativePrompt} {
-		require.Contains(t, prompt, "Selected database: catalog")
-		require.Contains(t, prompt, "CURRENT DATABASE CONTEXT AND INSTRUCTIONS:")
-		require.Contains(t, prompt, p.AdditionalInstructions)
-		require.Contains(t, prompt, "inspect_schema")
-		// The stateless minimal fallback never replaces a conversation prompt.
-		require.NotEqual(t, p.buildMinimalPrompt(), prompt)
-	}
-	require.Contains(t, jsonPrompt, "output only")
-	require.NotContains(t, jsonPrompt, "Use registered tools when needed")
-	require.Contains(t, nativePrompt, "Use registered tools when needed")
-	require.NotContains(t, nativePrompt, "output only")
 }
 
 // promptModeCapture records the system prompt each generation path received.
