@@ -44,6 +44,8 @@ func TestAdjacentEdgeRequestDirectionsTypesAndSelfLoops(t *testing.T) {
 						call func(context.Context, AdjacentEdgeRead) ([]*Edge, error)
 					}{
 						{"engine", engine.ReadAdjacentEdges},
+						{"stored-engine", engine.ReadStoredAdjacentEdges},
+						{"stored-transaction", tx.ReadStoredAdjacentEdges},
 						{"transaction", tx.ReadEdges},
 					} {
 						for _, headers := range []bool{false, true} {
@@ -59,6 +61,7 @@ func TestAdjacentEdgeRequestDirectionsTypesAndSelfLoops(t *testing.T) {
 								{AdjacentBetween, []string{"R"}, []string{"test:out"}, "test:b"},
 								{AdjacentOutgoing, []string{"missing"}, []string{}, ""},
 								{AdjacentOutgoing, []string{"R"}, []string{"test:out"}, "test:b"},
+								{AdjacentOutgoing, nil, []string{"test:out"}, "test:b"},
 								{AdjacentIncoming, []string{"S"}, []string{"test:in"}, "test:c"},
 								{AdjacentBoth, []string{"R"}, []string{"test:self"}, "test:a"},
 								{AdjacentBoth, []string{"R", "S"}, []string{"test:out"}, "test:b"},

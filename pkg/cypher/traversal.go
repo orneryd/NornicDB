@@ -182,13 +182,13 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 		Headers:   ctx.relationshipsNeedOnlyHeaders,
 	}
 	if ctx.maxHops == 1 && ctx.endNodeID != "" {
-		other, valid := storage.EntityIdentityFromKey(string(ctx.endNodeID)).NodeLookupID(e.storage)
+		other, valid := storage.EntityIdentityFromKey(string(ctx.endNodeID)).NodeLookupID(e.getStorage(ctx.cancelCtx))
 		if !valid {
 			return nil
 		}
 		request.Other = other
 	}
-	edges, err := e.storage.ReadAdjacentEdges(ctx.cancelCtx, statementAdjacentRead(ctx.cancelCtx, request))
+	edges, err := e.getStorage(ctx.cancelCtx).ReadAdjacentEdges(ctx.cancelCtx, statementAdjacentRead(ctx.cancelCtx, request))
 	if err == nil {
 		err = ctx.cancelCtx.Err()
 	}

@@ -10,5 +10,7 @@
 - [x] Default-parser focused/race controls cover snapshots, own writes, type/direction filters, rollback, cancellation and source identity; final race repeat passed twice after indexed bookkeeping optimization.
 - [x] Repeat affected public guards with ANTLR.
 - [x] Measure four existing MERGE admission paths against f781ff5ca, five 500-operation samples each, without concurrent tests. Medians within -1.9% to +2.2%; relationship-match allocations 298 to 285.
-- [ ] Review duplicate candidates, update public documentation and publish the focused-validated fix PR.
+- [x] Review current-source adapter candidates, update public documentation and publish draft #1842.
+- [x] Reproduce and correct bounded stored-reader recursion; extend the matrix to engine/transaction stored routes including unfiltered types.
+- [x] Retain membership-bound traversal storage and canonical statement policy for remaining pair reads.
 - [ ] Run exact-head CI; preserve failures/skips and fix findings before readiness.

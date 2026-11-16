@@ -72,14 +72,15 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 	}
 	// Transparent routing and nested clauses must retain the full-image
 	// requirement of a later native consumer in the enclosing statement.
-	if outer, ok := statement.Context.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok &&
-		outer.outcome == statement.outcome && outer.nodeImages.resolved && outer.nodeImages.images == FullNodeImages {
-		policy.images = FullNodeImages
+	if outer, ok := statement.Context.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok && outer.outcome == statement.outcome {
+		if outer.nodeImages.resolved && outer.nodeImages.images == FullNodeImages {
+			policy.images = FullNodeImages
+		}
+		if outer.relationshipReads == storage.CurrentEdgeMatch {
+			statement.relationshipReads = storage.CurrentEdgeMatch
+		}
 	}
-	if outer, ok := statement.Context.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok &&
-		outer.outcome == statement.outcome && outer.relationshipReads == storage.CurrentEdgeMatch {
-		statement.relationshipReads = storage.CurrentEdgeMatch
-	}
+
 	statement.nodeImages = policy
 	return nil
 }

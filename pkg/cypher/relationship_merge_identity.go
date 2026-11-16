@@ -219,7 +219,7 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	edges, err := store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: edge.StartNode, Other: edge.EndNode})
+	edges, err := store.ReadAdjacentEdges(ctx, statementAdjacentRead(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentBetween, Node: edge.StartNode, Other: edge.EndNode}))
 	profileRelationshipBetweenRead(ctx, edges, err)
 	if err != nil {
 		return nil, err
