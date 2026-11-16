@@ -147,7 +147,9 @@ func TestKalmanVelocity_PredictWithUncertainty(t *testing.T) {
 // ===== COMPARISON: Basic vs Velocity Filter for Trend Tracking =====
 
 func TestComparison_BasicVsVelocity_LinearTrend(t *testing.T) {
-	rand.Seed(42)
+	// Fixture-owned RNG with the intended seed: math/rand.Seed is a no-op on Go 1.24+,
+	// so seeding the package-level source would leave this fixture randomly seeded.
+	rng := rand.New(rand.NewSource(42))
 
 	basic := NewKalman(DefaultConfig())
 	velocity := NewKalmanVelocity(DefaultVelocityConfig())
@@ -157,7 +159,7 @@ func TestComparison_BasicVsVelocity_LinearTrend(t *testing.T) {
 	// Linear trend with noise
 	for i := 0; i < 100; i++ {
 		actual := float64(i) * 0.5 // 0, 0.5, 1, 1.5, ...
-		noisy := actual + rand.NormFloat64()*2.0
+		noisy := actual + rng.NormFloat64()*2.0
 
 		basicFiltered := basic.Process(noisy, 0)
 		velocityFiltered := velocity.Process(noisy)
@@ -187,7 +189,7 @@ func TestComparison_BasicVsVelocity_LinearTrend(t *testing.T) {
 }
 
 func TestComparison_BasicVsVelocity_StableSignal(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	basic := NewKalman(DefaultConfig())
 	velocity := NewKalmanVelocity(DefaultVelocityConfig())
@@ -197,7 +199,7 @@ func TestComparison_BasicVsVelocity_StableSignal(t *testing.T) {
 
 	// Stable signal with noise (basic filter's strength)
 	for i := 0; i < 100; i++ {
-		noisy := trueValue + rand.NormFloat64()*5.0
+		noisy := trueValue + rng.NormFloat64()*5.0
 
 		basicFiltered := basic.Process(noisy, 0)
 		velocityFiltered := velocity.Process(noisy)
@@ -226,7 +228,7 @@ func TestComparison_BasicVsVelocity_StableSignal(t *testing.T) {
 }
 
 func TestComparison_BasicVsVelocity_Prediction(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	basic := NewKalman(DefaultConfig())
 	velocity := NewKalmanVelocity(DefaultVelocityConfig())
@@ -234,7 +236,7 @@ func TestComparison_BasicVsVelocity_Prediction(t *testing.T) {
 	// Train both filters on linear trend
 	for i := 0; i < 50; i++ {
 		actual := float64(i) * 2.0 // 0, 2, 4, 6, ...
-		noisy := actual + rand.NormFloat64()*1.0
+		noisy := actual + rng.NormFloat64()*1.0
 
 		basic.Process(noisy, 0)
 		velocity.Process(noisy)
@@ -479,7 +481,7 @@ func TestKalmanVelocity_ZeroDt(t *testing.T) {
 // ===== Summary Comparison =====
 
 func TestComparison_Summary_AllFilters(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	t.Log("\n" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=" + "=")
 	t.Log("FILTER COMPARISON SUMMARY")
@@ -490,10 +492,10 @@ func TestComparison_Summary_AllFilters(t *testing.T) {
 		generator func(i int) float64
 		trueVel   float64
 	}{
-		{"Stable Signal", func(i int) float64 { return 50.0 + rand.NormFloat64()*5.0 }, 0.0},
-		{"Linear Trend", func(i int) float64 { return float64(i)*0.5 + rand.NormFloat64()*2.0 }, 0.5},
-		{"Fast Trend", func(i int) float64 { return float64(i)*2.0 + rand.NormFloat64()*3.0 }, 2.0},
-		{"Decaying", func(i int) float64 { return 100.0*math.Exp(-0.02*float64(i)) + rand.NormFloat64()*2.0 }, -0.02},
+		{"Stable Signal", func(i int) float64 { return 50.0 + rng.NormFloat64()*5.0 }, 0.0},
+		{"Linear Trend", func(i int) float64 { return float64(i)*0.5 + rng.NormFloat64()*2.0 }, 0.5},
+		{"Fast Trend", func(i int) float64 { return float64(i)*2.0 + rng.NormFloat64()*3.0 }, 2.0},
+		{"Decaying", func(i int) float64 { return 100.0*math.Exp(-0.02*float64(i)) + rng.NormFloat64()*2.0 }, -0.02},
 	}
 
 	for _, sc := range scenarios {

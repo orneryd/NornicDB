@@ -64,7 +64,9 @@ Improvements:
 
 // runComparison runs a comparison test between filtered and unfiltered values.
 func runComparison(name string, trueValue float64, noiseStd float64, samples int, cfg Config) ComparisonResult {
-	rand.Seed(42) // Deterministic for reproducibility
+	// Deterministic for reproducibility. math/rand.Seed is a no-op on Go 1.24+, so the
+	// package-level source is randomly seeded and cannot make this fixture repeatable.
+	rng := rand.New(rand.NewSource(42))
 
 	k := NewKalman(cfg)
 
@@ -73,7 +75,7 @@ func runComparison(name string, trueValue float64, noiseStd float64, samples int
 
 	for i := 0; i < samples; i++ {
 		// Generate noisy observation
-		noise := rand.NormFloat64() * noiseStd
+		noise := rng.NormFloat64() * noiseStd
 		observation := trueValue + noise
 		unfiltered[i] = observation
 		filtered[i] = k.Process(observation, 0)
@@ -504,7 +506,7 @@ func TestComparison_LowNoise(t *testing.T) {
 
 // TestComparison_SpikeRejection tests the filter's ability to reject outliers
 func TestComparison_SpikeRejection(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	k := NewKalman(DefaultConfig())
 	trueValue := 50.0
@@ -517,7 +519,7 @@ func TestComparison_SpikeRejection(t *testing.T) {
 			// Inject a spike
 			observation = 500.0
 		} else {
-			observation = trueValue + rand.NormFloat64()*5.0
+			observation = trueValue + rng.NormFloat64()*5.0
 		}
 
 		unfiltered = append(unfiltered, observation)
@@ -550,7 +552,7 @@ func TestComparison_SpikeRejection(t *testing.T) {
 // not for tracking rapidly changing trends. For trend tracking, consider a
 // more sophisticated filter (e.g., Kalman with velocity state).
 func TestComparison_TrendTracking(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	k := NewKalman(DefaultConfig())
 
@@ -558,7 +560,7 @@ func TestComparison_TrendTracking(t *testing.T) {
 	// Train the filter first
 	for i := 0; i < 50; i++ {
 		actualValue := float64(i) * 0.5 // Linear trend: 0, 0.5, 1, 1.5, ...
-		observation := actualValue + rand.NormFloat64()*2.0
+		observation := actualValue + rng.NormFloat64()*2.0
 		k.Process(observation, 0)
 	}
 

@@ -60,12 +60,14 @@ func TestKalmanAdaptive_New(t *testing.T) {
 }
 
 func TestKalmanAdaptive_StableSignal_StaysBasic(t *testing.T) {
-	rand.Seed(42)
+	// Fixture-owned RNG with the intended seed: math/rand.Seed is a no-op on Go 1.24+,
+	// so seeding the package-level source would leave this fixture randomly seeded.
+	rng := rand.New(rand.NewSource(42))
 	k := NewKalmanAdaptive(DefaultAdaptiveConfig())
 
 	// Feed stable signal - should stay in basic mode or velocity with low trend
 	for i := 0; i < 100; i++ {
-		noisy := 50.0 + rand.NormFloat64()*2.0
+		noisy := 50.0 + rng.NormFloat64()*2.0
 		k.Process(noisy)
 	}
 
@@ -104,6 +106,7 @@ func TestKalmanAdaptive_TrendSignal_SwitchesToVelocity(t *testing.T) {
 }
 
 func TestKalmanAdaptive_TrendThenStable_SwitchesBack(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
 	cfg := DefaultAdaptiveConfig()
 	cfg.SwitchHysteresis = 5 // Allow faster switching for test
 	k := NewKalmanAdaptive(cfg)
@@ -116,7 +119,7 @@ func TestKalmanAdaptive_TrendThenStable_SwitchesBack(t *testing.T) {
 
 	// Phase 2: Stable (should switch back to basic)
 	for i := 0; i < 100; i++ {
-		k.Process(100.0 + rand.NormFloat64()*0.5) // Very stable
+		k.Process(100.0 + rng.NormFloat64()*0.5) // Very stable
 	}
 	modeAfterStable := k.Mode()
 
@@ -255,7 +258,7 @@ func TestKalmanAdaptive_ProcessIfEnabled(t *testing.T) {
 // ===== Comparison: Adaptive vs Fixed Mode =====
 
 func TestComparison_AdaptiveVsFixed_MixedSignal(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	// Create filters
 	adaptive := NewKalmanAdaptive(DefaultAdaptiveConfig())
@@ -278,7 +281,7 @@ func TestComparison_AdaptiveVsFixed_MixedSignal(t *testing.T) {
 		case 3: // Falling trend
 			trueVal = 150.0 - float64(i%50)*2.0
 		}
-		noisy := trueVal + rand.NormFloat64()*3.0
+		noisy := trueVal + rng.NormFloat64()*3.0
 		return noisy, trueVal
 	}
 
@@ -314,7 +317,7 @@ func TestComparison_AdaptiveVsFixed_MixedSignal(t *testing.T) {
 }
 
 func TestComparison_AdaptiveVsFixed_RealWorldScenario(t *testing.T) {
-	rand.Seed(42)
+	rng := rand.New(rand.NewSource(42))
 
 	adaptive := NewKalmanAdaptive(DefaultAdaptiveConfig())
 
@@ -330,19 +333,19 @@ func TestComparison_AdaptiveVsFixed_RealWorldScenario(t *testing.T) {
 
 		if i < 50 {
 			// Initial stable period
-			value = 0.8 + rand.NormFloat64()*0.05
+			value = 0.8 + rng.NormFloat64()*0.05
 		} else if i < 100 {
 			// Decay phase
-			value = 0.8 - float64(i-50)*0.01 + rand.NormFloat64()*0.02
+			value = 0.8 - float64(i-50)*0.01 + rng.NormFloat64()*0.02
 		} else if i < 150 {
 			// Stable at low level
-			value = 0.3 + rand.NormFloat64()*0.03
+			value = 0.3 + rng.NormFloat64()*0.03
 		} else if i < 200 {
 			// Burst of activity (rising)
-			value = 0.3 + float64(i-150)*0.012 + rand.NormFloat64()*0.02
+			value = 0.3 + float64(i-150)*0.012 + rng.NormFloat64()*0.02
 		} else {
 			// Another decay
-			value = 0.9 - float64(i-200)*0.005 + rand.NormFloat64()*0.02
+			value = 0.9 - float64(i-200)*0.005 + rng.NormFloat64()*0.02
 		}
 
 		adaptive.Process(value)
