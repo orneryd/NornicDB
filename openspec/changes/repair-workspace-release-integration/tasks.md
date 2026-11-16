@@ -1,9 +1,11 @@
 # Workspace release integration
 
 - [x] Capture common CI npm-ci setup failures and reproduce locally.
-- [x] Restore the missing bundled lock records without upgrading dependencies.
+- [x] Restore missing bundled lock records without dependency upgrades.
 - [x] Clean install, build and run all26UI tests.
-- [ ] Complete exact workspace lexical-owner source/test review.
-- [ ] Obtain approval before any additional audit inventory edits.
-- [ ] Apply approved records and validate rejection controls.
-- [ ] Exact-head CI and advisory review.
+- [x] Source-review and apply approved exact workspace lexical records.
+- [x] Validate missing-entry and false-owner rejection controls.
+- [x] Migrate approved typed prompt API and all callers/plugins without forwarding wrappers.
+- [x] Preserve both response modes, conversation context and stateless budget fallback.
+- [x] Independently run Heimdall/bundled-plugin package race tests and focused workspace consumer tests.
+- [ ] Exact-head CI and advisory review on final integrated source.

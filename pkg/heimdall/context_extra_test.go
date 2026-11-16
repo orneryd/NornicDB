@@ -105,7 +105,7 @@ func TestPromptContext_BuildFinalPrompt_WithContext(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildFinalPrompt()
+	prompt := ctx.BuildFinalPrompt(PromptModeJSONAction)
 	assert.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "Heimdall")
 	assert.Contains(t, prompt, "query, status")
@@ -113,7 +113,7 @@ func TestPromptContext_BuildFinalPrompt_WithContext(t *testing.T) {
 	assert.Contains(t, prompt, "count nodes")
 }
 
-func TestPromptContext_BuildFinalPromptForTools_WithContext(t *testing.T) {
+func TestPromptContext_BuildFinalPromptNativeTools_WithContext(t *testing.T) {
 	ctx := &PromptContext{
 		Context:                t.Context(),
 		ActionPrompt:           "actions: store, recall",
@@ -124,7 +124,7 @@ func TestPromptContext_BuildFinalPromptForTools_WithContext(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildFinalPromptForTools()
+	prompt := ctx.BuildFinalPrompt(PromptModeNativeTools)
 	assert.NotEmpty(t, prompt)
 	assert.Contains(t, prompt, "Heimdall")
 	assert.Contains(t, prompt, "store, recall")
@@ -140,7 +140,7 @@ func TestPromptContext_BuildFinalPrompt_FallsBackToMinimalWhenHuge(t *testing.T)
 		UserMessage:  "test",
 	}
 
-	prompt := ctx.BuildFinalPrompt()
+	prompt := ctx.BuildFinalPrompt(PromptModeJSONAction)
 	assert.NotEmpty(t, prompt)
 	// Should use minimal prompt
 	assert.Contains(t, prompt, "Heimdall")

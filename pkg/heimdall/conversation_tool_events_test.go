@@ -35,9 +35,10 @@ func TestConversationToolEventsUseCanonicalRedaction(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "synthetic-pass")
 	require.NotContains(t, recorder.Body.String(), "synthetic-key")
 	require.Equal(t, json.RawMessage(`null`), safeToolValue(make(chan int)), "unencodable tool values remain valid JSON")
-	lifecycle.endTool(index, map[string]string{"result": "ok"}, nil, time.Millisecond)
-	require.Equal(t, "completed", lifecycle.tools[0].Status)
-	require.JSONEq(t, `{"result":"ok"}`, string(lifecycle.tools[0].Result))
+	success := lifecycle.beginTool("inspect", nil)
+	lifecycle.endTool(success, map[string]string{"result": "ok"}, nil, time.Millisecond)
+	require.Equal(t, "completed", lifecycle.tools[success].Status)
+	require.JSONEq(t, `{"result":"ok"}`, string(lifecycle.tools[success].Result))
 	idle := &requestLifecycle{promptCtx: &PromptContext{}}
 	require.Equal(t, -1, idle.beginTool("inspect", input))
 	idle.endTool(-1, nil, nil, 0)

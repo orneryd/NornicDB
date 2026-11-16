@@ -115,10 +115,8 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	} else if budgetErr := prompt.ValidateTokenBudget(); budgetErr != nil {
 		err = budgetErr
 	} else {
-		system := prompt.BuildFinalPrompt()
-		if h.manager.SupportsTools() {
-			system = prompt.BuildFinalPromptForTools()
-		}
+		// Select the response contract first so the turn builds its system prompt once.
+		system := prompt.BuildFinalPrompt(h.promptModeForProvider())
 		reply, err = h.runAgenticLoop(ctx, lifecycle, system, prompt.UserMessage, params)
 	}
 	reply = strings.TrimSpace(sanitizeAssistantResponse(reply))

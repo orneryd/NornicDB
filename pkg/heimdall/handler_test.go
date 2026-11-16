@@ -1406,7 +1406,7 @@ func TestPromptContext_BuildFinalPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.ctx.BuildFinalPrompt()
+			result := tt.ctx.BuildFinalPrompt(PromptModeJSONAction)
 			for _, expected := range tt.contains {
 				assert.Contains(t, result, expected)
 			}
@@ -1425,7 +1425,7 @@ func TestPromptContext_ActionPromptImmutable(t *testing.T) {
 		},
 	}
 
-	result := ctx.BuildFinalPrompt()
+	result := ctx.BuildFinalPrompt(PromptModeJSONAction)
 
 	// Find positions
 	actionPos := strings.Index(result, "AVAILABLE ACTIONS:")

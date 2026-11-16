@@ -181,7 +181,9 @@ func (p *WatcherPlugin) prepareConversationContext(ctx *guardian.PromptContext) 
 	if limit <= 0 {
 		limit = 8192
 	}
-	tokens := guardian.EstimateTokens(ctx.BuildFinalPrompt())
+	// Context accounting measures the prompt-based contract it always measured; the
+	// plugin has no view of the provider tool mode.
+	tokens := guardian.EstimateTokens(ctx.BuildFinalPrompt(guardian.PromptModeJSONAction))
 	for _, message := range ctx.Messages {
 		tokens += guardian.EstimateTokens(message.Content) + 8
 	}

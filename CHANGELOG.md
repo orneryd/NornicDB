@@ -1,5 +1,7 @@
 # Changelog
 
+- Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
+
 All notable changes to NornicDB will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

@@ -644,29 +644,30 @@ func EstimateTokens(text string) int {
 	return int(float64(len(text)) * TokensPerChar)
 }
 
-// BuildFinalPrompt constructs the complete prompt for Heimdall (prompt-based flow: model outputs JSON actions).
-// ActionPrompt is ALWAYS first and immutable.
-// Falls back to minimal prompt if full prompt exceeds budget.
-func (p *PromptContext) BuildFinalPrompt() string {
-	return p.buildFinalPrompt(false)
-}
+// PromptMode selects the response instructions used by BuildFinalPrompt.
+// Its two values preserve the JSON-action and native-tool contracts.
+// The zero value selects JSON actions; no other mode values are representable.
+type PromptMode bool
 
-// BuildFinalPromptForTools constructs the system prompt when the provider uses native tool calling.
-// Same as BuildFinalPrompt but with tools-friendly instructions: answer in natural language when
-// the context contains the answer; use tools only when an action is needed. Plugins inject context
-// via AdditionalInstructions (e.g. order status); the model should use it and reply in plain text.
-func (p *PromptContext) BuildFinalPromptForTools() string {
-	return p.buildFinalPrompt(true)
-}
+const (
+	// PromptModeJSONAction asks for a JSON action envelope when an action is needed.
+	PromptModeJSONAction PromptMode = false
+	// PromptModeNativeTools uses the provider's native tool-call protocol.
+	PromptModeNativeTools PromptMode = true
+)
 
-// buildFinalPrompt owns conversation dispatch and the stateless prompt budget.
-// Provider-specific builders retain their different action contracts.
-func (p *PromptContext) buildFinalPrompt(nativeTools bool) string {
+// BuildFinalPrompt constructs the complete system prompt for the requested PromptMode.
+// ActionPrompt is ALWAYS first and immutable, and this method is the single owner of
+// conversation dispatch and of the stateless prompt budget: a stateless prompt falls back
+// to the minimal prompt when it exceeds MaxSystemPromptTokens, while a conversation keeps
+// its database-scoped prompt so that ValidateTokenBudget reports the oversize instead of
+// losing scope.
+func (p *PromptContext) BuildFinalPrompt(mode PromptMode) string {
 	if p.ConversationID != "" {
-		return p.buildConversationSystemPrompt(nativeTools)
+		return p.buildConversationSystemPrompt(mode == PromptModeNativeTools)
 	}
 	var fullPrompt string
-	if nativeTools {
+	if mode == PromptModeNativeTools {
 		fullPrompt = p.buildFullPromptForTools()
 	} else {
 		fullPrompt = p.buildFullPrompt()
@@ -877,8 +878,10 @@ Vector Search:
 `
 
 // EstimatedSystemTokens returns estimated token count for the system prompt.
+// Budget accounting keeps measuring the prompt-based (PromptModeJSONAction) contract it
+// always measured, so configured limits and reported budget errors are unchanged.
 func (p *PromptContext) EstimatedSystemTokens() int {
-	return EstimateTokens(p.BuildFinalPrompt())
+	return EstimateTokens(p.BuildFinalPrompt(PromptModeJSONAction))
 }
 
 // ValidateTokenBudget checks if the prompt fits within the token budget.
