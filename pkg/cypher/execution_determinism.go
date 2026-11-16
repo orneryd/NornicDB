@@ -91,26 +91,11 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		return policy
 	}
 	if err := forEachFunctionInvocation(ctx, text, func(name, normalized string, open int) error {
-		volatility, known := functionCacheDeclarations[normalized]
-		if !known || volatility == functionVolatile {
+		volatility, args, known := stableFunctionInvocation(text, normalized, open)
+		if !known {
 			return errNonDeterministicExecution
 		}
 		policy.functions = append(policy.functions, name)
-		if volatility == functionStable {
-			return nil
-		}
-		close := findMatchingCallParen(text, open)
-		if close < 0 {
-			return errNonDeterministicExecution
-		}
-		body := strings.TrimSpace(text[open+1 : close])
-		if body == "" {
-			return errNonDeterministicExecution
-		}
-		args := splitTopLevelComma(body)
-		if volatility == functionTemporalTruncation && len(args) < 2 {
-			return errNonDeterministicExecution
-		}
 		if volatility == functionTemporalConstructor {
 			for _, argument := range args {
 				value, known := compileExecutionInput(argument, depth+1)
@@ -344,4 +329,26 @@ func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings e
 
 func deterministicExecution(ctx context.Context, text string, depth int) bool {
 	return cachedExecutionPolicy(ctx, text).allows(ctx, newExecutionBindings(ctx), depth)
+}
+
+// stableFunctionInvocation owns the catalog and arity portion of determinism.
+// Temporal input values are validated by the consumer against its bindings.
+func stableFunctionInvocation(source, normalized string, open int) (functionCacheVolatility, []string, bool) {
+	volatility, known := functionCacheDeclarations[normalized]
+	if !known || volatility == functionVolatile {
+		return volatility, nil, false
+	}
+	if volatility == functionStable {
+		return volatility, nil, true
+	}
+	close := findMatchingCallParen(source, open)
+	if close < 0 {
+		return volatility, nil, false
+	}
+	body := strings.TrimSpace(source[open+1 : close])
+	if body == "" {
+		return volatility, nil, false
+	}
+	args := splitTopLevelComma(body)
+	return volatility, args, volatility != functionTemporalTruncation || len(args) >= 2
 }
