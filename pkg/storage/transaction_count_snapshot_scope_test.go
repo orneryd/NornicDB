@@ -221,7 +221,7 @@ func TestTransactionCountScopeKeepsScalarCountsWhileAPeerPublicationIsInFlight(t
 
 	// The peer's commit lands its rows, blocks before its positional counters,
 	// and keeps its version in the ledger.
-	peer, err := engine.BeginTransaction(ctx)
+	peer, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, peer.SetNamespace("test"))
 	_, err = peer.CreateNode(ctx, &Node{ID: "test:peer", Labels: []string{"L"}})
@@ -231,7 +231,7 @@ func TestTransactionCountScopeKeepsScalarCountsWhileAPeerPublicationIsInFlight(t
 	go func() { peerCommitted <- peer.Commit() }()
 	<-publishing
 
-	tx, err := engine.BeginTransaction(ctx)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err, "a cut is taken while the peer's publication is in flight")
 	require.NoError(t, tx.SetNamespace("test"))
 	require.NotNil(t, tx.inflightAtBegin, "the cut names the version the peer has not retired")

@@ -43,9 +43,9 @@ import (
 // modes; NornicDB reads them in both versions.
 
 func init() {
-	cypherfn.Register(acyclicPathFunction, fnAcyclicPath, cypherfn.CanonicalReads)
-	cypherfn.Register(pathSelectorFunction, fnPatternMarker, cypherfn.CanonicalReads)
-	cypherfn.Register(repeatableElementsFunction, fnPatternMarker, cypherfn.CanonicalReads)
+	cypherfn.Register(acyclicPathFunction, fnAcyclicPath, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register(pathSelectorFunction, fnPatternMarker, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register(repeatableElementsFunction, fnPatternMarker, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 }
 
 // acyclicPathFunction reports whether a path's nodes are all distinct.

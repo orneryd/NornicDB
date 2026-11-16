@@ -54,6 +54,10 @@ type Func func(workCtx context.Context, ctx Context, args []string) (interface{}
 // policy a source registration states is the policy an admitted callable
 // stores. The zero value is OpaqueReads, so a registration that doesn't state
 // a policy is never trusted with an unobserved read.
+//
+// It says nothing about the row bindings an implementation may read; InputImage
+// owns that, and a canonical read observation never implies a narrow input
+// image.
 type ReadObservation = queryprofile.ReadObservation
 
 const (
@@ -66,12 +70,71 @@ const (
 	CanonicalReads = queryprofile.CanonicalReads
 )
 
-// registration is one function and the read-observation policy declared for
-// it. Both are replaced together under the registry lock, so a call never
-// observes one registration's implementation with another's policy.
+// InputImage is the input-image demand a registration declares for the row
+// bindings a call may read: how much of a binding's stored image the
+// implementation reads. The statement planner reads it to decide which property
+// bodies a scan must decode before the call.
+//
+// It is independent of ReadObservation, which says whether the implementation's
+// database access is observable. A registration stores both policies with its
+// implementation under the registry lock. A replacement completed before
+// statement planning supplies its own demand, independently of the old name.
+//
+// The zero value is FullInputImage: a registration that doesn't state a demand
+// is never trusted with a narrower image than a custom callback can read.
+type InputImage uint8
+
+const (
+	// FullInputImage declares an implementation that may read any visible row
+	// binding completely, including bindings its own arguments never name: it
+	// receives the call context, not only its arguments' values. The statement
+	// keeps every visible binding's whole image for it. This is the
+	// conservative declaration for a public custom registration.
+	FullInputImage InputImage = iota
+	// ArgumentInputImage declares an implementation that reads only the values
+	// of its own argument expressions, never another binding. A node argument
+	// is read as a value, so its whole property body is part of that value; a
+	// property argument (n.key) is that property alone. Native node arguments
+	// include stored embedding sidecars when they can reach this callback.
+	ArgumentInputImage
+	// HeaderInputImage declares an implementation that reads only identity,
+	// labels and existence from its argument values: id(v), elementId(v),
+	// labels(v), type(r).
+	HeaderInputImage
+	// StructuralInputImage declares a reviewed built-in whose reads of an
+	// argument follow the planner's canonical structural contract for that
+	// name: one of its elements, its cardinality, or its whole property body
+	// (head(), size(), collect()). It is a promise about a built-in
+	// implementation, not a way to rename transform semantics: a name the
+	// planner has no structural contract for keeps the whole argument value,
+	// and a custom implementation of a structural built-in's name declares
+	// ArgumentInputImage or FullInputImage instead.
+	StructuralInputImage
+	// MetadataArgumentInputImage reads only argument values without embedding
+	// sidecars or implicit row bindings. Reviewed Cypher value built-ins use
+	// this contract; a custom argument reader that can inspect stored vectors
+	// must use ArgumentInputImage instead.
+	MetadataArgumentInputImage
+)
+
+// Valid reports whether image names a declared input-image demand. Register
+// validates through this owner, so an unknown value can't be stored as one
+// demand and read as another.
+func (image InputImage) Valid() bool {
+	switch image {
+	case FullInputImage, ArgumentInputImage, HeaderInputImage, StructuralInputImage, MetadataArgumentInputImage:
+		return true
+	}
+	return false
+}
+
+// registration is one function and the policies declared for it. All of them
+// are replaced together under the registry lock, so a call never observes one
+// registration's implementation with another's policy.
 type registration struct {
 	implementation Func
 	reads          ReadObservation
+	image          InputImage
 }
 
 var (
@@ -79,15 +142,21 @@ var (
 	registry = map[string]registration{}
 )
 
-// Register registers a function implementation and its read-observation policy
-// for the given name. Names are stored in lower-case.
+// Register registers a function implementation and the two policies declared
+// for it: the read observation of its database access and the input-image
+// demand of the row bindings it reads.
 //
-// Registering an existing name replaces both the implementation and the
-// policy: the name carries no trust of its own, so a replacement of a built-in
-// is opaque unless its own registration says otherwise. A custom caller passes
-// OpaqueReads; a built-in passes CanonicalReads only after source review shows
-// its reads are complete without the opaque-callback hook.
-func Register(name string, implementation Func, observation ReadObservation) {
+// Registering an existing name replaces the implementation and both policies:
+// the name carries no trust of its own, so a replacement of a built-in is
+// opaque and full-scope unless its own registration says otherwise. A custom
+// caller passes OpaqueReads and FullInputImage. A built-in passes
+// CanonicalReads only after source review shows its reads are complete without
+// the opaque-callback hook, and states the narrowest input image its reviewed
+// implementation reads: ArgumentInputImage for a function that reads its
+// arguments' values, HeaderInputImage for the entity scalars, and
+// StructuralInputImage for the list and property built-ins whose argument reads
+// the planner's structural contract owns.
+func Register(name string, implementation Func, observation ReadObservation, image InputImage) {
 	if strings.TrimSpace(name) == "" {
 		panic("fn.Register: empty name")
 	}
@@ -97,10 +166,34 @@ func Register(name string, implementation Func, observation ReadObservation) {
 	if !observation.Valid() {
 		panic("fn.Register: unknown read observation")
 	}
+	if !image.Valid() {
+		panic("fn.Register: unknown input image")
+	}
 	key := cyphertext.NameLower(strings.TrimSpace(name))
 	mu.Lock()
 	defer mu.Unlock()
-	registry[key] = registration{implementation: implementation, reads: observation}
+	registry[key] = registration{implementation: implementation, reads: observation, image: image}
+}
+
+// InputImageOf returns the input-image demand the registration of name
+// declares, and whether a function is registered under that name at all. It
+// reads the live registration: a statement's planning sees the demand of the
+// implementation its calls resolve to, without a snapshot or a version cache.
+//
+// found is false for a name the registry doesn't own (an aggregate, an
+// evaluator built-in implemented elsewhere, or a native plugin function). Such
+// a call has no registration to promise anything, so the planner decides from
+// the owner it has; an unregistered call never reports a narrower promise than
+// that owner states.
+func InputImageOf(name string) (image InputImage, found bool) {
+	key := cyphertext.NameLower(strings.TrimSpace(name))
+	mu.RLock()
+	entry, ok := registry[key]
+	mu.RUnlock()
+	if !ok {
+		return FullInputImage, false
+	}
+	return entry.image, true
 }
 
 // EvaluateFunction evaluates a function by name.

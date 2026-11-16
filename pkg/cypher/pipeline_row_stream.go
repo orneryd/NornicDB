@@ -295,7 +295,7 @@ func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []
 	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause, nil)
 }
 
-func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []pipelineClause) (pipelineRowSource, bool, error) {
 	return e.pipelineNodeMatchSourceWithHint(ctx, inputSource, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
 }
 
