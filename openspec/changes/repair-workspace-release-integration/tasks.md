@@ -16,5 +16,5 @@
 - [x] Independently test resolver defaults/live visibility and protected stream-span boundaries.
 - [x] Apply approved exact numeric-domain records and two pinned byte/oracle boundaries; numeric mutation/rejection controls pass.
 - [x] Apply approved endpoint-owner fingerprints and exact non-egress records; missing/stale-entry rejection controls pass.
-- [ ] Apply the six derived lexical records after approval and re-run the lexical guard.
+- [x] Apply the six approved derived lexical records; lexical guard and missing/false-owner rejection controls pass.
 - [ ] Run exact-head CI on the complete source; retain the prior failure record.
