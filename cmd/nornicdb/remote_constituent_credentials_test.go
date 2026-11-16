@@ -41,7 +41,78 @@ func investigationDiagnostic(message string) string {
 	return strings.ReplaceAll(message, base64.StdEncoding.EncodeToString([]byte("admin:"+investigationPass)), "<synthetic-basic-auth>")
 }
 
-func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, parser string) func() {
+// investigationServer tracks one disposable real server. Its completion channel
+// and captured log let a failed readiness wait report whether the child was
+// still starting or had already exited, without echoing configuration values.
+type investigationServer struct {
+	role    string
+	cmd     *exec.Cmd
+	logPath string
+	done    chan struct{}
+	stop    func()
+}
+
+// state reports the sanitized child state: whether it has exited and its exit
+// code (-1 when unavailable).
+func (s *investigationServer) state() (bool, int) {
+	select {
+	case <-s.done:
+		if s.cmd.ProcessState != nil {
+			return true, s.cmd.ProcessState.ExitCode()
+		}
+		return true, -1
+	default:
+		return false, 0
+	}
+}
+
+// tail returns the captured child-log lines a startup report needs: the whole
+// log when it is short, otherwise its opening and closing lines. The synthetic
+// credential forms are redacted, so a startup failure is diagnosable without
+// disclosing configuration values.
+func (s *investigationServer) tail(limit int) []string {
+	data, err := os.ReadFile(s.logPath)
+	if err != nil {
+		return []string{"process log unreadable: " + investigationDiagnostic(err.Error())}
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	selected := lines
+	if len(lines) > limit {
+		head, foot := limit/2, limit-limit/2
+		selected = append(append(append([]string{}, lines[:head]...), fmt.Sprintf("... %d child log lines omitted ...", len(lines)-head-foot)), lines[len(lines)-foot:]...)
+	}
+	redacted := make([]string, 0, len(selected))
+	for _, line := range selected {
+		redacted = append(redacted, investigationDiagnostic(line))
+	}
+	return redacted
+}
+
+func TestServerStartupLogDiagnosticsPreserveCauseAndRedactCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "startup.log")
+	basic := base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))
+	lines := []string{"startup failure: address already in use " + investigationPass, "opening config", "middle 1", "middle 2", "closing config", "exit: " + basic}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := &investigationServer{logPath: path}
+	report := strings.Join(server.tail(4), "\n")
+	if !strings.Contains(report, "address already in use") || !strings.Contains(report, "2 child log lines omitted") || !strings.Contains(report, "exit:") {
+		t.Fatal("startup diagnostics lost the opening cause, truncation count or final status")
+	}
+	for _, secret := range []string{investigationPass, basic} {
+		if strings.Contains(report, secret) {
+			t.Fatal("startup diagnostics disclosed synthetic credentials")
+		}
+	}
+	if got := len(server.tail(40)); got != len(lines) {
+		t.Fatalf("short log lost lines: got %d want %d", got, len(lines))
+	}
+}
+
+// investigationStart launches one disposable real server and keeps its
+// process state so a readiness wait can report startup evidence.
+func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, parser string) *investigationServer {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -60,17 +131,26 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, p
 	cmd.Dir = dir
 	cmd.Env = []string{"HOME=" + dir, "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "NORNICDB_LANGUAGE=en", "NORNICDB_BOLT_ENABLED=true", "NORNICDB_EMBEDDING_ENABLED=false", "NORNICDB_TELEMETRY_ENABLED=false", "NORNICDB_TELEMETRY_LISTEN=127.0.0.1:0", "NORNICDB_AUTH_JWT_SECRET=synthetic-investigation-encryption-key-78369214"}
 	cmd.Env = append(cmd.Env, "NORNICDB_PARSER="+parser)
+	role := "coordinator"
+	if remote {
+		role = "remote"
+	}
+	srv := &investigationServer{role: role, cmd: cmd, logPath: logFile.Name(), done: make(chan struct{})}
 	t.Logf("real server parser=%s authenticated_remote=%t", parser, remote)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		t.Fatal(err)
 	}
+	go func() {
+		_ = cmd.Wait()
+		close(srv.done)
+	}()
 	var stopped sync.Once
-	stop := func() {
+	srv.stop = func() {
 		stopped.Do(func() {
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			<-srv.done
 			_ = logFile.Close()
 			data, _ := os.ReadFile(logFile.Name())
 			for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
@@ -85,8 +165,51 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, p
 			}
 		})
 	}
-	t.Cleanup(stop)
-	return stop
+	t.Cleanup(srv.stop)
+	return srv
+}
+
+// investigationWaitReady keeps the existing readiness allowance — three
+// attempts at least 30 seconds apart — and reports every attempt through the
+// canonical CLI readiness classification so an unready server names its
+// transport status and process state instead of failing anonymously. A child
+// that has already exited fails immediately: it cannot become ready.
+func investigationWaitReady(t *testing.T, srv *investigationServer, target, notReady, password string) {
+	t.Helper()
+	outcome := cliProbeOutcome{LastClass: "no_response", ExitCode: -1}
+	started := time.Now()
+	for attempt := 1; attempt <= 3; attempt++ {
+		if exited, code := srv.state(); exited {
+			outcome.Exited, outcome.ExitCode = true, code
+			break
+		}
+		outcome.Attempts = attempt
+		status, _, err := investigationHTTP(target, "nornic", "RETURN 1", password)
+		outcome.LastStatus = status
+		switch {
+		case err != nil:
+			outcome.LastClass = cliTransportClass(err)
+		case status == http.StatusOK:
+			outcome.Elapsed = time.Since(started)
+			outcome.Ready = true
+			return
+		default:
+			outcome.LastClass = "unexpected_status"
+		}
+		t.Logf("readiness attempt %d/3 role=%s: %s", attempt, srv.role, outcome.describe())
+		if attempt < 3 {
+			// An exiting child cannot become ready: report its exit state now.
+			select {
+			case <-srv.done:
+			case <-time.After(30 * time.Second):
+			}
+		}
+	}
+	outcome.Elapsed = time.Since(started)
+	for _, line := range srv.tail(40) {
+		t.Logf("captured %s process log: %s", srv.role, line)
+	}
+	t.Fatalf("%s: role=%s %s", notReady, srv.role, outcome.describe())
 }
 
 type investigationResponse struct {
@@ -309,31 +432,15 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("NORNICDB_PARSER")), "antlr") {
 		parser = "antlr"
 	}
-	investigationStart(t, binary, filepath.Join(dir, "remote"), rh, rb, true, parser)
+	remoteSrv := investigationStart(t, binary, filepath.Join(dir, "remote"), rh, rb, true, parser)
 	// Inline remote constituent DDL is a native extension not represented by
 	// the ANTLR administration grammar. Configure through public native Cypher,
 	// then restart against the same persisted metadata for ANTLR workflows.
-	stopCoordinator := investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, "nornic")
+	coordinator := investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, "nornic")
 	remote, local := "http://127.0.0.1:"+rh, "http://127.0.0.1:"+lh
 	// At most one readiness attempt every 30 seconds.
-	for _, base := range []string{remote, local} {
-		ready := false
-		for attempt := 0; attempt < 3; attempt++ {
-			password := ""
-			if base == remote {
-				password = investigationPass
-			}
-			status, _, e := investigationHTTP(base, "nornic", "RETURN 1", password)
-			if e == nil && status == 200 {
-				ready = true
-				break
-			}
-			time.Sleep(30 * time.Second)
-		}
-		if !ready {
-			t.Fatal("real NornicDB not ready")
-		}
-	}
+	investigationWaitReady(t, remoteSrv, remote, "real NornicDB not ready", investigationPass)
+	investigationWaitReady(t, coordinator, local, "real NornicDB not ready", "")
 	investigationMustHTTP(t, remote, "nornic", "CREATE (n:AuthInvestigation {marker: '"+investigationMarker+"'})", investigationPass, false)
 	investigationMustHTTP(t, remote, "nornic", investigationRead, investigationPass, true)
 	status, _, err := investigationHTTP(remote, "nornic", investigationRead, "synthetic-wrong-password-82361749")
@@ -360,20 +467,9 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 		investigationMustHTTP(t, local, "system", create, "", false)
 	}
 	if parser == "antlr" {
-		stopCoordinator()
-		investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, parser)
-		ready := false
-		for attempt := 0; attempt < 3; attempt++ {
-			status, _, err := investigationHTTP(local, "nornic", "RETURN 1", "")
-			if err == nil && status == 200 {
-				ready = true
-				break
-			}
-			time.Sleep(30 * time.Second)
-		}
-		if !ready {
-			t.Fatal("ANTLR coordinator restart not ready")
-		}
+		coordinator.stop()
+		restarted := investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, parser)
+		investigationWaitReady(t, restarted, local, "ANTLR coordinator restart not ready", "")
 		t.Log("native public-Cypher metadata setup complete; coordinator and remote now use ANTLR for every runtime workflow")
 	}
 	for _, target := range []struct {

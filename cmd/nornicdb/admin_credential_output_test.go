@@ -37,8 +37,8 @@ func TestAdminCredentialErrorWireResponse(t *testing.T) {
 		parser = "antlr"
 	}
 	hp, bp := solPort(t), solPort(t)
-	stop := investigationStart(t, binary, dir, hp, bp, false, parser)
-	defer stop()
+	server := investigationStart(t, binary, dir, hp, bp, false, parser)
+	defer server.stop()
 	base := "http://127.0.0.1:" + hp
 	ready := false
 	for attempt := 0; attempt < 3; attempt++ {

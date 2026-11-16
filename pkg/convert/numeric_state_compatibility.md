@@ -52,7 +52,7 @@ The domain-reader functions (excluding the shared codec owners) are:
 - `pkg/cypher`: `loadJsonFromURL`, `loadJsonFromFile`, `callApocImportJson`,
   `callDbInfer`, `apocConvertFromJSON`.
 - `pkg/graphql/models`: `JSON.UnmarshalGQL`.
-- `pkg/heimdall`: `parseActionEnvelope`, `tryParseActionResponse`.
+- `pkg/heimdall`: `parseActionEnvelope` (the shared action-envelope input owner).
 - `pkg/nornicdb`: `DB.Restore`.
 - `pkg/storage/entity_payload_codec.go`: current `DecodeCommandPayload`, `DecodeNodePayload`, `DecodeEdgePayload` consume typed MessagePack, not a JSON domain reader. Historical JSON/Gob decoding is restricted to explicit V4 migration owners, including `pkg/replication/wal_v4_payload.go:decodeV4ReplicationValue` and `pkg/storage/wal_v4_gob_entity.go:TranscodeV4EntityChange`.
 - `pkg/server`: `decodeTransactionRequest`, `readJSON`.

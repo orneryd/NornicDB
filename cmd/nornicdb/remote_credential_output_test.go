@@ -32,7 +32,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 	}
 	hp, bp := solPort(t), solPort(t)
 	serverDir := filepath.Join(dir, "server")
-	stop := investigationStart(t, binary, serverDir, hp, bp, false, "nornic")
+	server := investigationStart(t, binary, serverDir, hp, bp, false, "nornic")
 	base := "http://127.0.0.1:" + hp
 	ready := func() {
 		t.Helper()
@@ -168,8 +168,8 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("NORNICDB_PARSER")), "antlr") {
-		stop()
-		stop = investigationStart(t, binary, serverDir, hp, bp, false, "antlr")
+		server.stop()
+		server = investigationStart(t, binary, serverDir, hp, bp, false, "antlr")
 		ready()
 		checkDuplicatePassword()
 		// The composite grammar now accepts the AT constituent form. Keep checking
@@ -196,7 +196,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 	if bytes.Contains(data, []byte(investigationPass)) {
 		t.Error("HTTP catalog disclosed a synthetic password; value withheld")
 	}
-	stop()
+	server.stop()
 	files, err := filepath.Glob(filepath.Join(serverDir, "process-*.log"))
 	if err != nil || len(files) == 0 {
 		t.Fatal("process log capture missing")
