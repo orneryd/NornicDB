@@ -45,6 +45,12 @@ func (sm *SchemaManager) PropertyIndexValueCount(ctx context.Context, label, pro
 // plus the most pending writes its lookup can add (compositeMatchBound), read
 // from the same pending-write view without scanning it. indexed is false when
 // the index cannot key values.
+//
+// Both terms are read under one pending lease, the order the scalar owner uses.
+// A write-behind flush commits a buffered node into the postings and retires it
+// from the pending view, so reading the postings before admission lets that
+// flush land in between: the node is then in neither term, and the estimate
+// undercounts the population the lookup returns.
 func (sm *SchemaManager) CompositeIndexValueCount(ctx context.Context, idx *CompositeIndex, values []interface{}, full bool) (count int, indexed bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
@@ -52,15 +58,15 @@ func (sm *SchemaManager) CompositeIndexValueCount(ctx context.Context, idx *Comp
 	if idx == nil || len(values) == 0 || len(values) > len(idx.Properties) || (full && len(values) != len(idx.Properties)) {
 		return 0, false, nil
 	}
-	stored, indexed, err := compositeIndexStoredCount(ctx, idx, values)
-	if err != nil || !indexed {
-		return 0, false, err
-	}
 	view, source, err := sm.beginPendingRead(ctx)
 	if err != nil {
 		return 0, false, err
 	}
 	defer endPendingRead(source)
+	stored, indexed, err := compositeIndexStoredCount(ctx, idx, values)
+	if err != nil || !indexed {
+		return 0, false, err
+	}
 	pending, err := view.compositeMatchBound(ctx, idx.Label, idx.Properties, values)
 	if err != nil {
 		return 0, false, err
@@ -69,7 +75,9 @@ func (sm *SchemaManager) CompositeIndexValueCount(ctx context.Context, idx *Comp
 }
 
 // compositeIndexStoredCount is the length of idx's committed posting list for
-// values, or indexed false when idx cannot key them.
+// values, or indexed false when idx cannot key them. It takes idx.mu; the
+// caller holds the pending lease across it and the pending bound, so both terms
+// of the estimate describe one buffer state.
 func compositeIndexStoredCount(ctx context.Context, idx *CompositeIndex, values []interface{}) (count int, indexed bool, err error) {
 	if len(idx.Properties) == 1 {
 		valueKey, ok, err := indexValueKey(ctx, values[0])

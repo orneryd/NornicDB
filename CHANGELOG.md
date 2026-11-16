@@ -1,6 +1,5 @@
 # Changelog
 
-- Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
 
 All notable changes to NornicDB will be documented in this file.
 
@@ -8,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+- Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
+- Fix composite-index estimate undercounts when write-behind flushes between committed and pending reads.
 
 - Return relationship storage read failures from streams and retained search reads instead of silently omitting unreadable records; honor buffered replacements before reading older bodies.
 - Keep deferred search refreshes progressing during continuous writes instead of waiting for an idle interval.
