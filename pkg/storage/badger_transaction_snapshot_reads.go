@@ -371,7 +371,19 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 	latest, locked := tx.adjacencyReadAuthorityLocked(request.Node)
 	if latest || request.ReadPolicy == CurrentEdgeMatch {
 		edges, err := tx.engine.ReadAdjacentEdges(ctx, request)
-		if err == nil && (locked || request.ReadPolicy == CurrentEdgeMatch) {
+		if err != nil {
+			return nil, err
+		}
+		// The engine's current read may borrow immutable cache images. A native
+		// transaction returns mutable caller-owned records, just as its pinned
+		// reader does; SET/rollback must never edit the retained engine image.
+		for at, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			edges[at] = copyEdge(edge)
+		}
+		if locked || request.ReadPolicy == CurrentEdgeMatch {
 			tx.recordLatestEndpointsLocked(request.Node, edges)
 		}
 		return edges, err

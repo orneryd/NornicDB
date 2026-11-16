@@ -306,6 +306,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if body == "" {
 		return nil, false, nil
 	}
+	ctx = mutationRelationshipDecisionContext(ctx)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {

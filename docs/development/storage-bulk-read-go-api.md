@@ -107,8 +107,7 @@ edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{
 
 Stored/integrity readers use `ReadStoredAdjacentEdges`; versioned readers use `ReadAdjacentEdgesVisibleAt` with the existing version argument. This replaces the old outgoing/incoming/header entry points, their capability interfaces and directional enum. Go consumers/plugins must migrate and rebuild; no forwarding aliases remain. Transaction between requests and write-behind retain their existing view semantics. Badger keys, persisted records, WAL and storage version are unchanged.
 
-Cypher mutation decisions select the current relationship policy from their
-admitted statement contract. If an empty range's anchor becomes write-owned,
+Cypher graph subquery expressions within a mutation select the current relationship policy from their admitted statement contract. Ordinary MATCH and DELETE traversals retain their snapshot; a write effect alone never changes their read view. Native transaction current reads detach their images before exposing mutable records, so a later rejected write cannot poison retained engine cache images. If an empty range's anchor becomes write-owned,
 the transaction rechecks that range after lock waits and under final commit
 admission. A peer filling it returns a genuine retryable transaction conflict
 (`Neo.TransientError.Transaction.Outdated` over Bolt), not a fabricated deadlock.

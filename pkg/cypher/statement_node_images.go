@@ -24,7 +24,7 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 	policy := statementNodeImagePolicy{images: FullNodeImages, resolved: true, hasMatch: info.HasMatch}
 	if effect := info.effect.Load(); effect != nil {
 		if effect.effect == statementEffectWrite {
-			statement.relationshipReads = storage.CurrentEdgeMatch
+			statement.guardRelationshipReads = storage.CurrentEdgeMatch
 		}
 		policy.images, policy.readOnly = effect.nodeImages, effect.effect == statementEffectRead && info.readResult()
 		if policy.images == MetadataNodeImages {
@@ -76,8 +76,8 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 		if outer.nodeImages.resolved && outer.nodeImages.images == FullNodeImages {
 			policy.images = FullNodeImages
 		}
-		if outer.relationshipReads == storage.CurrentEdgeMatch {
-			statement.relationshipReads = storage.CurrentEdgeMatch
+		if outer.guardRelationshipReads == storage.CurrentEdgeMatch {
+			statement.guardRelationshipReads = storage.CurrentEdgeMatch
 		}
 	}
 

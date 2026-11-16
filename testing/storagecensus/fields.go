@@ -91,6 +91,9 @@ var fieldClasses = map[string]fieldRow{
 	// only add may change it and find may consult it.
 	"pkg/storage.entityWriteLocks.latest": {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.lockEntityForWrite"}, readers: []string{"pkg/storage.BadgerTransaction.readsLatestLocked", "pkg/storage.BadgerTransaction.enrollCommittedWriteLocked", "pkg/storage.writeOwnedReadImagesLocked[pkg/storage.NodeID, *pkg/storage.Node]", "pkg/storage.writeOwnedReadImagesLocked[pkg/storage.EdgeID, *pkg/storage.Edge]", "pkg/storage.BadgerTransaction.mergePendingAdjacentEdgesLocked"}},
 	"pkg/storage.entityWriteLocks.index":  {class: "publication-order", owners: []string{"pkg/storage.entityWriteLocks.add"}, readers: []string{"pkg/storage.entityWriteLocks.find"}},
+	// Exact empty-range lookup metadata is written and read only by its transaction owner.
+	"pkg/storage.entityWriteLocks.absenceIndex":      {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.observeEmptyAdjacencyLocked"}},
+	"pkg/storage.entityWriteLocks.absenceCollisions": {class: "publication-order", owners: []string{"pkg/storage.BadgerTransaction.observeEmptyAdjacencyLocked"}},
 
 	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
 	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},

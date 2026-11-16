@@ -14,3 +14,14 @@
 - [x] Reproduce and correct bounded stored-reader recursion; extend the matrix to engine/transaction stored routes including unfiltered types.
 - [x] Retain membership-bound traversal storage and canonical statement policy for remaining pair reads.
 - [ ] Run exact-head CI; preserve failures/skips and fix findings before readiness.
+
+## Integrated CI correction
+
+- [x] Capture all failures on8fe607f7 before replacing its CI run: census metadata, Cypher snapshot/ownership controls, HTTP/Bolt temporal ownership.
+- [x] Scope current relationship reads to graph subquery expressions in a mutation, preserving ordinary MATCH/DELETE snapshots.
+- [x] Reproduce mutable current-read cache escape and detach transaction images at the canonical handoff.
+- [x] Pass every reported runtime parent under focused checks; repeat storage/Cypher/Bolt race controls twice and HTTP/Bolt guide ownership under both parsers.
+- [x] Update the physical-work control from3 to1 relationship with identical stored-claim rows, requiring the stronger bounded endpoint behavior.
+- [x] User approved two exact publication-order classifications; off-owner readers/writers, sibling fields, lookalike types and entity-count writes remain rejected by focused controls.
+- [x] Fresh sequential baseline/candidate profiles: all16 MERGE allocation counts unchanged; absent guard+1312B/+26alloc, present guard-13338B/-11alloc. No concurrent local tests during profiling.
+- [ ] Exact replacement-head CI and advisory dispositions.
