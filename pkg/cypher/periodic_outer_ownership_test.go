@@ -19,8 +19,8 @@ func TestPeriodicCallerSeesBatchesAndKeepsOuterRollback(t *testing.T) {
 						ctx := context.Background()
 						_, err := exec.Execute(ctx, "UNWIND [1,2,3] AS x CREATE (:U5PeriodicOuterSeed)", nil)
 						require.NoError(t, err)
-						cleanupAdmissionProcedure(t, "u5periodic.observe")
-						cleanupAdmissionProcedure(t, "u5periodic.abort")
+						scopeProcedureRegistration(t, "u5periodic.observe", userProcedureTable)
+						scopeProcedureRegistration(t, "u5periodic.abort", userProcedureTable)
 						var observed [][]interface{}
 						require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5periodic.observe", Mode: ProcedureModeRead, Returns: []ProcedureColumn{{Name: "seen", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 							result, err := caller.Execute(ctx, "MATCH (n:U5PeriodicOuter) RETURN count(n) AS seen", nil)

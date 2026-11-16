@@ -168,7 +168,7 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 }
 
 func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
-	cleanupAdmissionProcedure(t, "u5remote.noStats")
+	scopeProcedureRegistration(t, "u5remote.noStats", userProcedureTable)
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5remote.noStats", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, exec *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 		if _, err := exec.Execute(ctx, "CREATE (:U5RemoteMode) RETURN 1 AS v", nil); err != nil {
 			return nil, err

@@ -24,7 +24,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 					for _, dynamic := range []bool{false, true} {
 						t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v/dynamic=%v", name, composite, explicit, failure, dynamic), func(t *testing.T) {
 							exec, committed := newProcedureAdmissionExecutor(t, composite)
-							cleanupAdmissionProcedure(t, "u5batch.step")
+							scopeProcedureRegistration(t, "u5batch.step", userProcedureTable)
 							calls, visible := 0, -1
 							require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5batch.step", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 								calls++
@@ -105,7 +105,7 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 		for _, composite := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/fabric=%v", contract.Name, composite), func(t *testing.T) {
 				exec, committed := newProcedureAdmissionExecutor(t, composite)
-				cleanupAdmissionProcedure(t, "u5batch.atomic")
+				scopeProcedureRegistration(t, "u5batch.atomic", userProcedureTable)
 				calls, visible := 0, -1
 				require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5batch.atomic", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 					calls++
