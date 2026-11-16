@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Return relationship storage read failures from streams and retained search reads instead of silently omitting unreadable records; honor buffered replacements before reading older bodies.
 - Keep deferred search refreshes progressing during continuous writes instead of waiting for an idle interval.
 
 - Separate temporal-index derivation from its write owners while preserving schema staging and release audit verification.
