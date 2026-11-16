@@ -84,12 +84,19 @@ func BenchmarkCodeIntelRelationshipReads(b *testing.B) {
 	exec := codeIntelReadFixture(b, 128, 2048)
 	for _, query := range []struct{ name, text string }{
 		{"labelled_count", "MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r)"},
+		{"labelled_count_eager", "MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r)"},
 		{"unlabelled_count", "MATCH ()-[r]->() RETURN count(r)"},
 		{"identity", "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash"},
 	} {
 		b.Run(query.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
+				if query.name == "labelled_count_eager" {
+					if _, err := exec.Execute(context.Background(), query.text, nil); err != nil {
+						b.Fatal(err)
+					}
+					continue
+				}
 				run := executeStreamed(context.Background(), exec, query.text, 16)
 				if run.stream.streamed() {
 					for {

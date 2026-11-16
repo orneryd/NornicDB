@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -264,7 +265,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		reduction.invocationRows(1)
 		return newCountReductionOutcome(count, column, countReductionObservedScan)
 	}
-	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	projectedProperties, _ := pipelineNodePropertyDemand(ctx, nodePattern.variable, whereClause, nodePattern.properties, nil)
 	label := nodeScanLabels(ctx, store, nodePattern.labels)[0]
 	visit := queryprofile.EntityVisitor(ctx, profileKindNodeByLabelScan, label, func(node *storage.Node) error {
 		return countNode(node, false)
@@ -277,6 +278,171 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	return newCountReductionOutcome(count, column, countReductionObservedScan)
 }
 
+// pipelineNodeObservation is how much of a node image one consumer reads. Every
+// stored image carries identity and labels; a property body is decoded only
+// when the row reads it.
+type pipelineNodeObservation uint8
+
+const (
+	// pipelineNodeUnobserved reads nothing: the value is not evaluated.
+	pipelineNodeUnobserved pipelineNodeObservation = iota
+	// pipelineNodeCardinality reads only how many elements a list value has.
+	pipelineNodeCardinality
+	// pipelineNodeHeader reads identity, labels and existence, which the stored
+	// image carries without a property body.
+	pipelineNodeHeader
+	// pipelineNodeBody reads every stored property body.
+	pipelineNodeBody
+)
+
+// pipelineNodeRead is what one expression position reads from the value it
+// evaluates: the value itself at an observation level, one legible member of it
+// (n.key), or, through a list literal or a list function, one of its elements.
+type pipelineNodeRead struct {
+	level   pipelineNodeObservation
+	member  string
+	element *pipelineNodeRead
+}
+
+// pipelineNodePredicateProperties returns the stored properties a row reads
+// from variable through expression and the pattern's inline map. A nil result
+// means the row reads every property body: the variable escapes as a value into
+// a result, a list, a map or native code, or the expression has a form this
+// analysis does not read. An empty non-nil result means the row reads nothing
+// beyond the image's identity and labels, so the scan decodes no property body.
+//
+// The forms narrower than the whole node are the ones that own the read: a
+// property access reads that property, an existence test reads the header, and
+// a call reads the input image its registration declares (pipelineCallInputOf).
+// Every other form keeps the conservative walk of
+// forEachSemanticExpressionReference, so an operation this analysis does not
+// read keeps the whole demand.
+// pipelineCallInput is how much of the row's visible bindings a call may read:
+// the promise of the input-image demand its registration declares, or, for a
+// name no registration owns, the promise of the owner that implements it.
+type pipelineCallInput uint8
+
+const (
+	// pipelineCallArguments reads only the values of its own argument
+	// expressions: an unregistered call (a native plugin function, an aggregate
+	// or an evaluator built-in) receives its arguments' values and never the
+	// row, and a registration that declares ArgumentInputImage says the same.
+	pipelineCallArguments pipelineCallInput = iota
+	// pipelineCallHeader reads identity, labels and existence from its argument
+	// values.
+	pipelineCallHeader
+	// pipelineCallStructural reads an argument through the built-in structural
+	// contract the planner owns for the name.
+	pipelineCallStructural
+	// pipelineCallFullVisible may read every visible row binding completely,
+	// including bindings its arguments never name.
+	pipelineCallFullVisible
+)
+
+// pipelineStructuralRead is what a built-in's canonical structural contract
+// reads from the argument a call hands it.
+type pipelineStructuralRead uint8
+
+const (
+	// pipelineStructuralUnknown owns no structural contract: a structural
+	// declaration of the name keeps its arguments' whole values.
+	pipelineStructuralUnknown pipelineStructuralRead = iota
+	// pipelineStructuralCardinality reads a value's number of elements.
+	pipelineStructuralCardinality
+	// pipelineStructuralElement reads one element of a list as the caller reads
+	// it (head, last).
+	pipelineStructuralElement
+	// pipelineStructuralElements reads a list's elements at the shallowest level
+	// a list building reads them (tail, reverse, collect).
+	pipelineStructuralElements
+)
+
+// pipelineStructuralReads is the canonical structural contract of the built-in
+// functions whose read of an argument is narrower than that argument's value.
+// A name here is read through this contract only when its registration declares
+// StructuralInputImage (size, tail) or when no scalar registration exists and
+// this planner's own implementation owns the name (length, head, last,
+// reverse, collect): a lexical name alone narrows nothing, so a custom
+// implementation registered under one of these names declares its own demand
+// and keeps whatever that demand promises.
+var pipelineStructuralReads = map[string]pipelineStructuralRead{
+	"size":    pipelineStructuralCardinality,
+	"length":  pipelineStructuralCardinality,
+	"head":    pipelineStructuralElement,
+	"last":    pipelineStructuralElement,
+	"tail":    pipelineStructuralElements,
+	"reverse": pipelineStructuralElements,
+	"collect": pipelineStructuralElements,
+}
+
+// pipelineCallInputOf reports how much of the row a call of name may read. A
+// registered function states it: FullInputImage is the conservative custom
+// default, and the narrowed promises are the reviewed declarations. A name the
+// registry doesn't own is an aggregate, an evaluator built-in or a native
+// plugin function: none of them receives the row, so they read their arguments'
+// values, except the structural built-ins this planner implements itself.
+//
+// The declaration is read from the live registration when the statement is
+// planned; a replacement completed before planning supplies its own demand.
+func pipelineCallInputOf(name string) pipelineCallInput {
+	// Aggregates own their arguments independently of scalar registrations.
+	// count(entity) consumes existence/identity, not the entity's property body.
+	if name == "count" {
+		return pipelineCallHeader
+	}
+	if image, registered := cypherfn.InputImageOf(name); registered {
+		switch image {
+		case cypherfn.ArgumentInputImage, cypherfn.MetadataArgumentInputImage:
+			return pipelineCallArguments
+		case cypherfn.HeaderInputImage:
+			return pipelineCallHeader
+		case cypherfn.StructuralInputImage:
+			return pipelineCallStructural
+		}
+		return pipelineCallFullVisible
+	}
+	if _, owned := pipelineStructuralReads[name]; owned {
+		return pipelineCallStructural
+	}
+	return pipelineCallArguments
+}
+
+// pipelineConsumersReadWholeVisibleScope reports whether any consumer
+// expression a MATCH's rows are read through calls a function that may read
+// every visible row binding completely. Such a registration receives the call
+// context, not only its arguments' values, so a binding its arguments never
+// name is still part of the image it reads: no variable's demand is complete
+// while one of the clauses that read the MATCH's rows holds such a call.
+//
+// The calls are the semantic scanner's, so a call nested inside a form the
+// per-variable analysis cannot read (an unknown function's argument, an
+// operator over the variable) is found too. The scan reads retained syntax and
+// performs no statement work, and it runs under the statement's own context, so
+// the statement's cancellation stops it. A stopped scan has not read every
+// call, so it reports the whole visible scope: every binding keeps its whole
+// image instead of the demand narrowing on a partial analysis, and the query
+// that owns the context reports the cancellation.
+func pipelineConsumersReadWholeVisibleScope(ctx context.Context, expressions []string) bool {
+	for _, expression := range expressions {
+		if strings.TrimSpace(expression) == "" {
+			continue
+		}
+		reads := false
+		if err := forEachFunctionCall(ctx, expression, func(_, normalized string) error {
+			if pipelineCallInputOf(normalized) == pipelineCallFullVisible {
+				reads = true
+			}
+			return nil
+		}); err != nil {
+			return true
+		}
+		if reads {
+			return true
+		}
+	}
+	return false
+}
+
 func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
 	properties := make([]string, 0, len(inline)+2)
 	seen := make(map[string]struct{}, len(inline)+2)
@@ -286,20 +452,166 @@ func pipelineNodePredicateProperties(variable, expression string, inline map[str
 	}
 	variable = normalizeProjectionColumnName(variable)
 	wholeNode := false
-	forEachSemanticExpressionReference(expression, func(base, property string, hasProperty bool, _ int) bool {
-		if base != variable {
+	add := func(property string) {
+		if _, exists := seen[property]; property == "" || exists {
+			return
+		}
+		seen[property] = struct{}{}
+		properties = append(properties, property)
+	}
+	conservative := func(text string) {
+		forEachSemanticExpressionReference(text, func(base, property string, hasProperty bool, _ int) bool {
+			if base != variable {
+				return true
+			}
+			if !hasProperty || property == "" {
+				wholeNode = true
+				return false
+			}
+			add(property)
 			return true
+		})
+	}
+	// A list's elements are evaluated when the list is built, so the shallowest
+	// read of one is its header; only a whole-body read of a list reads every
+	// element's body.
+	elementLevel := func(level pipelineNodeObservation) pipelineNodeObservation {
+		if level == pipelineNodeBody {
+			return pipelineNodeBody
 		}
-		if !hasProperty || property == "" {
-			wholeNode = true
-			return false
+		return pipelineNodeHeader
+	}
+	var observe func(expression string, read pipelineNodeRead)
+	observe = func(expression string, read pipelineNodeRead) {
+		if wholeNode || (read.element == nil && read.member == "" && read.level == pipelineNodeUnobserved) {
+			return
 		}
-		if _, exists := seen[property]; !exists {
-			seen[property] = struct{}{}
-			properties = append(properties, property)
+		expression = strings.TrimSpace(expression)
+		for {
+			inner, enclosed := stripEnclosingExpressionParentheses(expression)
+			if !enclosed {
+				break
+			}
+			expression = strings.TrimSpace(inner)
 		}
-		return true
-	})
+		if expression == "" || expression == "*" {
+			return
+		}
+		// n IS NULL reads whether the value exists, never its properties.
+		for _, suffix := range [...]string{" is not null", " is null"} {
+			if hasSuffixFoldASCII(expression, suffix) {
+				observe(strings.TrimSpace(expression[:len(expression)-len(suffix)]), pipelineNodeRead{level: pipelineNodeHeader})
+				return
+			}
+		}
+		if name := simpleSemanticIdentifier(expression); name != "" {
+			if name != variable {
+				return
+			}
+			switch {
+			case read.element != nil:
+				// A stored node is not a list, so a read of one of its
+				// elements reads the node as a value.
+				wholeNode = true
+			case read.member != "":
+				add(read.member)
+			case read.level == pipelineNodeBody, read.level == pipelineNodeCardinality:
+				wholeNode = true
+			}
+			return
+		}
+		// n['key'] reads one property. A computed key can name any of them.
+		if open := rowSubscriptStart(expression); open > 0 {
+			key := strings.TrimSpace(expression[open+1 : len(expression)-1])
+			if property := decodeCypherStringLiteral(key); property != key {
+				observe(expression[:open], pipelineNodeRead{member: property})
+				return
+			}
+			conservative(expression)
+			return
+		}
+		if base, member, ok := splitPostfixPropertyAccess(expression); ok {
+			observe(base, pipelineNodeRead{member: member})
+			return
+		}
+		if isListLiteral(expression) {
+			items := splitTopLevelComma(expression[1 : len(expression)-1])
+			switch {
+			case read.element != nil:
+				for _, item := range items {
+					observe(item, *read.element)
+				}
+			case read.member != "":
+				// A list has no member to read.
+				conservative(expression)
+			default:
+				element := pipelineNodeRead{level: elementLevel(read.level)}
+				for _, item := range items {
+					observe(item, element)
+				}
+			}
+			return
+		}
+		var call functionCallFacts
+		if inspectFunctionCall(expression, qualifiedFunctionCall, "", &call) {
+			name := strings.ToLower(call.name)
+			argumentSource := call.inner
+			if _, inner, _, aggregate := parsePipelineAggregate(expression); aggregate {
+				// Demand follows the same modifier/name boundary as execution.
+				argumentSource = inner
+			}
+			arguments := splitTopLevelComma(argumentSource)
+			switch pipelineCallInputOf(name) {
+			case pipelineCallFullVisible:
+				// The implementation receives the row, not only its
+				// arguments: every visible binding keeps its whole image,
+				// including the bindings this expression never names.
+				wholeNode = true
+			case pipelineCallHeader:
+				for _, argument := range arguments {
+					observe(argument, pipelineNodeRead{level: pipelineNodeHeader})
+				}
+			case pipelineCallStructural:
+				switch pipelineStructuralReads[name] {
+				case pipelineStructuralCardinality:
+					for _, argument := range arguments {
+						observe(argument, pipelineNodeRead{level: pipelineNodeCardinality})
+					}
+				case pipelineStructuralElement:
+					for _, argument := range arguments {
+						element := read
+						observe(argument, pipelineNodeRead{element: &element})
+					}
+				case pipelineStructuralElements:
+					for _, argument := range arguments {
+						switch {
+						case read.element != nil:
+							observe(argument, *read.element)
+						case read.member != "":
+							conservative(expression)
+						default:
+							observe(argument, pipelineNodeRead{level: elementLevel(read.level)})
+						}
+					}
+				default:
+					// A structural promise this planner has no contract
+					// for keeps the argument values whole.
+					for _, argument := range arguments {
+						conservative(argument)
+					}
+				}
+			default:
+				// The callee owns its arguments' values: a property access
+				// reads that property, a bare variable its whole value.
+				for _, argument := range arguments {
+					conservative(argument)
+				}
+			}
+			return
+		}
+		conservative(expression)
+	}
+	observe(expression, pipelineNodeRead{level: pipelineNodeBody})
 	if wholeNode {
 		return nil
 	}

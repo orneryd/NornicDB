@@ -401,7 +401,9 @@ func TestProfileGDSRegistrationReportsCustomCallback(t *testing.T) {
 		require.True(t, builtin.TotalDBHitsObserved, "the built-in catalog read is certified")
 		require.Empty(t, builtin.Unobserved)
 
-		t.Cleanup(func() { cypherfn.Register("gds.graph.exists", fnGDSGraphExists, cypherfn.CanonicalReads) })
+		t.Cleanup(func() {
+			cypherfn.Register("gds.graph.exists", fnGDSGraphExists, cypherfn.CanonicalReads, cypherfn.ArgumentInputImage)
+		})
 		cypherfn.Register("gds.graph.exists", func(workCtx context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
 			store, err := ctx.GraphStorage()
 			if err != nil {
@@ -410,7 +412,7 @@ func TestProfileGDSRegistrationReportsCustomCallback(t *testing.T) {
 			// A read no observation owner sees: the registry cannot certify it.
 			_, _ = store.GetNode(workCtx, storage.NodeID("absent"))
 			return true, nil
-		}, cypherfn.OpaqueReads)
+		}, cypherfn.OpaqueReads, cypherfn.FullInputImage)
 
 		result, err = exec.Execute(t.Context(), query, nil)
 		require.NoError(t, err)

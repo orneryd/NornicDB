@@ -10,6 +10,7 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -245,5 +246,34 @@ func TestDecodeNodeRejectsMalformedBodies(t *testing.T) {
 		node, err = filtered.decode([]byte("\x01ns:n1"), data)
 		require.Error(t, err, name)
 		require.Nil(t, node, name)
+	}
+}
+
+// A public projected scan gives the filter the same map shape on cold and
+// resident bodies; a preceding full read must not change which rows qualify.
+func TestProjectedStreamFilterSeesSamePropertiesAfterCacheWarmup(t *testing.T) {
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, NodeCacheMaxEntries: 200, NodeCacheMaxBytes: 1 << 20}))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	for i := 0; i < 36; i++ {
+		label := "Doc"
+		if i >= 12 {
+			label = "Other"
+		}
+		_, err := b.CreateNode(t.Context(), &Node{ID: NodeID(fmt.Sprintf("a:%02d", i)), Labels: []string{label}, Properties: map[string]any{"id": fmt.Sprint(i), "payload": "more"}})
+		require.NoError(t, err)
+	}
+	b.nodeCacheMu.Lock()
+	b.resetNodeReadCachesLocked()
+	b.nodeCacheMu.Unlock()
+	for scan := 0; scan < 4; scan++ {
+		var ids []NodeID
+		err := b.StreamNodesWithOptions(t.Context(), StreamNodesOptions{Prefix: "a:", Label: "Doc", QueryNodes: true, Projection: []string{"id"}, PropertyFilter: func(p map[string]any) bool { return len(p) == 1 && p["id"] == "3" }}, func(n *Node) error {
+			ids = append(ids, n.ID)
+			require.Equal(t, map[string]any{"id": "3"}, n.Properties)
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, []NodeID{"a:03"}, ids, "scan %d", scan)
 	}
 }

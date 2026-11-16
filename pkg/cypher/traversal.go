@@ -366,12 +366,12 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// pipeline supplies the read-only clauses after this MATCH (readTail);
 	// direct callers supply the RETURN items themselves.
 	if hint.readTail != nil {
-		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, hint.readTail)
+		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(ctx, matches, whereClause, hint.readTail)
 		if !matches.IsChained && matches.PathVariable == "" {
-			matches.endpointProperties = traversalSourceProperties(matches.EndNode, whereClause, hint.readTail, "")
+			matches.endpointProperties = traversalSourceProperties(ctx, matches.EndNode, whereClause, hint.readTail, "")
 		}
 	} else {
-		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(matches, returnItems, whereClause)
+		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(ctx, matches, returnItems, whereClause)
 	}
 	if hint.earlyLimit == 0 {
 		return result, nil

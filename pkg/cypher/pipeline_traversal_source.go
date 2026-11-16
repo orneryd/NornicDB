@@ -20,7 +20,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		return nil, false, nil
 	}
 	for _, tail := range hint.readTail {
-		if topLevelKeywordIndex(ctx, tail, "ORDER BY") >= 0 {
+		if topLevelKeywordIndex(ctx, tail.text, "ORDER BY") >= 0 {
 			return nil, false, nil
 		}
 	}
@@ -95,9 +95,9 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				return false
 			}
 			match.PathVariable = pathVariable
-			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)
-			startProperties := traversalSourceProperties(match.StartNode, where, hint.readTail, pathVariable)
-			endProperties := traversalSourceProperties(match.EndNode, where, hint.readTail, pathVariable)
+			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(ctx, match, where, hint.readTail)
+			startProperties := traversalSourceProperties(ctx, match.StartNode, where, hint.readTail, pathVariable)
+			endProperties := traversalSourceProperties(ctx, match.EndNode, where, hint.readTail, pathVariable)
 			// Only metadata-only nodes enter this fixed-size cache; arbitrary
 			// property bodies are never retained between rows.
 			headers := make(map[storage.NodeID]*storage.Node)
@@ -189,23 +189,19 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	}, true, nil
 }
 
-func traversalSourceProperties(node nodePatternInfo, where string, tail []string, pathVariable string) []string {
+// traversalSourceProperties is the projection a traversal endpoint asks storage
+// for: the demand of the endpoint's inline map and WHERE plus the read-only
+// clauses after the MATCH, read from the one owner a label scan reads too
+// (pipelineNodePropertyDemand). A path variable exposes the whole node, so the
+// endpoint keeps every body, as it does when ctx's statement was canceled
+// before the demand was complete.
+func traversalSourceProperties(ctx context.Context, node nodePatternInfo, where string, tail []pipelineClause, pathVariable string) []string {
 	if pathVariable != "" {
 		return nil
 	}
-	properties := pipelineNodePredicateProperties(node.variable, where, node.properties)
-	if properties == nil || node.variable == "" {
-		return properties
-	}
-	for _, text := range tail {
-		if !traversalVariablePropertiesRead(text, node.variable) {
-			continue
-		}
-		used := pipelineNodePredicateProperties(node.variable, text, nil)
-		if used == nil {
-			return nil
-		}
-		properties = append(properties, used...)
+	properties, complete := pipelineNodePropertyDemand(ctx, node.variable, where, node.properties, tail)
+	if !complete {
+		return nil
 	}
 	return properties
 }

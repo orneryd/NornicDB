@@ -22,18 +22,18 @@ func init() {
 	// The public names reach here only with an argument count the
 	// statement rewrite leaves alone: the functions report it.
 	for _, name := range []string{vectorFunction, "vector"} {
-		cypherfn.Register(name, fnVector, cypherfn.CanonicalReads)
+		cypherfn.Register(name, fnVector, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
 	for _, name := range []string{vectorDistanceFunction, "vector_distance"} {
-		cypherfn.Register(name, fnVectorDistance, cypherfn.CanonicalReads)
+		cypherfn.Register(name, fnVectorDistance, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
 	for _, name := range []string{vectorNormFunction, "vector_norm"} {
-		cypherfn.Register(name, fnVectorNorm, cypherfn.CanonicalReads)
+		cypherfn.Register(name, fnVectorNorm, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
-	cypherfn.Register("vector_dimension_count", fnVectorDimensionCount, cypherfn.CanonicalReads)
-	cypherfn.Register("uuid", fnUUID, cypherfn.CanonicalReads)
-	cypherfn.Register("uuid.mostsignificantbits", fnUUIDHalf(true), cypherfn.CanonicalReads)
-	cypherfn.Register("uuid.leastsignificantbits", fnUUIDHalf(false), cypherfn.CanonicalReads)
+	cypherfn.Register("vector_dimension_count", fnVectorDimensionCount, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("uuid", fnUUID, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("uuid.mostsignificantbits", fnUUIDHalf(true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("uuid.leastsignificantbits", fnUUIDHalf(false), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 }
 
 const (

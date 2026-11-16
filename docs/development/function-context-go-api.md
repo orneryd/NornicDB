@@ -9,11 +9,12 @@ type Func func(workCtx context.Context, scope fn.Context, args []string) (interf
 value, found, err := fn.EvaluateFunction(workCtx, name, args, scope)
 ```
 
-`fn.Register` takes the function and the read-observation policy that says how
-its database access is observed:
+`fn.Register` takes the function and two independent policies: the
+read-observation policy that says how its database access is observed, and the
+input-image demand that says how much of the call's row bindings it reads.
 
 ```go
-fn.Register(name string, implementation fn.Func, observation fn.ReadObservation)
+fn.Register(name string, implementation fn.Func, observation fn.ReadObservation, image fn.InputImage)
 ```
 
 Migrate registrations, direct handler calls and registry dispatch to the new
@@ -30,7 +31,7 @@ fn.Register("example.identity", func(workCtx context.Context, scope fn.Context, 
         return nil, fmt.Errorf("expected one argument")
     }
     return scope.Eval(args[0])
-}, fn.OpaqueReads)
+}, fn.OpaqueReads, fn.ArgumentInputImage)
 ```
 
 Receiving the context is necessary but does not automatically interrupt a handler.
@@ -175,9 +176,23 @@ existing canonical argument-error constructor directly, without a forwarding
 policy adapter. For example:
 
 ```go
-fn.Register("customUpper", fn.CaseFunction("customUpper", fn.UpperCaseText, nil), fn.OpaqueReads)
-fn.Register("customLower", fn.CaseFunction("customLower", fn.LowerCaseText, nil), fn.OpaqueReads)
+fn.Register("customUpper", fn.CaseFunction("customUpper", fn.UpperCaseText, nil), fn.OpaqueReads, fn.ArgumentInputImage)
+fn.Register("customLower", fn.CaseFunction("customLower", fn.LowerCaseText, nil), fn.OpaqueReads, fn.ArgumentInputImage)
 ```
 
 The mapper remains atomic. Cancellation stops argument/mapper boundaries; it
 does not interrupt `golang.org/x/text` inside one mapping operation.
+
+### Vector-bearing callback inputs
+
+`FullInputImage` includes every visible node's stored vectors as well as its
+properties, even when the callback's arguments do not name that node.
+`ArgumentInputImage` preserves complete node values only where those values can
+reach the callback's arguments. Both reuse the statement's existing node-input
+analysis. Unknown argument reachability remains conservative.
+
+Reviewed value built-ins use `MetadataArgumentInputImage` when they need
+argument properties but no embedding sidecars. `HeaderInputImage` is the
+identity/labels/existence scalar contract; returning an original whole entity
+requires a whole-value policy. These are explicit implementation promises,
+not privileges conferred by a built-in name or its PROFILE policy.
