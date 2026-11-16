@@ -41,6 +41,12 @@ func (c *seedReadEngine) GetQueryNode(ctx context.Context, id storage.NodeID) (*
 	return node, err
 }
 
+func (c *seedReadEngine) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := c.MemoryEngine.GetNodeProjected(ctx, id, properties)
+	c.countNode(node)
+	return node, err
+}
+
 func (c *seedReadEngine) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	nodes, err := c.MemoryEngine.BatchGetNodes(ctx, ids)
 	c.reads.Add(int64(len(nodes)))

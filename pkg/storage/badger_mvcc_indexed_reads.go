@@ -77,8 +77,8 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 }
 
 // getNodeProjectedVisibleAtInTxn is the MVCC node kernel for a projected
-// read. The visibility resolution (MVCC head) is identical; only the body
-// decode and embedding hydration are skipped.
+// read. The visibility resolution (MVCC head) is identical; properties are
+// decoded selectively, and requested embedding metadata uses the same view.
 func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
 	include := propertyProjectionSet(properties)
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
@@ -92,20 +92,12 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				node = decoded
-				return nil
-			}); err != nil {
+			node, err := b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)
+			if err != nil {
 				return nil, err
+			}
+			if node == nil {
+				return nil, ErrNotFound
 			}
 			if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 				return nil, ErrNotFound
