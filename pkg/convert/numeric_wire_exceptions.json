@@ -271,10 +271,6 @@
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "2b95a1376c320fc8e99371062dd014fe4a8baba0b446450f64ef5a35f62e2a7e"
   },
-  "pkg/heimdall/handler.go:Handler.handleChatCompletions": {
-    "reason": "Typed chat/autocomplete model request envelope; graph/tool argument maps are decoded separately through CypherInputJSON.",
-    "sha256": "20d194a5b23061347dc2922226bddef8b8c4f7ca29a306350342092e4248d30a"
-  },
   "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
     "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
     "sha256": "9ce972d25f27b9a52d7269c80ebfc9aed2509cf27ab91659506c3db302ed813f"
@@ -354,10 +350,6 @@
   "pkg/nornicdb/storage_recovery.go:writeRecoveryManifest": {
     "reason": "Typed recovery status manifest, not entity backup data.",
     "sha256": "8109d44a2afa4546203c7c4b89e7d7e98d0fd0d70d0574a8f7b6d19dc779fbba"
-  },
-  "pkg/observability/credential_text.go:redactOwnedCredentials": {
-    "reason": "JSON-escapes a credential string to match its quoted spelling in diagnostic text; no numeric data.",
-    "sha256": "c834834a31905a681f53a5435f34b9fb12b4e28643cc2e03a231c15a0088d7c7"
   },
   "pkg/observability/health.go:handleVersion": {
     "reason": "Health/version payloads and captured diagnostic log records, not property imports/results.",
@@ -627,10 +619,6 @@
     "reason": "Author: #1665 implementation lane (Codex). Historical version-4 compatibility fallback after strict Gob framing. Its old JSON meaning is retained, rather than changing a historical format to the new property policy.",
     "sha256": "e0adf009a9250d8f048ce546e7944fe5e5929bec17d01ab7c09ad47bc85b90fc"
   },
-  "pkg/server/server_dbconfig.go:Server.handleDbConfig": {
-    "reason": "Author: #1665 implementation lane (Codex). Typed database configuration/settings input retains TJ normalization and override owner; it is not graph-property import. TJ function body unchanged.",
-    "sha256": "eeb305adb3e0c432d18fc2c09cd4ed6625a2ab0d807f8065cf496b5048efcebb"
-  },
   "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
     "reason": "Author: #1665 implementation lane (Codex). Typed retry/control input is administrative metadata. The delta changes only the shared response adapter; retry authorization and request parsing are unchanged.",
     "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
@@ -671,21 +659,9 @@
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "b472c049f0c4bab151c313894b4c7c2715ec59af78ec4330ec249eecdb584ccf"
   },
-  "pkg/heimdall/handler.go:Handler.handleNonStreamingResponse": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "8f9dffd9a8b69eecfca49df3a08d11b07468352ccce001fd46cd1d62a8477998"
-  },
-  "pkg/heimdall/handler.go:Handler.handleStatus": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "2f32a88fc2c01f402d0e09bf7b55fadfe2159cf8912db73fa64a45afab6df6ce"
-  },
   "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "ddbc37cba475b2f75eb563abead80c0896a33b197c84119f5be713ff1a3b2102"
-  },
-  "pkg/heimdall/handler.go:Handler.handleStreamingWithTools": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "ee2dafff1ce8d492a77e2538a847332a25d07445feb6b72574598b708bee8437"
   },
   "pkg/heimdall/handler.go:Handler.sendCancellationResponse": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
@@ -714,5 +690,13 @@
   "testing/capturecensus/storage.go:StoragePolicy": {
     "reason": "Typed static-analysis policy JSON contains source review classifications and audit metadata, not application graph data.",
     "sha256": "dc1918f85da728aa095e7339eab431fae7a79e6c7b41b447f3a2a254a6fb218c"
+  },
+  "pkg/heimdall/conversation_tools.go:safeToolValue": {
+    "reason": "Opaque tool-transcript encoding preserves the existing standard-JSON document bytes before canonical text redaction, including whole-FLOAT spelling and unsupported-value null fallback. This boundary is not a graph-property decoder. Exact raw transcript/persisted-string goldens and canonical-redaction controls pin its behavior.",
+    "sha256": "20c9f8c784b7f4cb904a1d14bad11c2bb4ef0c08186580740b2150601e1bd9ff"
+  },
+  "pkg/observability/credential_text.go:ownedCredentialForms": {
+    "reason": "Standard-JSON string escaping is one representation oracle used to recognize caller-owned credentials inside already-encoded text. This is representation enumeration, not a graph-value encoder/decoder; exhaustive overlap/escaping and split-stream controls compare against the standard oracle.",
+    "sha256": "3ee3aa65ae23d0bb57bfb66af738638e73924976a8f5582fc95d896101b384ed"
   }
 }
