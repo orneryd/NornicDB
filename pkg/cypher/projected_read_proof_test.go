@@ -47,7 +47,7 @@ func TestProjectedReadProjectionProofConcurrentOwnership(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		workers.Go(func() {
 			for n := 0; n < 50; n++ {
-				fields := pipelineNodePredicateProperties("p", "RETURN p.a, p.body", nil)
+				fields := pipelineNodePredicateProperties("p", "p.a + p.body", nil)
 				if len(fields) != 2 || fields[0] != "a" || fields[1] != "body" {
 					t.Error("projection proof changed across callers", fields)
 					return
