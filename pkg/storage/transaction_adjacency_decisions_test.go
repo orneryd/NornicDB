@@ -65,19 +65,6 @@ func newAdjacencyDecisionEngine(t *testing.T, buffered bool) *BadgerEngine {
 	return engine
 }
 
-// beginAdjacencyDecisionTransaction opens the mutation transaction both modes
-// share: one namespace, implicit commits so the write-behind engine takes its
-// buffered route.
-func beginAdjacencyDecisionTransaction(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
-	t.Helper()
-	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.SetImplicit(true))
-	return tx
-}
-
 // adjacencyDecisionRequest is the read a relationship mutation makes when it
 // decides the range is empty: the current committed view, never the plain
 // snapshot.
@@ -152,7 +139,7 @@ func createAdjacencyDecisionPeerEdge(t *testing.T, mode adjacencyDecisionMode, e
 		require.NoError(t, engine.CreateEdge(t.Context(), edge))
 		return edge
 	}
-	peer := beginAdjacencyDecisionTransaction(t, engine)
+	peer := beginAdjacencyTransaction(t, engine, true)
 	require.NoError(t, peer.CreateEdge(t.Context(), edge))
 	require.NoError(t, peer.Commit())
 	require.Positive(t, engine.writeBehind.PendingOps(), "the peer's acknowledged commit is still only buffered")
@@ -165,7 +152,7 @@ func createAdjacencyDecisionPeerEdge(t *testing.T, mode adjacencyDecisionMode, e
 func TestAdjacencyDecisionMatchingPeerRelationshipRefusesBeforeAcceptance(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		edges, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 		require.NoError(t, err)
@@ -225,7 +212,7 @@ func TestAdjacencyDecisionMatchingPeerRelationshipRefusesBeforeAcceptance(t *tes
 func TestAdjacencyDecisionRecordedRangeSurvivesCallerSliceReuse(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		types := []string{adjacencyDecisionLink}
 		_, err := tx.ReadEdges(ctx, AdjacentEdgeRead{Node: adjacencyDecisionAnchor, Types: types, ReadPolicy: CurrentEdgeMatch})
@@ -257,7 +244,7 @@ func TestAdjacencyDecisionRecordedRangeSurvivesCallerSliceReuse(t *testing.T) {
 func TestAdjacencyDecisionRangeOwnershipAndDeduplication(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 		require.NoError(t, err)
@@ -296,7 +283,7 @@ func TestAdjacencyDecisionOwnStagedRelationshipIsNotAnAbsence(t *testing.T) {
 	t.Run("staged before the decision read", func(t *testing.T) {
 		adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 			ctx := t.Context()
-			tx := beginAdjacencyDecisionTransaction(t, engine)
+			tx := beginAdjacencyTransaction(t, engine, true)
 
 			ownEdge := &Edge{ID: "test:own-link", StartNode: adjacencyDecisionAnchor, EndNode: adjacencyDecisionOther, Type: adjacencyDecisionLink, Properties: map[string]interface{}{"writer": "transaction"}}
 			require.NoError(t, tx.CreateEdge(ctx, ownEdge))
@@ -314,7 +301,7 @@ func TestAdjacencyDecisionOwnStagedRelationshipIsNotAnAbsence(t *testing.T) {
 	t.Run("staged after the decision", func(t *testing.T) {
 		adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 			ctx := t.Context()
-			tx := beginAdjacencyDecisionTransaction(t, engine)
+			tx := beginAdjacencyTransaction(t, engine, true)
 
 			_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 			require.NoError(t, err)
@@ -341,7 +328,7 @@ func TestAdjacencyDecisionOwnStagedRelationshipIsNotAnAbsence(t *testing.T) {
 func TestAdjacencyDecisionRollbackClearsRecordedDecisions(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 		require.NoError(t, err)
@@ -370,7 +357,7 @@ func TestAdjacencyDecisionRollbackClearsRecordedDecisions(t *testing.T) {
 func TestAdjacencyDecisionCancellationKeepsCallerError(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -398,7 +385,7 @@ func TestAdjacencyDecisionCancellationKeepsCallerError(t *testing.T) {
 func TestAdjacencyDecisionUnrelatedTypeDoesNotConflict(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 		require.NoError(t, err)
@@ -427,7 +414,7 @@ func TestAdjacencyDecisionUnrelatedTypeDoesNotConflict(t *testing.T) {
 func TestAdjacencyDecisionOppositeDirectionDoesNotConflict(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 
 		_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 		require.NoError(t, err)
@@ -454,7 +441,7 @@ func TestAdjacencyDecisionOppositeDirectionDoesNotConflict(t *testing.T) {
 func TestAdjacencyDecisionPlainSnapshotReadKeepsItsContract(t *testing.T) {
 	adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 		ctx := t.Context()
-		tx := beginAdjacencyDecisionTransaction(t, engine)
+		tx := beginAdjacencyTransaction(t, engine, true)
 		pinned := adjacencyDecisionSnapshotRequest(adjacencyDecisionAnchor, adjacencyDecisionLink)
 
 		edges, err := tx.ReadEdges(ctx, pinned)
@@ -496,7 +483,7 @@ func TestAdjacencyDecisionAuthorityKeysCoverOnlyWriteOwnedAnchors(t *testing.T) 
 	t.Run("lock-only anchor is authority, observed non-owned anchor is not", func(t *testing.T) {
 		adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 			ctx := t.Context()
-			tx := beginAdjacencyDecisionTransaction(t, engine)
+			tx := beginAdjacencyTransaction(t, engine, true)
 
 			_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 			require.NoError(t, err)
@@ -542,7 +529,7 @@ func TestAdjacencyDecisionAuthorityKeysCoverOnlyWriteOwnedAnchors(t *testing.T) 
 	t.Run("observed anchor without a write contributes no authority", func(t *testing.T) {
 		adjacencyDecisionModes(t, func(t *testing.T, mode adjacencyDecisionMode, engine *BadgerEngine) {
 			ctx := t.Context()
-			tx := beginAdjacencyDecisionTransaction(t, engine)
+			tx := beginAdjacencyTransaction(t, engine, true)
 
 			_, err := tx.ReadEdges(ctx, adjacencyDecisionRequest(adjacencyDecisionAnchor, adjacencyDecisionLink))
 			require.NoError(t, err)
