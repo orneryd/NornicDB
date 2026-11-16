@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -208,7 +209,7 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	var body struct {
 		Overrides map[string]string `json:"overrides"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&body); err != nil {
 		s.writeNeo4jInvalidJSONBody(w, r)
 		return
 	}

@@ -91,7 +91,7 @@ github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes -> github.c
 github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=2
 github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes
-github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=6
+github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=9
 github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=8
 github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes

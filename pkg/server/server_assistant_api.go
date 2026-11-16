@@ -1,9 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/httpresponse"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -31,7 +31,7 @@ func (s *Server) handleAssistantWorkspace(w http.ResponseWriter, r *http.Request
 		var request struct {
 			Database string `json:"database"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&request); err != nil {
 			httpresponse.WritePropertyJSON(w, http.StatusBadRequest, map[string]string{"message": "Invalid workspace request"})
 			return
 		}
@@ -98,7 +98,7 @@ func (s *Server) handleAssistantConversations(w http.ResponseWriter, r *http.Req
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&request); err != nil {
 			writeConversationError(w, err)
 			return
 		}
@@ -108,7 +108,7 @@ func (s *Server) handleAssistantConversations(w http.ResponseWriter, r *http.Req
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&request); err != nil {
 			writeConversationError(w, err)
 			return
 		}

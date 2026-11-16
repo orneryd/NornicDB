@@ -2,10 +2,10 @@ package heimdall
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	guardian "github.com/orneryd/nornicdb/pkg/heimdall"
 	"strings"
 	"time"
@@ -115,7 +115,7 @@ func (p *WatcherPlugin) Conversation(ctx context.Context, request guardian.Conve
 			attachments := make([]guardian.ConversationAttachment, 0)
 			if encoded, _ := message["attachment_ids"].(string); encoded != "" {
 				var ids []string
-				if err := json.Unmarshal([]byte(encoded), &ids); err != nil {
+				if err := convert.PropertyJSON.Unmarshal([]byte(encoded), &ids); err != nil {
 					return nil, err
 				}
 				for _, id := range ids {

@@ -2,7 +2,7 @@ package heimdall
 
 import (
 	_ "embed"
-	"encoding/json"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 //go:embed default_model.json
@@ -17,12 +17,14 @@ type LocalModelDefaults struct {
 	NativeContextTokens int    `json:"native_context_tokens"`
 }
 
-var packagedModel = func() LocalModelDefaults {
+var packagedModel = loadLocalModelDefaults(packagedModelJSON)
+
+func loadLocalModelDefaults(data []byte) LocalModelDefaults {
 	var model LocalModelDefaults
-	if err := json.Unmarshal(packagedModelJSON, &model); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &model); err != nil {
 		panic(err)
 	}
 	return model
-}()
+}
 
 func DefaultLocalModel() string { return packagedModel.Name }

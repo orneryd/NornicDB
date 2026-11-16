@@ -743,7 +743,7 @@ func TestHeimdallCoverage_PromptToolBudgetBranches(t *testing.T) {
 		ActionPrompt: strings.Repeat("x", MaxSystemPromptTokens()*8),
 		UserMessage:  "test",
 	}
-	prompt := ctx.BuildFinalPromptForTools()
+	prompt := ctx.BuildFinalPrompt(PromptModeNativeTools)
 	assert.Contains(t, prompt, "ACTIONS:")
 	assert.NotContains(t, prompt, "RESPONSE RULES:")
 
