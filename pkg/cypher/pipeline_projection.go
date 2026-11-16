@@ -1095,8 +1095,8 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	if plan == nil {
 		return nil, nil, true, unresolvedStatementError()
 	}
-	// The statement only reads, so no row holds an entity it deleted
-	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
+	// The statement only reads, so no row holds an entity it deleted,
+	// and the RETURN does not aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.

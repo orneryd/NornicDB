@@ -954,11 +954,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 		}
-		if deleted := contextslot.Get[deletedEntities](ctx); !deleted.empty() {
-			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
-				return nil, true, err
-			}
-		}
 		switch clause.kind {
 		case pipelineClauseLet, pipelineClauseFilter:
 			input := source

@@ -2,9 +2,8 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"strings"
 
+	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -58,7 +57,7 @@ func (d *deletedEntities) empty() bool {
 // n {.*}, properties(n) and keys(n) are empty. A relationship keeps its type
 // and endpoints (type(r) still answers). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
-// property or labels is an error instead (validateDeletedEntityReads).
+// property or labels is an error instead (deletedEntityReadFailure).
 func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
@@ -159,219 +158,84 @@ func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
 	return &storage.Edge{ID: edge.ID, Database: edge.Database, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
-// validateDeletedEntityReads rejects a clause that, after a DELETE in the
-// statement, reads a property or the labels of a deleted node or
-// relationship, or the keys or properties() of a deleted relationship,
-// anywhere it reads (n.p + 1, WITH n.p AS p, WHERE n.p = 1, ORDER BY n.p, a
-// SET value, [x IN deleted | x.p]): Neo4j 5.26's EntityNotFound. keys and
-// properties of a deleted node, and n {.*}, are empty instead
-// (replaceDeletedEntityViews); n.p IS NULL is true and SET n.p = 1 writes
-// nothing, without an error (deletedEntityReadsIn, deletedEntityReadText).
-func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities) error {
+// deletedEntityReadKind is what a read asks of an entity value: the value of a
+// property, the labels the entity carries, the property set keys() and
+// properties() report, or whether one property is present.
+type deletedEntityReadKind int
+
+const (
+	// deletedEntityPropertyValue reads one property value: n.p, (n).p, n[key],
+	// head([n]).p, [x IN [n] | x.p], a map's value read on to its property
+	// (m.entity.p) — and a relationship's keys(r) and properties(r), which
+	// Neo4j answers from its property store.
+	deletedEntityPropertyValue deletedEntityReadKind = iota
+	// deletedEntityLabels reads labels(v).
+	deletedEntityLabels
+	// deletedEntityPropertySet reads keys(v) and properties(v) of a node: Neo4j
+	// reports the empty set for a deleted node rather than an error.
+	deletedEntityPropertySet
+	// deletedEntityPropertyPresence asks whether one property is present: the
+	// read a null test's own operand is. A deleted entity's property is absent,
+	// and Neo4j answers n.p IS NULL for it without loading the entity, so this
+	// read answers null instead of the statement error (#907).
+	deletedEntityPropertyPresence
+)
+
+// deletedEntityReadFailure is the statement error reading value raises once the
+// statement deleted it (#907): a deleted entity's property values and labels
+// are gone, so Neo4j reports reading them as EntityNotFound wherever the read
+// is reached — a projection, a filter, an ordering, a SET's value, a dynamic
+// key, a list comprehension over a list holding the entity, through an alias.
+// The decision is taken from the entity value the expression actually
+// received, so every expression that hands a deleted entity to a read fails
+// alike, whatever shape its text has.
+//
+// It is nil for a value that isn't an entity the statement deleted, for the
+// empty property set a deleted node's keys() and properties() answer, and for
+// the presence a null test asks of a property: that read is granted to the
+// null test's own operand only, never to a computed or nested expression
+// (deletedEntityPropertyPresence).
+func deletedEntityReadFailure(ctx context.Context, value interface{}, read deletedEntityReadKind) error {
+	switch value.(type) {
+	case *storage.Node, *storage.Edge:
+	default:
+		return nil
+	}
+	deleted := contextslot.Get[deletedEntities](ctx)
 	if deleted.empty() {
 		return nil
 	}
-	reads := deletedEntityReadsIn(clause)
-	for _, row := range rows {
-		for _, read := range reads {
-			variable := read.variable
-			if _, bound := row[variable]; !bound {
-				// A list iteration variable (x IN xs) reads the list's items.
-				variable = iterationSourceVariable(clause, variable)
-			}
-			if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
-				return newSemanticError(
-					"Neo.ClientError.Statement.EntityNotFound",
-					"DeletedEntityAccess",
-					"cannot access properties or labels of a deleted entity",
-				)
-			}
-		}
+	if !deleted.readsDeleted(value, read) {
+		return nil
 	}
-	return nil
+	return newSemanticError(
+		"Neo.ClientError.Statement.EntityNotFound",
+		"DeletedEntityAccess",
+		"cannot access properties or labels of a deleted entity",
+	)
 }
 
-// deletedEntityRead is a variable an expression reads a property or the
-// labels of, or (relationshipOnly) the keys or properties() of: an error only
-// for a relationship.
-type deletedEntityRead struct {
-	variable         string
-	relationshipOnly bool
-}
-
-// deletedEntityReadsIn returns the variables expression reads a property, the
-// labels, the keys or properties() of, outside string literals: v.p,
-// labels(v), keys(v), properties(v). A gap between those parts is the
-// statement's: whitespace and comments (queryGapEnd).
-func deletedEntityReadsIn(expression string) []deletedEntityRead {
-	var reads []deletedEntityRead
-	for index := 0; index < len(expression); {
-		if !isCypherBacktickByte(expression[index]) {
-			if end, opaque := skipCypherLexicalToken(expression, index); opaque {
-				index = end
-				continue
-			}
-		}
-		name, ok := cyphertext.ScanIdentifier(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		if !functionNameStartsAt(expression, index) {
-			index = name.End
-			continue
-		}
-		index = name.End
-		word := name.Value
-		next := queryGapEnd(expression, index)
-		switch {
-		case isPropertyDotAt(expression, next):
-			// A qualified function namespace is not a row variable. Keep
-			// scanning the argument body so actual deleted reads still fail.
-			_, end := dottedNameParts(expression, index, true, dottedNameExtent)
-			if open := queryGapEnd(expression, end); open < len(expression) && expression[open] == '(' {
-				index = end
-				continue
-			}
-			if !propertyNullTestFollows(expression, next+1) {
-				reads = append(reads, deletedEntityRead{variable: word})
-			}
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
-			argument, ok := cyphertext.ScanIdentifier(expression, queryGapEnd(expression, next+1))
-			if close := queryGapEnd(expression, argument.End); ok && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: argument.Value, relationshipOnly: !strings.EqualFold(word, "labels")})
-			}
-		}
-	}
-	return reads
-}
-
-// bindsDeleted reports whether row binds variable to a deleted node or
-// relationship. For a keys() / properties() read (relationshipOnly) only a
-// relationship counts: a deleted node's are empty.
-func (d *deletedEntities) bindsDeleted(row pipelineRow, variable string, relationshipOnly bool) bool {
-	if variable == "" {
-		return false
-	}
-	return d.holdsDeleted(row[variable], relationshipOnly)
-}
-
-// holdsDeleted reports whether value is a deleted node or relationship, or a
-// list holding one (bindsDeleted).
-func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool) bool {
+// readsDeleted reports whether reading value the given way fails: a deleted
+// node's property values and labels are gone, a deleted relationship's too
+// (its type, endpoints and identity remain), a deleted node's property set is
+// empty rather than missing, and a property's presence is what a null test
+// answers without an error.
+func (d *deletedEntities) readsDeleted(value interface{}, read deletedEntityReadKind) bool {
 	switch entity := value.(type) {
-	case []interface{}:
-		for _, item := range entity {
-			if d.holdsDeleted(item, relationshipOnly) {
-				return true
-			}
-		}
-		return false
 	case *storage.Node:
-		if relationshipOnly || entity == nil {
+		if entity == nil || read == deletedEntityPropertySet || read == deletedEntityPropertyPresence {
 			return false
 		}
 		_, found := d.nodes[storage.NodeID(entity.IdentityKey())]
 		return found
 	case *storage.Edge:
-		if entity == nil {
+		if entity == nil || read == deletedEntityPropertyPresence {
 			return false
 		}
 		_, found := d.edges[storage.EdgeID(entity.IdentityKey())]
 		return found
-	default:
-		return false
 	}
-}
-
-// propertyNullTestFollows reports whether the property name starting at
-// index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
-// entity's property for null without an error (it has none).
-func propertyNullTestFollows(expression string, index int) bool {
-	property, _, ok := cyphertext.ScanIdentifierExtent(expression, queryGapEnd(expression, index))
-	if !ok {
-		return false
-	}
-	index = queryGapEnd(expression, property.End)
-	if !matchKeywordAt(expression, index, "IS") {
-		return false
-	}
-	index = queryGapEnd(expression, index+len("IS"))
-	if matchKeywordAt(expression, index, "NOT") {
-		index = queryGapEnd(expression, index+len("NOT"))
-	}
-	return matchKeywordAt(expression, index, "NULL")
-}
-
-// iterationSourceVariable is the row variable that variable iterates in
-// clause (x in [x IN xs | x.p], any(x IN xs WHERE …), reduce(s = 0, x IN xs
-// | …)), "" when variable iterates no row variable.
-func iterationSourceVariable(clause, variable string) string {
-	for offset := 0; offset < len(clause); {
-		index := cyphertext.FindIdentifier(clause[offset:], variable, 0, cyphertext.IdentifierFold)
-		if index < 0 {
-			return ""
-		}
-		after := offset + index + len(variable)
-		offset = after
-		rest := clause[queryGapEnd(clause, after):]
-		if !startsWithKeywordFold(rest, "IN") {
-			continue
-		}
-		source, ok := cyphertext.ScanIdentifier(rest, queryGapEnd(rest, len("IN")))
-		if ok {
-			return source.Value
-		}
-	}
-	return ""
-}
-
-// deletedEntityReadText is the part of clause that reads values, for
-// validateDeletedEntityReads: a SET's assigned values, dynamic keys and
-// dynamic label expressions (its targets are writes, and Neo4j lets SET
-// write to a deleted entity), nothing for a DELETE or REMOVE (their
-// targets), a FOREACH's iteration list (its body runs per item, so the body's
-// reads are validated by runPipelineClauseRows where each item runs them), the whole clause otherwise.
-func deletedEntityReadText(clause pipelineClause) string {
-	switch clause.kind {
-	case pipelineClauseDelete, pipelineClauseRemove:
-		return ""
-	case pipelineClauseSet:
-		body := strings.TrimSpace(clause.text)
-		if startsWithKeywordFold(body, "SET") {
-			body = body[len("SET"):]
-		}
-		var values strings.Builder
-		for _, assignment := range splitSetAssignments(body) {
-			_, property, operator, right := splitSetAssignment(assignment)
-			switch operator {
-			case "[]=":
-				// The key expression of x[key] = v is read too.
-				values.WriteString(property)
-				values.WriteByte('\n')
-				fallthrough
-			case "=", "+=":
-				values.WriteString(right)
-				values.WriteByte('\n')
-			case ":":
-				// A dynamic label's expression ($(e)) reads e.
-				if strings.Contains(right, "$(") {
-					values.WriteString(right)
-					values.WriteByte('\n')
-				}
-			}
-		}
-		return values.String()
-	case pipelineClauseForeach:
-		// An empty list runs no body, so only the list expression, which every
-		// row evaluates, is a read here (runPipelineClauseRows).
-		body := queryBodyFromSyntax(clause.syntax)
-		if body.foreach == nil {
-			return clause.text
-		}
-		return body.foreach.listExpression
-	}
-	return clause.text
+	return false
 }
 
 // deleteEdgeLookupID uses the same identity translation as collected targets

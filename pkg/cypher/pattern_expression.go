@@ -259,21 +259,26 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	return values
 }
 
-// evaluateRowExpressionWithContext extends the allocation-conscious row
-// evaluator with graph expressions that require storage access. Callers with
-// an execution context use this as the converged expression entry point.
-func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
-	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
-		return cypherfn.RuntimeValue(value), true
+// evaluateBoundRowValue resolves a row variable, or a plain property chain on
+// one (e.uuid), straight from the row. The chain reads its receiver, so a
+// deleted entity's property is the statement error it raises everywhere else
+// (#907), not a null this fast path answers alone.
+func (e *StorageExecutor) evaluateBoundRowValue(ctx context.Context, expr string, values pipelineRow) (interface{}, bool, error) {
+	if value, found := values[expr]; found && !isLiteralKeyword(expr) {
+		return cypherfn.RuntimeValue(value), true, nil
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(base, chain, e, false); resolved {
-				return cypherfn.RuntimeValue(value), true
+			value, resolved, err := evaluateRowPropertyChain(ctx, base, chain, e, false, deletedEntityPropertyValue)
+			if err != nil {
+				return nil, false, err
+			}
+			if resolved {
+				return cypherfn.RuntimeValue(value), true, nil
 			}
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // rowContextShape is what evaluateRowExpressionWithContext reads from an
@@ -314,9 +319,15 @@ func rowContextShapeOf(ctx context.Context, expr string) *rowContextShape {
 	return shape
 }
 
+// evaluateRowExpressionWithContext extends the allocation-conscious row
+// evaluator with graph expressions that require storage access. Callers with
+// an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
-	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-		return cypherfn.RuntimeValue(value), true
+	if value, bound, err := e.evaluateBoundRowValue(ctx, expr, values); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
+	} else if bound {
+		return value, true
 	}
 	// A bare parameter already has a native value. Preserve the ordinary
 	// binding precedence without copying whole scopes for each prepared value.
@@ -364,8 +375,11 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// A row variable, or a plain property chain on one (e.uuid),
 		// resolves without the graph-expression checks below, which can't
 		// match it.
-		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-			return cypherfn.RuntimeValue(value), true
+		if value, bound, err := e.evaluateBoundRowValue(ctx, expr, values); err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, false
+		} else if bound {
+			return value, true
 		}
 	}
 	if shape.statementContext {

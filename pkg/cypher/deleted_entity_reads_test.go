@@ -144,31 +144,45 @@ func TestDeletedEntityReadsAfterWithMatchNeo4j(t *testing.T) {
 	}
 }
 
-func TestDeletedEntityReadTextAndIteration(t *testing.T) {
-	require.Equal(t, "n.p\n1\n", deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n.q = n.p, m += 1, n:L"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n.p"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseDelete, text: "DELETE n"}))
-	require.Equal(t, "RETURN n.p", deletedEntityReadText(pipelineClause{kind: pipelineClauseReturn, text: "RETURN n.p"}))
-	require.Equal(t, "xs", iterationSourceVariable("RETURN [x IN xs | x.p]", "x"))
-	require.Equal(t, "ys", iterationSourceVariable("RETURN 'x IN zs', any(x  in ys WHERE x.p > 1)", "x"))
-	require.Empty(t, iterationSourceVariable("RETURN x.p, xin", "x"))
-	require.Empty(t, iterationSourceVariable("RETURN [x IN [1] | x]", "x"))
-	require.Empty(t, iterationSourceVariable("RETURN 'x", "x"))
-	require.True(t, propertyNullTestFollows("n.p IS NULL", 2))
-	require.True(t, propertyNullTestFollows("n.p is  not null", 2))
-	require.False(t, propertyNullTestFollows("n.p IS NOT 1", 2))
-	require.False(t, propertyNullTestFollows("n.p = 1", 2))
-	var none *deletedEntities
-	require.True(t, none.empty())
-	require.False(t, none.bindsDeleted(pipelineRow{}, "", false))
-}
-
-func TestDeletedEntityReadsIn(t *testing.T) {
-	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", relationshipOnly: true}, {variable: "r"}, {variable: "q"}},
-		deletedEntityReadsIn("n.a + size(keys( m )) + 'x.y' + size(labels(r)) + `q`.z"))
-	require.Empty(t, deletedEntityReadsIn("range(1..2)"))
-	require.Empty(t, deletedEntityReadsIn("keys(f(n))"))
-	require.Empty(t, deletedEntityReadsIn("'unterminated"))
+// A clause reads a deleted entity wherever the statement hands the entity to a
+// read: a SET's value, an iteration's projection, a filter, an ordering. A
+// write target and a clause that reads nothing do not (#907).
+func TestDeletedEntityReadsReachClauseValuesAndIterations(t *testing.T) {
+	forEachCypherParserSetting(t, func(t *testing.T) {
+		probe := deletedExpressionReadsFixture(t)
+		for _, query := range []string{
+			"MATCH (n:EIDel {p: 1}) DELETE n SET n.q = n.p RETURN 1 AS v",
+			"MATCH (n:EIDel {p: 1}) DELETE n WITH n SET n.q = n.p RETURN 1 AS v",
+			"MATCH (n:EIDel {p: 1}) DELETE n WITH collect(n) AS ns RETURN size(labels(head(ns))) AS v",
+			"MATCH (n:EIDel {p: 1}) DELETE n WITH collect(n) AS ns RETURN [x IN ns | x.p - 1] AS v",
+			"MATCH (n:EIDel {p: 1}) DELETE n WITH n WHERE n.p + 1 = 2 RETURN 1 AS v",
+			"MATCH (n:EIDel {p: 1}) DELETE n WITH n ORDER BY n.p RETURN 1 AS v",
+			"MATCH (:EIDel {p: 1})-[r:EIR]->() DELETE r RETURN keys(r) AS v",
+			"MATCH (:EIDel {p: 1})-[r:EIR]->() DELETE r RETURN properties(r) AS v",
+		} {
+			t.Run(query, func(t *testing.T) {
+				_, err := probe(query)
+				require.Error(t, err)
+				code, message := nornicerrors.Neo4jStatus(err)
+				require.Equal(t, "Neo.ClientError.Statement.EntityNotFound", code, "%s: %v", message, err)
+			})
+		}
+		for _, testCase := range []struct {
+			query string
+			want  interface{}
+		}{
+			{"MATCH (n:EIDel {p: 1}) DELETE n RETURN n.p IS NULL AS v", true},
+			{"MATCH (n:EIDel {p: 1}) DELETE n RETURN n.p is not null AS v", false},
+			{"MATCH (n:EIDel {p: 1}) DELETE n RETURN range(1, 2) AS v", []interface{}{int64(1), int64(2)}},
+			{"MATCH (n:EIDel {p: 1}) DELETE n RETURN 1 AS v", int64(1)},
+		} {
+			t.Run(testCase.query, func(t *testing.T) {
+				result, err := probe(testCase.query)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{testCase.want}}, result.Rows)
+			})
+		}
+	})
 }
 
 // A DELETE target must be a node, relationship or path (or null, which
@@ -248,12 +262,12 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	var nilEdge *storage.Edge
 	deleted := &deletedEntities{}
 	deleted.add([]storage.NodeID{"n"}, map[storage.EdgeID]struct{}{"e": {}})
-	require.False(t, deleted.holdsDeleted(nilNode, false))
-	require.False(t, deleted.holdsDeleted(nilEdge, false))
-	require.False(t, deleted.holdsDeleted(&storage.Node{ID: "n"}, true))
-	require.True(t, deleted.holdsDeleted([]interface{}{int64(1), &storage.Edge{ID: "e"}}, true))
-	require.False(t, deleted.holdsDeleted([]interface{}{int64(1)}, false))
-	require.Empty(t, iterationSourceVariable("RETURN x", "x"))
+	require.False(t, deleted.readsDeleted(nilNode, deletedEntityPropertyValue))
+	require.False(t, deleted.readsDeleted(nilEdge, deletedEntityPropertyValue))
+	// A node's keys() and properties() are empty, not a failed read.
+	require.False(t, deleted.readsDeleted(&storage.Node{ID: "n"}, deletedEntityPropertySet))
+	require.True(t, deleted.readsDeleted(&storage.Edge{ID: "e"}, deletedEntityPropertyValue))
+	require.False(t, deleted.readsDeleted(int64(1), deletedEntityPropertyValue))
 
 	targets, detach, ok := deleteClauseTargets("REMOVE n.p")
 	require.False(t, ok)

@@ -43,13 +43,16 @@ func TestVisibleRowPropertyChainPreservesNestedEntityVisibility(t *testing.T) {
 	base := map[string]interface{}{"outer": map[string]interface{}{"node": node, "edge": edge, "plain": map[string]interface{}{"quantity": int64(3)}}}
 	for _, chain := range []string{"outer.node.body", "outer.node.title", "outer.edge.summary", "outer.node", "outer.plain.quantity", "outer.plain", "outer.absent"} {
 		t.Run(chain, func(t *testing.T) {
-			oldValue, oldOK := evaluateRowPropertyChain(e.queryVisibleValue(base), chain, nil, false)
-			got, ok := evaluateRowPropertyChain(base, chain, e, false)
+			oldValue, oldOK, err := evaluateRowPropertyChain(t.Context(), e.queryVisibleValue(base), chain, nil, false, deletedEntityPropertyValue)
+			require.NoError(t, err)
+			got, ok, err := evaluateRowPropertyChain(t.Context(), base, chain, e, false, deletedEntityPropertyValue)
+			require.NoError(t, err)
 			require.Equal(t, oldOK, ok)
 			require.Equal(t, oldValue, got)
 		})
 	}
-	hidden, ok := evaluateRowPropertyChain(base, "outer.node.body", e, false)
+	hidden, ok, err := evaluateRowPropertyChain(t.Context(), base, "outer.node.body", e, false, deletedEntityPropertyValue)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Nil(t, hidden)
 	require.Equal(t, "hidden", node.Properties["body"], "visibility must not mutate the stored binding")

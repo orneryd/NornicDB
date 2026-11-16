@@ -231,7 +231,8 @@ func compileRowPredicateLeaf(ctx context.Context, expr string) rowPredicateNode 
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expr, operator) {
-			return &rowPredicateNullNode{operand: compileRowPredicateOperand(ctx, strings.TrimSpace(expr[:len(expr)-len(operator)])), isNull: operator == " IS NULL"}
+			operand := strings.TrimSpace(expr[:len(expr)-len(operator)])
+			return &rowPredicateNullNode{operand: compileRowPredicateOperand(ctx, operand), property: compileNullTestProperty(ctx, operand), isNull: operator == " IS NULL"}
 		}
 	}
 	if scan, comparison := scanComparisonChain(expr); comparison {
@@ -417,9 +418,22 @@ func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Conte
 type rowPredicateNullNode struct {
 	operand rowPredicateOperand
 	isNull  bool
+	// property is the operand's own property read when the operand is exactly
+	// one (n.p, (n).p, n['p']); nil otherwise. Neo4j answers a deleted
+	// entity's null test without loading the property, so only that read
+	// answers null instead of the statement error (#907).
+	property *rowNullTestProperty
 }
 
 func (n *rowPredicateNullNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	if n.property != nil {
+		value, _, err := n.property.evaluate(ctx, e, values, nil)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
+		}
+		return nullEvaluationHandler(!n.isNull).evaluate(value)
+	}
 	value, _ := n.operand.resolve(e, ctx, values)
 	return nullEvaluationHandler(!n.isNull).evaluate(value)
 }
