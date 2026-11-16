@@ -2,7 +2,6 @@ package heimdall
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 func BuildModelPrompt(model string, messages []ChatMessage, thinking bool) string {
@@ -47,7 +47,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
 		return
 	}
 	defer turn.Release()
@@ -84,13 +84,13 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	}
 	fail := func(failure error) {
 		if req.Stream {
-			data, _ := json.Marshal(map[string]string{"message": failure.Error()})
+			data, _ := valueconvert.PropertyJSON.Marshal(map[string]string{"message": failure.Error()})
 			fmt.Fprintf(w, "event: nornic.error\ndata: %s\n\n", data)
 			flusher.Flush()
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"message": failure.Error()})
+			valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]string{"message": failure.Error()})
 		}
 	}
 	CallPrePromptHooks(prompt)
@@ -145,7 +145,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	response := ChatResponse{ID: prompt.RequestID, Object: "chat.completion", Model: req.Model, Created: time.Now().Unix(), Choices: []ChatChoice{{Index: 0, Message: &ChatMessage{Role: "assistant", Content: reply}, FinishReason: "stop"}}}
 	if !req.Stream {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		valueconvert.PropertyJSON.NewEncoder(w).Encode(response)
 		return
 	}
 	response.Object = "chat.completion.chunk"
@@ -154,7 +154,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	if lifecycle.streamedAnswer.Len() == 0 {
 		response.Choices[0].Delta.Content = reply
 	}
-	data, _ := json.Marshal(response)
+	data, _ := valueconvert.PropertyJSON.Marshal(response)
 	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
 	flusher.Flush()
 }

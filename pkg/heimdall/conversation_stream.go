@@ -2,9 +2,10 @@ package heimdall
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // reasoningDecoder preserves marker fragments across arbitrary token boundaries.
@@ -70,7 +71,7 @@ func (h *Handler) generateConversationRound(ctx context.Context, lifecycle *requ
 			return nil
 		}
 		chunk := ChatResponse{ID: lifecycle.requestID, Object: "chat.completion.chunk", Model: lifecycle.StreamModel, Created: lifecycle.promptCtx.RequestTime.Unix(), Choices: []ChatChoice{{Index: 0, Delta: &ChatMessage{Content: text}}}}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		if _, err := fmt.Fprintf(lifecycle.StreamWriter, "data: %s\n\n", data); err != nil {
 			return err
 		}
@@ -86,7 +87,7 @@ func (h *Handler) generateConversationRound(ctx context.Context, lifecycle *requ
 		if thinking {
 			lifecycle.reasoning.WriteString(text)
 			if lifecycle.StreamWriter != nil {
-				data, _ := json.Marshal(map[string]string{"text": text})
+				data, _ := valueconvert.PropertyJSON.Marshal(map[string]string{"text": text})
 				if _, err := fmt.Fprintf(lifecycle.StreamWriter, "event: nornic.reasoning\ndata: %s\n\n", data); err != nil {
 					return err
 				}

@@ -302,7 +302,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(map[string]interface{}{
 		"status":                  "ok",
 		"model":                   h.announcedModel(),
 		"context_window":          h.config.ContextSize,
@@ -698,7 +698,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeLocalizedError(w, r, localization.HeimdallInvalidRequestBody(), http.StatusBadRequest)
 		return
 	}
@@ -1225,7 +1225,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 					}},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 				return
 			}
 		}
@@ -1252,7 +1252,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, ctx context.
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(resp)
 }
 
 // handleStreamingWithTools runs the agentic loop (tools path) and streams the final response.
@@ -1288,7 +1288,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: fmt.Sprintf("Error: %v", err)},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	} else if finalResponse != "" {
@@ -1303,7 +1303,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 				Delta: &ChatMessage{Content: finalResponse},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1313,7 +1313,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 		ID: lifecycle.requestID, Object: "chat.completion.chunk", Model: model, Created: time.Now().Unix(),
 		Choices: []ChatChoice{{Index: 0, Delta: &ChatMessage{}, FinishReason: "stop"}},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()

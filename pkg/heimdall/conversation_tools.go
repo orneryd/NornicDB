@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -30,7 +31,7 @@ func (l *requestLifecycle) publishTool(index int) {
 	if index < 0 || l.StreamWriter == nil {
 		return
 	}
-	data, _ := json.Marshal(l.tools[index])
+	data, _ := valueconvert.PropertyJSON.Marshal(l.tools[index])
 	fmt.Fprintf(l.StreamWriter, "event: nornic.tool\ndata: %s\n\n", data)
 	l.StreamFlusher.Flush()
 }

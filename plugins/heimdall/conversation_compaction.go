@@ -2,12 +2,12 @@ package heimdall
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	guardian "github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -115,7 +115,7 @@ func (p *WatcherPlugin) compactConversation(ctx context.Context, host guardian.C
 		var batch strings.Builder
 		start := cursor
 		for cursor < cutoff {
-			encoded, _ := json.Marshal(messages[cursor])
+			encoded, _ := convert.PropertyJSON.Marshal(messages[cursor])
 			text := string(encoded)
 			if guardian.EstimateTokens(batch.String()+text)+guardian.EstimateTokens(summary) > batchBudget && cursor > start {
 				break
@@ -236,7 +236,7 @@ func loadConversationContext(ctx context.Context, host guardian.ChatWorkspaceHos
 		content, _ := row["content"].(string)
 		if encoded, _ := row["attachment_ids"].(string); encoded != "" {
 			var ids []string
-			if err := json.Unmarshal([]byte(encoded), &ids); err != nil {
+			if err := convert.PropertyJSON.Unmarshal([]byte(encoded), &ids); err != nil {
 				return nil, err
 			}
 			hint, _, err := attachmentReferences(ctx, host, id, ids, &budget)
