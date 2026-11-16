@@ -1631,6 +1631,7 @@ type Session struct {
 	inTransaction                   bool
 	txMetadata                      map[string]any // Transaction metadata from BEGIN
 	txDatabase                      string
+	txAccessMode                    requestedAccessMode // BEGIN's requested access mode
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
 	txMergeStatements               []cypher.CommitStatement
@@ -2071,6 +2072,16 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			break
 		}
 
+		// BEGIN's requested access mode governs every statement of the
+		// transaction until the transaction ends, whatever the individual RUNs
+		// of the connection carry.
+		requestedMode, validRequestedMode := accessModeFromMetadata(metadata)
+		if !validRequestedMode {
+			invalidMode := invalidRequestedAccessMode(metadata)
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(invalidMode, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(invalidMode)))
+			break
+		}
+
 		// Pin every explicit transaction provider to the BEGIN database, not only
 		// database-manager adapters. Factory and single-connection raw executors are
 		// session-scoped rather than database-resolving, so a later RUN naming a
@@ -2152,6 +2163,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		s.inTransaction = true
 		s.txMetadata = metadata
 		s.txDatabase = txDatabase
+		s.txAccessMode = requestedMode
 		s.txHasMerge = false
 		s.txHasNonMergeWrite = false
 		s.txMergeStatements = nil

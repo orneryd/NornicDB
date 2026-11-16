@@ -78,6 +78,16 @@ func (s *Session) handleRun(data []byte) error {
 	// Store metadata for potential use (bookmarks, tx_timeout, etc.)
 	s.lastRunMetadata = metadata
 
+	// The RUN's requested access mode restricts this statement only: a READ
+	// request refuses updates at admission below, and the option does not
+	// persist to the next message on this connection. A value Neo4j does not
+	// define is an invalid message option.
+	runAccessMode, validRunAccessMode := accessModeFromMetadata(metadata)
+	if !validRunAccessMode {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Request.Invalid",
+			localization.ExternalDiagnostic(invalidRequestedAccessMode(metadata)))
+	}
+
 	// Validate bookmarks if present (for causal consistency)
 	if bookmarks, ok := metadata["bookmarks"].([]any); ok && len(bookmarks) > 0 {
 		if err := s.validateBookmarks(bookmarks); err != nil {
@@ -175,6 +185,20 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 
+	// A READ request refuses a statement that updates data or schema before it
+	// reaches an executor or a transaction, so a refused statement changes
+	// nothing. Requested access restricts the client on top of the principal's
+	// grants and the database's configuration; it never replaces them, and the
+	// checks above and the executor's authorization still decide whether the
+	// principal may write at all.
+	if s.statementAccessMode(runAccessMode) == accessModeRead {
+		readCtx := cypher.WithReadOnlyStatements(parentCtx)
+		if err := cypher.CheckStatementAccess(readCtx, query, cypher.RawSource); err != nil {
+			code, message := mapBoltQueryError(err)
+			return s.sendRunFailure(code, message)
+		}
+	}
+
 	// Keep explicit transactions pinned to the executor selected at BEGIN.
 	executor := s.executor
 	if s.inTransaction {
@@ -208,6 +232,9 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		defer func() { _ = s.txLifecycle.finishRun() }()
 		parentCtx = txCtx
+	}
+	if s.statementAccessMode(runAccessMode) == accessModeRead {
+		parentCtx = cypher.WithReadOnlyStatements(parentCtx)
 	}
 	parentCtx = extractTraceparent(parentCtx, metadata)
 	if !s.inTransaction {

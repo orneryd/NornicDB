@@ -142,6 +142,7 @@ func (s *Session) clearExplicitTransactionState() {
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
+	s.txAccessMode = accessModeUnconstrained
 	s.txHasMerge = false
 	s.txHasNonMergeWrite = false
 	s.txMergeStatements = nil
