@@ -58,7 +58,7 @@ func init() {
 			return nil, fmt.Errorf("%s() has no active gate", statementGateFunction)
 		}
 		return gate.call(workCtx, value), nil
-	}, cypherfn.OpaqueReads)
+	}, cypherfn.OpaqueReads, cypherfn.FullInputImage)
 }
 
 // newStatementGate returns a gate that runs onFirst when the statement first

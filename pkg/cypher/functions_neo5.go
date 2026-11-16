@@ -27,10 +27,10 @@ import (
 // null out; an argument of a type the signature excludes is the "Type
 // mismatch: expected … but was …" SyntaxError (cypherfn.TypeMismatchError).
 func init() {
-	cypherfn.Register("radians", fnRadians, cypherfn.CanonicalReads)
-	cypherfn.Register("pi", constantFunction("pi", math.Pi, coreConstantArguments), cypherfn.CanonicalReads)
-	cypherfn.Register("e", constantFunction("e", math.E, coreConstantArguments), cypherfn.CanonicalReads)
-	cypherfn.Register("round", fnRound, cypherfn.CanonicalReads)
+	cypherfn.Register("radians", fnRadians, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("pi", constantFunction("pi", math.Pi, coreConstantArguments), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("e", constantFunction("e", math.E, coreConstantArguments), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("round", fnRound, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	for name, operation := range map[string]func(float64) float64{
 		"sin":      math.Sin,
 		"cos":      math.Cos,
@@ -50,34 +50,34 @@ func init() {
 		"tanh":     math.Tanh,
 		"coth":     rowMathCoth,
 	} {
-		cypherfn.Register(name, mathFunction(name, mathOperation{unary: operation}), cypherfn.CanonicalReads)
+		cypherfn.Register(name, mathFunction(name, mathOperation{unary: operation}), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
-	cypherfn.Register("ceil", mathFunction("ceil", mathOperation{unary: math.Ceil}), cypherfn.CanonicalReads)
-	cypherfn.Register("floor", mathFunction("floor", mathOperation{unary: math.Floor}), cypherfn.CanonicalReads)
-	cypherfn.Register("atan2", mathFunction("atan2", mathOperation{binary: math.Atan2}), cypherfn.CanonicalReads)
-	cypherfn.Register("power", mathFunction("power", mathOperation{binary: math.Pow}), cypherfn.CanonicalReads)
-	cypherfn.Register("isnan", fnIsNaN, cypherfn.CanonicalReads)
-	cypherfn.Register("char_length", fnCharLength, cypherfn.CanonicalReads)
-	cypherfn.Register("character_length", fnCharLength, cypherfn.CanonicalReads)
-	cypherfn.Register("upper", cypherfn.CaseFunction("upper", cypherfn.UpperCaseText, argumentCountError), cypherfn.CanonicalReads)
-	cypherfn.Register("lower", cypherfn.CaseFunction("lower", cypherfn.LowerCaseText, argumentCountError), cypherfn.CanonicalReads)
-	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true), cypherfn.CanonicalReads)
-	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false), cypherfn.CanonicalReads)
-	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true), cypherfn.CanonicalReads)
-	cypherfn.Register("trim", fnTrim, cypherfn.CanonicalReads)
-	cypherfn.Register("normalize", fnNormalize, cypherfn.CanonicalReads)
-	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)), cypherfn.CanonicalReads)
-	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)), cypherfn.CanonicalReads)
-	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringInVersion), cypherfn.CanonicalReads)
-	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)), cypherfn.CanonicalReads)
-	cypherfn.Register("valuetype", fnValueType, cypherfn.CanonicalReads)
-	cypherfn.Register("nullif", fnNullIf, cypherfn.CanonicalReads)
-	cypherfn.Register("tail", fnTail, cypherfn.CanonicalReads)
+	cypherfn.Register("ceil", mathFunction("ceil", mathOperation{unary: math.Ceil}), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("floor", mathFunction("floor", mathOperation{unary: math.Floor}), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("atan2", mathFunction("atan2", mathOperation{binary: math.Atan2}), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("power", mathFunction("power", mathOperation{binary: math.Pow}), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("isnan", fnIsNaN, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("char_length", fnCharLength, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("character_length", fnCharLength, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("upper", cypherfn.CaseFunction("upper", cypherfn.UpperCaseText, argumentCountError), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("lower", cypherfn.CaseFunction("lower", cypherfn.LowerCaseText, argumentCountError), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("trim", fnTrim, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("normalize", fnNormalize, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringInVersion), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("valuetype", fnValueType, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("nullif", fnNullIf, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("tail", fnTail, cypherfn.CanonicalReads, cypherfn.StructuralInputImage)
 	for name, fn := range singleValueFunctions {
-		cypherfn.Register(name, singleValueFunction(name, fn), cypherfn.CanonicalReads)
+		cypherfn.Register(name, singleValueFunction(name, fn), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
-		cypherfn.Register(name, fnStringOperation(name), cypherfn.CanonicalReads)
+		cypherfn.Register(name, fnStringOperation(name), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
 	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
 		convert := map[string]versionedConversion{
@@ -85,9 +85,9 @@ func init() {
 			"tofloat": sameInEveryVersion(convertToFloatOrNull), "toboolean": sameInEveryVersion(convertToBooleanOrNull),
 			"tostring": convertToStringInVersion,
 		}[name]
-		cypherfn.Register(name, fnScalarConversion(name, convert, false), cypherfn.CanonicalReads)
+		cypherfn.Register(name, fnScalarConversion(name, convert, false), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 		if name != "toint" {
-			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true), cypherfn.CanonicalReads)
+			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 		}
 	}
 }

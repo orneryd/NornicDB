@@ -23,7 +23,7 @@ func TestProfileEvaluationOwnsItsInputMetadata(t *testing.T) {
 			}
 		}
 		return true, nil
-	}, cypherfn.OpaqueReads)
+	}, cypherfn.OpaqueReads, cypherfn.FullInputImage)
 	forEachParser(t, func(t *testing.T) {
 		for _, prefix := range []string{"", "CYPHER 25 "} {
 			for _, params := range []map[string]interface{}{nil, {"unused": int64(7)}} {

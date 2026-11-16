@@ -255,7 +255,7 @@ func TestGraphFunctionNameCarriesNoRegistrationTrust(t *testing.T) {
 			restoreRegistration(t, name)
 			Register(name, func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 				return nil, nil
-			}, OpaqueReads)
+			}, OpaqueReads, FullInputImage)
 			_, observer, err := evaluateObservedGraphFunction(t, name, []string{"a"}, graphTestContext([]string{"cmp.a"}, true, nil))
 			require.NoError(t, err)
 			require.Empty(t, observer.reads(), "the replacement acquires no catalog")

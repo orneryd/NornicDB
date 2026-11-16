@@ -78,7 +78,7 @@ func TestRegisterReadObservationPolicyControlsOpaqueCallback(t *testing.T) {
 
 	Register("policy_canonical_value", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "canonical", nil
-	}, CanonicalReads)
+	}, CanonicalReads, FullInputImage)
 	value, unobserved, reads := evaluateWithObserver(t, "policy_canonical_value", ctx)
 	if value != "canonical" || len(unobserved) != 0 || reads != 0 {
 		t.Fatalf("canonical registration: value=%v unobserved=%v reads=%d", value, unobserved, reads)
@@ -86,7 +86,7 @@ func TestRegisterReadObservationPolicyControlsOpaqueCallback(t *testing.T) {
 
 	Register("policy_opaque_value", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "opaque", nil
-	}, OpaqueReads)
+	}, OpaqueReads, FullInputImage)
 	value, unobserved, reads = evaluateWithObserver(t, "policy_opaque_value", ctx)
 	if value != "opaque" || reads != 0 {
 		t.Fatalf("opaque registration: value=%v reads=%d", value, reads)
@@ -101,7 +101,7 @@ func TestRegisterReadObservationPolicyControlsOpaqueCallback(t *testing.T) {
 	}
 	Register("policy_zero_value", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "zero", nil
-	}, zero)
+	}, zero, FullInputImage)
 	if _, unobserved, _ = evaluateWithObserver(t, "policy_zero_value", ctx); len(unobserved) != 1 {
 		t.Fatalf("a registration without a stated policy stays opaque, got %v", unobserved)
 	}
@@ -136,7 +136,7 @@ func TestRegisterReplacementSwapsImplementationAndPolicyTogether(t *testing.T) {
 
 	Register("policy_replaced", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "first", nil
-	}, CanonicalReads)
+	}, CanonicalReads, FullInputImage)
 	if value, unobserved, _ := evaluateWithObserver(t, "policy_replaced", ctx); value != "first" || len(unobserved) != 0 {
 		t.Fatalf("first registration: value=%v unobserved=%v", value, unobserved)
 	}
@@ -145,14 +145,14 @@ func TestRegisterReplacementSwapsImplementationAndPolicyTogether(t *testing.T) {
 	// custom callback is opaque even though the name was canonical before.
 	Register("policy_replaced", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "second", nil
-	}, OpaqueReads)
+	}, OpaqueReads, FullInputImage)
 	if value, unobserved, _ := evaluateWithObserver(t, "policy_replaced", ctx); value != "second" || len(unobserved) != 1 {
 		t.Fatalf("opaque replacement: value=%v unobserved=%v", value, unobserved)
 	}
 
 	Register("policy_replaced", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "third", nil
-	}, CanonicalReads)
+	}, CanonicalReads, FullInputImage)
 	if value, unobserved, _ := evaluateWithObserver(t, "policy_replaced", ctx); value != "third" || len(unobserved) != 0 {
 		t.Fatalf("canonical replacement: value=%v unobserved=%v", value, unobserved)
 	}
@@ -171,7 +171,7 @@ func TestReplacingBuiltinNameStaysUnknown(t *testing.T) {
 	}}
 	Register("toupper", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return "custom", nil
-	}, OpaqueReads)
+	}, OpaqueReads, FullInputImage)
 	observer := &recordingObserver{}
 	value, found, err := EvaluateFunction(queryprofile.WithObserver(context.Background(), observer), "toupper", []string{"'abc'"}, ctx)
 	if err != nil || !found || value != "custom" {
@@ -190,7 +190,7 @@ func TestRegisterRejectsUnknownReadObservation(t *testing.T) {
 	}()
 	Register("policy_unknown_observation", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 		return nil, nil
-	}, ReadObservation(2))
+	}, ReadObservation(2), FullInputImage)
 }
 
 func TestEvaluateFunctionPreservesResultsAndErrorsUnderBothPolicies(t *testing.T) {
@@ -207,21 +207,21 @@ func TestEvaluateFunctionPreservesResultsAndErrorsUnderBothPolicies(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			Register(tc.name+"_nil", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 				return nil, nil
-			}, tc.reads)
+			}, tc.reads, FullInputImage)
 			if value, found, err := EvaluateFunction(context.Background(), tc.name+"_nil", nil, ctx); !found || err != nil || value != nil {
 				t.Fatalf("nil result: value=%v found=%v err=%v", value, found, err)
 			}
 
 			Register(tc.name+"_boxed_nil", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 				return map[string]interface{}(nil), nil
-			}, tc.reads)
+			}, tc.reads, FullInputImage)
 			if value, found, err := EvaluateFunction(context.Background(), tc.name+"_boxed_nil", nil, ctx); !found || err != nil || value != nil {
 				t.Fatalf("boxed nil result is admitted as null: value=%v found=%v err=%v", value, found, err)
 			}
 
 			Register(tc.name+"_error", func(_ context.Context, _ Context, _ []string) (interface{}, error) {
 				return nil, registerErr
-			}, tc.reads)
+			}, tc.reads, FullInputImage)
 			value, found, err := EvaluateFunction(context.Background(), tc.name+"_error", nil, ctx)
 			if !found || !errors.Is(err, registerErr) || value != nil {
 				t.Fatalf("error result: value=%v found=%v err=%v", value, found, err)
@@ -239,7 +239,7 @@ func TestConcurrentRegistrationKeepsImplementationAndPolicyPaired(t *testing.T) 
 	ctx := Context{Eval: func(expression string) (interface{}, error) { return expression, nil }}
 	canonical := func(_ context.Context, _ Context, _ []string) (interface{}, error) { return int64(1), nil }
 	opaque := func(_ context.Context, _ Context, _ []string) (interface{}, error) { return int64(2), nil }
-	Register(name, canonical, CanonicalReads)
+	Register(name, canonical, CanonicalReads, FullInputImage)
 
 	var writers sync.WaitGroup
 	stop := make(chan struct{})
@@ -253,8 +253,8 @@ func TestConcurrentRegistrationKeepsImplementationAndPolicyPaired(t *testing.T) 
 					return
 				default:
 				}
-				Register(name, canonical, CanonicalReads)
-				Register(name, opaque, OpaqueReads)
+				Register(name, canonical, CanonicalReads, FullInputImage)
+				Register(name, opaque, OpaqueReads, FullInputImage)
 			}
 		}()
 	}
@@ -303,7 +303,7 @@ func TestConcurrentRegistrationKeepsImplementationAndPolicyPaired(t *testing.T) 
 func TestCanonicalPolicyKeepsNestedArgumentObservations(t *testing.T) {
 	Register("policy_nested_argument", func(_ context.Context, ctx Context, args []string) (interface{}, error) {
 		return ctx.Eval(args[0])
-	}, CanonicalReads)
+	}, CanonicalReads, FullInputImage)
 	observer := &recordingObserver{}
 	workCtx := queryprofile.WithObserver(context.Background(), observer)
 	ctx := Context{Eval: func(string) (interface{}, error) {
@@ -336,7 +336,7 @@ func TestEvaluateFunctionPreservesStatementCancellation(t *testing.T) {
 					return nil, err
 				}
 				return "not canceled", nil
-			}, tc.reads)
+			}, tc.reads, FullInputImage)
 			workCtx, cancel := context.WithCancel(context.Background())
 			cancel()
 			value, found, err := EvaluateFunction(workCtx, tc.name, nil, Context{Eval: func(string) (interface{}, error) { return nil, nil }})
