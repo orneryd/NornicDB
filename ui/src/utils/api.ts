@@ -1149,6 +1149,7 @@ class NornicDBClient {
 
   async getStatus(): Promise<DatabaseStats> {
     const res = await fetch(joinBasePath(BASE_PATH, "/status"));
+    if (!res.ok) throw new Error(`Server status unavailable (HTTP ${res.status})`);
     return await res.json();
   }
 

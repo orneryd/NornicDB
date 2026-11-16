@@ -5,6 +5,7 @@
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "./Button";
+import { ServerStatus } from "./ServerStatus";
 
 interface PageHeaderProps {
   title: string;
@@ -37,9 +38,10 @@ export function PageHeader({
           )}
           <h1 className="min-w-0 text-xl font-semibold text-white">{title}</h1>
         </div>
-        {actions && (
-          <div className="flex items-center gap-2 sm:shrink-0">{actions}</div>
-        )}
+        <div className="flex flex-wrap items-center gap-3 sm:shrink-0 sm:justify-end">
+          {actions}
+          <ServerStatus />
+        </div>
       </div>
     </header>
   );
