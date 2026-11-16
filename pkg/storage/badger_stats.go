@@ -1207,9 +1207,6 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		if edge == nil {
 			return nil
 		}
-		if len(touched) > 0 && touched[edge.ID] {
-			return nil // the write-behind overlay shadows this committed row
-		}
 		if b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 			return nil
 		}
@@ -1235,9 +1232,16 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			default:
 			}
 
-			edge, err := b.readStreamEdgeItem(txn, it.Item())
+			item := it.Item()
+			if len(touched) != 0 {
+				key := item.Key()
+				if len(key) > 1 && touched[EdgeID(key[1:])] {
+					continue // the acknowledged overlay owns this row, before hydration
+				}
+			}
+			edge, err := b.readStreamEdgeItem(txn, item)
 			if err != nil {
-				continue // Skip invalid edges
+				return err
 			}
 			if err := emit(edge); err != nil {
 				if err == ErrIterationStopped {
@@ -1462,9 +1466,8 @@ func (b *BadgerEngine) entityCountByPrefix(ctx context.Context, prefix string, k
 
 // readStreamEdgeItem is the one native relationship hydration policy: the
 // relationship stream and captured output materialization both read a committed
-// row through it. Renderable rows come back whole; a row this reader cannot
-// decode is absent from both populations, as the relationship stream omits it
-// today, so a captured image never differs from the streamed one.
+// row through it. An unreadable record fails either read; it must never become
+// an absent row in an otherwise successful scan or retained search population.
 func (b *BadgerEngine) readStreamEdgeItem(txn *badger.Txn, item *badger.Item) (*Edge, error) {
 	key := item.Key()
 	var edgeID EdgeID
@@ -1478,7 +1481,7 @@ func (b *BadgerEngine) readStreamEdgeItem(txn *badger.Txn, item *badger.Item) (*
 		return decodeErr
 	})
 	if err != nil {
-		return nil, nil // Skip invalid edges, as the release stream does.
+		return nil, fmt.Errorf("reading relationship %q: %w", edgeID, err)
 	}
 	return edge, nil
 }
