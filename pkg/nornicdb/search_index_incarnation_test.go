@@ -49,7 +49,7 @@ func openIncarnationDBAt(t *testing.T, dir string, persist bool) (*DB, *dbSearch
 	entry := db.searchServices[db.defaultDatabaseName()]
 	db.searchServicesMu.RUnlock()
 	require.NotNil(t, entry)
-	// Each storage event re-arms the flush with this delay: refreshes stay
+	// The first queued storage event arms the flush with this delay: refreshes stay
 	// queued until the test applies them, as the flush would later.
 	entry.pendingFlushDelay = time.Hour
 	return db, entry

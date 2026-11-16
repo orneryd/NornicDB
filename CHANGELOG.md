@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep deferred search refreshes progressing during continuous writes instead of waiting for an idle interval.
+
 - Separate temporal-index derivation from its write owners while preserving schema staging and release audit verification.
 
 - Periodic iteration honors configured parameters and returns failed-batch messages instead of empty error maps.

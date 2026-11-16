@@ -747,7 +747,10 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 	}
 	entry.pendingFlushMu.Lock()
 	if entry.pendingFlushTimer != nil {
-		entry.pendingFlushTimer.Stop()
+		// Coalesce into the first queued write's window. Restarting the timer
+		// for each later write can postpone search refresh forever under load.
+		entry.pendingFlushMu.Unlock()
+		return
 	}
 	delay := entry.flushDelay()
 	entry.pendingFlushTimer = entry.svc.AfterFunc(delay, func() {
