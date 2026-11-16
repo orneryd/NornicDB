@@ -33,18 +33,23 @@ Current behavior:
 
 - storage callbacks enqueue search mutations inline
 - per-database search services collect pending operations in a mutation map keyed by logical node id
-- a short debounce window coalesces bursts of updates before flush
+- a short batching window starts with the first queued update; later writes join it without postponing the flush
 - the flush worker is single-flight per database service, so concurrent callback bursts do not create unbounded worker fan-out
 
 Operational effect:
 
 - repeated updates to the same node are collapsed before indexing work runs
-- search services do not process one immediate mutation per write anymore
-- database writes stay lightweight because callbacks only enqueue and schedule flush work
+- storage-event callbacks enqueue and schedule work rather than starting one refresh goroutine per write
+- Cypher's inline commit refresh remains separate from this deferred callback path
 
-Current debounce constant:
+Current batching interval:
 
 - search mutation flush delay defaults to `250ms`
+
+This is a scheduling interval, not a completion deadline. Continuous writes do
+not restart an armed window. The single-flight worker drains queued updates,
+and schedules another pass if work remains. Refresh duration still depends on
+the queued work and service availability.
 
 ## Embedding Worker Trigger Path
 
