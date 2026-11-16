@@ -4,7 +4,7 @@ package cypher
 // nodes and the relationship by inline unique keys. The target node owns N
 // incoming PD_RELATION relationships while the source owns exactly three
 // outgoing ones, so the lookup must use its declared relationship key without expanding either endpoint.
-// A control without the relationship key still expands the cheaper source.
+// A control without the relationship key uses an endpoint read bounded to the selected pair.
 //
 // The fixture preserves the reported laboratory population: in-memory native
 // Badger behind the personal_documents namespace, populated by sequential
@@ -174,14 +174,15 @@ func TestStoredLinkLookupPreservesClaimWithoutAdjacencyExpansion(t *testing.T) {
 					t.Cleanup(parser.setup())
 					require.Implements(t, (*storage.RelationshipPropertyEqualityLookup)(nil), fixture.spy)
 					exec := NewStorageExecutor(fixture.spy, QueryCachePolicy{MaxEntries: 0})
-					// Prove that the meter sees real expansion when no key pins
-					// the relationship. The complete stored claim is unchanged.
+					// Without the relationship key, the endpoint reader still runs,
+					// but the bound far endpoint limits it to this pair's one edge.
+					// The complete stored claim must remain unchanged.
 					control := strings.Replace(storedLinkStatement, " {id: $id}", "", 1)
 					fixture.spy.counts.reset()
 					result, err := exec.Execute(t.Context(), control, storedLinkParams())
 					require.NoError(t, err)
 					require.Equal(t, storedLinkExpectedRows(), result.Rows)
-					require.Equal(t, 3, fixture.spy.counts.entries)
+					require.Equal(t, 1, fixture.spy.counts.entries, "the bound far endpoint narrows the source adjacency to one pair")
 					fixture.spy.counts.reset()
 					fixture.spy.lookupCalls, fixture.spy.lookupHandled = 0, 0
 					result, err = exec.Execute(t.Context(), storedLinkStatement, storedLinkParams())

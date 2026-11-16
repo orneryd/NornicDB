@@ -369,9 +369,21 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(ctx context.Context
 	// instead (PR #1043 read-overlay parity). A write-owned node also
 	// sees the latest committed adjacency after a later commit (NOR-213).
 	latest, locked := tx.adjacencyReadAuthorityLocked(request.Node)
-	if latest {
+	if latest || request.ReadPolicy == CurrentEdgeMatch {
 		edges, err := tx.engine.ReadAdjacentEdges(ctx, request)
-		if err == nil && locked {
+		if err != nil {
+			return nil, err
+		}
+		// The engine's current read may borrow immutable cache images. A native
+		// transaction returns mutable caller-owned records, just as its pinned
+		// reader does; SET/rollback must never edit the retained engine image.
+		for at, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			edges[at] = copyEdge(edge)
+		}
+		if locked || request.ReadPolicy == CurrentEdgeMatch {
 			tx.recordLatestEndpointsLocked(request.Node, edges)
 		}
 		return edges, err
@@ -445,7 +457,7 @@ func (tx *BadgerTransaction) readCachedSnapshotAdjacentEdgesLocked(ctx context.C
 		// requested type it does not name excludes it.
 		var headers map[EdgeID]*Edge
 		var decided map[EdgeID]struct{}
-		if request.Headers || len(request.Types) > 0 || request.Direction == AdjacentBetween {
+		if request.Headers || len(request.Types) > 0 || request.Other != "" {
 			headers, decided, err = tx.engine.adjacentSnapshotHeadersInTxn(ctx, snapshot, request, tx.readTS)
 			if err != nil {
 				return err

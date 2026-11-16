@@ -306,6 +306,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if body == "" {
 		return nil, false, nil
 	}
+	ctx = mutationRelationshipDecisionContext(ctx)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -631,6 +632,14 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	seed, _ := values[matches.StartNode.variable].(*storage.Node)
 	if seed == nil {
 		return 0, false
+	}
+	if end, ok := values[matches.EndNode.variable].(*storage.Node); ok && end != nil {
+		// The retained structural plan is immutable; only this row binds its
+		// endpoint. Carry it into the storage request rather than reading every
+		// same-type relationship and deciding the pair's absence afterward.
+		bound := *matches
+		bound.boundEndNodeID = storage.NodeID(end.IdentityKey())
+		matches = &bound
 	}
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
@@ -984,24 +993,15 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 	var edges []*storage.Edge
 	var err error
 	if shape.outgoing {
-		edges, err = store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: node.ID})
+		edges, err = store.ReadAdjacentEdges(ctx, statementAdjacentRead(ctx, storage.AdjacentEdgeRead{Node: node.ID, Types: shape.types}))
 	} else {
-		edges, err = store.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: node.ID})
+		edges, err = store.ReadAdjacentEdges(ctx, statementAdjacentRead(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: node.ID, Types: shape.types}))
 	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return 0
 	}
-	if len(shape.types) == 0 {
-		return int64(len(edges))
-	}
-	var count int64
-	for _, edge := range edges {
-		if e.edgeTypeMatches(edge.Type, shape.types) {
-			count++
-		}
-	}
-	return count
+	return int64(len(edges))
 }
 
 // collectProjectionOrigin preserves the established diagnostics of a declared

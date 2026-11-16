@@ -67,6 +67,11 @@ type entityWriteLocks struct {
 	// readsEdgeLastCommittedLocked; NOR-213).
 	endpoints map[NodeID]struct{}
 	edges     map[EdgeID]struct{}
+	// Empty ranges read by mutation decisions become guarded when their anchor
+	// is explicitly write-owned. Ordinary snapshot reads retain no such state.
+	absent            []AdjacentEdgeRead
+	absenceIndex      map[uint64]int
+	absenceCollisions map[uint64][]int
 }
 
 const entityWriteLockIndexAfter = 8
@@ -186,7 +191,7 @@ func (tx *BadgerTransaction) lockEntityForWrite(ctx context.Context, kind buffer
 	tx.mu.Unlock()
 
 	wait := tx.mergeKeyWait(namespace)
-	request, err := schema.acquireEntityWriteLock(ctx, tx.ID, key, &wait)
+	request, contended, err := schema.acquireEntityWriteLock(ctx, tx.ID, key, &wait)
 	if err != nil {
 		return false, err
 	}
@@ -206,6 +211,11 @@ func (tx *BadgerTransaction) lockEntityForWrite(ctx context.Context, kind buffer
 	if stale {
 		held.latest = true
 		tx.entityLocks.latest++
+	}
+	if contended {
+		if err := tx.validateEmptyAdjacencyLocked(ctx); err != nil {
+			return false, err
+		}
 	}
 	return stale, nil
 }
@@ -295,7 +305,7 @@ func (tx *BadgerTransaction) releaseEntityWriteLocksLocked() {
 // owner in the canonical commit-lock registry, waiting as wait says while
 // another owner holds it (waitForUniqueConstraintLock). The commit of the
 // owning transaction takes the key again without waiting.
-func (sm *SchemaManager) acquireEntityWriteLock(ctx context.Context, owner string, key uniqueConstraintLockKey, wait *uniqueKeyLockWait) (uniqueConstraintLockRequest, error) {
+func (sm *SchemaManager) acquireEntityWriteLock(ctx context.Context, owner string, key uniqueConstraintLockKey, wait *uniqueKeyLockWait) (uniqueConstraintLockRequest, bool, error) {
 	request := uniqueConstraintLockRequest{key: key}
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	if sm.uniqueConstraintCommitLocks == nil {
@@ -310,14 +320,14 @@ func (sm *SchemaManager) acquireEntityWriteLock(ctx context.Context, owner strin
 		// Free: taken without a second registry round trip.
 		lock.owner, lock.holds = owner, 1
 		sm.uniqueConstraintCommitLocksMu.Unlock()
-		return request, nil
+		return request, false, nil
 	}
 	sm.uniqueConstraintCommitLocksMu.Unlock()
 	if err := sm.waitForUniqueConstraintLock(ctx, owner, request, wait); err != nil {
 		sm.releaseUniqueConstraintLocks(owner, nil, []uniqueConstraintLockRequest{request})
-		return uniqueConstraintLockRequest{}, err
+		return uniqueConstraintLockRequest{}, true, err
 	}
-	return request, nil
+	return request, true, nil
 }
 
 // releaseEntityWriteLocks releases owner's entity write locks, newest first.

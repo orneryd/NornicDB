@@ -1021,10 +1021,10 @@ func (c *CompositeEngine) GetFirstNodeByLabel(ctx context.Context, label string)
 
 // ReadAdjacentEdges answers one adjacent-edge request from all constituents.
 // Each readable source is selected once; equal local IDs across databases
-// remain distinct. A between request is qualified to the one constituent that
+// remain distinct. A bounded request is qualified to the one constituent that
 // owns both nodes when the pair names one.
 func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
-	if request.Direction == AdjacentBetween {
+	if request.Other != "" {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

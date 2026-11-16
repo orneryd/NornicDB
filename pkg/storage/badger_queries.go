@@ -1427,11 +1427,22 @@ func (b *BadgerEngine) ReadStoredAdjacentEdges(ctx context.Context, request Adja
 }
 
 // readAdjacentEdges is the engine's one adjacency kernel: it answers a between
-// request from the between index and every other direction from the native
+// bounded directional request from the between index and unbounded directions from the native
 // adjacency capture.
 func (b *BadgerEngine) readAdjacentEdges(ctx context.Context, request AdjacentEdgeRead, v readVisibility) ([]*Edge, error) {
 	if err := request.validate(); err != nil {
 		return nil, err
+	}
+	if request.Other != "" {
+		if request.Direction == AdjacentBoth {
+			return readBothAdjacentEdges(ctx, request, func(half AdjacentEdgeRead) ([]*Edge, error) {
+				return b.readAdjacentEdges(ctx, half, v)
+			})
+		}
+		if request.Direction == AdjacentIncoming {
+			request.Node, request.Other = request.Other, request.Node
+		}
+		request.Direction = AdjacentBetween
 	}
 	if request.Direction == AdjacentBetween {
 		return b.readAdjacentEdgesBetween(ctx, request, v)
@@ -1956,6 +1967,9 @@ func (b *BadgerEngine) readAdjacentEdgesBetween(ctx context.Context, request Adj
 	if v != visibleRead {
 		outgoing := request
 		outgoing.Direction = AdjacentOutgoing
+		// The stored adjacency owner lists one side; the original request
+		// below applies the pair predicate without re-entering pair routing.
+		outgoing.Other = ""
 		edges, err := b.readAdjacentEdges(ctx, outgoing, v)
 		if err != nil {
 			return nil, err
@@ -2030,22 +2044,22 @@ func (b *BadgerEngine) readAdjacentEdgesBetween(ctx context.Context, request Adj
 	if err != nil {
 		return nil, err
 	}
+	if len(request.Types) == 0 && !request.Headers {
+		return committed, nil
+	}
 	return filterAdjacentBetween(ctx, request, committed)
 }
 
 // filterAdjacentBetween keeps the pair's relationships the request lists, in
 // the detail it asks for.
 func filterAdjacentBetween(ctx context.Context, request AdjacentEdgeRead, edges []*Edge) ([]*Edge, error) {
-	if len(request.Types) == 0 && !request.Headers {
-		return edges, nil
-	}
 	var cancel bulkReadCancellation
 	filtered := edges[:0]
 	for _, edge := range edges {
 		if err := cancel.check(ctx); err != nil {
 			return nil, err
 		}
-		if !adjacentTypesAdmit(request.Types, edge.Type) {
+		if !request.admits(edge) {
 			continue
 		}
 		filtered = append(filtered, request.header(edge))

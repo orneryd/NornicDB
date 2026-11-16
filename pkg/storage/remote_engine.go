@@ -1185,8 +1185,12 @@ func (r *RemoteEngine) ReadAdjacentEdges(ctx context.Context, request AdjacentEd
 		return nil, err
 	}
 	defer cancel()
-	if request.Direction == AdjacentBetween {
-		return r.readEdgesBetween(ctx, request.Node, request.Other, request.Types, false)
+	if request.Other != "" {
+		start, end := request.Node, request.Other
+		if request.Direction == AdjacentIncoming {
+			start, end = end, start
+		}
+		return r.readEdgesBetween(ctx, start, end, request.Types, false)
 	}
 	statement := "MATCH (n)-[r" + remoteRelationshipTypes(request.Types) + "]->() WHERE n.id = $id RETURN r"
 	if request.Direction == AdjacentIncoming {

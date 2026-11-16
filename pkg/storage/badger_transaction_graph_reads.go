@@ -226,7 +226,7 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request AdjacentEdge
 	if err := tx.pinNamespaceFromIDLocked(string(request.Node)); err != nil {
 		return nil, err
 	}
-	if request.Direction == AdjacentBetween {
+	if request.Other != "" {
 		if err := tx.pinNamespaceFromIDLocked(string(request.Other)); err != nil {
 			return nil, err
 		}
@@ -242,9 +242,13 @@ func (tx *BadgerTransaction) ReadEdges(ctx context.Context, request AdjacentEdge
 		return nil, err
 	}
 	now := DecayScoringTime()
-	return tx.mergePendingAdjacentEdgesLocked(ctx, committed, request, func(edge *Edge) bool {
+	edges, err := tx.mergePendingAdjacentEdgesLocked(ctx, committed, request, func(edge *Edge) bool {
 		return !tx.engine.filterEntityByDecay(visibleRead, edge, now) && request.admits(edge)
 	})
+	if err == nil && len(edges) == 0 && request.ReadPolicy == CurrentEdgeMatch {
+		err = tx.observeEmptyAdjacencyLocked(ctx, request)
+	}
+	return edges, err
 }
 
 // GetEdgeBetween returns a matching edge including pending transaction writes.

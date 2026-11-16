@@ -131,12 +131,13 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidEdge)
 }
 
-func beginAdjacencyConflict(t *testing.T, engine *BadgerEngine) *BadgerTransaction {
+func beginAdjacencyTransaction(t *testing.T, engine *BadgerEngine, implicit bool) *BadgerTransaction {
 	t.Helper()
 	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.SetImplicit(implicit))
 	return tx
 }
 
@@ -154,7 +155,7 @@ func adjacencyConflictFixture(t *testing.T, edgeID EdgeID, properties map[string
 func TestBadgerTransaction_CheckNodeAdjacencyConflict_Branches(t *testing.T) {
 	engine := adjacencyConflictFixture(t, "test:e1", map[string]any{"v": int64(1)})
 
-	tx := beginAdjacencyConflict(t, engine)
+	tx := beginAdjacencyTransaction(t, engine, false)
 
 	// Old read timestamp to force conflict after concurrent edge write.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
@@ -191,7 +192,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t
 		return view.Set(missingHeadKey, nil)
 	}))
 
-	tx := beginAdjacencyConflict(t, engine)
+	tx := beginAdjacencyTransaction(t, engine, false)
 	require.NoError(t, tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil))
 }
 
@@ -207,7 +208,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *t
 		return txn.Set(headKey, []byte{0x01})
 	}))
 
-	tx := beginAdjacencyConflict(t, engine)
+	tx := beginAdjacencyTransaction(t, engine, false)
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(0, 0).UTC(), CommitSequence: 0}
 
 	err := tx.checkNodeAdjacencyConflict(context.Background(), "test:a", nil)
@@ -439,7 +440,7 @@ func TestAdjacencyConflictIgnoresPreviouslyDeletedUnstagedRelationship(t *testin
 	require.NoError(t, engine.withUpdate(t.Context(), updateRequest{}, func(view *badger.Txn) error {
 		return view.Set(key, nil)
 	}))
-	tx := beginAdjacencyConflict(t, engine)
+	tx := beginAdjacencyTransaction(t, engine, false)
 	require.NoError(t, tx.checkNodeAdjacencyConflict(t.Context(), "test:a", nil))
 	require.NoError(t, tx.DeleteGraphNode(t.Context(), "test:a", CascadeEdges))
 	require.NoError(t, tx.Commit())
