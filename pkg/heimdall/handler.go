@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"golang.org/x/text/language"
 )
@@ -54,18 +55,19 @@ func sanitizeAssistantResponse(content string) string {
 	return content + "\n"
 }
 
+// parseActionEnvelope reads the first action envelope a model response contains.
+// The stream decoder frames that one JSON value, so a brace, quote or backslash
+// inside a string, and any nested object, cannot truncate it, and prose after the
+// envelope is ignored.
 func parseActionEnvelope(response string) *ParsedAction {
 	response = strings.TrimSpace(response)
 	start := strings.Index(response, "{")
 	if start == -1 {
 		return nil
 	}
-	jsonStr := extractFirstJSONObject(response[start:])
-	if jsonStr == "" {
-		return nil
-	}
+	// Tool parameters use the canonical exact-number input contract.
 	var parsed ParsedAction
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(strings.NewReader(response[start:])).Decode(&parsed); err != nil {
 		return nil
 	}
 	if strings.TrimSpace(parsed.Action) == "" {
@@ -75,27 +77,6 @@ func parseActionEnvelope(response string) *ParsedAction {
 		parsed.Params = make(map[string]interface{})
 	}
 	return &parsed
-}
-
-// extractFirstJSONObject returns the first balanced JSON object from the input,
-// or an empty string if the input does not contain a complete object.
-func extractFirstJSONObject(s string) string {
-	if len(s) == 0 || s[0] != '{' {
-		return ""
-	}
-	depth := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[:i+1]
-			}
-		}
-	}
-	return ""
 }
 
 func looksLikeActionEnvelopePrefix(response string) bool {
@@ -926,7 +907,8 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 		for _, tc := range toolCalls {
 			var paramsMap map[string]interface{}
 			if tc.Arguments != "" {
-				_ = json.Unmarshal([]byte(tc.Arguments), &paramsMap)
+				// Keep model-emitted integers exact, including nested arguments.
+				_ = valueconvert.CypherInputJSON.Unmarshal([]byte(tc.Arguments), &paramsMap)
 			}
 			if paramsMap == nil {
 				paramsMap = make(map[string]interface{})

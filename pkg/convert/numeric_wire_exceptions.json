@@ -275,10 +275,6 @@
     "reason": "Typed chat/autocomplete model request envelope; graph/tool argument maps are decoded separately through CypherInputJSON.",
     "sha256": "20d194a5b23061347dc2922226bddef8b8c4f7ca29a306350342092e4248d30a"
   },
-  "pkg/heimdall/handler.go:Handler.runAgenticLoopWithTools": {
-    "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
-    "sha256": "4d22bec96e885d3d60da1697350b947b0cc42c432df518d9b818221562a67908"
-  },
   "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
     "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
     "sha256": "9ce972d25f27b9a52d7269c80ebfc9aed2509cf27ab91659506c3db302ed813f"
@@ -699,17 +695,9 @@
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "164d38d1c6d7ebed47ce6968ed82c84ee74d4a571cef58a3f8c70c3dfab57a90"
   },
-  "pkg/heimdall/handler.go:parseActionEnvelope": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "1c4ef475eafe9ee5d44924ad563c6c31816a60cb097d4f39a8030526bd9af2f8"
-  },
   "pkg/heimdall/plugin.go:FormatActionResultForModel": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "d070ce373170928808c2affbdbd298e55e1d68560dab01c59f2d26ded551c647"
-  },
-  "pkg/heimdall/plugin.go:tryParseActionResponse": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "02288d13001ffcb89bdf0c88e21b49ed2dce883d6d4c6fe1c3323500462048d2"
   },
   "internal/rerankwire/decode.go:UnmarshalJSON": {
     "reason": "Reranker model protocol parsing: typed document IDs, score fields and opaque model response envelopes. Not graph-property JSON.",

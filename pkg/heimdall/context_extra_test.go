@@ -504,55 +504,55 @@ func TestNoOpHeimdallInvoker(t *testing.T) {
 }
 
 // ============================================================================
-// tryParseActionResponse
+// parseActionEnvelope
 // ============================================================================
 
-func TestTryParseActionResponse_ValidAction(t *testing.T) {
+func TestParseActionEnvelope_ValidAction(t *testing.T) {
 	resp := `{"action":"heimdall_health_check","params":{"verbose":true}}`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	require.NotNil(t, action)
 	assert.Equal(t, "heimdall_health_check", action.Action)
 	assert.Equal(t, true, action.Params["verbose"])
 }
 
-func TestTryParseActionResponse_NoActionField(t *testing.T) {
+func TestParseActionEnvelope_NoActionField(t *testing.T) {
 	resp := `{"key":"value","other":123}`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	assert.Nil(t, action)
 }
 
-func TestTryParseActionResponse_NoJSON(t *testing.T) {
-	action := tryParseActionResponse("no json content here")
+func TestParseActionEnvelope_NoJSON(t *testing.T) {
+	action := parseActionEnvelope("no json content here")
 	assert.Nil(t, action)
 }
 
-func TestTryParseActionResponse_PrefixThenJSON(t *testing.T) {
+func TestParseActionEnvelope_PrefixThenJSON(t *testing.T) {
 	resp := `Okay, I'll run: {"action":"query","params":{"cypher":"MATCH (n) RETURN n"}}`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	require.NotNil(t, action)
 	assert.Equal(t, "query", action.Action)
 }
 
-func TestTryParseActionResponse_UnclosedJSON(t *testing.T) {
+func TestParseActionEnvelope_UnclosedJSON(t *testing.T) {
 	resp := `{"action":"test","params":{`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	assert.Nil(t, action)
 }
 
-func TestTryParseActionResponse_EmptyString(t *testing.T) {
-	action := tryParseActionResponse("")
+func TestParseActionEnvelope_EmptyString(t *testing.T) {
+	action := parseActionEnvelope("")
 	assert.Nil(t, action)
 }
 
-func TestTryParseActionResponse_EmptyAction(t *testing.T) {
+func TestParseActionEnvelope_EmptyAction(t *testing.T) {
 	resp := `{"action":"","params":{}}`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	assert.Nil(t, action)
 }
 
-func TestTryParseActionResponse_InvalidJSON(t *testing.T) {
+func TestParseActionEnvelope_InvalidJSON(t *testing.T) {
 	resp := `{not valid json}`
-	action := tryParseActionResponse(resp)
+	action := parseActionEnvelope(resp)
 	assert.Nil(t, action)
 }
 

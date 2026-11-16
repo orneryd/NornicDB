@@ -51,6 +51,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	cypherpkg "github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 )
@@ -369,7 +370,9 @@ func (p *WatcherPlugin) actionRepoMap(ctx heimdall.ActionContext) (*heimdall.Act
 	}
 
 	limit := 25
-	if l, ok := ctx.Params["limit"].(float64); ok && l > 0 && l <= 100 {
+	// The action parameters arrive from a tool call, where a JSON INTEGER keeps its
+	// 64-bit value; the canonical numeric reader accepts every numeric kind.
+	if l, ok := convert.NumericFloat64(ctx.Params["limit"]); ok && l > 0 && l <= 100 {
 		limit = int(l)
 	}
 	dbName := getDatabaseParam(ctx.Params)
@@ -534,11 +537,11 @@ func (p *WatcherPlugin) actionDiscover(ctx heimdall.ActionContext) (*heimdall.Ac
 		}, nil
 	}
 	limit := 10
-	if l, ok := ctx.Params["limit"].(float64); ok && l > 0 && l <= 50 {
+	if l, ok := convert.NumericFloat64(ctx.Params["limit"]); ok && l > 0 && l <= 50 {
 		limit = int(l)
 	}
 	depth := 1 // relationship hop from matched nodes (1 = direct neighbors)
-	if d, ok := ctx.Params["depth"].(float64); ok && d >= 0 && d <= 5 {
+	if d, ok := convert.NumericFloat64(ctx.Params["depth"]); ok && d >= 0 && d <= 5 {
 		depth = int(d)
 	}
 	dbName := getDatabaseParam(ctx.Params)
