@@ -55,11 +55,6 @@ func registerNilResultProcedure(t *testing.T) {
 		})
 }
 
-func newNilResultExecutor(t *testing.T) *StorageExecutor {
-	t.Helper()
-	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-}
-
 // assertEmptyProcedureResult runs query and requires the declared empty result:
 // the procedure's columns and no rows, never a missing result.
 func assertEmptyProcedureResult(t *testing.T, exec *StorageExecutor, query string, columns []string) {
@@ -77,7 +72,7 @@ func assertEmptyProcedureResult(t *testing.T, exec *StorageExecutor, query strin
 // control keeps its own rows and an unknown YIELD column still fails.
 func TestCallProcedureNilResultServesDeclaredEmptyResult(t *testing.T) {
 	registerNilResultProcedure(t)
-	exec := newNilResultExecutor(t)
+	exec := newCallScopeExecutor(t)
 
 	for _, tc := range []struct {
 		name    string
@@ -138,7 +133,7 @@ func TestCallBuiltInProcedureNilResultServesDeclaredEmptyResult(t *testing.T) {
 		func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 			return nil, nil
 		})
-	exec := newNilResultExecutor(t)
+	exec := newCallScopeExecutor(t)
 
 	assertEmptyProcedureResult(t, exec, "CALL "+builtInNilResultProcedureName+"()", []string{"value"})
 	assertEmptyProcedureResult(t, exec,
@@ -152,7 +147,7 @@ func TestCallProcedureHandlerErrorIsNotAnEmptyResult(t *testing.T) {
 		func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 			return nil, errors.New("handler failed")
 		})
-	exec := newNilResultExecutor(t)
+	exec := newCallScopeExecutor(t)
 
 	result, err := exec.Execute(context.Background(), "CALL "+failingProcedureName+"()", nil)
 	require.ErrorContains(t, err, "handler failed")
@@ -169,7 +164,7 @@ func TestCallProcedureRowsResultControl(t *testing.T) {
 				Rows:    [][]interface{}{{int64(7)}},
 			}, nil
 		})
-	exec := newNilResultExecutor(t)
+	exec := newCallScopeExecutor(t)
 
 	result, err := exec.Execute(context.Background(),
 		"CALL "+rowResultProcedureName+"() YIELD value RETURN value", nil)
