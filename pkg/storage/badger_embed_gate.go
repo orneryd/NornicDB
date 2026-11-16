@@ -21,25 +21,25 @@ func (b *BadgerEngine) SetEmbeddingLabelPolicy(namespace string, include, exclud
 	for _, label := range exclude {
 		policy.exclude[label] = struct{}{}
 	}
-	for {
-		old := b.embeddingLabelPolicies.Load()
-		updated := make(embeddingLabelPolicies)
-		if old != nil {
-			for name, existing := range *old {
-				updated[name] = existing
-			}
-		}
-		policy.disabled = updated[namespace].disabled
-		updated[namespace] = policy
-		if b.embeddingLabelPolicies.CompareAndSwap(old, &updated) {
-			return
-		}
-	}
+	b.updateEmbeddingLabelPolicy(namespace, func(current embeddingLabelPolicy) embeddingLabelPolicy {
+		policy.disabled = current.disabled
+		return policy
+	})
 }
 
 // SetDatabaseEmbeddingsEnabled changes admission for one database without
 // deleting its existing vectors. Returns whether the setting changed.
 func (b *BadgerEngine) SetDatabaseEmbeddingsEnabled(namespace string, enabled bool) bool {
+	previous := b.updateEmbeddingLabelPolicy(namespace, func(policy embeddingLabelPolicy) embeddingLabelPolicy {
+		policy.disabled = !enabled
+		return policy
+	})
+	return previous.disabled == enabled
+}
+
+// updateEmbeddingLabelPolicy owns copy-on-write publication. A retry reapplies
+// only the caller's fields to the latest policy, preserving concurrent edits.
+func (b *BadgerEngine) updateEmbeddingLabelPolicy(namespace string, update func(embeddingLabelPolicy) embeddingLabelPolicy) embeddingLabelPolicy {
 	for {
 		old := b.embeddingLabelPolicies.Load()
 		updated := make(embeddingLabelPolicies)
@@ -48,12 +48,10 @@ func (b *BadgerEngine) SetDatabaseEmbeddingsEnabled(namespace string, enabled bo
 				updated[name] = policy
 			}
 		}
-		policy := updated[namespace]
-		changed := policy.disabled == enabled
-		policy.disabled = !enabled
-		updated[namespace] = policy
+		previous := updated[namespace]
+		updated[namespace] = update(previous)
 		if b.embeddingLabelPolicies.CompareAndSwap(old, &updated) {
-			return changed
+			return previous
 		}
 	}
 }
