@@ -352,6 +352,99 @@ func (s *stallStore) requireServes(ids []string) {
 	}
 }
 
+// requireCompleteVectorPopulation checks canonical index membership separately
+// from the bounded ANN recall checked by requireServes. Exact visits the indexed
+// population, and a limit equal to the complete stored Doc population avoids
+// mistaking a top-K result for evidence that an entry is absent.
+func (s *stallStore) requireCompleteVectorPopulation() {
+	s.t.Helper()
+	nodes, err := s.db.GetStorage().GetNodesByLabel(s.t.Context(), "Doc")
+	require.NoError(s.t, err)
+	require.NotEmpty(s.t, nodes, "the qualification must contain stored Doc nodes")
+	service, err := s.db.GetOrCreateSearchService("nornic", s.db.GetStorage())
+	require.NoError(s.t, err)
+	bm25Max, vectorMax, metadataMax, _, _ := service.IndexCapacityPolicy()
+	for name, limit := range map[string]int64{"bm25": bm25Max, "vector": vectorMax, "metadata": metadataMax} {
+		// These policies are byte budgets, not entry counts. This fixture
+		// requires their unlimited setting, so capacity cannot explain an
+		// absent identity or change the population being qualified.
+		require.LessOrEqual(s.t, limit, int64(0),
+			"%s byte budget must be unlimited for exhaustive membership qualification", name)
+	}
+	require.Equal(s.t, len(nodes), service.CountPropertyVectorEntries("embedding"),
+		"every stored Doc must have its embedding property indexed")
+	ids := make([]string, len(nodes))
+	for i, node := range nodes {
+		ids[i] = string(node.ID)
+	}
+	query := make([]float32, len(s.want[s.ids[0]]))
+	for i, value := range s.want[s.ids[0]] {
+		query[i] = float32(value)
+	}
+	before := service.IndexRevision()
+	hits, err := service.VectorQueryNodes(s.t.Context(), query, search.VectorQuerySpec{
+		IndexName: "doc_embedding", Label: "Doc", Property: "embedding", Similarity: "cosine",
+		Limit: len(nodes), Exact: true,
+	})
+	require.NoError(s.t, err)
+	require.NoError(s.t, stallVectorPopulationMismatch(ids, hits))
+	s.t.Logf("exact published vector membership: stored_docs=%d exact_unique_hits=%d property_entries=%d vector_max_bytes=%d metadata_max_bytes=%d bm25_max_bytes=%d revision_before=%d revision_after=%d; ANN top-100 recall remains independently asserted",
+		len(nodes), len(hits), service.CountPropertyVectorEntries("embedding"), vectorMax, metadataMax, bm25Max, before, service.IndexRevision())
+}
+
+// stallVectorPopulationMismatch compares identities, not scores or ranking.
+// Counts alone cannot distinguish a missing entry replaced by a duplicate or
+// an entry from another population.
+func stallVectorPopulationMismatch(ids []string, hits []search.VectorQueryHit) error {
+	want := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, duplicate := want[id]; duplicate {
+			return fmt.Errorf("duplicate stored node identity %q", id)
+		}
+		want[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(hits))
+	for _, hit := range hits {
+		if _, duplicate := seen[hit.ID]; duplicate {
+			return fmt.Errorf("duplicate exact vector identity %q", hit.ID)
+		}
+		if _, exists := want[hit.ID]; !exists {
+			return fmt.Errorf("unexpected exact vector identity %q", hit.ID)
+		}
+		seen[hit.ID] = struct{}{}
+	}
+	for id := range want {
+		if _, exists := seen[id]; !exists {
+			return fmt.Errorf("stored node %q is missing from the exact vector population", id)
+		}
+	}
+	return nil
+}
+
+func TestVectorPopulationOracleRejectsMissingDuplicateAndForeignIdentities(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		ids  []string
+		hits []search.VectorQueryHit
+		err  string
+	}{
+		{"complete reordered population", []string{"a", "b"}, []search.VectorQueryHit{{ID: "b"}, {ID: "a"}}, ""},
+		{"missing", []string{"a", "b"}, []search.VectorQueryHit{{ID: "a"}}, "missing"},
+		{"duplicate replaces missing", []string{"a", "b"}, []search.VectorQueryHit{{ID: "a"}, {ID: "a"}}, "duplicate exact"},
+		{"foreign replaces missing", []string{"a", "b"}, []search.VectorQueryHit{{ID: "a"}, {ID: "foreign"}}, "unexpected"},
+		{"duplicate source", []string{"a", "a"}, []search.VectorQueryHit{{ID: "a"}}, "duplicate stored"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := stallVectorPopulationMismatch(test.ids, test.hits)
+			if test.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, test.err)
+			}
+		})
+	}
+}
+
 // diagnoseFirstMiss captures the canonical index answer before any settling
 // or repeated ANN query. It never replaces the original failed assertion.
 func (s *stallStore) diagnoseFirstMiss(id string) {
@@ -880,6 +973,10 @@ func TestHNSWBuildEndDoesNotHoldCommits(t *testing.T) {
 			})
 			return "DROP INDEX", took, err
 		})
+		// Keep the first bounded ANN read at its original point. The exact
+		// population observation runs afterward, even when an ANN assertion
+		// fails, and must not give that first read extra settling time.
+		defer store.requireCompleteVectorPopulation()
 		store.requireServes(append(store.sample(100), changed...))
 	})
 
