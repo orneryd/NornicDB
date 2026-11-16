@@ -1154,6 +1154,18 @@ func TestHandler_ChatCompletionRequest_StoresExternalToolsInPromptContext(t *tes
 // trimAgenticResponse / extractNonJSONAnswer (prompt-based agentic loop helpers)
 // =============================================================================
 
+// firstJSONValue frames the JSON value starting at s[at] and reports its raw
+// text plus the offset just past it. Framing comes from the standard library's
+// value grammar, so a brace or escape inside a string is not structure.
+func firstJSONValue(s string, at int) (string, int, bool) {
+	decoder := json.NewDecoder(strings.NewReader(s[at:]))
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return "", 0, false
+	}
+	return string(raw), at + int(decoder.InputOffset()), true
+}
+
 // trimAgenticResponse extracts the first JSON object from the response, or the first paragraph if no JSON.
 // Used by tests that validate prompt-based agentic response trimming.
 func trimAgenticResponse(s string) string {
@@ -1162,7 +1174,7 @@ func trimAgenticResponse(s string) string {
 		return ""
 	}
 	if idx := strings.Index(s, "{"); idx >= 0 {
-		if obj := extractFirstJSONObject(s[idx:]); obj != "" {
+		if obj, _, ok := firstJSONValue(s, idx); ok {
 			return obj
 		}
 	}
@@ -1184,11 +1196,11 @@ func extractNonJSONAnswer(s string) string {
 		return s
 	}
 	before := strings.TrimSpace(s[:idx])
-	obj := extractFirstJSONObject(s[idx:])
-	if obj == "" {
+	_, end, ok := firstJSONValue(s, idx)
+	if !ok {
 		return s
 	}
-	after := strings.TrimSpace(s[idx+len(obj):])
+	after := strings.TrimSpace(s[end:])
 	if before != "" {
 		return before
 	}

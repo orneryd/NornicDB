@@ -34,7 +34,7 @@ func TestIdentityFunctionNamesPreserveCodeUnits(t *testing.T) {
 	})
 	for index, unit := range units {
 		want := int64(index + 1)
-		Register("identity_units."+unit, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return want, nil }, OpaqueReads)
+		Register("identity_units."+unit, func(_ context.Context, _ Context, _ []string) (interface{}, error) { return want, nil }, OpaqueReads, FullInputImage)
 	}
 	ctx := Context{Eval: func(string) (interface{}, error) { return nil, nil }, Now: time.Now}
 	for index, unit := range units {

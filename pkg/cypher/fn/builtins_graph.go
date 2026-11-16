@@ -77,7 +77,7 @@ func init() {
 	for _, name := range []string{"graph.byName", "graph.byElementId"} {
 		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 			return nil, &GraphSelectionContextError{Function: name}
-		}, CanonicalReads)
+		}, CanonicalReads, MetadataArgumentInputImage)
 	}
 	// graph.names() lists the graphs of the composite database the query
 	// runs on, as their qualified names (composite.alias), the names
@@ -103,7 +103,7 @@ func init() {
 			}
 		}
 		return out, nil
-	}, CanonicalReads)
+	}, CanonicalReads, MetadataArgumentInputImage)
 	// graph.propertiesByName(name) is the map of properties of the alias
 	// that added the graph to the composite database. NornicDB aliases have
 	// no properties, so it is an empty map for each of the composite's
@@ -130,7 +130,7 @@ func init() {
 			}
 		}
 		return nil, &GraphNotFoundError{Name: name}
-	}, CanonicalReads)
+	}, CanonicalReads, MetadataArgumentInputImage)
 }
 
 // compositeGraphs acquires the graphs of the composite database the statement

@@ -31,24 +31,24 @@ func init() {
 		"resourceallocation":     "resource_allocation",
 		"totalneighbors":         "total_neighbors",
 	} {
-		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm), cypherfn.CanonicalReads)
+		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	}
-	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity, cypherfn.CanonicalReads)
+	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	// gds.util.asNode/asNodes read each node through the point-read owner
 	// (getQueryNode), which records the read it performs; their whole access
 	// is therefore already observed.
-	cypherfn.Register("gds.util.asnode", gdsNodeFunction("gds.util.asNode", false), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.asnodes", gdsNodeFunction("gds.util.asNodes", true), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.nan", constantFunction("gds.util.NaN", math.NaN(), gdsConstantArguments), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.infinity", constantFunction("gds.util.infinity", math.Inf(1), gdsConstantArguments), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false), cypherfn.CanonicalReads)
-	cypherfn.Register("gds.version", constantFunction("gds.version", gdsVersion, gdsConstantArguments), cypherfn.CanonicalReads)
+	cypherfn.Register("gds.util.asnode", gdsNodeFunction("gds.util.asNode", false), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.asnodes", gdsNodeFunction("gds.util.asNodes", true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.nan", constantFunction("gds.util.NaN", math.NaN(), gdsConstantArguments), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.infinity", constantFunction("gds.util.infinity", math.Inf(1), gdsConstantArguments), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.version", constantFunction("gds.version", gdsVersion, gdsConstantArguments), cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	// gds.graph.exists asks only the projection catalog, and
 	// gds.util.nodeProperty only that catalog and the projected property it
 	// reads; each records the requests it actually made.
-	cypherfn.Register("gds.graph.exists", fnGDSGraphExists, cypherfn.CanonicalReads)
-	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty, cypherfn.CanonicalReads)
+	cypherfn.Register("gds.graph.exists", fnGDSGraphExists, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 }
 
 // The catalog readers GDS's functions and its graph-catalog procedures report

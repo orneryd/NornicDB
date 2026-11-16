@@ -16,21 +16,21 @@ func init() {
 	for _, name := range []string{"id", "elementid", "labels", "type"} {
 		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 			return evaluateEntityScalar(ctx, name, args)
-		}, CanonicalReads)
+		}, CanonicalReads, HeaderInputImage)
 	}
-	Register("keys", evalKeys, CanonicalReads)
-	Register("properties", evalProperties, CanonicalReads)
-	Register("size", evalSize, CanonicalReads)
-	Register("tolower", CaseFunction("toLower", LowerCaseText, nil), CanonicalReads)
-	Register("toupper", CaseFunction("toUpper", UpperCaseText, nil), CanonicalReads)
-	Register("coalesce", evalCoalesce, CanonicalReads)
+	Register("keys", evalKeys, CanonicalReads, MetadataArgumentInputImage)
+	Register("properties", evalProperties, CanonicalReads, MetadataArgumentInputImage)
+	Register("size", evalSize, CanonicalReads, StructuralInputImage)
+	Register("tolower", CaseFunction("toLower", LowerCaseText, nil), CanonicalReads, MetadataArgumentInputImage)
+	Register("toupper", CaseFunction("toUpper", UpperCaseText, nil), CanonicalReads, MetadataArgumentInputImage)
+	Register("coalesce", evalCoalesce, CanonicalReads, MetadataArgumentInputImage)
 	for _, name := range []string{"file", "linenumber"} {
 		Register(name, func(workCtx context.Context, ctx Context, args []string) (interface{}, error) {
 			if argumentCount(args) != 0 {
 				return nil, &ParameterCountError{Function: name, TooMany: true}
 			}
 			return nil, nil
-		}, CanonicalReads)
+		}, CanonicalReads, MetadataArgumentInputImage)
 	}
 }
 

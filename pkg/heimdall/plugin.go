@@ -354,7 +354,7 @@ func (h *LiveHeimdallInvoker) SendPrompt(ctx context.Context, prompt string) (*A
 	}
 
 	// Try to parse as action
-	if parsedAction := tryParseActionResponse(response); parsedAction != nil {
+	if parsedAction := parseActionEnvelope(response); parsedAction != nil {
 		return h.InvokeAction(ctx, parsedAction.Action, parsedAction.Params)
 	}
 
@@ -433,55 +433,6 @@ func (h *LiveHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string
 // such as the request principal, without its cancellation or deadline.
 func detachedContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
-}
-
-// parsedActionCmd is used internally to parse SLM action responses.
-type parsedActionCmd struct {
-	Action string                 `json:"action"`
-	Params map[string]interface{} `json:"params"`
-}
-
-// tryParseActionResponse attempts to parse an action from SLM response.
-func tryParseActionResponse(response string) *parsedActionCmd {
-	// Simple JSON extraction - look for {"action": ...}
-	start := -1
-	for i, c := range response {
-		if c == '{' {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return nil
-	}
-
-	// Find matching closing brace
-	depth := 0
-	end := -1
-	for i := start; i < len(response); i++ {
-		if response[i] == '{' {
-			depth++
-		} else if response[i] == '}' {
-			depth--
-			if depth == 0 {
-				end = i + 1
-				break
-			}
-		}
-	}
-	if end < 0 {
-		return nil
-	}
-
-	jsonStr := response[start:end]
-	var action parsedActionCmd
-	if err := json.Unmarshal([]byte(jsonStr), &action); err != nil {
-		return nil
-	}
-	if action.Action == "" {
-		return nil
-	}
-	return &action
 }
 
 // BifrostBridge is the interface for plugins to communicate via Bifrost.

@@ -29,8 +29,8 @@ import (
 // client's text.
 
 func init() {
-	cypherfn.Register(interpolateFunction, fnInterpolate, cypherfn.CanonicalReads)
-	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs, cypherfn.CanonicalReads)
+	cypherfn.Register(interpolateFunction, fnInterpolate, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 }
 
 // interpolateFunction converts an interpolated value to its text.

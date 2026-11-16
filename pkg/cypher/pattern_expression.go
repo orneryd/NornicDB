@@ -285,9 +285,6 @@ type rowContextShape struct {
 	statementContext bool
 	subquery         subqueryExpression
 	isSubquery       bool
-	identity         bool
-	function         string
-	argument         string
 	comprehension    bool
 	pattern2         string
 	projection       string
@@ -308,13 +305,6 @@ func rowContextShapeOf(ctx context.Context, expr string) *rowContextShape {
 		brace:            strings.Contains(expr, "{"),
 	}
 	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
-	var callFacts1 functionCallFacts
-	if ok := inspectFunctionCall(shape.trimmed, qualifiedFunctionCall, "", &callFacts1); ok {
-		function, argument := callFacts1.name, callFacts1.inner
-
-		shape.identity = strings.EqualFold(function, "id") || strings.EqualFold(function, "elementId")
-		shape.function, shape.argument = function, argument
-	}
 	shape.pattern2, shape.projection, shape.comprehension = splitPatternComprehension(expr)
 	// A canceled scan reads only part of the expression, so its verdict is not
 	// published: the entry must come from a completed read.
@@ -388,14 +378,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if shape.isSubquery {
 		return e.evaluateRowSubqueryValue(ctx, shape.subquery.kind, shape.subquery.body, values)
 	}
-	// Whole id() / elementId() calls resolve directly at this boundary.
-	// Nested registry calls use the same statement identity through the
-	// context bound above, including a composite constituent selection.
-	if shape.identity {
-		if value, resolved := e.evaluateRowEntityIdentity(ctx, shape.function, shape.argument, values); resolved {
-			return cypherfn.RuntimeValue(value), true
-		}
-	}
 	if shape.comprehension {
 		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
 	}
@@ -446,44 +428,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	}
 
 	return value, resolved
-}
-
-// evaluateRowEntityIdentity resolves id(entity) and elementId(entity) at the
-// context-aware row boundary. The element id names the database the statement
-// currently executes on — a composite subquery's constituent after
-// CALL { USE … } — so the identity survives the row projection (#745 §3).
-func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, function, argument string, values pipelineRow) (interface{}, bool) {
-	inner := strings.TrimSpace(argument)
-	var node *storage.Node
-	var edge *storage.Edge
-	if value, bound := values[inner]; bound {
-		node, _ = value.(*storage.Node)
-		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(ctx, inner, values); err == nil && resolved {
-		node, _ = value.(*storage.Node)
-		edge, _ = value.(*storage.Edge)
-	} else {
-		return nil, false
-	}
-	metadataCtx := ctx
-	if inherited := rowStatementContext(values); inherited != nil {
-		metadataCtx = inherited
-	}
-	switch {
-	case node != nil:
-		if strings.EqualFold(function, "id") {
-			return string(node.ID), true
-		}
-		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), node)
-		return value, true
-	case edge != nil:
-		if strings.EqualFold(function, "id") {
-			return string(edge.ID), true
-		}
-		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(metadataCtx, nil), edge)
-		return value, true
-	}
-	return nil, false
 }
 
 // evaluatePatternPredicateValue is the value of a pattern predicate in a
