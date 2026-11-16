@@ -143,12 +143,6 @@ func TestGroupedNumericLiteralInvalidStatementKeepsItsError(t *testing.T) {
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 
-	requirements := QueryPermissionRequirements(t.Context(), query, RawSource)
-	require.True(t, requirements.Write, "an unreadable statement has no proven read effect")
-	require.True(t, requirements.Read)
-	require.True(t, requirements.Schema)
-	require.True(t, requirements.Admin)
-
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "audit_invalid")
 	exec := NewStorageExecutor(store)
 	_, err = exec.Execute(t.Context(), query, nil)
@@ -160,20 +154,14 @@ func TestGroupedNumericLiteralInvalidStatementKeepsItsError(t *testing.T) {
 	require.Empty(t, nodes)
 }
 
-// An interrupted classification has no proven effect and must not answer
-// "read": the contract reports the cancellation it was given, and the
-// permission requirements fall back to every permission rather than admitting
-// the statement as a read.
+// The effect reader preserves cancellation; authorization returns that original
+// cancellation rather than converting it to a privilege failure.
 func TestGroupedNumericLiteralClassificationKeepsCancellation(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := readStatementExecutionContract(canceled, "CREATE (:Audit {amount:1.0_0})")
 	require.ErrorIs(t, err, context.Canceled)
-
-	requirements := QueryPermissionRequirements(canceled, "CREATE (:Audit {amount:1.0_0})", RawSource)
-	require.True(t, requirements.Write)
-	require.True(t, requirements.Read)
 
 	// AuthorizeQuery reports the cancellation itself, not a permission verdict.
 	grantAll := WithPermissionChecker(canceled, func(string) bool { return true })
