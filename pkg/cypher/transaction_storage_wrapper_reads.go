@@ -115,7 +115,7 @@ func (w *transactionStorageWrapper) visibleAtEdges(ctx context.Context, request 
 	qualified := request
 	if !w.underlyingIsNamespaced() {
 		qualified.Node = w.prefixNodeID(request.Node)
-		if request.Direction == storage.AdjacentBetween {
+		if request.Other != "" {
 			qualified.Other = w.prefixNodeID(request.Other)
 		}
 	}
@@ -154,7 +154,7 @@ func (w *transactionStorageWrapper) visibleAtScope() readScope {
 func (w *transactionStorageWrapper) adjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead, stored bool) ([]*storage.Edge, error) {
 	qualified := request
 	qualified.Node = w.prefixNodeID(request.Node)
-	if request.Direction == storage.AdjacentBetween {
+	if request.Other != "" {
 		qualified.Other = w.prefixNodeID(request.Other)
 	}
 	var (

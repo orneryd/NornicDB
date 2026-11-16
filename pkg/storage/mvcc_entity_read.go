@@ -66,7 +66,7 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, request 
 	if err := request.validate(); err != nil {
 		return nil, err
 	}
-	if request.Direction == AdjacentBetween {
+	if request.Other != "" {
 		if err := b.pendingReadConflict(readNodePairScope, "", []NodeID{request.Other, request.Node}, ctx); err != nil {
 			return nil, err
 		}
@@ -96,7 +96,7 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(ctx context.Context, request 
 		}
 		var headers map[EdgeID]*Edge
 		var decided map[EdgeID]struct{}
-		if request.Headers || len(request.Types) > 0 || request.Direction == AdjacentBetween {
+		if request.Headers || len(request.Types) > 0 || request.Other != "" {
 			headers, decided, err = b.adjacentSnapshotHeadersInTxn(ctx, txn, request, version)
 			if err != nil {
 				return err

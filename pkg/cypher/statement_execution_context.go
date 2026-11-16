@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/apocio"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // statementOutcome belongs to the semantic statement, not a registered Execute
@@ -108,13 +109,14 @@ func (o *statementOutcome) retainTerminalFailures(primary error) error {
 // fresh outcomes even if their caller retained an earlier execution context.
 type statementExecutionContext struct {
 	context.Context
-	instant    time.Time // Value exposes its stable address without boxing the clock.
-	binding    *QueryEmbedderBinding
-	state      *queryEmbedderState
-	outcome    *statementOutcome
-	owned      statementOutcome
-	nodeImages statementNodeImagePolicy
-	apocIO     apocio.Capability // One handle to this statement's APOC I/O capability.
+	instant                time.Time // Value exposes its stable address without boxing the clock.
+	binding                *QueryEmbedderBinding
+	state                  *queryEmbedderState
+	outcome                *statementOutcome
+	owned                  statementOutcome
+	nodeImages             statementNodeImagePolicy
+	guardRelationshipReads storage.EdgeMatchReadPolicy
+	apocIO                 apocio.Capability // One handle to this statement's APOC I/O capability.
 }
 
 func (e *StorageExecutor) newStatementExecutionContext(ctx context.Context, instant time.Time, outcome *statementOutcome) *statementExecutionContext {

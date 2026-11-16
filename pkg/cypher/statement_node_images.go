@@ -4,6 +4,7 @@ import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // statementNodeImagePolicy belongs to one admitted execution, not an executor
@@ -22,6 +23,9 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 	}
 	policy := statementNodeImagePolicy{images: FullNodeImages, resolved: true, hasMatch: info.HasMatch}
 	if effect := info.effect.Load(); effect != nil {
+		if effect.effect == statementEffectWrite {
+			statement.guardRelationshipReads = storage.CurrentEdgeMatch
+		}
 		policy.images, policy.readOnly = effect.nodeImages, effect.effect == statementEffectRead && info.readResult()
 		if policy.images == MetadataNodeImages {
 			var inputs nativeFunctionInputs
@@ -68,10 +72,15 @@ func (e *StorageExecutor) resolveStatementNodeImages(ctx context.Context, info *
 	}
 	// Transparent routing and nested clauses must retain the full-image
 	// requirement of a later native consumer in the enclosing statement.
-	if outer, ok := statement.Context.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok &&
-		outer.outcome == statement.outcome && outer.nodeImages.resolved && outer.nodeImages.images == FullNodeImages {
-		policy.images = FullNodeImages
+	if outer, ok := statement.Context.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok && outer.outcome == statement.outcome {
+		if outer.nodeImages.resolved && outer.nodeImages.images == FullNodeImages {
+			policy.images = FullNodeImages
+		}
+		if outer.guardRelationshipReads == storage.CurrentEdgeMatch {
+			statement.guardRelationshipReads = storage.CurrentEdgeMatch
+		}
 	}
+
 	statement.nodeImages = policy
 	return nil
 }

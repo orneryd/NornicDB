@@ -11,6 +11,9 @@ import (
 )
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Context) error {
+	if err := tx.validateEmptyAdjacencyLocked(ctx); err != nil {
+		return err
+	}
 	// Metadata handlers can publish a peer commit between the optimistic and
 	// authoritative passes. Endpoint memoization belongs to one pass only.
 	tx.nodeHeadCache = nil

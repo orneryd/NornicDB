@@ -24,7 +24,7 @@ const (
 )
 
 // AdjacentEdgeRead is the one request for a node's adjacent relationships: the
-// node, the direction (with the far endpoint of a between read), the
+// node, the direction, an optional far endpoint, the
 // relationship types it may list, and whether the caller needs only headers.
 //
 // Types nil or empty lists every type. A non-empty Types set is a filter the
@@ -42,14 +42,22 @@ const (
 type AdjacentEdgeRead struct {
 	Direction AdjacentEdgeDirection
 	Node      NodeID
-	Other     NodeID
-	Types     []string
-	Headers   bool
+	// Other, when nonempty, restricts the far endpoint in any direction.
+	// AdjacentBetween requires it and remains a directed outgoing pair read.
+	Other   NodeID
+	Types   []string
+	Headers bool
+	// ReadPolicy leaves ordinary reads pinned by default. Mutation decisions
+	// may request the current committed adjacency while retaining staged writes.
+	ReadPolicy EdgeMatchReadPolicy
 }
 
 // validate rejects a request that names no node, or a between request without
 // its other endpoint.
 func (r AdjacentEdgeRead) validate() error {
+	if r.ReadPolicy != SnapshotEdgeMatch && r.ReadPolicy != CurrentEdgeMatch {
+		return ErrInvalidData
+	}
 	switch r.Direction {
 	case AdjacentOutgoing, AdjacentIncoming, AdjacentBoth:
 		if r.Node == "" {
@@ -84,7 +92,7 @@ func adjacentTypesAdmit(types []string, edgeType string) bool {
 }
 
 // admits reports whether edge is one this request lists: attached at the
-// request's node in its direction (and at Other for a between read) and of a
+// request's node in its direction (and at Other when specified) and of a
 // requested type.
 func (r AdjacentEdgeRead) admits(edge *Edge) bool {
 	if edge == nil || !adjacentTypesAdmit(r.Types, edge.Type) {
@@ -92,13 +100,14 @@ func (r AdjacentEdgeRead) admits(edge *Edge) bool {
 	}
 	switch r.Direction {
 	case AdjacentOutgoing:
-		return edge.StartNode == r.Node
+		return edge.StartNode == r.Node && (r.Other == "" || edge.EndNode == r.Other)
 	case AdjacentIncoming:
-		return edge.EndNode == r.Node
+		return edge.EndNode == r.Node && (r.Other == "" || edge.StartNode == r.Other)
 	case AdjacentBetween:
 		return edge.StartNode == r.Node && edge.EndNode == r.Other
 	case AdjacentBoth:
-		return edge.StartNode == r.Node || edge.EndNode == r.Node
+		return (edge.StartNode == r.Node && (r.Other == "" || edge.EndNode == r.Other)) ||
+			(edge.EndNode == r.Node && (r.Other == "" || edge.StartNode == r.Other))
 	default:
 		return false
 	}

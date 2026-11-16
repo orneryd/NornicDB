@@ -536,7 +536,7 @@ type compositePairCountProbe struct {
 }
 
 func (p *compositePairCountProbe) ReadAdjacentEdges(ctx context.Context, request AdjacentEdgeRead) ([]*Edge, error) {
-	if request.Direction == AdjacentBetween {
+	if request.Other != "" {
 		p.mu.Lock()
 		p.pairReads++
 		p.mu.Unlock()
@@ -612,6 +612,26 @@ func TestCompositeFanOutPreservesSourceIdentityAndPairRouting(t *testing.T) {
 	require.Empty(t, crossSource)
 	require.Equal(t, 1, counted["one"].readCount())
 	require.Zero(t, counted["two"].readCount())
+
+	for _, direction := range []AdjacentEdgeDirection{AdjacentOutgoing, AdjacentIncoming, AdjacentBoth} {
+		request := AdjacentEdgeRead{Direction: direction, Node: "4:one:raw:same", Other: "4:one:raw:target"}
+		if direction == AdjacentIncoming {
+			request.Node, request.Other = request.Other, request.Node
+		}
+		before := counted["one"].readCount()
+		edges, err := routed.ReadAdjacentEdges(ctx, request)
+		require.NoError(t, err)
+		require.Len(t, edges, 1)
+		require.Equal(t, "one", edges[0].Database)
+		require.Equal(t, before+1, counted["one"].readCount(), "each bounded direction selects its own source once")
+		require.Zero(t, counted["two"].readCount())
+		request.Other = "4:two:raw:target"
+		edges, err = routed.ReadAdjacentEdges(ctx, request)
+		require.NoError(t, err)
+		require.Empty(t, edges)
+		require.Equal(t, before+1, counted["one"].readCount(), "cross-source bounded reads must not fan out")
+		require.Zero(t, counted["two"].readCount())
+	}
 }
 
 func nodeDatabases(nodes []*Node) []string {
