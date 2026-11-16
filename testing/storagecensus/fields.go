@@ -165,6 +165,9 @@ var fieldClasses = map[string]fieldRow{
 	// quota, suppression or publication-order value. Classify the exact field,
 	// so new state on the type still requires its own census decision.
 	"pkg/storage.bulkReadCancellation.remaining": {class: "request-local cancellation polling progress"},
+	// One node's rebuild plan advances through its discovered constraints.
+	// This local derivation cursor is not persisted or used for entity accounting.
+	"pkg/storage.temporalRebuildPlan.next": {class: "temporal backfill derivation cursor"},
 	// A fresh walker owns this bounded cursor for one caller-copy traversal;
 	// it is neither retained engine state nor a stored entity/accounting count.
 	"pkg/storage.callerCopyWalker.count": {class: "caller-copy traversal progress"},

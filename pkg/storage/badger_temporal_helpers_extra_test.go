@@ -91,11 +91,10 @@ func TestRebuildTemporalNodeInTxn_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
-		view := engine.physicalTemporalRebuild(txn)
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), view, nil, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), view, &Node{ID: "unprefixed", Labels: []string{"Role"}}, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), view, older, now))
-		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), view, newer, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, nil, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, &Node{ID: "unprefixed", Labels: []string{"Role"}}, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, older, now))
+		require.NoError(t, engine.rebuildTemporalNodeInTxn(context.Background(), txn, newer, now))
 		return nil
 	}))
 
