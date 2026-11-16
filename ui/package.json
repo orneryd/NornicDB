@@ -12,6 +12,7 @@
     "inventory": "node tools/inventory-controls.mjs"
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.15.36",
     "@ornery/ui-grid-core": "^5.0.3",
     "@ornery/ui-grid-react": "^5.0.3",
     "@ornery/ui-grid-vanilla": "^5.0.3",
@@ -39,7 +40,8 @@
     "baseline-browser-mapping": "^2.11.26",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
   },
   "overrides": {
     "browserslist": "4.28.8",

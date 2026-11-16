@@ -11,6 +11,8 @@ package multidb
 // Existing databases remain errors; query-level IF NOT EXISTS admission belongs
 // to its caller. Request cancellation is governed by the catalog commit receipt.
 type DatabaseCreateRequest struct {
-	Name    string
-	Options map[string]string
+	// PrivateOwner is server-assigned, never accepted from a JSON request.
+	PrivateOwner string `json:"-"`
+	Name         string
+	Options      map[string]string
 }

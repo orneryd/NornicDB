@@ -218,6 +218,11 @@ func (s *Server) registerHeimdallRoutes(mux *http.ServeMux) {
 		handler.ServeHTTP(w, r)
 	}
 
+	// Workspace/history stay available when inference is unavailable. Persistence
+	// is delegated to the registered conversation plugin, under the request user.
+	mux.HandleFunc("/api/bifrost/workspace", s.withAuth(s.handleAssistantWorkspace, auth.PermRead))
+	mux.HandleFunc("/api/bifrost/conversations", s.withAuth(s.handleAssistantConversations, auth.PermRead))
+	mux.HandleFunc("/api/bifrost/conversations/", s.withAuth(s.handleAssistantConversations, auth.PermRead))
 	// Status endpoint - read access required
 	mux.HandleFunc("/api/bifrost/status", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		serveHeimdall(w, r)
@@ -226,14 +231,14 @@ func (s *Server) registerHeimdallRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/models", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		serveHeimdall(w, r)
 	}, auth.PermRead))
-	// Chat completions - write access required (modifies state/generates content)
+	// Inference requires read access; tools retain their own scoped write/admin checks.
 	mux.HandleFunc("/api/bifrost/chat/completions", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		serveHeimdall(w, r)
-	}, auth.PermWrite))
+	}, auth.PermRead))
 	// OpenAI-compatible chat completions alias - write access required
 	mux.HandleFunc("/v1/chat/completions", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		serveHeimdall(w, r)
-	}, auth.PermWrite))
+	}, auth.PermRead))
 	// Autocomplete - read access required (queries schema, generates suggestions)
 	mux.HandleFunc("/api/bifrost/autocomplete", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		serveHeimdall(w, r)

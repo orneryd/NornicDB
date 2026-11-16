@@ -1,0 +1,7 @@
+{
+  "name": "qwen3.5-0.8b",
+  "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q4_K_M.gguf",
+  "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B",
+  "license": "Apache-2.0",
+  "native_context_tokens": 262144
+}

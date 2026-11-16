@@ -75,13 +75,17 @@ type ChatToolDefinitionFunction struct {
 // ChatRequest is the request format for chat completions.
 // Compatible with OpenAI/Ollama API format.
 type ChatRequest struct {
-	Model       string               `json:"model"`
-	Messages    []ChatMessage        `json:"messages"`
-	Tools       []ChatToolDefinition `json:"tools,omitempty"`
-	Stream      bool                 `json:"stream,omitempty"`
-	MaxTokens   int                  `json:"max_tokens,omitempty"`
-	Temperature float32              `json:"temperature,omitempty"`
-	TopP        float32              `json:"top_p,omitempty"`
+	AttachmentIDs  []string             `json:"attachment_ids,omitempty"`
+	Thinking       bool                 `json:"thinking,omitempty"`
+	ConversationID string               `json:"conversation_id,omitempty"`
+	MessageID      string               `json:"message_id,omitempty"`
+	Model          string               `json:"model"`
+	Messages       []ChatMessage        `json:"messages"`
+	Tools          []ChatToolDefinition `json:"tools,omitempty"`
+	Stream         bool                 `json:"stream,omitempty"`
+	MaxTokens      int                  `json:"max_tokens,omitempty"`
+	Temperature    float32              `json:"temperature,omitempty"`
+	TopP           float32              `json:"top_p,omitempty"`
 }
 
 // ChatResponse is the response format for chat completions.
@@ -376,6 +380,10 @@ func BuildPrompt(messages []ChatMessage) string {
 // Notifications: Plugins can send non-blocking SSE messages to the UI
 // via ctx.Notify() - these are fire-and-forget and won't block the request.
 type PromptContext struct {
+	Thinking bool
+	// ConversationID selects plugin-owned private conversation memory.
+	ConversationID string
+	SourceDatabase string
 	// Context carries request cancellation and deadlines.
 	Context context.Context
 
@@ -640,6 +648,9 @@ func EstimateTokens(text string) int {
 // ActionPrompt is ALWAYS first and immutable.
 // Falls back to minimal prompt if full prompt exceeds budget.
 func (p *PromptContext) BuildFinalPrompt() string {
+	if p.ConversationID != "" {
+		return p.buildConversationSystemPrompt(false)
+	}
 	fullPrompt := p.buildFullPrompt()
 	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens() {
 		return fullPrompt
@@ -652,6 +663,9 @@ func (p *PromptContext) BuildFinalPrompt() string {
 // the context contains the answer; use tools only when an action is needed. Plugins inject context
 // via AdditionalInstructions (e.g. order status); the model should use it and reply in plain text.
 func (p *PromptContext) BuildFinalPromptForTools() string {
+	if p.ConversationID != "" {
+		return p.buildConversationSystemPrompt(true)
+	}
 	fullPrompt := p.buildFullPromptForTools()
 	if EstimateTokens(fullPrompt) <= MaxSystemPromptTokens() {
 		return fullPrompt

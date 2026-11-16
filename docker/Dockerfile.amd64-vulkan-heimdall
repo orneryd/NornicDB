@@ -92,7 +92,7 @@ WORKDIR /app
 
 # Install Vulkan runtime libraries and dependencies
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata wget \
+    ca-certificates tzdata wget jq \
     libvulkan1 \
     mesa-vulkan-drivers \
     libgomp1 \
@@ -109,13 +109,15 @@ RUN chmod +x /app/entrypoint.sh /app/healthcheck.sh
 ARG EMBED_MODEL=false
 ARG HEADLESS=false
 ARG BGE_MODEL_URL=https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf
-ARG QWEN_MODEL_URL=https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-RUN \
+COPY pkg/heimdall/default_model.json /app/models/default-heimdall.json
+ARG QWEN_MODEL_URL
+RUN QWEN_MODEL_NAME="$(jq -r .name /app/models/default-heimdall.json)" && \
+    QWEN_MODEL_URL="${QWEN_MODEL_URL:-$(jq -r .url /app/models/default-heimdall.json)}" && \
     if [ "$EMBED_MODEL" = "true" ]; then \
       wget -q --show-progress -O /app/models/bge-m3.gguf "$BGE_MODEL_URL" && \
       echo "✓ Downloaded bge-m3.gguf ($(du -h /app/models/bge-m3.gguf | cut -f1))" && \
-      wget -q --show-progress -O /app/models/qwen3-0.6b-instruct.gguf "$QWEN_MODEL_URL" && \
-      echo "✓ Downloaded Heimdall model ($(du -h /app/models/qwen3-0.6b-instruct.gguf | cut -f1))"; \
+      wget -q --show-progress -O /app/models/${QWEN_MODEL_NAME}.gguf "$QWEN_MODEL_URL" && \
+      echo "✓ Downloaded Heimdall model ($(du -h /app/models/${QWEN_MODEL_NAME}.gguf | cut -f1))"; \
     else \
       echo "→ BYOM mode (no embedded model)"; \
     fi && \

@@ -69,17 +69,19 @@ var Plugin heimdall.HeimdallPlugin = &WatcherPlugin{}
 // - Uses HeimdallInvoker to synthesize action results into coding guidance
 // - Maintains durable summarized conversation state for long context windows
 type WatcherPlugin struct {
-	mu       sync.RWMutex
-	eventMu  sync.RWMutex
-	ctx      heimdall.SubsystemContext
-	status   heimdall.SubsystemStatus
-	events   []heimdall.SubsystemEvent
-	config   map[string]interface{}
-	summary  string
-	facts    []string
-	started  time.Time
-	requests int64
-	errors   int64
+	activeTurns sync.Map
+	compactions sync.Map
+	mu          sync.RWMutex
+	eventMu     sync.RWMutex
+	ctx         heimdall.SubsystemContext
+	status      heimdall.SubsystemStatus
+	events      []heimdall.SubsystemEvent
+	config      map[string]interface{}
+	summary     string
+	facts       []string
+	started     time.Time
+	requests    int64
+	errors      int64
 }
 
 // === Identity Methods ===
@@ -296,6 +298,7 @@ var repoMapInputSchema = json.RawMessage([]byte(`{"type":"object","properties":{
 
 func (p *WatcherPlugin) Actions() map[string]heimdall.ActionFunc {
 	return map[string]heimdall.ActionFunc{
+		"chat_memory": {Description: "Retrieve bounded sections of files attached to this private chat or relevant previous chats. Large files must be read in relevant chunks, never pasted whole. Params: attachment_id (optional), query (optional search terms), chunk (optional zero-based start).", Category: "memory", InputSchema: json.RawMessage(`{"type":"object","properties":{"attachment_id":{"type":"string"},"query":{"type":"string"},"chunk":{"type":"integer","minimum":0}}}`), Handler: p.actionChatMemory},
 		"hello": {
 			Description: "Respond with a simple greeting to confirm Heimdall is available. Use for greetings, smoke tests, or a lightweight readiness check.",
 			Category:    "system",
@@ -850,6 +853,9 @@ func coalesceString(values ...string) string {
 }
 
 func (p *WatcherPlugin) PrePrompt(ctx *heimdall.PromptContext) error {
+	if ctx.ConversationID != "" {
+		return p.privateConversationPrompt(ctx)
+	}
 	msgPreview := ctx.UserMessage
 	if len(msgPreview) > 50 {
 		msgPreview = msgPreview[:50] + "..."
@@ -879,17 +885,8 @@ func (p *WatcherPlugin) PrePrompt(ctx *heimdall.PromptContext) error {
 	ctx.PluginData["coding_agent_memory_mb"] = m.Alloc / 1024 / 1024
 	ctx.PluginData["coding_agent_history_strategy"] = config["history_strategy"]
 	ctx.PluginData["coding_agent_summary_scope"] = config["summary_scope"]
-	p.refreshSessionMemoryFromGraph(ctx.Context, ctx.UserMessage, db, fmt.Sprint(config["summary_scope"]))
-	p.mu.RLock()
-	ctx.PluginData["coding_agent_session_summary"] = p.summary
-	ctx.PluginData["coding_agent_session_facts"] = append([]string(nil), p.facts...)
-	p.mu.RUnlock()
-
-	retrievedMemory := p.buildSessionMemoryContext(ctx.UserMessage)
-	if retrievedMemory != "" {
-		ctx.AdditionalInstructions += retrievedMemory
-		ctx.NotifyInfo("Coding Memory", "Recovered summarized session context")
-	}
+	// Stateless clients never read or write shared session memory. Private
+	// conversation turns use their owner-scoped persistence boundary above.
 
 	ctx.AdditionalInstructions += "\n\nADDITIONAL CODING AGENT INSTRUCTIONS:\n"
 	ctx.AdditionalInstructions += "- You are operating as Heimdall's built-in coding agent for NornicDB.\n"
@@ -1053,11 +1050,14 @@ func (p *WatcherPlugin) PreExecute(ctx *heimdall.PreExecuteContext, done func(he
 	log.Printf("[HeimdallCodingAgent] PreExecute: request=%s action=%s param_count=%d", ctx.RequestID, ctx.Action, len(ctx.Params))
 	ctx.NotifyInfo("\nHeimdall Coding Agent", fmt.Sprintf("Executing action: %s\n", ctx.Action))
 
-	p.addEvent("info", fmt.Sprintf("PreExecute: %s", ctx.Action), map[string]interface{}{
+	eventData := map[string]interface{}{
 		"request_id": ctx.RequestID,
 		"action":     ctx.Action,
-		"params":     ctx.Params,
-	})
+	}
+	if private, _ := ctx.PluginData["private_conversation"].(bool); !private {
+		eventData["params"] = ctx.Params
+	}
+	p.addEvent("info", fmt.Sprintf("PreExecute: %s", ctx.Action), eventData)
 
 	go func() {
 		if ctx.Action == "heimdall_watcher_query" {
@@ -1099,7 +1099,7 @@ func (p *WatcherPlugin) PostExecute(ctx *heimdall.PostExecuteContext) {
 		p.errors++
 		p.mu.Unlock()
 	}
-	p.captureSessionMemory(ctx.Context, ctx.Action, ctx.Params, ctx.Result)
+	// Conversation completion is the single owner of durable chat memory.
 
 	if ctx.Result != nil && ctx.Result.Success {
 		ctx.NotifySuccess("\nHeimdall Coding Agent", fmt.Sprintf("Action completed in %.2fms\n", executionTime))

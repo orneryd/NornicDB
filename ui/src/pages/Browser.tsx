@@ -3,7 +3,6 @@ import { useEffect, useId, useState, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router-dom";
 import { Terminal, Sparkles, Database, Share2 } from "lucide-react";
 import { useAppStore } from "../store/appStore";
-import { Bifrost } from "../../Bifrost";
 import { api } from "../utils/api";
 import { ManagedEmbeddingDatabases } from "../components/browser/ManagedEmbeddingDatabases";
 import { DatabaseSummary } from "../components/browser/DatabaseSummary";
@@ -105,7 +104,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   });
   const [embedTriggering, setEmbedTriggering] = useState(false);
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
-  const showAIChat = params.get('assistant') === 'open';
   const setShowAIChat = (open: boolean) => patch({assistant: open ? 'open' : null});
   const showRegenerateConfirm = params.get('confirm') === 'regenerate';
   const setShowRegenerateConfirm = (open: boolean) => patch({confirm: open ? 'regenerate' : null});
@@ -512,7 +510,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
 
       </>}
       {/* AI Assistant Chat */}
-      <Bifrost isOpen={showAIChat} onClose={() => setShowAIChat(false)} />
 
       {/* Regenerate Embeddings Confirmation Dialog */}
       <RegenerateConfirmModal

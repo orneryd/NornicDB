@@ -21,7 +21,7 @@ import (
 //
 // Environment variables:
 //   - NORNICDB_MODELS_DIR: Directory for .gguf files (default: /data/models)
-//   - NORNICDB_HEIMDALL_MODEL: Model name (default: qwen2.5-1.5b-instruct-q4_k_m)
+//   - NORNICDB_HEIMDALL_MODEL: Model name (default: packaged Qwen3.5-0.8B)
 //   - NORNICDB_HEIMDALL_GPU_LAYERS: GPU layer offload (-1=auto, 0=CPU only)
 //   - NORNICDB_HEIMDALL_ENABLED: Feature flag (default: false)
 type Manager struct {
@@ -159,7 +159,7 @@ func loadGenerator(modelPath string, gpuLayers, contextSize, batchSize, lazyMode
 func loadLocalGenerator(cfg Config) (Generator, string, error) {
 	modelName := cfg.Model
 	if modelName == "" {
-		modelName = "qwen3-0.6b-instruct"
+		modelName = DefaultLocalModel()
 	}
 	modelFile := modelName
 	if !strings.HasSuffix(modelFile, ".gguf") {
@@ -294,43 +294,13 @@ func (m *Manager) GenerateStream(ctx context.Context, prompt string, params Gene
 	m.mu.Unlock()
 
 	safePrompt, credentials := redactGeneratorPrompt(prompt)
-	// A generated URL may carry credentials even when the prompt did not. Keep
-	// the entire response inside the manager until URL boundaries are known, so
-	// a credential split across callbacks cannot reach a consumer early.
-	var response strings.Builder
-	var chunks []string
-	// The same inference provider boundary: only a call that reaches the
-	// generator is reported, and a closed manager or missing generator
-	// returned above.
+	redactor := liveModelRedactor{credentials: credentials, emit: callback}
 	queryprofile.Callback(ctx, "inference provider", "")
-	err := gen.GenerateStream(ctx, safePrompt, params, func(token string) error {
-		chunks = append(chunks, token)
-		response.WriteString(token)
-		return nil
-	})
+	err := gen.GenerateStream(ctx, safePrompt, params, func(token string) error { return redactor.write(token, false) })
+	if err == nil {
+		err = redactor.write("", true)
+	}
 	if err != nil {
-		m.mu.Lock()
-		m.errorCount++
-		m.mu.Unlock()
-		return observability.RedactError(err, credentials...)
-	}
-	if response.Len() == 0 {
-		return nil
-	}
-	joined := response.String()
-	safe := observability.RedactText(joined, credentials...)
-	if safe == joined {
-		for _, chunk := range chunks {
-			if err := callback(chunk); err != nil {
-				m.mu.Lock()
-				m.errorCount++
-				m.mu.Unlock()
-				return observability.RedactError(err, credentials...)
-			}
-		}
-		return nil
-	}
-	if err := callback(safe); err != nil {
 		m.mu.Lock()
 		m.errorCount++
 		m.mu.Unlock()

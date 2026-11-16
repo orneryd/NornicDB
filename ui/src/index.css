@@ -460,3 +460,6 @@ textarea.property-value { resize: vertical; }
 .embedding-generation-switch[aria-checked=true] .embedding-switch-track { background:#047857; }
 .embedding-generation-switch[aria-checked=true] .embedding-switch-track > span { transform:translateX(14px); }
 @media(max-width:600px) { .managed-embedding-databases { padding:.75rem; } .embedding-database-table th,.embedding-database-table td { padding:.5rem .25rem; } .embedding-database-table th:first-child { width:32%; } .embedding-database-table th:nth-child(2) { width:30%; } .embedding-database-filters label { width:100%; } }
+
+.assistant-app-launcher { display:flex; align-items:center; justify-content:space-between; gap:.5rem; width:100%; padding:.75rem; margin-top:1rem; border-top:1px solid #2a3247; color:#34d399; font-size:.8125rem; text-align:left; }
+.assistant-app-launcher span { font-size:.6875rem; color:#c6cbd5; }
