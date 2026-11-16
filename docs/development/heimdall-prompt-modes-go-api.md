@@ -12,6 +12,23 @@ JSON-action mode answers from supplied context or emits one JSON action envelope
 Native-tool mode answers in natural language and uses the provider's tool-call protocol
 when an action is needed. Both retain the same actions, examples and additional context.
 
+## Automatic backend selection
+
+The HTTP assistant selects the execution path automatically. `Manager.SupportsTools()`
+checks whether the configured generator implements `GeneratorWithTools`. When it does
+and tools are available, the agent loop uses native tool calls. Otherwise, it asks the
+text generator for a JSON action envelope. Go embedding callers select the prompt
+contract explicitly with the API above.
+
+This is an adapter capability check, not a model-name lookup or a live test of the
+model. An adapter can advertise native tool support while its selected model cannot
+fulfil that contract. Choose a model that supports its backend's tool API; a rejected
+native-tool request returns an error rather than automatically retrying in JSON mode.
+
+MCP-shaped tool definitions are shared by both paths. Native provider responses and
+text-generated action envelopes still enter separate execution loops; this API change
+does not claim to consolidate those loops.
+
 ## Go migration
 
 | Previous call | Replacement |

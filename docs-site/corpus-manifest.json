@@ -62,8 +62,8 @@
     },
     {
       "path": "api-reference/README.md",
-      "sha256": "5204cd3895d4313ea816eb074b5fee7aa09c92ebcf8094f82717c6029734ae5c",
-      "bytes": 8248
+      "sha256": "7b28a73eb228a117c79bbdc0b012914146aac0da4dc431d585c11725aa4b4959",
+      "bytes": 9412
     },
     {
       "path": "api-reference/apoc-integer-values.md",
@@ -177,8 +177,8 @@
     },
     {
       "path": "architecture/mvcc-lifecycle-background-work.md",
-      "sha256": "a09f46d688ac00cfd1baf63378b3b6ce8f47e10b033245ce6c39744aca1b6a61",
-      "bytes": 6617
+      "sha256": "15782813e128c06a8a519b5ea0fcb6608b9bedb599902ade5f1d9ed7805d63bc",
+      "bytes": 6964
     },
     {
       "path": "architecture/neon-simd-implementation.md",
@@ -237,8 +237,8 @@
     },
     {
       "path": "architecture/vector-checkpoints.md",
-      "sha256": "00119da7a5548a699d17c6e93997450e34e0c36d756d97684359a5eee03d6603",
-      "bytes": 3507
+      "sha256": "7242ec911e5e5efbf20f6b21c054343aa66fd98b16eebac63d0920d12463a71e",
+      "bytes": 3892
     },
     {
       "path": "architecture/wal-property-bindings.md",
@@ -357,8 +357,8 @@
     },
     {
       "path": "development/README.md",
-      "sha256": "d5ae3beabfb7e00de53de683c9ef2c50128d9ffa51f030d63eca3435d70fef20",
-      "bytes": 2479
+      "sha256": "7fc8e4fb49f71663e3d90b4f94dd555ea0fd1d07dd8c81e034495db67dcf6c00",
+      "bytes": 2537
     },
     {
       "path": "development/access-metadata-write-ownership.md",
@@ -397,8 +397,8 @@
     },
     {
       "path": "development/count-store-visibility.md",
-      "sha256": "fedf9333383847a5d1b941e1db9e3cd425f235bb79c18572156bf76fad14915b",
-      "bytes": 4824
+      "sha256": "2a56cc3c55772d15185af5e507f62224a3d3d0f55341f614f40bcb4ebc8ee26f",
+      "bytes": 9718
     },
     {
       "path": "development/cypher-preparation-context-api.md",
@@ -437,8 +437,8 @@
     },
     {
       "path": "development/function-context-go-api.md",
-      "sha256": "e99412b124784f07f3fde262cdc17777d8a1fc23b8b49d87f528656cbfded3dd",
-      "bytes": 9611
+      "sha256": "6e39d2aee8c072d2a3b39d6bcf53e0ad3d5f9269ac1ff0f55bb35fe6aecc2931",
+      "bytes": 10582
     },
     {
       "path": "development/gpu-large-build-qualification.md",
@@ -454,6 +454,11 @@
       "path": "development/graphml-go-api.md",
       "sha256": "4e8171d7f6b27581b8a3800ad364c5a62323ad8686062f2e7fd421c0bf68e17d",
       "bytes": 5486
+    },
+    {
+      "path": "development/heimdall-prompt-modes-go-api.md",
+      "sha256": "800e21f684122d50bbb5e2a6dd7c73f9d4ce99efad9cad6109d248da5e86950d",
+      "bytes": 2982
     },
     {
       "path": "development/index-publication.md",
@@ -532,8 +537,8 @@
     },
     {
       "path": "development/replicated-entity-commits.md",
-      "sha256": "d6d932a0d8154fb74e142b79b3408329283ea3cbc8b95839f82d65f30b0b878b",
-      "bytes": 18181
+      "sha256": "2ecd2f4ac74aaa616bed5ae43852915716440a06831cd1ad0a33457b65de7cfc",
+      "bytes": 21202
     },
     {
       "path": "development/reveal-scope-metadata-api.md",
@@ -627,8 +632,8 @@
     },
     {
       "path": "features/apoc-functions.md",
-      "sha256": "456f4256a6bfde0bd9ad98e53ed3bc0911b6e437430b7752cc414b3e99329d36",
-      "bytes": 67518
+      "sha256": "87d753ec49b1b3b6daf7f1b88d6bf70bfbd86590cf3e2974a493f10c5e2d66a2",
+      "bytes": 68242
     },
     {
       "path": "features/apoc-procedure-capabilities.md",
@@ -697,13 +702,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "51acfcb7ab82ebd15d4c85cc843ffc32a66f415762b3ba18fc9a41957350c8af",
-      "bytes": 213624
+      "sha256": "5d62933d32c160677fb79b4094975cd5bc51b36a2427e617f2660e3cfbec41bc",
+      "bytes": 218113
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "97fce684abe2636edc78cf44b36a805fa2fdf4359a7d047124c200d9e4733177",
-      "bytes": 155938
+      "sha256": "5ab8aaa9cb589280e8c5e56cd6529c412f694100eb0ce46f73df5555a679f1c6",
+      "bytes": 159251
     },
     {
       "path": "getting-started/README.md",
@@ -767,8 +772,8 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "2bf433fe1701c82b675ff3ab5318f4ecebaf50bc7c8b25f847bda4446e1a2b96",
-      "bytes": 35385
+      "sha256": "61f6d37ab00420666776d7223e842da0d266b5c997dd478e65e29773db3ad948",
+      "bytes": 35537
     },
     {
       "path": "neo4j-migration/feature-parity.md",
@@ -792,8 +797,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "9c5595b53f39daa9fdb48d9db2b5c51ab302caf9f513996d771e8138c1f6bf51",
-      "bytes": 5862
+      "sha256": "d248c76512fbfa172f06ee5b63d499ace2f5abea6cf820c0f9874631dede1838",
+      "bytes": 7313
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -872,8 +877,8 @@
     },
     {
       "path": "operations/recovery-format-compatibility.md",
-      "sha256": "5eb9c1b0554f4ff78a1af9338a65f81d34b62fa8ee4e78e485fce37e76ba20f6",
-      "bytes": 12014
+      "sha256": "9bff5f1f9f36f187172ae294da17f2c353e202eeee2f87e5ba2e6756917ccb4e",
+      "bytes": 14683
     },
     {
       "path": "operations/reverse-proxy.md",
@@ -1391,6 +1396,11 @@
       "bytes": 11508
     },
     {
+      "path": "performance/scalar-node-input-demand.md",
+      "sha256": "fdbabb87845ea05e4cd9bf639d4cb02022a7aa44f331dea5c006870460447270",
+      "bytes": 2116
+    },
+    {
       "path": "performance/searching.md",
       "sha256": "43cf2ca312b134503396ad6f10bdbeb9cf9512e1a9007ad53b803f468dc860f7",
       "bytes": 49709
@@ -1416,9 +1426,39 @@
       "bytes": 6861
     },
     {
+      "path": "performance/v150-csv-row-convergence.md",
+      "sha256": "4ae0907537d81f772ced987724f73d8d7272ed92d9f9ea869d3cf4917f881a34",
+      "bytes": 2173
+    },
+    {
+      "path": "performance/v150-managed-vector-journal.md",
+      "sha256": "1c371a8eb9194361d8ae8ca33ddc19890e45d5038fe289ef6236945bee83339b",
+      "bytes": 3726
+    },
+    {
+      "path": "performance/v150-pinned-compaction.md",
+      "sha256": "0b3bf8726d058f36a8d52d3bb6b892d98b6a47a4af429471bc648b45531e17b6",
+      "bytes": 8825
+    },
+    {
       "path": "performance/v150-rc-corrections.md",
-      "sha256": "217144d1cd1f291acece94863f2fda5bb369470d5e34f4e105164da0a1c2ff18",
-      "bytes": 76966
+      "sha256": "02716d2628ca276fe41df9b23ff84eebc20a1b901b841ac46b78dbfa61a6b0f7",
+      "bytes": 79952
+    },
+    {
+      "path": "performance/v150-result-copy-scratch.md",
+      "sha256": "f961f28cacaf2323f46170e40f629ed11b0c19e7150714f3c6386b5701d94de4",
+      "bytes": 3173
+    },
+    {
+      "path": "performance/v150-self-loop-limit.md",
+      "sha256": "9a8045c833c539a22c434159bca488d3e6590e43222198d3cbc0e9b270da7c40",
+      "bytes": 2539
+    },
+    {
+      "path": "performance/v150-sidecar-reuse.md",
+      "sha256": "15194daaccddb9eeb6a9188110eaee991674293d6a6131dae9edf2bdf349aa77",
+      "bytes": 2343
     },
     {
       "path": "performance/vector-checkpoint-validation.md",
@@ -1497,8 +1537,8 @@
     },
     {
       "path": "security/llm-ast-security.md",
-      "sha256": "692853ca4e9cfb0bcc3b2d11b0979dc08e4cb89112054999775f41a8862897e2",
-      "bytes": 15701
+      "sha256": "fc25775f110bfccd3fdac6d911ef34ad82e5c66a4b2fa0f59b68e7fda3f86fa8",
+      "bytes": 15727
     },
     {
       "path": "security/per-database-rbac.md",
@@ -1667,13 +1707,13 @@
     },
     {
       "path": "user-guides/heimdall-ai-assistant.md",
-      "sha256": "27af198da008d9a4e93972877f03d0c60e1af312e3c6110d51f4311222001b4f",
-      "bytes": 29575
+      "sha256": "7d12fc24e97f3c3a33b9e8e8135c75731a2a86612a433e9f519fda46163bc079",
+      "bytes": 30133
     },
     {
       "path": "user-guides/heimdall-context.md",
-      "sha256": "7a65faebdcc68c5a8b24d7c0f11bf45fe9e0ac24fa046e7bfe4fd68c075e378b",
-      "bytes": 11538
+      "sha256": "4bfb3314826585559bbb1cd3d5cd084d71c635c2b18b87a6af7f373643fc2d1e",
+      "bytes": 12918
     },
     {
       "path": "user-guides/heimdall-event-triggers-remediation.md",
@@ -1692,8 +1732,8 @@
     },
     {
       "path": "user-guides/historical-reads-mvcc-retention.md",
-      "sha256": "8ba581b9b49579e42c8028232ee8d6d34df0573f9a1e2cf5150a1647a7952ac4",
-      "bytes": 15674
+      "sha256": "3335fcac358b8c5137d94063df1b51869df5703abaf34bc7cc6a573609e9ce44",
+      "bytes": 15700
     },
     {
       "path": "user-guides/hybrid-search.md",
@@ -1717,8 +1757,8 @@
     },
     {
       "path": "user-guides/managing-constraints.md",
-      "sha256": "7ae7c9441a533a2e4ad46ee96834f7b0845e3494b2ef652dc8c5219d632bf976",
-      "bytes": 18088
+      "sha256": "da2fb53c459e2856ee25a50db5c0066d241b1386bd2fd60d95a5480391f06977",
+      "bytes": 18222
     },
     {
       "path": "user-guides/multi-database.md",
@@ -1787,8 +1827,8 @@
     },
     {
       "path": "user-guides/vector-search.md",
-      "sha256": "d05b24b7995a834afcdee2b52ac425a8c72f26d06f7e525bed8133c2f28bf103",
-      "bytes": 25188
+      "sha256": "610b793a997f0b74cc0ae39d03f4e15802c4a943427b7a105a885d9de6c83d11",
+      "bytes": 26565
     },
     {
       "path": "user-guides/visibility-suppression-deindex.md",
