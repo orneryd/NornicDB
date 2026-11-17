@@ -27,6 +27,14 @@
     "reason": "Separately owned APOC graph structs and mutation arithmetic, not generic runtime numeric-list values; storage.Node arguments do not bind to these foreign graph pointer types.",
     "sha256": "c9b0f4987a0b88f9b895d553bfaf9e5104bc48f3f78aae2b693981d45b02023f"
   },
+  "pkg/convert/json.go:jsonNumbers": {
+    "reason": "Owner: the one JSON number read decision (kind and range of every JSON number, per domain policy); its switch walks lists and maps to reach the json.Number leaves it decides.",
+    "sha256": "eaa71c9ea3c495242bceaf8b30c39849b430fec787757f909ceb04c64840f04e"
+  },
+  "pkg/convert/json_encode.go:any": {
+    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat. Typed persisted-state metadata spelling is temporarily disabled across dynamic interface values and restored for siblings; this state controls output spelling only, not number acceptance or input normalization. The added save/restore is the reviewed source delta.",
+    "sha256": "6340aeeab8ecf0a55fa13db61b20406691b1540fb8fbc8edbb744645567479db"
+  },
   "pkg/convert/scalar.go:NativeScalar": {
     "reason": "Exact built-in primitive SHAPE predicate shared by safe equality and authoritative index absence. It neither converts nor narrows values. ReadNumber admits named types via reflection, while this predicate must reject them; tests pin that distinction and the caller-specific nil rule.",
     "sha256": "f6d1858693a76f08289e31b505a662f69eb16acae3a164b39e764e8ff7a2b0eb"
@@ -42,6 +50,14 @@
   "pkg/cypher/apoc_load_export.go:jsonLoadProcedure": {
     "reason": "Canonical decoded-JSON-to-row shape adapter for both native loader names; it does not narrow runtime numeric/list inputs.",
     "sha256": "408f627bc9077e3fe74b0388f61aa208c763a8545eff263ffb421a5e354c9db4"
+  },
+  "pkg/cypher/cache.go:transportInertLeaf": {
+    "reason": "Transport certification identifies concrete scalar leaves and homogeneous native slices; it neither converts nor narrows their elements. Unknown named/custom carriers require owned copies. TestTransportRowsInertCertifiesTheClosedValueSet and TestTransportVectorImagesPreserveOwnedGoDelivery cover the accepted and rejected shapes.",
+    "sha256": "9940d3028d1c48a8845249a12fce2349601db6bc441a45fd8e6d4f754e34f2eb"
+  },
+  "pkg/cypher/cache.go:value": {
+    "reason": "Transport certification traverses native result maps, row lists and entity properties without numeric conversion. Unknown/custom values and cycles retain owned delivery. TestTransportRowsInertCertifiesTheClosedValueSet, TestTransportCacheHitRefusesCustomEntityProperties and TestCachedResultCyclesKeepCallerOwnership preserve the closed input boundary.",
+    "sha256": "d8056a7c7ece1ceb3dddbbe7d47f784f7c580b91e773b44ed3ae85071af8deec"
   },
   "pkg/cypher/cache_key.go:writeCacheKeyValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -71,6 +87,14 @@
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
     "sha256": "31b18eb5c673eda82e597fbad945e2805305f56e7211877a3070546891f5a8e3"
   },
+  "pkg/cypher/deleted_entity_projection.go:deletedEntityContainerOf": {
+    "reason": "Graph projection identifies list/map container identity for copy-on-write traversal; numeric elements remain opaque. TestDeletedEntityMapProjectionKeepsUnchangedContainerIdentity, TestDeletedEntityMapProjectionKeepsAliases and TestDeletedEntityMapProjectionPreservesCycleTopology cover identity and cycles.",
+    "sha256": "8d9f634678d938adf69b5afccb0626c1082cb843cfed53acf21574988d6e6e26"
+  },
+  "pkg/cypher/deleted_entity_projection.go:forEachDeletedEntityContainerChild": {
+    "reason": "Graph projection visits list entries and map values as opaque children for deleted-entity reachability, not numeric conversion. TestDeletedEntityMapProjectionCopiesListsOfMaps, TestDeletedEntityMapProjectionKeepsAliases and TestDeletedEntityContainerProjectionMatchNeo4j cover traversal.",
+    "sha256": "771953fd2395c001712c9f73cdbfd7385902b2733b622f1a46080c50ca177158"
+  },
   "pkg/cypher/deleted_entity_projection.go:holdsDeleted": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "5ee9c0ed14082de119efa62e3e208c4a55ac3183d15e48c215cebbbf6be4e886"
@@ -78,6 +102,10 @@
   "pkg/cypher/deleted_entity_projection.go:replace": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
     "sha256": "ab76f090ca3a4f2a502f752ccbbe6c89623ae446b35100e8385e0bfbb3edf352"
+  },
+  "pkg/cypher/deleted_entity_projection.go:rewrite": {
+    "reason": "Graph projection copies only containers containing deleted-entity views, retaining aliases, cycles and map order; it does not interpret numeric values. TestDeletedEntityMapProjectionCopiesNestedContainers, TestDeletedEntityMapProjectionPreservesCycleTopology and TestDeletedEntityMapProjectionKeepsMapKeyOrder cover the boundary.",
+    "sha256": "85e7470cb0d5bafb0e00261a7e99245fdb686cc1fb37f3478306c5d6d60ab789"
   },
   "pkg/cypher/dynamic_tokens.go:dynamicLabelNames": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -148,8 +176,8 @@
     "sha256": "aa381cb1a0cecbe7c9a4229bd6eccd711868a796704ddfcd8d7da4558fbd0c2c"
   },
   "pkg/cypher/node_helpers.go:materializedValue": {
-    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "a19859776d56b6055b7b4f0b307e19b45f2534a168716898af1a067a25aae268"
+    "reason": "Materialized-result access recording traverses graph carriers, maps and lists with cycle detection; numeric leaves are not converted. TestMaterializedAccessRecordedOnCacheHits, TestMaterializedPathAccessAcrossTransactions, TestMaterializedValueShapes and TestCachedResultCyclesKeepCallerOwnership cover retained identity and ownership.",
+    "sha256": "e3bf11f238ee5137d90f78f5e82d346d03363af96da51634687dcaf1df1de703"
   },
   "pkg/cypher/parameters.go:nestedParameterValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -224,8 +252,8 @@
     "sha256": "819f637743ef412cd11dd790db99c4c21793e105478521a0d7e9f12b05a66e55"
   },
   "pkg/cypher/row_value_program.go:compileValue": {
-    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged. NOR-15 uses the source-width-aware null predicate reader; review confirms the native literal cases and generic input boundary remain unchanged. Current map-projection admission calls mapProjectionSplit(expr,mapProjectionRuntime); source review confirms the existing post-parse native literal switch and runtime numeric/list boundary remain unchanged. TestMapProjectionBoundaryPolicies and public row expression tests preserve the boundary. Qualified function admission now calls inspectFunctionCall(...,qualifiedFunctionCall) and reads its same name/inner product; reviewed source diff changes only that call/product, leaving every native literal kind and generic numeric/list boundary unchanged. TestStandaloneFunctionCallPurposes and TestStandaloneFunctionCallPublicConsumers retain call-shape policy controls alongside TestRowOperandPolicyPopulations and TestRowValueProgramAdapterConsistency. Reviewed static-scope signature migration adds nil to mapProjectionSplit(expr,mapProjectionRuntime,nil); runtime policy never reads the static-only scope parameter. Exact declaration diff changes only this argument; existing post-parse literal type specialization and generic numeric/list reader boundary remain unchanged. TestMapProjectionBoundaryPolicies, TestRowOperandPolicyPopulations, TestRowValueProgramAdapterConsistency and canonical numeric conversion/literal cases retain the affected contracts. Reviewed PROFILE source-fragment migration: the entire post-parse native literal branch is byte-identical to 2de922857 (nil, bool, int64, float64 and string specialization). Source wrappers and canonical compiler descent retain generic runtime input ownership; no numeric/list conversion or literal case is added. TestRowOperandPolicyPopulations, TestRowValueProgramAdapterConsistency and literal boundary controls preserve the contract. Only this existing source-pinned digest is refreshed; scanner rules and the 69-member nonconsumer population stay unchanged.",
-    "sha256": "e8648138fc213f724a6829ac9d61f7e2eeb2f74899f6ade65774f8583198c0da"
+    "reason": "Compiler specialization dispatches already-parsed nil, bool, int64, float64 and string literals. Runtime numeric/list conversion remains with canonical input readers. Reviewed receiver-chain and quoted-name admission changes do not narrow runtime values. TestRowValueProgramAdapterConsistency, TestRowValueProgramsCompileIssueForms and TestDeletedEntityReadsPreserveQuotedIdentityAndNullTests cover the affected compiler paths.",
+    "sha256": "43bbcecb4165d3bf9f7b7ee573986f74821ca9ec96303fc0551172243de561a8"
   },
   "pkg/cypher/runtime_type_errors.go:cypherPredicateTruth": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -294,13 +322,5 @@
   "pkg/cypher/value_equivalence.go:cypherValueKey": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
     "sha256": "b55b25dbdda67c326f5784855c1da83f21da56e60902576522e071ecaf99c911"
-  },
-  "pkg/convert/json.go:jsonNumbers": {
-    "reason": "Owner: the one JSON number read decision (kind and range of every JSON number, per domain policy); its switch walks lists and maps to reach the json.Number leaves it decides.",
-    "sha256": "eaa71c9ea3c495242bceaf8b30c39849b430fec787757f909ceb04c64840f04e"
-  },
-  "pkg/convert/json_encode.go:any": {
-    "reason": "Owner (output): the JSON writer's value dispatch (jsonWriterState.any); an encoder, not an input reader; every FLOAT is written through the one write decision appendJSONFloat. Typed persisted-state metadata spelling is temporarily disabled across dynamic interface values and restored for siblings; this state controls output spelling only, not number acceptance or input normalization. The added save/restore is the reviewed source delta.",
-    "sha256": "6340aeeab8ecf0a55fa13db61b20406691b1540fb8fbc8edbb744645567479db"
   }
 }
