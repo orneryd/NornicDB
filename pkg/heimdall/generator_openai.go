@@ -24,8 +24,6 @@ const defaultVLLMBaseURL = "http://localhost:8000"
 const defaultLiteLLMBaseURL = "http://localhost:4000"
 const defaultOrcaBaseURL = "https://api.orcarouter.ai"
 const defaultOrcaModel = "orcarouter/auto"
-const defaultUberLLMBaseURL = "https://api.uberllm.dev"
-const defaultUberLLMModel = "openai/gpt-4o-mini"
 const defaultOpenAIModel = "gpt-4o-mini"
 const openAIChatPath = "/v1/chat/completions"
 
@@ -59,6 +57,7 @@ type openAIGenerator struct {
 	baseURL     string
 	apiKey      string
 	modelPrefix string
+	identity    *providerIdentity
 	model       string
 	client      *http.Client
 }
@@ -92,7 +91,7 @@ type openAIChatChunk struct {
 }
 
 func init() {
-	for _, provider := range []string{"openai", "vllm", "litellm", "orca", "uberllm"} {
+	for _, provider := range []string{"openai", "vllm", "litellm", "orca"} {
 		RegisterHeimdallProvider(provider, newOpenAIGenerator)
 	}
 }
@@ -101,32 +100,28 @@ func init() {
 // policy is selected here before the shared HTTP client and completion owner are
 // initialized. Empty Provider retains the direct OpenAI constructor contract.
 func newOpenAIGenerator(cfg Config) (Generator, error) {
+	cfg = cfg.resolveProviderIdentity("openai")
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	baseURL, apiKey, model := cfg.APIURL, cfg.APIKey, strings.TrimSpace(cfg.Model)
 	modelPrefix := "openai"
-	if provider == "orca" || provider == "uberllm" {
-		// Hosted gateways validate credentials before processing their URL and
-		// only strip a terminal /v1; they do not normalize the configured URL.
-		defaultURL, defaultModel := defaultOrcaBaseURL, defaultOrcaModel
-		if provider == "uberllm" {
-			defaultURL, defaultModel = defaultUberLLMBaseURL, defaultUberLLMModel
-		}
+	if provider == "orca" {
+		// Keep Orca's key-first validation and deferred rejection of unparseable
+		// URLs. Valid URLs use the shared OpenAI-compatible path normalization.
 		if strings.TrimSpace(apiKey) == "" {
-			return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_API_KEY", provider)
+			return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_API_KEY", cfg.identity.label("orca"))
 		}
 		baseURL = strings.TrimSpace(baseURL)
 		if baseURL == "" {
-			baseURL = defaultURL
+			baseURL = defaultOrcaBaseURL
 		}
-		if parsed, err := url.Parse(baseURL); err == nil {
-			parsed.Path = strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), "/v1")
-			parsed.RawPath = strings.TrimSuffix(strings.TrimSuffix(parsed.RawPath, "/"), "/v1")
-			baseURL = parsed.String()
+		if normalized, err := normalizeOpenAICompatibleBaseURL(baseURL); err == nil {
+			baseURL = normalized
 		}
+
 		if looksLikeLocalModel(model) {
-			model = defaultModel
+			model = defaultOrcaModel
 		}
-		modelPrefix = provider
+		modelPrefix = "orca"
 	} else {
 		defaultURL := defaultOpenAIBaseURL
 		switch provider {
@@ -142,23 +137,23 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 		}
 		configuredURL := strings.TrimSpace(baseURL)
 		var err error
-		baseURL, err = observability.NormalizeRequestBaseURL(configuredURL)
+		baseURL, err = normalizeOpenAICompatibleBaseURL(configuredURL)
 		if err != nil {
-			return nil, fmt.Errorf("%s provider URL: %w", provider, observability.RedactClientError(err, configuredURL, cfg.APIKey))
+			return nil, fmt.Errorf("%s provider URL: %w", cfg.identity.label(provider), observability.RedactClientError(err, configuredURL, cfg.APIKey))
 		}
 		if provider == "openai" {
 			if looksLikeLocalModel(model) {
 				model = defaultOpenAIModel
 			}
 			if apiKey == "" {
-				return nil, fmt.Errorf("openai provider requires NORNICDB_HEIMDALL_API_KEY")
+				return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_API_KEY", cfg.identity.label("openai"))
 			}
 		} else {
 			if model == "" {
 				if provider == "vllm" {
-					return nil, fmt.Errorf("vllm provider requires NORNICDB_HEIMDALL_MODEL (the model served by vLLM)")
+					return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_MODEL (the model served by vLLM)", cfg.identity.label("vllm"))
 				}
-				return nil, fmt.Errorf("litellm provider requires NORNICDB_HEIMDALL_MODEL (a model/alias served by your LiteLLM proxy)")
+				return nil, fmt.Errorf("%s provider requires NORNICDB_HEIMDALL_MODEL (a model/alias served by your LiteLLM proxy)", cfg.identity.label("litellm"))
 			}
 			if apiKey == "" {
 				apiKey = "EMPTY"
@@ -166,7 +161,7 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 		}
 	}
 	g := &openAIGenerator{
-		baseURL: baseURL, apiKey: apiKey, model: model, modelPrefix: modelPrefix,
+		baseURL: baseURL, apiKey: apiKey, model: model, modelPrefix: cfg.identity.label(modelPrefix), identity: cfg.identity,
 		client: &http.Client{Timeout: 120 * time.Second},
 	}
 	g.chatCompletionGenerator = chatCompletionGenerator{
@@ -176,6 +171,33 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 		toolContent:      truncateForOpenAI,
 	}
 	return g, nil
+}
+
+// normalizeOpenAICompatibleBaseURL owns version handling for all compatible
+// providers. URL composition remains with the canonical escaped-path/query owner.
+func normalizeOpenAICompatibleBaseURL(configured string) (string, error) {
+	normalized, err := observability.NormalizeRequestBaseURL(configured)
+	if err != nil {
+		return "", err
+	}
+	endpoint, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+	escaped := strings.TrimSuffix(endpoint.EscapedPath(), "/v1")
+	endpoint.Path, err = url.PathUnescape(escaped)
+	if err != nil {
+		return "", err
+	}
+	endpoint.RawPath = escaped
+	return endpoint.String(), nil
+}
+
+func (g *openAIGenerator) errorProviderName() string {
+	if g.identity != nil {
+		return g.identity.label("openai")
+	}
+	return "openai"
 }
 
 // chatStatusError retains the safe response facts required by provider policy.
@@ -236,7 +258,7 @@ func (g *openAIGenerator) requestChat(ctx context.Context, messages []chatMessag
 		reqBody.MaxTokens = 1024
 	}
 
-	resp, err := requestProviderChat(ctx, g.client, "openai", g.baseURL, openAIChatPath, g.apiKey, reqBody)
+	resp, err := requestProviderChat(ctx, g.client, g.errorProviderName(), g.baseURL, openAIChatPath, g.apiKey, reqBody)
 	var rejected *chatStatusError
 	if tools != nil && errors.As(err, &rejected) && rejected.status == http.StatusBadRequest && strings.Contains(rejected.body, "context_length_exceeded") {
 		return nil, fmt.Errorf("conversation is too long for the model (context limit exceeded). Please start a new chat or ask a shorter question")
@@ -254,10 +276,10 @@ func (g *openAIGenerator) completeChat(ctx context.Context, messages []chatMessa
 
 	var chatResp openAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return chatMessage{}, fmt.Errorf("openai decode: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
+		return chatMessage{}, fmt.Errorf("%s decode: %w", g.errorProviderName(), observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	if len(chatResp.Choices) == 0 {
-		return chatMessage{}, fmt.Errorf("openai: no choices in response")
+		return chatMessage{}, fmt.Errorf("%s: no choices in response", g.errorProviderName())
 	}
 	return chatResp.Choices[0].Message, nil
 }
@@ -384,6 +406,9 @@ func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, par
 		if len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != nil {
 			break
 		}
+	}
+	if err := scanner.Err(); err != nil && g.identity != nil && g.identity.override {
+		return fmt.Errorf("%s stream: %w", g.errorProviderName(), err)
 	}
 	return scanner.Err()
 }

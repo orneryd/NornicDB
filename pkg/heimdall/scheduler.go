@@ -58,8 +58,6 @@ func RegisterHeimdallProvider(name string, factory func(Config) (Generator, erro
 //   - openai: Use OpenAI (or compatible) chat API; requires NORNICDB_HEIMDALL_API_KEY.
 //   - orca: Use OrcaRouter's OpenAI-compatible API; defaults to orcarouter/auto
 //     and requires NORNICDB_HEIMDALL_API_KEY.
-//   - uberllm: Use UberLLM's OpenAI-compatible API (https://api.uberllm.dev);
-//     defaults to openai/gpt-4o-mini and requires NORNICDB_HEIMDALL_API_KEY.
 //   - ollama: Use Ollama /api/chat; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:11434.
 //   - vllm: Use vLLM's OpenAI-compatible API; NORNICDB_HEIMDALL_API_URL defaults to http://localhost:8000.
 //   - litellm: Use a LiteLLM proxy (OpenAI-compatible gateway to 100+ providers);
@@ -71,10 +69,8 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	diagnosticCredentials := observability.ClientCredentials(cfg.APIURL, cfg.APIKey)
 
-	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	if provider == "" {
-		provider = "local"
-	}
+	cfg = cfg.resolveProviderIdentity("local")
+	provider := cfg.identity.protocol
 
 	var generator Generator
 	var modelPath string
@@ -89,10 +85,10 @@ func NewManager(cfg Config) (*Manager, error) {
 		generator, err = factory(cfg)
 		if err != nil {
 			err = observability.RedactError(err, diagnosticCredentials...)
-			return nil, fmt.Errorf("Heimdall %s provider: %w", provider, err)
+			return nil, fmt.Errorf("Heimdall %s provider: %w", observability.RedactText(cfg.identity.name, diagnosticCredentials...), err)
 		}
 		modelPath = generator.ModelPath()
-		logHeimdallPrintf(slog.LevelInfo, "🛡️ Heimdall using %s: %s", provider, modelPath)
+		logHeimdallPrintf(slog.LevelInfo, "🛡️ Heimdall using %s: %s", cfg.identity.name, observability.RedactText(modelPath, diagnosticCredentials...))
 	} else {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
