@@ -109,6 +109,12 @@ type pipelineMatchPhysicalHint struct {
 	orderExpr  string
 	limit      int
 	earlyLimit int
+	// A node-pattern template may prove the same property demand once for
+	// every input row. Values in its inline property map vary by row, but the
+	// names and read tail do not.
+	projectionKnown bool
+	projectionSafe  bool
+	projection      []string
 	// readTail holds the clauses after the MATCH when every one of them only
 	// reads; nil otherwise. A label scan uses it to read only the properties
 	// those clauses use (pipelineLabelScanProjection).
@@ -178,6 +184,13 @@ func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInf
 		return nil, false
 	}
 	return pipelineNodePropertyDemand(ctx, nodePattern.variable, whereClause, nodePattern.properties, readTail)
+}
+
+func pipelineLabelScanProjectionForHint(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) ([]string, bool) {
+	if hint.projectionKnown && whereClause == "" {
+		return hint.projection, hint.projectionSafe
+	}
+	return pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail)
 }
 
 // pipelineNodePropertyDemand returns the stored property bodies a MATCH must
@@ -2022,7 +2035,7 @@ func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePa
 		// match before decoding them (#857).
 		properties = e.scanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
 	}
-	projection, projected := pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail)
+	projection, projected := pipelineLabelScanProjectionForHint(ctx, nodePattern, whereClause, hint)
 	if !projected {
 		projection = nil
 	}
