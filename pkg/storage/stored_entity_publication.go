@@ -146,6 +146,17 @@ func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state b
 	return edge, err == nil, err
 }
 
+// isStoredEntityKey reports whether a publication key names a stored entity.
+// The list also carries the AffectedFact records that dependency owners consume;
+// this capture never reads those.
+func isStoredEntityKey(key any) bool {
+	switch key.(type) {
+	case NodeID, EdgeID:
+		return true
+	}
+	return false
+}
+
 // captureStoredEntityChanges reads each typed touched entity once. Both views
 // belong to this commit, never the latest mutable storage after publication.
 type storedEntityCapture struct {
@@ -179,15 +190,25 @@ func (b *BadgerEngine) captureStoredEntityChanges(ctx context.Context, request s
 		before = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, decodes: decodes}, acknowledged: b.writeBehind, boundaries: b.storedEntityObservers.Load()}
 		after = storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes, decodes: decodes}}
 	}
-	seen := make(map[any]struct{}, len(keys))
-	changes := make([]StoredEntityChange, 0, len(keys))
+	// Only entity keys reach the change list, so only they size it: the list also
+	// carries the far more numerous fact records the capture never reads. A
+	// repeated entity key is counted but skipped by seen, so the list cannot grow.
+	entityKeyCount := 0
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		switch key.(type) {
-		case NodeID, EdgeID:
-		default:
+		if isStoredEntityKey(key) {
+			entityKeyCount++
+		}
+	}
+	seen := make(map[any]struct{}, entityKeyCount)
+	changes := make([]StoredEntityChange, 0, entityKeyCount)
+	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !isStoredEntityKey(key) {
 			continue
 		}
 		if _, ok := seen[key]; ok {

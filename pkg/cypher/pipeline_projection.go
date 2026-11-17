@@ -1042,12 +1042,13 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	profiling := profileRuntimeFromContext(ctx) != nil
 	if rows == nil && source != nil {
 		// A local the closure captures, so the rows path below doesn't pay
 		// for a captured result variable.
 		sourceProjected := true
 		sourceCompleted := source(func(row pipelineRow) bool {
-			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row, profiling)
 			if !evaluated {
 				sourceProjected = false
 				return false
@@ -1065,7 +1066,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			recordExpressionFailure(ctx, err)
 			return false, true
 		}
-		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row, profiling)
 		if !evaluated {
 			return false, true
 		}

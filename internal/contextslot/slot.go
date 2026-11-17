@@ -23,3 +23,11 @@ func Ensure[T any](ctx context.Context) context.Context {
 	}
 	return context.WithValue(ctx, key[T]{}, new(T))
 }
+
+// Bind retains the current slot close to repeated readers without initializing
+// absent state. Later Ensure calls can still initialize it; inherited state is
+// shared by identity. For example, ctx = Bind[StatementState](ctx) avoids walking
+// the full parent chain for each Get[StatementState](ctx).
+func Bind[T any](ctx context.Context) context.Context {
+	return context.WithValue(ctx, key[T]{}, Get[T](ctx))
+}

@@ -629,7 +629,15 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 				return abort(err)
 			}
 		}
-		if err := b.materializeMVCCCommitWithHeads(accepted, w, versions[c.namespace], c.ops, true); err != nil {
+		// The commit's frame is prepared once, after any recovery hydration
+		// has rewritten its operations, and both consumers of this frame read
+		// it: the materialization below and the generation's publication.
+		frame, err := prepareCommitFrame(accepted, c.ops)
+		if err != nil {
+			return abort(err)
+		}
+		materialization := mvccCommitMaterialization{writer: w, version: versions[c.namespace], frame: frame, staged: true}
+		if err := b.materializeMVCCCommit(accepted, materialization); err != nil {
 			return abort(err)
 		}
 		for keyStr := range deletes {
@@ -811,17 +819,18 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 // writer orders it by entity and UNIQUE value; listeners run after retirement.
 // A nil schema explicitly excludes UNIQUE claims already published at logical
 // buffered ACK. Cache/count/revision publication retains its existing timing.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishCounts bool, publishRevision bool, images *commitCacheImages) {
+// frame is the caller's prepared commit frame: its states serve the claims, the
+// index membership and the cache images, and its operations the counts and
+// notifications, so publication reads one fold of those operations instead of
+// folding them again.
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, frame commitFrame, publishCounts bool, publishRevision bool, images *commitCacheImages) {
 	if namespace == "" {
 		schema = nil
 	}
-	// The commit is accepted: its frame is selected on that completion
-	// lifetime, so the fold cannot cancel.
-	states, _ := newCommitStates(context.Background(), ops)
-	b.publishUniqueValues(schema, states, ValidatedUniqueClaim)
-	b.publishIndexMembership(states)
-	images.acceptStates(states)
-	b.publishCommitEffects(ops, publishCounts, publishRevision)
+	b.publishUniqueValues(schema, frame.states, ValidatedUniqueClaim)
+	b.publishIndexMembership(frame.states)
+	images.acceptStates(frame.states)
+	b.publishCommitEffects(frame.ops, publishCounts, publishRevision)
 }
 
 // publishCommitEffects retains operation multiplicity for cardinality,

@@ -1,6 +1,10 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // nodeBodyAccess keeps mutable query results detached. Commit validation may
 // borrow an immutable version-matched body only for its immediate comparisons.
@@ -80,6 +84,71 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	}
 	b.bindNodeReadSource(node, id, item.Version())
 	return node, nil
+}
+
+// embeddingRecordsAbsentAt proves absence only within this transaction's snapshot.
+// Chunks, shards and sidecar metadata share prefixEmbedding; any matching record
+// keeps ordinary per-node hydration. An empty nodePrefix checks all namespaces.
+func embeddingRecordsAbsentAt(ctx context.Context, txn *badger.Txn, nodePrefix string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	prefix := make([]byte, 0, 1+len(nodePrefix))
+	prefix = append(prefix, prefixEmbedding)
+	prefix = append(prefix, nodePrefix...)
+	options := badger.DefaultIteratorOptions
+	options.Prefix = prefix
+	options.PrefetchValues = false
+	it := txn.NewIterator(options)
+	defer it.Close()
+	it.Seek(prefix)
+	absent := !it.ValidForPrefix(prefix)
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return absent, nil
+}
+
+// Delay the iterator cost until the transaction has a population to hydrate.
+const pinnedEmbeddingAbsenceProbeReads = 64
+
+// pinnedEmbeddingAbsence belongs to one immutable physical snapshot, not a node.
+type pinnedEmbeddingAbsence struct {
+	// readTs is the ReadTs of the pinned snapshot this record belongs to; a
+	// different version restarts the count and the proof.
+	readTs uint64
+	// reads counts the node reads of that snapshot that needed the embedding
+	// state, so a bounded read never pays for the probe.
+	reads uint64
+	// proved reports that absent is this snapshot's answered range proof.
+	proved bool
+	// absent is that proof: the snapshot holds no embedding record at all.
+	absent bool
+}
+
+// pinnedEmbeddingRecordsAbsentLocked reuses only this snapshot's range proof.
+// Pending-node reads bypass this path. The caller holds tx.mu.
+func (tx *BadgerTransaction) pinnedEmbeddingRecordsAbsentLocked(ctx context.Context, snapshot *badger.Txn) (bool, error) {
+	readTs := snapshot.ReadTs()
+	if tx.pinnedEmbeddingAbsence.readTs != readTs {
+		tx.pinnedEmbeddingAbsence = pinnedEmbeddingAbsence{readTs: readTs}
+	}
+	if tx.pinnedEmbeddingAbsence.proved {
+		return tx.pinnedEmbeddingAbsence.absent, nil
+	}
+	tx.pinnedEmbeddingAbsence.reads++
+	if tx.pinnedEmbeddingAbsence.reads < pinnedEmbeddingAbsenceProbeReads {
+		return false, nil
+	}
+	absent, err := embeddingRecordsAbsentAt(ctx, snapshot, "")
+	if err != nil {
+		// A canceled read keeps no proof: the count stays at the threshold, so
+		// the next read of this snapshot probes again.
+		return false, err
+	}
+	tx.pinnedEmbeddingAbsence.proved = true
+	tx.pinnedEmbeddingAbsence.absent = absent
+	return absent, nil
 }
 
 // bindNodeReadSource gives a decoded image the identity of the pinned body

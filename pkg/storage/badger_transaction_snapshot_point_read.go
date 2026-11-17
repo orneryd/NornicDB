@@ -71,6 +71,15 @@ func (tx *BadgerTransaction) readsPinnedSnapshotBodyLocked() bool {
 // visibility decision, and the same body-cache and read-source provenance the
 // engine's point and scan reads share. Caller must hold tx.mu and
 // readsPinnedSnapshotBodyLocked must hold.
+//
+// The snapshot this read runs on is also what its embedding hydration is
+// asked about: a snapshot whose whole embedding range holds no record has no
+// separately stored embedding state for any node it contains, so the read
+// passes that absence proof to the body owner instead of making one missing
+// sidecar and chunk lookup per node (pinnedEmbeddingRecordsAbsentLocked). The
+// proof belongs to this snapshot's read version and only ever claims absence
+// for it, so a node whose vectors this transaction staged itself is unaffected:
+// the pending overlay answers that read before this route runs.
 func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
 	hydration := nodeItemQueryMetadata
 	var decodes *embeddingChunkDecodes
@@ -92,7 +101,11 @@ func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, n
 		if getErr != nil {
 			return getErr
 		}
-		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration, nodeBodyCacheAdmit, false, decodes)
+		embeddingRecordsAbsent, probeErr := tx.pinnedEmbeddingRecordsAbsentLocked(ctx, snapshot)
+		if probeErr != nil {
+			return probeErr
+		}
+		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration, nodeBodyCacheAdmit, embeddingRecordsAbsent, decodes)
 		if readErr != nil {
 			return readErr
 		}

@@ -1001,17 +1001,16 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 	}
 	// A single prefix check in the same snapshot proves that no sidecar or
 	// chunk exists for any node in this scan. Avoid one missing-key lookup per
-	// node when a database (or scoped prefix) has no embedding records.
+	// node when a database (or scoped prefix) has no embedding records. The
+	// proof comes from its one owner, which the pinned point-read route also
+	// asks for its own snapshot.
 	embeddingRecordsAbsent := false
 	if opts.WithEmbeddings && projected == nil {
-		prefix := append([]byte{prefixEmbedding}, opts.Prefix...)
-		iteratorOptions := badger.DefaultIteratorOptions
-		iteratorOptions.Prefix = prefix
-		iteratorOptions.PrefetchValues = false
-		it := txn.NewIterator(iteratorOptions)
-		it.Seek(prefix)
-		embeddingRecordsAbsent = !it.ValidForPrefix(prefix)
-		it.Close()
+		absent, err := embeddingRecordsAbsentAt(ctx, txn, opts.Prefix)
+		if err != nil {
+			return err
+		}
+		embeddingRecordsAbsent = absent
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
