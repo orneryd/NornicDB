@@ -1,0 +1,77 @@
+import {useEffect,useMemo} from 'react';
+import {Activity,ArrowLeft,ArrowRight,Clock,Database,Layers,Pause,Play,RefreshCw,Search,Server,ShieldCheck,Trash2,Workflow} from 'lucide-react';
+import {Link,useNavigate,useParams,useLocation} from 'react-router-dom';
+import {PageHeader} from '../components/common/PageHeader';
+import {PageLayout} from '../components/common/PageLayout';
+import {StatefulGrid} from '../components/common/StatefulGrid';
+import {HealthChart} from '../components/monitoring/HealthChart';
+import {useMonitoringStore,refreshMonitoring} from '../store/monitoringStore';
+import {useViewState} from '../utils/useUrlState';
+import {familyValue,familyDisplay,finite,formatValue,metricGroup,metricUnit,scalar,type MetricFamily,type MetricSample} from '../utils/monitoring';
+import './Health.css';
+
+function MetricValue({family}:{family:MetricFamily}){
+ const sample=family.metric?.[0],value=sample?scalar(sample):null;
+ if(family.metric?.length===1&&family.name.endsWith('_running')&&(value===0||value===1))return <span className={`metric-switch-state ${value?'on':''}`}>{value?'Running':'Stopped'}</span>;
+ return <span className="health-number">{familyDisplay(family)}</span>;
+}
+function Distribution({sample}:{sample:MetricSample}){
+ const buckets=sample.histogram?.bucket??[];let before=0;
+ const frequencies=buckets.map(bucket=>{const count=finite(bucket.cumulativeCount)??0,amount=Math.max(0,count-before);before=count;return {bound:bucket.upperBound,amount};});
+ const max=Math.max(1,...frequencies.map(bucket=>bucket.amount));
+ return frequencies.length?<div className="health-distribution" role="img" aria-label="Histogram frequency since collection began">{frequencies.map((bucket,index)=><div key={index}><span style={{height:`${Math.max(2,bucket.amount/max*64)}px`}} title={`≤ ${bucket.bound}: ${bucket.amount} observations`}/><small>{String(bucket.bound).replace('+Inf','∞')}</small></div>)}</div>:null;
+}
+function MetricInspector({family}:{family:MetricFamily}){
+ const [page,setPage]=useViewState('seriesPage',0),samples=family.metric??[],pages=Math.max(1,Math.ceil(samples.length/8)),current=Math.min(Math.max(0,page),pages-1);
+ return <section className="health-inspector" aria-label="Metric details"><header><div><span className="health-eyebrow">{family.type.toLowerCase()} · {family.unit||metricUnit(family.name)}</span><h2>{family.name}</h2><p>{family.help||'No description reported by the server.'}</p></div><span>{samples.length} {samples.length===1?'series':'series'}</span></header>
+  <p className="health-note">Current server values. Counters and distributions are cumulative; overview charts show observed intervals.</p>
+  {samples.slice(current*8,current*8+8).map((sample,index)=><article key={index} className="health-series"><div className="health-series-top"><div className="health-labels">{sample.label?.length?sample.label.map(label=><span key={label.name}><b>{label.name}</b> {label.value}</span>):<span>Unlabelled series</span>}</div><strong>{sample.histogram||sample.summary?`${formatValue(finite(sample.histogram?.sampleCount??sample.summary?.sampleCount))} observations`:formatValue(scalar(sample),family.unit||metricUnit(family.name))}</strong></div>
+   {sample.histogram&&<><div className="health-series-stats"><span>Observations <b>{formatValue(finite(sample.histogram.sampleCount))}</b></span><span>Sum <b>{formatValue(finite(sample.histogram.sampleSum),metricUnit(family.name))}</b></span></div><Distribution sample={sample}/></>}
+   {sample.summary&&<div className="health-series-stats"><span>Observations <b>{formatValue(finite(sample.summary.sampleCount))}</b></span>{sample.summary.quantile?.map(q=><span key={String(q.quantile)}>Quantile {q.quantile} <b>{formatValue(finite(q.value),metricUnit(family.name))}</b></span>)}</div>}
+   <details><summary>Raw sample</summary><pre>{JSON.stringify(sample,null,2)}</pre></details>
+  </article>)}
+  {pages>1&&<nav className="health-pagination" aria-label="Metric series pages"><button disabled={current===0} onClick={()=>setPage(current-1)}>Previous</button><span>Page {current+1} of {pages}</span><button disabled={current===pages-1} onClick={()=>setPage(current+1)}>Next</button></nav>}
+ </section>;
+}
+export function Health(){
+ const source=useMonitoringStore(),navigate=useNavigate(),location=useLocation(),{metricName}=useParams();
+ const state=source.ready?source:{...source,stats:null,metrics:null,history:[],updatedAt:null,connected:false};
+ const [paused,setPaused]=useViewState('paused',false);
+ useEffect(()=>{useMonitoringStore.setState({paused});},[paused]);
+ const [windowMinutes,setWindow]=useViewState('window',15),[view,setView]=useViewState('view','overview'),[subsystem,setSubsystem]=useViewState('subsystem','all'),[query,setQuery]=useViewState('q','');
+ const minutes=[5,15,30].includes(windowMinutes)?windowMinutes:15;
+ const families=state.metrics?.families??[];
+ const points=state.history.filter(point=>point.at>Date.now()-minutes*60000);
+ const latest=state.history[state.history.length-1],fresh=state.connected&&state.updatedAt!==null&&Date.now()-state.updatedAt<15000;
+ const groups=useMemo(()=>[...new Set(families.map(family=>metricGroup(family.name)))].sort(),[families]);
+ const rows=useMemo(()=>families.filter(family=>(subsystem==='all'||metricGroup(family.name)===subsystem)&&`${family.name} ${family.help??''}`.toLowerCase().includes(query.toLowerCase())).map(family=>({__gridId:family.name,name:family.name,type:family.type.toLowerCase(),unit:family.unit||metricUnit(family.name),series:family.metric?.length??0,value:familyDisplay(family),description:family.help??'',family})),[families,subsystem,query]);
+ const options=useMemo(()=>({id:"health-metrics",data:rows,rowIdentity:(row:Record<string,unknown>)=>String(row.name),enableSorting:true,enableFiltering:true,enableCellEdit:false,enableGridMenu:false,columnDefs:[
+  {name:'name',displayName:'Metric',pinnedLeft:true,width:'minmax(300px, 1.4fr)',enableCellEdit:false},
+  {name:'type',displayName:'Type',width:'130px',enableCellEdit:false},
+  {name:'value',displayName:'Latest value',width:'210px',enableCellEdit:false},
+  {name:'unit',displayName:'Unit',width:'120px',enableCellEdit:false},
+  {name:'series',displayName:'Series',type:'number' as const,width:'95px',enableCellEdit:false},
+  {name:'description',displayName:'Description',width:'minmax(340px, 2fr)',enableCellEdit:false}
+ ],emptyMessage:query?'No metrics match these filters.':'No metric families reported.'}),[rows,query]);
+ const openMetric=(name:string)=>navigate({pathname:`/operations/health/metrics/${encodeURIComponent(name)}`,search:location.search});
+ const selected=families.find(family=>family.name===metricName);
+ const showMetrics=view==='metrics'||Boolean(metricName);
+ const restricted=state.metrics?.scope==='database';
+ const rss=familyValue(families,'process_resident_memory_bytes'),heap=familyValue(families,'go_memstats_heap_alloc_bytes'),goroutines=familyValue(families,'go_goroutines'),queue=familyValue(families,'nornicdb_embed_queue_depth');
+ const subsystems=[{key:'http',title:'HTTP & connections',icon:Activity},{key:'cypher',title:'Query execution',icon:Workflow},{key:'storage',title:'Storage & MVCC',icon:Database},{key:'search',title:'Search & indexing',icon:Search},{key:'embed',title:'Embedding workers',icon:Layers},{key:'runtime',title:'Runtime & memory',icon:Server}];
+ return <PageLayout><PageHeader title="Health & monitoring"/><div className="health-page">
+  <section className="health-overview-header"><div className="health-identity"><div className={`health-beacon ${fresh?'live':'offline'}`}><Activity size={25}/></div><div><span className="health-eyebrow">Current server · {state.stats?.server?.version?`v${state.stats.server.version}`:'Connecting'}</span><h2>{state.hidden?'Updates paused':fresh?'Server responding':'Server status unavailable'}</h2><p>{state.updatedAt?`Last status sample ${new Date(state.updatedAt).toLocaleTimeString()}`:'Waiting for the first successful status sample'}{state.stats?.server&&` · Uptime ${formatValue(state.stats.server.uptime_seconds,'seconds')}`}</p></div></div><span className="health-scope"><ShieldCheck size={15}/>{state.metrics?.scope==='server'?'Admin · full catalog':state.metrics?.scope==='database'?'Database-scoped catalog':'Authenticated view'}</span></section>
+  {state.metrics?.scope==='database'&&<p className="health-permission-note"><ShieldCheck size={16}/>This view includes metrics for databases you can read. Server-wide measurements require administrative permission; unavailable values do not indicate a failure.</p>}
+  {(state.error||state.metricsError)&&<div className="health-notice" role="status"><strong>{state.error?'Status updates interrupted':'Some telemetry is unavailable'}</strong><span>{state.error||state.metricsError}. Last successful history is retained; missing values are not zero.</span></div>}
+  <div className="health-toolbar"><div role="group" aria-label="Health views"><button aria-pressed={!showMetrics} onClick={()=>{const params=new URLSearchParams(location.search);params.delete('view');navigate({pathname:'/operations/health',search:params.toString()});}}>Overview</button><button aria-pressed={showMetrics} onClick={()=>setView('metrics')}>Metric explorer <span>{families.length}</span></button></div><div className="health-controls"><label>Window<select value={minutes} onChange={event=>setWindow(Number(event.target.value))}><option value={5}>5 minutes</option><option value={15}>15 minutes</option><option value={30}>30 minutes</option></select></label><button onClick={()=>setPaused(!paused)}>{state.paused?<Play size={14}/>:<Pause size={14}/>} {state.paused?'Resume history':'Pause history'}</button><button disabled={state.refreshing||state.hidden} onClick={()=>void refreshMonitoring()}><RefreshCw size={14} className={state.refreshing?'health-refreshing':''}/>{state.refreshing?'Refreshing':'Refresh now'}</button><details className="health-more"><summary>History</summary><div><p>Up to 30 minutes kept only in this browser tab. Reloading clears it.</p><button onClick={state.clearHistory}><Trash2 size={14}/>Clear local history</button></div></details></div></div>
+  <p className="health-history-note"><Clock size={13}/>{state.paused?'History paused. Current values continue updating.':state.hidden?'Polling resumes when this tab is visible.':`${state.history.length} samples in this tab · refreshed every 5 seconds`}. Rates need consecutive samples. Gaps and restarts break chart lines.</p>
+  {!showMetrics?<>
+   <div className="health-kpis">{(restricted?[{label:'Readable nodes',value:state.stats?.database.nodes??null,unit:'count',help:'Nodes across databases you can read.'},{label:'Readable edges',value:state.stats?.database.edges??null,unit:'count',help:'Relationships across readable databases.'},{label:'Active requests',value:state.stats?.server.active??null,unit:'count',help:'Server-reported active HTTP requests.'},{label:'HTTP traffic',value:latest?.requestRate??null,unit:'rate',help:'Observed change in the HTTP request counter.'},{label:'HTTP errors',value:latest?.errorRate??null,unit:'rate',help:'Observed change in the HTTP error counter.'},{label:'Metric families',value:families.length,unit:'count',help:'Families exposed to your current permissions.'}]:[{label:'Resident memory',value:rss,unit:'bytes',help:'Process RSS; no capacity percentage is inferred.'},{label:'Go heap',value:heap,unit:'bytes',help:'Bytes allocated on the Go heap.'},{label:'Goroutines',value:goroutines,unit:'count',help:'Reported runtime goroutine count.'},{label:'Active requests',value:state.stats?.server?.active??null,unit:'count',help:'HTTP requests currently being served.'},{label:'HTTP errors',value:latest?.errorRate??null,unit:'rate',help:'Server-reported error counter change per second.'},{label:'Embedding backlog',value:queue,unit:'count',help:'Items in the reported embedding queue.'}]).map(item=><section className="health-kpi" key={item.label}><h3>{item.label}</h3><strong>{formatValue(item.value,item.unit)}</strong><p>{item.help}</p></section>)}</div>
+   <div className="health-charts"><HealthChart title="HTTP traffic" description="Observed request and error counter rates" points={points} unit="rate" series={[{key:'requestRate',label:'Requests',color:'#34d399'},{key:'errorRate',label:'Errors',color:'#fb7185'}]}/>{(!restricted||families.some(family=>family.name==='nornicdb_http_request_duration_seconds'))&&<HealthChart title="Request latency" description="Interval average from HTTP duration histograms" points={points} unit="ms" series={[{key:'latency',label:'Average',color:'#e8be63'}]}/>}{!restricted&&<HealthChart title="Process memory" description="Reported bytes; no host memory limit is assumed" points={points} unit="bytes" series={[{key:'rss',label:'Resident',color:'#79b8ff'},{key:'heap',label:'Go heap',color:'#b49bff'}]}/>}{!restricted&&<HealthChart title="Embedding backlog" description="Queued work reported by the server" points={points} unit="count" series={[{key:'queue',label:'Queue depth',color:'#56d9ce'}]}/>} {restricted&&<HealthChart title="Readable graph size" description="Node and edge counts within your database permissions" points={points} unit="count" series={[{key:'nodes',label:'Nodes',color:'#79b8ff'},{key:'edges',label:'Edges',color:'#b49bff'}]}/>}</div>
+   <section className="health-subsystems"><div className="health-section-heading"><div><h2>Inspect a subsystem</h2><p>Metric availability reflects what this endpoint reports to your account.</p></div><span>{families.length} metric families</span></div><div>{subsystems.filter(item=>!restricted||families.some(family=>metricGroup(family.name)===item.key)).map(item=><button key={item.key} onClick={()=>{setSubsystem(item.key);setView('metrics');}}><item.icon size={21}/><strong>{item.title}</strong><span>{families.filter(family=>metricGroup(family.name)===item.key).length} families</span><ArrowRight size={15}/></button>)}</div></section>
+  </>:<section className="health-explorer"><div className="health-section-heading"><div><h2>Metric explorer</h2><p>Latest values with the server's types, descriptions and labels. Select a metric to inspect its series.</p></div></div><div className="health-explorer-filters"><label><Search size={15}/><span className="sr-only">Find a metric</span><input type="search" placeholder="Find a metric or description" value={query} onChange={event=>setQuery(event.target.value)}/></label><label>Subsystem<select value={subsystem} onChange={event=>setSubsystem(event.target.value)}><option value="all">All subsystems</option>{groups.map(group=><option key={group} value={group}>{group}</option>)}</select></label><span>{rows.length} of {families.length} families</span></div>
+   {metricName&&<><Link className="health-back" to={{pathname:'/operations/health',search:location.search}}><ArrowLeft size={15}/>Back to metric catalog</Link>{selected?<MetricInspector key={metricName} family={selected}/>:<p role="status">This metric is not reported in the current authenticated view.</p>}</>}
+   {!metricName&&<StatefulGrid height={530} options={options} cellRenderers={{name:({row})=><button className="health-metric-link" onClick={()=>openMetric(String(row.name))}>{String(row.name)}</button>,type:({row})=><span className={`health-type health-type-${row.type}`}>{String(row.type)}</span>,value:({row})=><MetricValue family={row.family as MetricFamily}/>}}/>}
+  </section>}
+ </div></PageLayout>;
+}

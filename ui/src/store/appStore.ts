@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../utils/api';
-import type { DatabaseStats, SearchResult, CypherResponse } from '../utils/api';
+import type { SearchResult, CypherResponse } from '../utils/api';
 import { splitCypherStatements } from '../utils/cypherStatements';
 
 let workspaceGeneration=0;
@@ -20,8 +20,6 @@ interface AppState {
   authLoading: boolean;
   
   // Database
-  stats: DatabaseStats | null;
-  connected: boolean;
   /** Selected database for queries (null = use server default). */
   selectedDatabase: string | null;
   /** List of database names for the dropdown (user-visible, excludes system). */
@@ -60,7 +58,6 @@ interface AppState {
   checkAuth: () => Promise<void>;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  fetchStats: () => Promise<void>;
   setCypherQuery: (query: string) => void;
   executeCypher: (options?: { continueOnError?: boolean }) => Promise<void>;
   setSearchQuery: (query: string) => void;
@@ -78,8 +75,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   isAuthenticated: false,
   username: null,
   authLoading: true,
-  stats: null,
-  connected: false,
   selectedDatabase: null,
   databaseList: [],
   cypherQuery: 'MATCH (n) RETURN n LIMIT 25',
@@ -121,15 +116,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Database actions
-  fetchStats: async () => {
-    try {
-      const stats = await api.getStatus();
-      set({ stats, connected: true });
-    } catch {
-      set({ connected: false });
-    }
-  },
-
   setSelectedDatabase: (db) => {
     if(get().selectedDatabase===db)return;
     workspaceGeneration++;

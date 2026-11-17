@@ -99,6 +99,7 @@ export default defineConfig(({ mode }) => {
       port: 5174,
       proxy: {
         "^/status$": {target: proxyTarget, changeOrigin:true},
+        "^/metrics$": {target: proxyTarget, changeOrigin:true},
         "^/$": {
           target:proxyTarget,
           changeOrigin:true,

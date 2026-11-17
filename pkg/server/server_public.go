@@ -157,57 +157,43 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
-// handleMetrics serves the legacy :7474/metrics endpoint by translating
-// the unified pkg/observability *prometheus.Registry through
-// observability.RenderLegacy (Phase 5 / Plan 05-04 D-01e). The body
-// schema is locked by pkg/observability/legacy_snapshot.golden. With auth
-// enabled, storage counts and database-labelled samples use the caller's
-// databaseReadAccess decision. Unpartitioned database-derived counters require
-// access to their complete population. Auth-off retains the process-wide view.
-//
-// Three locked headers per MET-19/MET-20:
-//   - Content-Type: text/plain; version=0.0.4; charset=utf-8 (Prometheus exposition v0.0.4)
-//   - Deprecation: true                                       (RFC 8594 — surface is sunset-tagged)
-//   - Sunset:      Fri, 31 Dec 2027 23:59:59 GMT              (RFC 8594 — public deprecation cutoff)
-//
-// The auth gate at server_router.go:117 (s.withAuth(s.handleMetrics, auth.PermRead))
-// is intentionally PRESERVED VERBATIM per CONTEXT D-04 — relaxing auth on
-// the deprecated surface would itself require a separate deprecation cycle.
-//
-// Nil-safe: if SetObsRegistry was never called (test fixtures, pre-Phase-5
-// callers), s.obsRegistryForHandler returns nil and observability.RenderLegacy
-// emits empty bytes — handler still sets the three headers and returns 200.
-//
-// Example Prometheus config (legacy scrape — operators should migrate to
-// the new :9090 telemetry listener before 31 Dec 2027):
-//
-//	scrape_configs:
-//	  - job_name: 'nornicdb-legacy'
-//	    static_configs:
-//	      - targets: ['localhost:7474']
-//	    metrics_path: '/metrics'
+// handleMetrics serves the authenticated application metrics catalog. Existing
+// compatibility names remain alongside the canonical registry families. Admin
+// entitlement grants the server-wide view; other readers receive admitted
+// database-labelled samples and the existing scoped compatibility reductions.
+// The dedicated telemetry listener is unchanged and remains process-wide.
+// Existing content-type and compatibility headers are preserved.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	registry := s.obsRegistryForHandler()
-	var body []byte
-	if registry == nil || !s.isRBACEnforced() {
-		body = observability.RenderLegacy(registry, time.Now())
-	} else {
-		canRead := s.databaseReadPredicate(getClaims(r))
+	var scope *observability.LegacyReadScope
+	administrator := !s.isRBACEnforced()
+	if !administrator && registry != nil {
+		claims := getClaims(r)
+		administrator = claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin)
+		canRead := s.databaseReadPredicate(claims)
 		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
 		if r.Context().Err() != nil {
 			return
 		}
 		anyReadable, allReadable := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), canRead)
-		anyReadable = anyReadable || databases > 0
-		if !anyReadable {
+		if !anyReadable && databases == 0 {
 			s.writeNeo4jDatabaseAccessDenied(w, r, "")
 			return
 		}
-		body = observability.RenderLegacyForRead(registry, time.Now(), observability.LegacyReadScope{
-			CanReadDatabase:      canRead,
-			AllDatabasesReadable: allReadable,
-			Nodes:                nodes, Edges: edges,
-		})
+		scope = &observability.LegacyReadScope{CanReadDatabase: canRead, AllDatabasesReadable: allReadable, Nodes: nodes, Edges: edges}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if administrator {
+		w.Header().Set("X-NornicDB-Metrics-Scope", "server")
+	} else {
+		w.Header().Set("X-NornicDB-Metrics-Scope", "database")
+	}
+	w.Header().Add("Vary", "Authorization")
+	w.Header().Add("Vary", "Cookie")
+	body, err := observability.RenderMetrics(registry, time.Now(), scope, administrator)
+	if err != nil {
+		http.Error(w, "Unable to collect metrics", http.StatusServiceUnavailable)
+		return
 	}
 	w.Header().Set("Content-Type", observability.LegacyContentType)
 	w.Header().Set("Deprecation", observability.LegacyDeprecation)

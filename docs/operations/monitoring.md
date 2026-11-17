@@ -15,14 +15,26 @@ The Prometheus registry is the canonical metrics contract. OTEL metric export re
 | ------------------------------ | ------------- | --------------------------------------------- |
 | `:7474/health`                 | No            | Legacy basic health check                     |
 | `:7474/status`                 | Yes           | Detailed status                               |
-| `:7474/metrics`                | Yes           | Legacy authenticated metrics endpoint         |
+| `:7474/metrics`                | Yes           | Permission-aware application metrics catalog  |
 | `:9090/metrics`                | No            | Preferred telemetry listener metrics endpoint |
 | `:9090/livez`                  | No            | Process liveness                              |
 | `:9090/readyz`                 | No            | Readiness and warm-up phase                   |
 | `:9090/version`                | No            | Plain-text build version                      |
 | `127.0.0.1:9091/debug/pprof/*` | No            | Opt-in profiling listener                     |
 
-The `:9090` telemetry listener is the preferred scrape target. The `:7474/metrics` data-plane endpoint remains available for migration compatibility, but the observability ADR treats the telemetry listener as the stable monitoring surface.
+The `:9090` listener serves the full process-wide catalog for network-restricted collectors. The application `/metrics` endpoint reads the same registry through authentication: administrators receive the full catalog; other authenticated readers receive samples labelled with databases they can read, along with the existing compatibility families. Unlabelled server-wide families are administrator-only. Existing metric names remain available. The application response is not cacheable and reports its view in `X-NornicDB-Metrics-Scope` (`server` or `database`).
+
+## Browser Health dashboard
+
+Open **Operations → Health & monitoring** to inspect current values, traffic rates, request latency, resource use and available metric families. The page uses the existing authenticated `/status` and `/metrics` endpoints. Restricted users see readable graph counts and available scoped metrics instead of administrator-only resource charts.
+
+The header and dashboard share one five-second sampler. Status requests bypass the browser cache. Refresh cycles do not overlap; polling pauses while the tab is hidden and resumes when visible.
+
+Overview history is held only in the current tab's memory, up to 360 samples or 30 minutes. It survives navigation within the application but clears on reload. **Pause history** freezes chart recording while current values continue to update. **History → Clear local history** removes the retained samples without changing server data.
+
+Rates require consecutive samples; counter decreases are not rendered as negative traffic. Restarts and missing intervals break chart lines. Missing or unauthorized measurements appear as unavailable, not zero. The metric explorer shows current typed values, descriptions, labels, histogram buckets, summary quantiles and raw samples. Metric selection and view filters are represented in the URL.
+
+No time-series database, collector or metrics ingestion job is required for this dashboard. It does not collect while no UI tab is monitoring, and history does not survive closing or reloading the tab.
 
 ## OTEL And Prometheus Model
 
