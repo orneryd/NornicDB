@@ -1351,6 +1351,12 @@ func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
+	ctx := context.Background()
+	// Selection reads physical records, so first make every earlier acknowledged
+	// generation visible there. Replay errors must stop the reset before writes.
+	if err := b.FlushWriteBehind(ctx); err != nil {
+		return 0, fmt.Errorf("clear embeddings: drain acknowledged writes: %w", err)
+	}
 
 	// Collect first and write later: the scan reads every in-scope body before
 	// the reset changes any of them, so an unreadable or misattributed record
@@ -1404,7 +1410,6 @@ func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id
 	// time; ordinary writes retain the same lock order. The canonical update
 	// also publishes the node's pending-embedding marker.
 	cleared := 0
-	ctx := context.Background()
 	for _, id := range nodeIDs {
 		_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
 			node, err := tx.LockNodeForWrite(ctx, id)
