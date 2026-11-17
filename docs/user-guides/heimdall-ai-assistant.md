@@ -170,6 +170,34 @@ heimdall:
   api_key: "your-orca-key"
 ```
 
+### Other OpenAI-compatible services
+
+Use `provider: openai` with the service's base URL, API key and model ID. Set
+`provider_name` (or `NORNICDB_HEIMDALL_PROVIDER_NAME`) to identify the service in
+logs, model identity and provider-facing errors. The label preserves capitalization
+and does not select the endpoint, authentication policy or model sent upstream.
+When omitted or blank, existing provider identification remains unchanged.
+
+For example, UberLLM can be configured without a separate provider registration:
+
+```yaml
+heimdall:
+  enabled: true
+  provider: openai
+  provider_name: UberLLM
+  api_url: https://api.uberllm.dev/v1
+  api_key: "<your-key>"
+  model: openai/gpt-4o-mini
+```
+
+All OpenAI-compatible adapters accept base URLs with or without a terminal `/v1`
+(and optional trailing slash). A proxy prefix such as `/gateway/v1` produces
+`/gateway/v1/chat/completions`; query parameters and URL encoding are preserved.
+Plain responses, streaming and tool calls share this URL construction.
+
+The existing named providers keep their endpoint/model defaults and API-key rules.
+The label does not alter model capabilities or context limits.
+
 ### OpenAI with larger context (defaults + 128K)
 
 The default token budget is 8K total context. For **OpenAI** (and Ollama), inference runs on the provider, so you can use larger context windows (e.g. 128K for GPT-4o-mini) without hitting local GPU limits. Set the token-budget env vars and run with your usual defaults:
