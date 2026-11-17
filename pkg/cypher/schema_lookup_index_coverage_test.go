@@ -179,17 +179,18 @@ func TestRowPredicatePlanEdges(t *testing.T) {
 		_, ok := parseRowOperand(text, rowOperandSimple)
 		require.False(t, ok, text)
 	}
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
 	operand, ok := parseRowOperand("n.a", rowOperandSimple)
 	require.True(t, ok)
-	_, bound := operand.resolve(map[string]interface{}{})
+	_, bound, err := operand.resolveScope(compiledRowScope{executor: exec, ctx: ctx}, deletedEntityPropertyValue)
+	require.NoError(t, err)
 	require.False(t, bound)
 
 	_, planned := planRowPredicatePart("  ")
 	require.False(t, planned)
 	require.Nil(t, planRowPredicate("a = 1 XOR b = 2"))
 
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	ctx := context.Background()
 	plan := planRowPredicate("x IN list")
 	require.NotNil(t, plan)
 	require.True(t, exec.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}{"x": int64(1), "list": []interface{}{int64(1)}}))

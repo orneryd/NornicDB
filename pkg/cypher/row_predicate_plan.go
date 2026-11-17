@@ -175,15 +175,6 @@ func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
 	return (value != nil) == bool(handler)
 }
 
-// resolve returns the operand's value for a row and no statement context: no
-// deleted-entity read can arise. ok is false when the row doesn't bind the
-// operand's variable or parameter; the caller then evaluates the part as text,
-// as evaluateRowExpression would resolve it further.
-func (o *rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
-	value, ok, _ := o.resolveScope(compiledRowScope{values: values}, deletedEntityPropertyValue)
-	return value, ok
-}
-
 // resolveScope returns the operand's value for the row. ok is false when the
 // row doesn't bind the operand's variable or parameter; the caller then
 // evaluates the part as text, as evaluateRowExpression would resolve it
