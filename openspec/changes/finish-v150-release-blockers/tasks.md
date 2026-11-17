@@ -24,7 +24,11 @@ Performance acceptance: equivalent v1.4.3 workload/configuration; <=15% regressi
 
 ## Current local verification
 
-- Full `make test` continues on the pushed candidate's production source. Bolt passes (1392.723s). Cypher runtime checks completed; `TestNumericInputOwnership` reports seven reviewed but unregistered/changed container/compiler boundaries. Exact inventory reconciliation awaits approval; no analyzer rule changes.
-- Initial UI setup and fixture-owner failures are corrected: clean UI build passes; all three affected fixture guards pass (101.685s), namespace focused races pass (2.090s).
-- Retained WAL tail headers and payloads survive reused scan buffers: focused truncation race checks pass (2.865s).
-- Two source-only allocation candidates pass focused checks in isolated trees; they are not integrated or performance-qualified yet. No benchmarks run concurrently with this suite, and no new CI dispatch.
+- Full `make test` completed with failures; no combined pass is claimed. UI/fixture setup, approved numeric/endpoint records and WAL diagnostics now have passing corrective checks.
+- The unchanged blocking nil-context census passes after explicit predicate-context propagation (135.678s); focused predicate and conversation checks pass.
+- Acknowledged buffered embedding resets and direct relabel/restore relationship counts have fail-first reproductions and passing public/storage race checks.
+- Namespaced relationship predicates now use the canonical returned-image projection; the old memory/native paths fail, corrected race and integrated native checks pass.
+- Matched Go1.27.3 history qualification confirms 23.18 GB allocated versus released v1.4.3’s 18.31 GB (+26.6%), with all 1,016 correctness checks passing. An isolated allocation candidate remains above threshold and is not integrated.
+- HTTP/Bolt wide and small result qualification verifies every returned value. The remaining Bolt latency gap and history allocation correction are under investigation; cache-boundary microbenchmarks are not wire-latency proof.
+- The disk-interrupted mutant retry was stopped incomplete before the remaining source changes. All four partitions and the final full suite must run on the frozen integrated candidate.
+- No new CI dispatched. Required audit corrections retain their rejection controls; analyzers and thresholds remain unchanged.
