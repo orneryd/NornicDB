@@ -1006,6 +1006,7 @@ Heimdall is the cognitive guardian and AI chat assistant. It supports **local** 
 | ---------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `NORNICDB_HEIMDALL_ENABLED`  | `false`     | Enable the AI assistant                                                                                                                                      |
 | `NORNICDB_HEIMDALL_PROVIDER` | `local`     | Backend: `local`, `ollama`, `openai`, `orca`, `vllm`, or `litellm`                                                                                           |
+| `NORNICDB_HEIMDALL_PROVIDER_NAME` | (empty) | Optional display name for OpenAI-compatible services; does not change protocol, URL, authentication or upstream model |
 | `NORNICDB_HEIMDALL_API_URL`  | (see below) | Provider base URL. OrcaRouter defaults to `https://api.orcarouter.ai`; see provider docs for all defaults.                                                   |
 | `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI and Orca; optional LiteLLM master/virtual key or vLLM key                                                                                |
 | `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias                                                                       |

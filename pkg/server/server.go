@@ -1375,15 +1375,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
 			heimdallCfg := heimdall.ConfigFromFeatureFlags(featuresConfig)
-			// Log resolved provider so users can verify env overrides (openai/ollama/local)
-			provider := strings.TrimSpace(strings.ToLower(heimdallCfg.Provider))
-			if provider == "" {
-				provider = "local"
-			}
-			diagnosticCredentials := observability.ClientCredentials(heimdallCfg.APIURL, heimdallCfg.APIKey)
-			safeProviderName := observability.RedactText(provider, diagnosticCredentials...)
-			s.logEvent(context.Background(), slog.LevelInfo,
-				localization.ServerHeimdallProviderResolvedEvent(safeProviderName, "NORNICDB_HEIMDALL_PROVIDER"))
 			manager, err := heimdall.NewManager(heimdallCfg)
 			if err != nil {
 				s.shutdown.work.RecordError("", fmt.Errorf("Heimdall construction: %w", err))
@@ -1397,6 +1388,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 				s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 				return
 			}
+			diagnosticCredentials := observability.ClientCredentials(heimdallCfg.APIURL, heimdallCfg.APIKey)
+			safeProviderName := observability.RedactText(manager.ProviderName(), diagnosticCredentials...)
+			s.logEvent(context.Background(), slog.LevelInfo,
+				localization.ServerHeimdallProviderResolvedEvent(safeProviderName, manager.ProviderNameSource()))
+
 			if !db.SetInferenceManager(manager) {
 				return
 			}

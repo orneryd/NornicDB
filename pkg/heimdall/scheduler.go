@@ -69,10 +69,8 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	diagnosticCredentials := observability.ClientCredentials(cfg.APIURL, cfg.APIKey)
 
-	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	if provider == "" {
-		provider = "local"
-	}
+	cfg = cfg.resolveProviderIdentity("local")
+	provider := cfg.identity.protocol
 
 	var generator Generator
 	var modelPath string
@@ -87,10 +85,10 @@ func NewManager(cfg Config) (*Manager, error) {
 		generator, err = factory(cfg)
 		if err != nil {
 			err = observability.RedactError(err, diagnosticCredentials...)
-			return nil, fmt.Errorf("Heimdall %s provider: %w", provider, err)
+			return nil, fmt.Errorf("Heimdall %s provider: %w", observability.RedactText(cfg.identity.name, diagnosticCredentials...), err)
 		}
 		modelPath = generator.ModelPath()
-		logHeimdallPrintf(slog.LevelInfo, "🛡️ Heimdall using %s: %s", provider, modelPath)
+		logHeimdallPrintf(slog.LevelInfo, "🛡️ Heimdall using %s: %s", cfg.identity.name, observability.RedactText(modelPath, diagnosticCredentials...))
 	} else {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {

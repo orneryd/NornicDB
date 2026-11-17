@@ -240,16 +240,18 @@ type Config struct {
 	// Cannot be enabled independently - Bifrost requires Heimdall.
 	BifrostEnabled bool `json:"bifrost_enabled"`
 
-	ModelsDir   string  `json:"models_dir"`
-	Model       string  `json:"model"`
-	Provider    string  `json:"provider"`     // local, ollama, openai, orca, vllm, litellm
-	APIURL      string  `json:"api_url"`      // for ollama/openai/vllm/litellm
-	APIKey      string  `json:"api_key"`      // for openai/litellm
-	ContextSize int     `json:"context_size"` // Context window size (single-shot, max out)
-	BatchSize   int     `json:"batch_size"`   // Batch size (match context for single-shot)
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float32 `json:"temperature"`
-	GPULayers   int     `json:"gpu_layers"`
+	ModelsDir    string `json:"models_dir"`
+	Model        string `json:"model"`
+	Provider     string `json:"provider"`                // local, ollama, openai, orca, vllm, litellm
+	ProviderName string `json:"provider_name,omitempty"` // Optional display identity.
+	identity     *providerIdentity
+	APIURL       string  `json:"api_url"`      // for ollama/openai/vllm/litellm
+	APIKey       string  `json:"api_key"`      // for openai/litellm
+	ContextSize  int     `json:"context_size"` // Context window size (single-shot, max out)
+	BatchSize    int     `json:"batch_size"`   // Batch size (match context for single-shot)
+	MaxTokens    int     `json:"max_tokens"`
+	Temperature  float32 `json:"temperature"`
+	GPULayers    int     `json:"gpu_layers"`
 	// LazyMode controls llama.cpp on-demand tensor loading: 0=off, 1=auto, 2=on.
 	LazyMode int `json:"lazy_mode"`
 
@@ -330,6 +332,11 @@ func ConfigFromFeatureFlags(flags FeatureFlagsSource) Config {
 	if p := flags.GetHeimdallProvider(); p != "" {
 		cfg.Provider = p
 	}
+	// An optional accessor preserves existing FeatureFlagsSource implementations.
+	if named, ok := flags.(interface{ GetHeimdallProviderName() string }); ok {
+		cfg.ProviderName = named.GetHeimdallProviderName()
+	}
+
 	cfg.APIURL = flags.GetHeimdallAPIURL()
 	cfg.APIKey = flags.GetHeimdallAPIKey()
 	cfg.GPULayers = flags.GetHeimdallGPULayers()
