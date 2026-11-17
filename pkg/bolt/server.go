@@ -138,6 +138,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/transportread"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -2334,7 +2335,11 @@ func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, pa
 	}
 
 	// Execute query
-	result, err := a.executor.Execute(ctx, query, paramsMap)
+	// This result is converted once, here, and read by this session's PULL
+	// records: the claim lets the executor hand a certified cached result over
+	// instead of copying it. Nothing between here and the client changes the
+	// result's rows (the SHOW DATABASES filter builds its own list).
+	result, err := a.executor.Execute(transportread.Claim(ctx), query, paramsMap)
 	if err != nil {
 		return nil, err
 	}

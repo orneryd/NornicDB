@@ -236,16 +236,19 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 // selects a database with USE goes through useDatabase: a top-level
 // statement, a statement a procedure runs (nested, run with executeInternal
 // so it stays in the caller's execution) and a CALL { USE … } body.
-func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool, delivery resultDelivery) (*ExecuteResult, error) {
 	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
 	}
 	var result *ExecuteResult
 	if nested {
+		// A nested statement is the caller's own work, so its result is owned.
 		result, err = scopedExec.executeInternal(ctx, query, params)
 	} else {
-		result, err = scopedExec.executeRouted(ctx, query, params)
+		// This statement continues on the selected database: its result keeps
+		// the delivery that brought the statement here.
+		result, err = scopedExec.executeRouted(ctx, query, params, delivery)
 	}
 	if result != nil {
 		// A routed result can come from a shared cache. Attach the selected

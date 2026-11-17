@@ -58,7 +58,7 @@ func TestMaterializedValueShapes(t *testing.T) {
 	var nilNode *storage.Node
 	var nilEdge *storage.Edge
 	for _, value := range []interface{}{nilNode, nilEdge, "text", int64(1), map[string]interface{}{"a": 1}, map[string]interface{}{"_nodeId": "forged"}, map[string]interface{}{"_edgeId": "forged"}, []interface{}{}, []map[string]interface{}{{"a": 1}}} {
-		require.False(t, materializedValue(nil, value), "%#v", value)
+		require.False(t, materializedValue(nil, value, &resultValuePath{}), "%#v", value)
 	}
 	for _, tc := range []struct {
 		value interface{}
@@ -72,9 +72,9 @@ func TestMaterializedValueShapes(t *testing.T) {
 		{[]interface{}{&storage.Node{ID: "n4"}, "s"}, []string{"n4"}},
 		{[]map[string]interface{}{{"node": &storage.Node{ID: "n5"}}, {"edge": &storage.Edge{ID: "e5"}}}, []string{"n5", "e5"}},
 	} {
-		require.True(t, materializedValue(nil, tc.value), "%#v", tc.value)
+		require.True(t, materializedValue(nil, tc.value, &resultValuePath{}), "%#v", tc.value)
 		recorder := &recordingAccessRecorder{}
-		require.True(t, materializedValue(recorder, tc.value), "%#v", tc.value)
+		require.True(t, materializedValue(recorder, tc.value, &resultValuePath{}), "%#v", tc.value)
 		require.Equal(t, tc.ids, recorder.ids, "%#v", tc.value)
 	}
 	require.True(t, resultHasMaterializedEntities(&ExecuteResult{Rows: [][]interface{}{{"a"}, {&storage.Edge{ID: "e"}}}}))

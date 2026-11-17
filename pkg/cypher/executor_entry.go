@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/transportread"
 	"strconv"
 	"strings"
 	"time"
@@ -101,21 +102,31 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
-	return e.execute(ctx, cypher, params, nil, true)
+	// A first-party transport claims the result it reads in place
+	// (internal/transportread). The claim is this statement's: it is taken here,
+	// before a procedure or custom callback runs, so a statement this one runs on
+	// the caller's behalf delivers owned results again.
+	ctx, claimed := transportread.Take(ctx)
+	delivery := ownedDelivery
+	if claimed {
+		delivery = transportDelivery
+	}
+	return e.execute(ctx, cypher, params, nil, true, delivery)
 }
 
 // executeRouted continues the same semantic statement through a transparent
-// dispatcher. Public Execute, including independent reentrant calls made by
-// consumers, always starts a fresh outcome instead.
-func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+// dispatcher, so it continues the same delivery too. Public Execute, including
+// independent reentrant calls made by consumers, always starts a fresh outcome
+// instead.
+func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, params map[string]interface{}, delivery resultDelivery) (*ExecuteResult, error) {
 	var outcome *statementOutcome
 	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok {
 		outcome = statement.outcome
 	}
-	return e.execute(ctx, cypher, params, outcome, false)
+	return e.execute(ctx, cypher, params, outcome, false, delivery)
 }
 
-func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
+func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool, delivery resultDelivery) (result *ExecuteResult, retErr error) {
 	if err := admitHistoricalStatement(ctx, cypher); err != nil {
 		return nil, err
 	}
@@ -546,7 +557,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		if routed != e {
-			return routed.executeRouted(ctx, cypher, params)
+			return routed.executeRouted(ctx, cypher, params, delivery)
 		}
 	}
 
@@ -566,7 +577,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
+		return e.executeOnDatabase(ctx, useDB, cypher, params, false, delivery)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -662,7 +673,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if allowResultCache && e.canUseResultCache(ctx, info, cypher) {
 			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
 				fabricResultCacheKey = key
-				if cached, _, _, found := e.cache.getWithTraceForEmbedding(fabricResultCacheKey, embeddingGeneration); found {
+				if cached, _, _, found := e.cache.getWithTraceForEmbedding(fabricResultCacheKey, embeddingGeneration, delivery); found {
 					return cached, nil
 				}
 			}
@@ -699,7 +710,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
+			// The plan, not a row set, is this statement's result: it is
+			// post-processed (attachPlanMetadata) rather than read in place, so
+			// it keeps the owned delivery whatever the claim was.
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false, ownedDelivery)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
@@ -710,7 +724,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params, false, delivery)
 	}
 	// The map and projection boundary is read before anything rewrites a pattern
 	// property map into WHERE predicates: {key: value,} is a syntax error on
@@ -1003,7 +1017,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if svc := e.search(); svc != nil {
 			resultCacheKey += searchCacheKey(svc)
 		}
-		if cached, trace, entities, found := e.cache.getWithTraceForEmbedding(resultCacheKey, embeddingGeneration); found {
+		if cached, trace, entities, found := e.cache.getWithTraceForEmbedding(resultCacheKey, embeddingGeneration, delivery); found {
 			e.restoreHotPathTrace(trace)
 			recordAccess = entities
 			return cached, nil
