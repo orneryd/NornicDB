@@ -779,7 +779,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		err = tx.engine.StreamNodesWithOptions(ctx, opts, emitCommitted)
 	} else if tx.snapshotTx != nil {
 		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
+			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, nodeBodyCacheAdmit, emitCommitted)
 		})
 	} else {
 		err = tx.streamCommittedNodesLocked(ctx, opts, inScope, emitCommitted)

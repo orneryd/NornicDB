@@ -64,6 +64,10 @@ func openStoredSnapshotSource(ctx context.Context, engine Engine) (*storedSnapsh
 // vectors from their sidecars). A namespaced pin delivers this database's nodes
 // with user-facing IDs, as NamespacedEngine.StreamNodesWithOptions does. The
 // caller applies its record encoding, as it does to the live stream.
+//
+// The checkpoint writer consumes each body once. Do not admit cold bodies
+// into the query cache; matching resident versions remain eligible and are
+// hydrated from this pin.
 func (s *storedSnapshotSource) StreamNodes(ctx context.Context, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
@@ -73,7 +77,7 @@ func (s *storedSnapshotSource) StreamNodes(ctx context.Context, visit func(*Node
 	if ids := s.target.ids; ids != nil {
 		fn = func(node *Node) error { return visit(ids.toUserNode(node, nodeUserView{})) }
 	}
-	return s.target.native.streamNodesWithOptionsAtView(ctx, s.view.withView, &s.nodes, opts, fn)
+	return s.target.native.streamNodesWithOptionsAtView(ctx, s.view.withView, &s.nodes, opts, nodeBodyCacheNoAdmit, fn)
 }
 
 // StreamEdges writes every stored relationship of the pin through the snapshot

@@ -92,7 +92,7 @@ func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, n
 		if getErr != nil {
 			return getErr
 		}
-		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration, false, decodes)
+		decoded, readErr := tx.engine.readNodeItemInTxn(snapshot, item, nodeID, hydration, nodeBodyCacheAdmit, false, decodes)
 		if readErr != nil {
 			return readErr
 		}

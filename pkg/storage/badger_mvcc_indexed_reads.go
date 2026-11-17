@@ -32,7 +32,7 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 			if vectors {
 				hydration = nodeItemFullEmbeddings
 			}
-			node, err := b.readNodeItemInTxn(txn, item, id, hydration, false, nil)
+			node, err := b.readNodeItemInTxn(txn, item, id, hydration, nodeBodyCacheAdmit, false, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -313,7 +313,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, false, nil)
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}

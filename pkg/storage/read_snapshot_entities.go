@@ -29,7 +29,7 @@ func (s *badgerReadSnapshot) readNode(ctx context.Context, id NodeID, opts Strea
 			if err != nil {
 				return nil, err
 			}
-			node, err := s.b.readStreamNodeItem(ctx, txn, item, opts, nil, DecayScoringTime(), false)
+			node, err := s.b.readStreamNodeItem(ctx, txn, item, opts, nodeBodyCacheAdmit, nil, DecayScoringTime(), false)
 			if err != nil {
 				return nil, err
 			}

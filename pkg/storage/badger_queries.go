@@ -282,7 +282,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(ctx context.Context, scope, label 
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemFullEmbeddings, false, nil)
+			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 			if readErr != nil {
 				return readErr
 			}
@@ -485,7 +485,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				physical.ApplyDecayFilter = false // emit owns visibility once
 				physical.StripEmbeddings = false  // the public options visitor owns stripping
 				stopped := false
-				err := b.streamNodesWithOptionsInTxn(ctx, txn, physical, func(node *Node) error {
+				err := b.streamNodesWithOptionsInTxn(ctx, txn, physical, nodeBodyCacheAdmit, func(node *Node) error {
 					if !hasLabel(node.Labels, label) || (denseTombstones && hasIndexTombstone(txn, b.labelIndexKeyStringLookup(label, node.ID))) {
 						return nil
 					}
@@ -521,7 +521,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				// The scan repeats: keep the node's query image, which holds the
 				// properties the filter reads and none of the stored vectors. A
 				// node whose image cannot be read is left to the scan decoder.
-				if image, err := b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, false, nil); err == nil {
+				if image, err := b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil); err == nil {
 					// Images that together are more than the cache's whole byte
 					// budget cannot all be kept, as one such image cannot
 					// (copyNodeForReadCache): the scan reads no further one, and
@@ -544,7 +544,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if kept {
 				// The row the scan's options ask for, as the scan decoder
 				// hydrates a body it keeps.
-				node, err := b.readNodeItemInTxn(txn, item, nodeID, filtered.hydration, false, nil)
+				node, err := b.readNodeItemInTxn(txn, item, nodeID, filtered.hydration, nodeBodyCacheAdmit, false, nil)
 				if err != nil {
 					return nil, fmt.Errorf("scanning node %q: %w", nodeID, err)
 				}
@@ -569,7 +569,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return node, nil
 			}
 			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, false, nil)
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
@@ -901,7 +901,7 @@ func (b *BadgerEngine) AllNodes(ctx context.Context) ([]*Node, error) {
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings, false, nil)
+			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 			if readErr != nil {
 				return readErr
 			}
@@ -1312,11 +1312,11 @@ func (b *BadgerEngine) readNodeBatch(ctx context.Context, ids []NodeID, embeddin
 				if embeddings {
 					hydrate = nodeItemFullEmbeddings
 				}
-				node, err = b.readNodeItemInTxn(txn, item, id, hydrate, false, nil)
+				node, err = b.readNodeItemInTxn(txn, item, id, hydrate, nodeBodyCacheAdmit, false, nil)
 				if err == nil {
 					loaded = append(loaded, node)
 				} else if !embeddings {
-					node, err = b.readNodeItemInTxn(txn, item, id, nodeItemBodyOnly, false, nil)
+					node, err = b.readNodeItemInTxn(txn, item, id, nodeItemBodyOnly, nodeBodyCacheAdmit, false, nil)
 				}
 				if err != nil {
 					return err

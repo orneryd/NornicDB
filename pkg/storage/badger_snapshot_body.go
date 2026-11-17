@@ -11,6 +11,20 @@ const (
 	nodeBodyBorrowed
 )
 
+// nodeBodyCacheAdmission controls insertion of newly decoded bodies. Query
+// reads admit reusable bodies; one-pass checkpoint streams reuse resident
+// version-matched bodies without admitting cold ones or evicting query data.
+type nodeBodyCacheAdmission uint8
+
+const (
+	// nodeBodyCacheAdmit admits a body decoded on a cache miss.
+	nodeBodyCacheAdmit nodeBodyCacheAdmission = iota
+	// nodeBodyCacheNoAdmit decodes without admitting. A body already cached at
+	// this record's version is still read, exactly as an admitting read reads
+	// it.
+	nodeBodyCacheNoAdmit
+)
+
 type nodeItemHydration uint8
 
 const (
@@ -29,7 +43,11 @@ const (
 // decodes, a transaction's chunk-decode memo or nil, goes to the hydration's
 // record reader (embeddingRecordReader.decodes). Only a full-embedding
 // hydration decodes chunk vectors.
-func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, embeddingRecordsAbsent bool, decodes *embeddingChunkDecodes) (*Node, error) {
+//
+// admission decides whether a body this read decoded is admitted to that cache.
+// A no-admission read still takes a matching entry, detached exactly as an
+// admitting read takes it, and simply does not fill a miss.
+func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, admission nodeBodyCacheAdmission, embeddingRecordsAbsent bool, decodes *embeddingChunkDecodes) (*Node, error) {
 	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
 	if !hit {
 		err := item.Value(func(value []byte) error {
@@ -43,7 +61,9 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 		if node == nil {
 			return nil, ErrNotFound
 		}
-		b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
+		if admission == nodeBodyCacheAdmit {
+			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
+		}
 	}
 	var err error
 	switch hydrate {
@@ -94,7 +114,7 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 // label and MVCC projection readers. A nil projection retains full hydration.
 func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
 	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}
 	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
 	if !cached {
