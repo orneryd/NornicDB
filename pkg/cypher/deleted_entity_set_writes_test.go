@@ -338,15 +338,12 @@ func TestDeletedEntitySetErrorControlsMatchNeo4j(t *testing.T) {
 				require.Equal(t, testCase.code, code, "%s: %v", message, err)
 			})
 		}
-		// A dynamic key or label whose value the compiler cannot know (a
-		// parameter) is classified at run time, and the deleted target does
-		// not change that classification: the statement's code is the code
-		// the same assignment reports on a live node. Neo4j 5.26.30 is
-		// reported to answer SyntaxError for an Integer parameter here; this
-		// implementation's run-time token check answers TypeError, as it does
-		// for the Neo4j-verified n[n.id] (TestDynamicLabelsAndKeysInWrites),
-		// so the classification is the dynamic-token owner's question, not the
-		// deleted target's.
+		// A dynamic key or label whose value the request supplies (a parameter)
+		// is typed when the statement is admitted, so Neo4j 5.26.30's
+		// SyntaxError is reported before a row runs: the live target and the
+		// target the same statement deleted report it alike, because the
+		// deletion is not part of admission. A value a row computes keeps its
+		// run-time classification (TestDynamicLabelsAndKeysInWrites).
 		for _, testCase := range []struct {
 			name    string
 			live    string
@@ -367,7 +364,7 @@ func TestDeletedEntitySetErrorControlsMatchNeo4j(t *testing.T) {
 			},
 		} {
 			t.Run(testCase.name, func(t *testing.T) {
-				codes := make([]string, 0, 2)
+				reported := make([]string, 0, 2)
 				for _, query := range []string{testCase.live, testCase.deleted} {
 					exec, ctx := deletedSetFixture(t)
 					_, err := exec.Execute(ctx, setup, nil)
@@ -375,9 +372,10 @@ func TestDeletedEntitySetErrorControlsMatchNeo4j(t *testing.T) {
 					_, err = exec.Execute(ctx, query, testCase.params)
 					require.Error(t, err, query)
 					code, message := nornicerrors.Neo4jStatus(err)
-					codes = append(codes, code+" ("+message+")")
+					require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, "%s: %v", query, err)
+					reported = append(reported, code+" ("+message+")")
 				}
-				require.Equal(t, codes[0], codes[1], "the deleted target changed the dynamic token's error")
+				require.Equal(t, reported[0], reported[1], "the deleted target changed the dynamic token's error")
 			})
 		}
 		// A value that reads the deleted entity's own property is the

@@ -5,6 +5,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -143,6 +144,15 @@ func staticWriteTokenError(ctx context.Context, clause pipelineClause, scope sta
 	if err := staticPatternTokenError(ctx, clause, scope); err != nil {
 		return err
 	}
+	return staticWriteItemTokenError(ctx, clause, scope)
+}
+
+// staticWriteItemTokenError is staticWriteTokenError's item half: the SET,
+// REMOVE and MERGE action items of one clause. A compile-time scope holds no
+// parameter values, so an item's parameter is unknown there; the request
+// owner (validateWriteTokenParameters) checks these same items with the
+// values the request supplied, so both read one implementation.
+func staticWriteItemTokenError(ctx context.Context, clause pipelineClause, scope staticTypeScope) error {
 	// Every item check needs a label item or a dynamic key (: or [), or a
 	// target that isn't an entity: other clauses cost one scan. A Cypher 25
 	// statement's items are also checked for an entity assigned whole.
@@ -189,6 +199,55 @@ func staticWriteTokenError(ctx context.Context, clause pipelineClause, scope sta
 		}
 	}
 	return nil
+}
+
+// validateWriteTokenParameters rejects a request whose SET, REMOVE or MERGE
+// action item names a dynamic label or property key with a value the token
+// can't take. A parameter value belongs to the request, so Neo4j compiles it
+// with the statement and rejects the mismatch before any row exists: for a
+// statement whose MATCH returns no row, and under EXPLAIN or PROFILE, which
+// compile the statement they plan. Compilation itself still reads no value
+// (staticWriteTokenError runs with the statement's own types only); this is
+// the one request owner that supplies them, not the per-row token reader.
+func validateWriteTokenParameters(ctx context.Context, cypher string, params map[string]interface{}) error {
+	if (len(params) == 0 && len(getParamsFromContext(ctx)) == 0) || strings.IndexByte(cypher, '$') < 0 || !strings.ContainsAny(cypher, ":[") {
+		return nil
+	}
+	// SET and REMOVE own the items; MERGE owns its ON CREATE/ON MATCH
+	// actions, whose SET is not a separate pipeline clause. Keep quoted names and comments out of this
+	// inexpensive discovery gate; retained grammar decides actual clauses.
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets = false, false
+	if keywordIndexFrom(ctx, cypher, "SET", 0, opts) < 0 && keywordIndexFrom(ctx, cypher, "REMOVE", 0, opts) < 0 && keywordIndexFrom(ctx, cypher, "MERGE", 0, opts) < 0 {
+		return ctx.Err()
+	}
+	params = mergeInheritedQueryParams(ctx, params)
+	syntax, err := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
+	if err != nil {
+		return syntaxAdmissionError(ctx, cypher, AcceptedSource, err)
+	}
+	scope := staticTypeScope{params: params, cypher25: cypherVersionFromContext(ctx) == "25"}
+	var failure error
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if failure != nil {
+			return nil
+		}
+		if failure = ctx.Err(); failure != nil {
+			return nil
+		}
+		var kind pipelineClauseKind
+		switch node.Rule() {
+		case cypherantlr.CypherParserRULE_setSt:
+			kind = pipelineClauseSet
+		case cypherantlr.CypherParserRULE_removeSt:
+			kind = pipelineClauseRemove
+		default:
+			return nil
+		}
+		failure = staticWriteItemTokenError(ctx, pipelineClause{kind: kind, text: node.Text(), syntax: node}, scope)
+		return nil
+	})
+	return failure
 }
 
 // mentionsNonEntity reports whether an item of the SET or REMOVE clauses in
@@ -306,7 +365,9 @@ const (
 // value is known: a literal null, a literal ” (in REMOVE x[”] too, though a
 // ” computed at run time removes nothing), a list literal holding either
 // (for a label), or an expression whose static type a label (STRING,
-// LIST<STRING>) or a key (STRING) can't take.
+// LIST<STRING>) or a key (STRING) can't take. A value the request supplies
+// makes the parameter one of those known values: the mismatch is then the
+// operator check's (operandMismatch), which names the parameter.
 func staticDynamicTokenError(ctx context.Context, expression string, scope staticTypeScope, use dynamicTokenUse) error {
 	expression = strings.TrimSpace(expression)
 	for {
@@ -334,11 +395,17 @@ func staticDynamicTokenError(ctx context.Context, expression string, scope stati
 	operand := scope.operandOf(ctx, expression)
 	if use == dynamicTokenLabel {
 		if operand.excludes(isLabelTokenTypeName) {
+			if operand.parameter != "" {
+				return operandMismatch(operand, "String or List<String>")
+			}
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(operand.typeName()))
 		}
 		return nil
 	}
 	if operand.excludes(isKeyTokenTypeName) {
+		if operand.parameter != "" {
+			return operandMismatch(operand, "String")
+		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(operand.typeName()))
 	}
 	return nil
