@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.0]
 
+- Keep cycle-safe result inspection allocation-free for scalar and shallow results.
+
 - Preserve local bindings in CALL UNION branches after nested CALLs.
 
 - Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
