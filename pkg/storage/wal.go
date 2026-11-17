@@ -942,7 +942,18 @@ func (w *WAL) Sync() error {
 		err := file.Sync()
 		w.syncMu.Unlock()
 		if err != nil {
-			return fmt.Errorf("wal: sync failed: %w", err)
+			// Rotation fsyncs a segment before closing it. If it retired this
+			// captured handle while Sync waited, the flushed prefix is already
+			// durable. A closed current handle or any other I/O failure is real.
+			retired := false
+			if errors.Is(err, os.ErrClosed) {
+				w.mu.Lock()
+				retired = file != w.file && !w.work.Closing()
+				w.mu.Unlock()
+			}
+			if !retired {
+				return fmt.Errorf("wal: sync failed: %w", err)
+			}
 		}
 	}
 
