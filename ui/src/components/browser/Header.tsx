@@ -5,7 +5,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  Activity,
   MessageCircle,
   LogOut,
 } from "lucide-react";
@@ -13,22 +12,19 @@ import { useAppStore } from "../../store/appStore";
 import { api } from "../../utils/api";
 import type { DatabaseStats } from "../../utils/api";
 import { BASE_PATH, joinBasePath } from "../../utils/basePath";
-import {useViewState} from '../../utils/useUrlState';
+import {ServerStatus} from "../common/ServerStatus";
 
 interface HeaderProps {
   workspace?: boolean;
   stats: DatabaseStats | null;
-  connected: boolean;
   onAIChatClick: () => void;
 }
 
 export function Header({
   workspace = false,
   stats,
-  connected,
   onAIChatClick,
 }: HeaderProps) {
-  const [showServer,setShowServer] = useViewState('server',false);
   const logout = useAppStore((state) => state.logout);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
@@ -163,34 +159,7 @@ export function Header({
             </button>
           )}
 
-          <div
-            className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1 rounded-full ${
-              connected
-                ? "bg-nornic-primary/20 status-connected"
-                : "bg-red-500/20"
-            }`}
-          >
-            <Activity
-              className={`w-4 h-4 ${
-                connected ? "text-nornic-primary" : "text-red-400"
-              }`}
-            />
-            <span
-              className={`text-sm ${
-                connected ? "text-nornic-primary" : "text-red-400"
-              }`}
-            >
-              {connected ? "Connected" : "Disconnected"}
-            </span>
-          </div>
-          <details open={showServer} onToggle={event=>{if(event.currentTarget.open!==showServer)setShowServer(event.currentTarget.open)}} className="text-sm text-norse-silver">
-            <summary className="cursor-pointer">Server status</summary>
-            <dl className="p-3 border border-norse-rune rounded-lg">
-              <dt>Server-reported nodes</dt><dd>{stats?.database?.nodes?.toLocaleString() ?? 'Unavailable'}</dd>
-              <dt>Server-reported edges</dt><dd>{stats?.database?.edges?.toLocaleString() ?? 'Unavailable'}</dd>
-              <dt>Uptime</dt><dd>{stats?.server ? `${Math.floor(stats.server.uptime_seconds/3600)}h ${Math.floor(stats.server.uptime_seconds%3600/60)}m` : 'Unavailable'}</dd>
-            </dl>
-          </details>
+          <ServerStatus />
         </div>
       </div>
       {logoutError && (

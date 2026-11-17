@@ -46,8 +46,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const [searchParams] = useSearchParams();
   const {
     stats,
-    connected,
-    fetchStats,
     fetchDatabases,
     databaseList,
     selectedDatabase,
@@ -165,12 +163,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
       setTimeout(() => setEmbedMessage(null), 5000);
     }
   };
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
 
   useEffect(() => {
     fetchDatabases();
@@ -301,7 +293,6 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
       <Header
         workspace={!maintenance}
         stats={stats}
-        connected={connected}
         onAIChatClick={() => setShowAIChat(true)}
       />
 
