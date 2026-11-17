@@ -137,6 +137,9 @@ type snapshotEmbeddingAbsence struct {
 // is not concurrency-safe; a transaction owns its record under tx.mu and a
 // scan owns the view it reads.
 func (p *snapshotEmbeddingAbsence) recordsAbsent(ctx context.Context, snapshot *badger.Txn) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	readTs := snapshot.ReadTs()
 	if p.readTs != readTs {
 		*p = snapshotEmbeddingAbsence{readTs: readTs}

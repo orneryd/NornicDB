@@ -293,3 +293,18 @@ func BenchmarkSnapshotLabelScanThenEmbeddingReads(b *testing.B) {
 		})
 	}
 }
+
+func TestSnapshotEmbeddingAbsenceCancellationPrecedesMemoReuse(t *testing.T) {
+	b := newTestEngine(t)
+	tx := nor160BeginPinned(t, b, "test")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, proved := range []bool{false, true} {
+		proof := snapshotEmbeddingAbsence{readTs: tx.snapshotTx.ReadTs(), proved: proved, absent: true}
+		before := proof
+		absent, err := proof.recordsAbsent(ctx, tx.snapshotTx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.False(t, absent)
+		require.Equal(t, before, proof, "cancellation neither advances nor consumes the proof")
+	}
+}
