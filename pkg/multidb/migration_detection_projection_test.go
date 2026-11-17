@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -37,9 +38,8 @@ func (s *migrationDetectionReader) StreamNodesWithOptions(ctx context.Context, o
 }
 
 func TestDatabaseManagerDetectsNamespaceWithoutHydratingPayloads(t *testing.T) {
-	inner, err := storage.NewBadgerEngine(t.TempDir())
+	inner, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, inner.Close()) })
 	for _, id := range []storage.NodeID{"nornic:a", "nornic:b"} {
 		_, err = inner.CreateNode(t.Context(), &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": strings.Repeat("payload ", 1024)}})
 		require.NoError(t, err)
