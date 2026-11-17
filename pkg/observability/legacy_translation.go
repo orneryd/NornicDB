@@ -131,6 +131,11 @@ func renderLegacy(reg *prometheus.Registry, now time.Time, scope *LegacyReadScop
 
 	families, _ := reg.Gather() // tolerate partial-error state per Pitfall 2
 
+	return renderLegacyFamilies(families, scope)
+}
+
+func renderLegacyFamilies(families []*dto.MetricFamily, scope *LegacyReadScope) []byte {
+	var buf bytes.Buffer
 	byName := make(map[string]*dto.MetricFamily, len(families))
 	for _, mf := range families {
 		if mf == nil {

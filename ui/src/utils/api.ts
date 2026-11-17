@@ -1,4 +1,5 @@
 import {extractNodeFromResult} from "./nodeUtils";
+import {parseMetrics,type MetricsSnapshot} from './monitoring';
 // NornicDB API Client
 
 // neo4j-driver ships a `browser` field in its package.json that swaps
@@ -1147,10 +1148,19 @@ class NornicDBClient {
     return await res.json();
   }
 
-  async getStatus(): Promise<DatabaseStats> {
-    const res = await fetch(joinBasePath(BASE_PATH, "/status"));
-    if (!res.ok) throw new Error(`Server status unavailable (HTTP ${res.status})`);
+  async getStatus(signal?:AbortSignal): Promise<DatabaseStats> {
+    const res = await fetch(joinBasePath(BASE_PATH, "/status"),{cache:'no-store',credentials:'include',signal});
+    if (!res.ok) throw Object.assign(new Error(`Server status unavailable (HTTP ${res.status})`),{status:res.status});
     return await res.json();
+  }
+
+  async getMonitoringMetrics(signal?:AbortSignal):Promise<MetricsSnapshot> {
+    const res=await fetch(joinBasePath(BASE_PATH,'/metrics'),{cache:'no-store',credentials:'include',signal});
+    if(!res.ok)throw Object.assign(new Error(`Metrics unavailable (HTTP ${res.status})`),{status:res.status});
+    const snapshot=parseMetrics(await res.text());
+    const scope=res.headers.get('X-NornicDB-Metrics-Scope');
+    if(scope==='server'||scope==='database')snapshot.scope=scope;
+    return snapshot;
   }
 
   async search(

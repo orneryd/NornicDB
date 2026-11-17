@@ -14,6 +14,7 @@ const groups = [
   [
     "Operations",
     [
+      ["Health & monitoring", "/operations/health"],
       ["Embeddings", "/embeddings"],
       ["Backup & restore", "/backups"],
       ["Lifecycle", "/security/lifecycle"],
