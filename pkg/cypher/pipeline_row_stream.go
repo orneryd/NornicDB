@@ -369,6 +369,23 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	if hint.streamScan && len(templates) == 1 {
 		return e.pipelineStreamedNodeMatchSource(ctx, inputSource, templates[0], hint), true, nil
 	}
+	// The read tail and each pattern's property names are fixed for this
+	// statement. Resolve projection demand once before visiting input rows;
+	// only the inline property values need evaluation for each row.
+	templateHints := make([]pipelineMatchPhysicalHint, len(templates))
+	for index, template := range templates {
+		templateHints[index] = hint
+		if hint.readTail == nil {
+			continue
+		}
+		inline := make(map[string]interface{}, len(template.properties))
+		for _, property := range template.properties {
+			inline[property.key] = nil
+		}
+		pattern := nodePatternInfo{variable: template.variable, labels: template.labels, properties: inline}
+		templateHints[index].projection, templateHints[index].projectionSafe = pipelineLabelScanProjection(ctx, pattern, "", hint.readTail)
+		templateHints[index].projectionKnown = true
+	}
 	type candidateCache struct {
 		key          string
 		nodes        []*storage.Node
@@ -465,7 +482,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 								candidatesBound = true
 							}
 							var err error
-							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
+							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", templateHints[index])
 							if err != nil {
 								recordExpressionFailure(ctx, err)
 								valid = false

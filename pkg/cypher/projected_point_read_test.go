@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,6 +15,37 @@ import (
 type projectedPointReadSpy struct {
 	*storagefault.QueryNodeReadSpy
 	projections [][]string
+}
+
+func TestProjectedReadBatchIndexedProjection(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(engine, "batch")
+	seed := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	ctx := t.Context()
+	_, err := seed.Execute(ctx, `CREATE CONSTRAINT batch_key IF NOT EXISTS FOR (n:Doc) REQUIRE n.key IS UNIQUE`, nil)
+	require.NoError(t, err)
+	keys := make([]any, 16)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("doc-%02d", i)
+		_, err = seed.Execute(ctx, `CREATE (:Doc {key: $key, path: $path, status: 'current', body: $body})`, map[string]any{
+			"key": keys[i], "path": fmt.Sprintf("/docs/%02d", i), "body": strings.Repeat("large omitted body ", 256),
+		})
+		require.NoError(t, err)
+	}
+	spy := &projectedPointReadSpy{QueryNodeReadSpy: storagefault.NewQueryNodeReadSpy(store)}
+	exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0})
+	result, err := exec.Execute(ctx, `UNWIND $keys AS key MATCH (d:Doc {key: key}) RETURN d.key AS key, d.path AS path, d.status AS status`, map[string]any{"keys": keys})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 16)
+	for i, row := range result.Rows {
+		require.Equal(t, []any{keys[i], fmt.Sprintf("/docs/%02d", i), "current"}, row)
+	}
+	require.Len(t, spy.projections, 16)
+	for _, projection := range spy.projections {
+		require.ElementsMatch(t, []string{"key", "path", "status"}, projection)
+	}
+	require.Zero(t, spy.Query.Load())
+	require.Zero(t, spy.Full.Load())
 }
 
 func (s *projectedPointReadSpy) GetNodeProjected(ctx context.Context, id storage.NodeID, properties []string) (*storage.Node, error) {
