@@ -32,3 +32,38 @@ func TestStateLineageAndTypeIsolation(t *testing.T) {
 		t.Fatal("lost parent cancellation")
 	}
 }
+
+func TestBoundSlotPreservesAbsentAndInheritedState(t *testing.T) {
+	type state struct{ value int }
+	type sibling struct{}
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	empty := Bind[state](parent)
+	if Get[state](empty) != nil {
+		t.Fatal("binding initialized absent state")
+	}
+	initialized := Ensure[state](empty)
+	Get[state](initialized).value = 42
+	bound := Bind[state](initialized)
+	if Get[state](bound) != Get[state](initialized) {
+		t.Fatal("binding replaced inherited state")
+	}
+	if Ensure[state](bound) != bound {
+		t.Fatal("ensure replaced the bound state")
+	}
+	if Get[state](empty) != nil {
+		t.Fatal("child initialization changed its parent")
+	}
+	if Get[sibling](bound) != nil {
+		t.Fatal("binding crossed type boundaries")
+	}
+	cancel()
+	if bound.Err() != context.Canceled || empty.Err() != context.Canceled {
+		t.Fatal("binding lost cancellation")
+	}
+	select {
+	case <-bound.Done():
+	default:
+		t.Fatal("binding lost Done")
+	}
+}

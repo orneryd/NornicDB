@@ -249,6 +249,22 @@ func isSchemaPermissionQuery(ctx context.Context, query string) bool {
 
 func isAdminPermissionQuery(ctx context.Context, query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
+	if commandOffset >= len(query) {
+		return false
+	}
+	// Every top-level administrative form below begins with one of these
+	// tokens. Ordinary MATCH/RETURN statements need no repeated whole-text
+	// searches; procedure permissions are resolved separately from the live registry.
+	possible := false
+	for _, first := range [...]string{"CREATE", "DROP", "ALTER", "SHOW", "TERMINATE", "GRANT", "REVOKE", "DENY"} {
+		if startsWithKeywordFold(query[commandOffset:], first) {
+			possible = true
+			break
+		}
+	}
+	if !possible {
+		return false
+	}
 	// GRANT, REVOKE, DENY and SHOW … PRIVILEGES administer privileges.
 	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(ctx, query[commandOffset:]) {
 		return true

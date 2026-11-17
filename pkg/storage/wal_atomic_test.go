@@ -123,11 +123,11 @@ func TestCheckAtomicWALIntegrity_DetectsCorruptionBranches(t *testing.T) {
 		path := filepath.Join(dir, "wal.log")
 
 		var buf bytes.Buffer
-		_, err := writeAtomicRecord(&buf, makePayload(1), walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&buf, makePayload(1), walFormatVersionCurrent)
 		require.NoError(t, err)
 		start := buf.Len()
 		payload2 := makePayload(2)
-		_, err = writeAtomicRecord(&buf, payload2, walFormatVersionCurrent)
+		_, err = writeAtomicRecordBufio(&buf, payload2, walFormatVersionCurrent)
 		require.NoError(t, err)
 		data := buf.Bytes()
 		crcOffset := start + 9 + len(payload2)
@@ -149,7 +149,7 @@ func TestCheckAtomicWALIntegrity_DetectsCorruptionBranches(t *testing.T) {
 		path := filepath.Join(dir, "wal.log")
 
 		var buf bytes.Buffer
-		_, err := writeAtomicRecord(&buf, makePayload(1), walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&buf, makePayload(1), walFormatVersionCurrent)
 		require.NoError(t, err)
 		buf.Write(atomicHeader(walFormatVersionCurrent, walMaxEntrySize+1))
 		require.NoError(t, os.WriteFile(path, buf.Bytes(), 0644))
@@ -170,7 +170,7 @@ func TestCheckAtomicWALIntegrity_DetectsCorruptionBranches(t *testing.T) {
 
 		payload := makePayload(1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		data := buf.Bytes()
 		trailerOffset := 9 + len(payload) + 4
@@ -211,7 +211,7 @@ func TestReadWALEntriesForTruncation_Formats(t *testing.T) {
 		var buf bytes.Buffer
 		for _, seq := range []uint64{1, 2, 3} {
 			payload := currentWALPayload(t, WALEntry{Sequence: seq, Timestamp: time.Now(), Operation: OpCreateNode})
-			_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+			_, err := writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 			require.NoError(t, err)
 		}
 		buf.Write([]byte{0x57, 0x41})

@@ -222,35 +222,19 @@ func isCreateConstraintStatement(ctx context.Context, cypher string) bool {
 // OVERLAP — was shipped first, is deprecated, and stays accepted; both compile
 // to the same constraint definition.
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	onPosition := keywordIndexFrom(ctx, cypher, "ON", 0, defaultKeywordScanOpts())
-	forPosition := keywordIndexFrom(ctx, cypher, "FOR", 0, defaultKeywordScanOpts())
-	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
-	}
-	// Every spelling of a uniqueness or key requirement becomes the one the
-	// shapes below read (canonicalConstraintRequirement).
-	cypher, err := e.canonicalConstraintRequirement(ctx, cypher)
+	prepared, err := e.prepareCreateConstraint(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
-	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
-	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
-	// Select the contract shape before execution; stored-data validation does
-	// not participate in the syntax decision.
-	if contract, err := e.parseCreateConstraintContractDDL(ctx, cypher); err == nil {
-		return e.executeCreateConstraintContract(ctx, cypher, contract, ifNotExists)
-	}
+	ifNotExists := prepared.ifNotExists
+	switch {
+	case prepared.contract != nil:
+		return e.executeCreateConstraintContract(ctx, prepared.source, *prepared.contract, ifNotExists)
+	case prepared.property != nil:
+		return e.executeCreateConstraintProperty(ctx, *prepared.property, ifNotExists)
+	case prepared.cardinality != nil:
+		parsed := *prepared.cardinality
 
-	// One owner reads every property declaration this prefix can spell; the
-	// requirement it returns decides the constraint the statement creates.
-	if declaration, recognized, err := e.parseCreateConstraintPropertyDDL(ctx, cypher); recognized {
-		if err != nil {
-			return nil, err
-		}
-		return e.executeCreateConstraintProperty(ctx, declaration, ifNotExists)
-	}
-
-	if parsed, err := e.parseCreateConstraintCardinalityDDL(ctx, cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
 			directionSuffix := "outgoing"
@@ -274,12 +258,9 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if isCreateConstraintStatement(ctx, cypher) &&
-		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
-		return nil, err
-	}
+	case prepared.policy != nil:
+		parsed := *prepared.policy
 
-	if parsed, err := e.parseCreateConstraintPolicyDDL(ctx, cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
 			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCII(parsed.policyMode))
@@ -300,11 +281,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if isCreateConstraintStatement(ctx, cypher) &&
-		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
-		return nil, err
 	}
-
 	return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 }
 
@@ -593,8 +570,9 @@ func parseForPatternTarget(forClause string) (target schemaPatternTarget, ok boo
 		return schemaPatternTarget{}, false
 	}
 
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
+	// A bracket within a quoted label belongs to that name, not an edge.
+	bracketStart, _ := cyphertext.FindOutside(forClause, "[")
+	if bracketStart >= 0 {
 		inside, rest, bracketed := extractBracketSection(forClause[bracketStart:])
 		if !bracketed {
 			return schemaPatternTarget{}, false
@@ -650,7 +628,7 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 	target, ok := parseForPatternTarget(forClause)
 	if !ok {
 		clause := "node FOR"
-		if strings.Contains(forClause, "[") {
+		if found, _ := inspectOutsideStrings(forClause, "["); found {
 			clause = "relationship FOR"
 		}
 		return "", "", false, localizedError(localization.CypherSchemaInvalidClause(clause), nil)

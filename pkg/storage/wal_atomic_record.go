@@ -19,91 +19,54 @@ func alignUp(n int64) int64 {
 // The record is 8-byte aligned to prevent torn headers and to make padding skips deterministic.
 // The returned int64 is the aligned record length (for accounting/stats).
 func buildAtomicRecord(payload []byte, version uint8) ([]byte, int64) {
-	entryCRC := crc32Checksum(payload)
-
-	headerSize := int64(4 + 1 + 4)          // magic + version + length
-	bodySize := int64(len(payload) + 4 + 8) // payload + crc + trailer
-	rawRecordLen := headerSize + bodySize
-	alignedRecordLen := alignUp(rawRecordLen)
-
+	alignedRecordLen := alignUp(int64(len(payload)) + 21)
 	record := make([]byte, alignedRecordLen)
-	offset := 0
-
-	binary.LittleEndian.PutUint32(record[offset:], walMagic)
-	offset += 4
-	record[offset] = version
-	offset++
-	binary.LittleEndian.PutUint32(record[offset:], uint32(len(payload)))
-	offset += 4
-	copy(record[offset:], payload)
-	offset += len(payload)
-	binary.LittleEndian.PutUint32(record[offset:], entryCRC)
-	offset += 4
-	binary.LittleEndian.PutUint64(record[offset:], walTrailer)
-	// padding is already zeroed by make(...)
-
+	fillAtomicRecord(record, payload, version)
 	return record, alignedRecordLen
 }
 
-// writeAtomicRecord writes a single WAL record in the atomic format directly to w:
-//
-//	[magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
-//
-// This avoids allocating a full record buffer on the hot append path.
-// The returned int64 is the aligned record length (for accounting/stats).
-func writeAtomicRecord(w io.Writer, payload []byte, version uint8) (int64, error) {
-	entryCRC := crc32Checksum(payload)
-
-	headerSize := int64(4 + 1 + 4)          // magic + version + length
-	bodySize := int64(len(payload) + 4 + 8) // payload + crc + trailer
-	rawRecordLen := headerSize + bodySize
-	alignedRecordLen := alignUp(rawRecordLen)
-
-	var header [9]byte
-	binary.LittleEndian.PutUint32(header[0:], walMagic)
-	header[4] = version
-	binary.LittleEndian.PutUint32(header[5:], uint32(len(payload)))
-
-	if _, err := w.Write(header[:]); err != nil {
-		return 0, err
-	}
-	if _, err := w.Write(payload); err != nil {
-		return 0, err
-	}
-
-	var crcBuf [4]byte
-	binary.LittleEndian.PutUint32(crcBuf[:], entryCRC)
-	if _, err := w.Write(crcBuf[:]); err != nil {
-		return 0, err
-	}
-
-	var trailerBuf [8]byte
-	binary.LittleEndian.PutUint64(trailerBuf[:], walTrailer)
-	if _, err := w.Write(trailerBuf[:]); err != nil {
-		return 0, err
-	}
-
-	padding := int(alignedRecordLen - rawRecordLen) // 0-7
-	if padding > 0 {
-		var zeros [8]byte
-		if _, err := w.Write(zeros[:padding]); err != nil {
-			return 0, err
-		}
-	}
-
-	return alignedRecordLen, nil
+// fillAtomicRecord is the framing owner for both owned records and a bufio
+// writer's reserved storage. Padding must be cleared when storage is reused.
+func fillAtomicRecord(record, payload []byte, version uint8) {
+	binary.LittleEndian.PutUint32(record, walMagic)
+	record[4] = version
+	binary.LittleEndian.PutUint32(record[5:], uint32(len(payload)))
+	end := 9 + len(payload)
+	copy(record[9:end], payload)
+	binary.LittleEndian.PutUint32(record[end:], crc32Checksum(payload))
+	binary.LittleEndian.PutUint64(record[end+4:], walTrailer)
+	clear(record[end+12:])
 }
 
 // writeAtomicRecordBufio writes a single WAL record to w, using a single Write
 // when w is a *bufio.Writer so that a record is never split across buffer flushes.
 // This prevents recovery from seeing a partial last record after a clean close.
 func writeAtomicRecordBufio(w io.Writer, payload []byte, version uint8) (int64, error) {
-	record, alignedRecordLen := buildAtomicRecord(payload, version)
-	if bw, ok := w.(*bufio.Writer); ok {
-		if bw.Available() < len(record) {
+	alignedRecordLen := alignUp(int64(len(payload)) + 21)
+	if bw, ok := w.(*bufio.Writer); ok && alignedRecordLen <= int64(bw.Size()) {
+		if int64(bw.Available()) < alignedRecordLen {
 			if err := bw.Flush(); err != nil {
 				return 0, err
 			}
+		}
+		// Reserve the complete frame in the writer's own backing storage.
+		// Write commits this same slice before any subsequent buffer operation.
+		record := bw.AvailableBuffer()[:int(alignedRecordLen)]
+		fillAtomicRecord(record, payload, version)
+		n, err := bw.Write(record)
+		if err != nil {
+			return 0, err
+		}
+		if n != len(record) {
+			return 0, io.ErrShortWrite
+		}
+		return alignedRecordLen, nil
+	}
+	// Oversized frames and generic writers retain one contiguous write.
+	record, alignedRecordLen := buildAtomicRecord(payload, version)
+	if bw, ok := w.(*bufio.Writer); ok && bw.Available() < len(record) {
+		if err := bw.Flush(); err != nil {
+			return 0, err
 		}
 	}
 	n, err := w.Write(record)

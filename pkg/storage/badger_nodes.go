@@ -77,13 +77,20 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 	if preparationErr != nil {
 		return "", preparationErr
 	}
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
+		b.publishCommitOperations(dbName, schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
-		capturePublicationOperations(notification, publicationOps)
+		operations := []Operation{{Type: OpCreateNode, Node: image}}
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
 		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, nil, image)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
@@ -133,7 +140,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, publish, keys, notification, &publicationOps, func(cw *commitWriter) error {
+	}, publish, keys, notification, &publicationFrame.ops, func(cw *commitWriter) error {
 		if persistSeparateEmbeddings {
 			if err := cw.replaceEmbeddingRange(node.ID, embeddingsToPersist, nil); err != nil {
 				return err
@@ -352,7 +359,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(ctx context.Context, id NodeID, fo
 		copyImage = nil
 	}
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}, copyImage, mode)
 }
 
@@ -376,7 +383,7 @@ func (b *BadgerEngine) readNodeMetadata(ctx context.Context, id NodeID, v readVi
 		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
 	}
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, hydration, false, nil)
+		return b.readNodeItemInTxn(txn, item, id, hydration, nodeBodyCacheAdmit, false, nil)
 	}, copyImage, cache)
 }
 
@@ -524,7 +531,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}})
+		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}, labelWrites: []nodeLabelWrite{{id: node.ID, labels: node.Labels}}})
 		if orderErr != nil {
 			return orderErr
 		}
@@ -535,16 +542,23 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 	if preparationErr != nil {
 		return preparationErr
 	}
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(dbName, schema, publicationOps, true, true, images)
+		b.publishCommitOperations(dbName, schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode, nodeAnchorEligible: true}}
+		operations := []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode, nodeAnchorEligible: true}}
 		if wasInsert {
-			publicationOps[0].Type = OpCreateNode
+			operations[0].Type = OpCreateNode
 		}
-		capturePublicationOperations(notification, publicationOps)
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
 		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, existingNode, image)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
@@ -747,7 +761,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, publish, keys, notification, &publicationOps, func(cw *commitWriter) error {
+	}, publish, keys, notification, &publicationFrame.ops, func(cw *commitWriter) error {
 		if persistSeparateEmbeddings {
 			if err := cw.replaceEmbeddingRange(node.ID, embeddingsToPersist, nil); err != nil {
 				return err
@@ -798,7 +812,7 @@ func (b *BadgerEngine) DeleteNode(ctx context.Context, id NodeID) error {
 		}
 		defer order.release()
 	}
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 	schema := b.schemaForNodeID(id)
 	// Capture before physical assembly can acquire the commit gate.
 	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
@@ -806,19 +820,26 @@ func (b *BadgerEngine) DeleteNode(ctx context.Context, id NodeID) error {
 		return preparationErr
 	}
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true, images)
+		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{result.operation(id)}
-		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
+		operations := []Operation{result.operation(id)}
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		var err error
 		result, err = b.executeNodeDeletion(write.ctx, txn, id, nil)
 		return err
-	}, publish, keys, notification, &publicationOps, write.stagePublication)
+	}, publish, keys, notification, &publicationFrame.ops, write.stagePublication)
 
 	return err
 }

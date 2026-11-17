@@ -101,12 +101,26 @@ func (tx *BadgerTransaction) LookupNodesByEquality(ctx context.Context, label st
 		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", storedRead, func(node *Node) error {
 			if cacheable {
 				bytes, ok := snapshotLabelPrefixNodeBytes(node)
-				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes || tx.nodeHasEmbeddingSidecar(tx.snapshotTx, node.ID) {
+				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes {
+					// A population the cache cannot hold is refused, not failed:
+					// this probe answers and later ones decline it.
 					cacheable = false
 					population.nodes = nil
 				} else {
-					population.nodes[node.ID] = node
-					retainedBytes += bytes
+					// A sidecar-bearing node must be re-read so embedding
+					// hydration runs; the probe is this snapshot's own answer and
+					// a probe it cannot answer is a read failure.
+					sidecar, probeErr := tx.nodeHasEmbeddingSidecar(ctx, tx.snapshotTx, node.ID)
+					if probeErr != nil {
+						return probeErr
+					}
+					if sidecar {
+						cacheable = false
+						population.nodes = nil
+					} else {
+						population.nodes[node.ID] = node
+						retainedBytes += bytes
+					}
 				}
 			}
 			if !tx.committedNodeSupersededLocked(node.ID) && !tx.readsLatestLocked(bufferedNodeEntity, string(node.ID)) && !tx.engine.filterEntityByDecay(visibleRead, node, nowNanos) && matches(node) {

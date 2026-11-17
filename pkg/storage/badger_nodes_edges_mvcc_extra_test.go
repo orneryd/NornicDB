@@ -442,7 +442,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AllOperationKinds(t *testing.T)
 			{Type: OpUpdateEdge, Edge: &Edge{ID: "test:me1", StartNode: "test:m1", EndNode: "test:m2", Type: "REL2", Properties: map[string]any{"w": 11}}, OldEdge: oldE1},
 			{Type: OpDeleteEdge, EdgeID: "test:me2", OldEdge: oldE2},
 		}
-		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, ops)
+		return engine.materializeMVCCCommit(t.Context(), mvccCommitMaterialization{writer: singleBatchWriter(txn), version: version, frame: mustCommitFrame(t, ops)})
 	}))
 
 	_, err = engine.GetNodeCurrentHead(context.Background(), "test:newfresh")

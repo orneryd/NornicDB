@@ -204,16 +204,22 @@ func keepNodeProperties(node *Node, properties []string) *Node {
 	return out
 }
 
-func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
+// toUserEdge creates an owned projection when destination is nil; otherwise
+// it reuses the supplied image until the caller overwrites that destination.
+func (n *NamespacedEngine) toUserEdge(edge *Edge, destination *Edge) *Edge {
 	if edge == nil {
 		return nil
 	}
-	out := *edge
+	out := destination
+	if out == nil {
+		out = new(Edge)
+	}
+	*out = *edge
 	out.ID = EdgeID(strings.TrimPrefix(string(out.ID), n.scope))
 	out.Database = n.namespace
 	out.StartNode = NodeID(strings.TrimPrefix(string(out.StartNode), n.scope))
 	out.EndNode = NodeID(strings.TrimPrefix(string(out.EndNode), n.scope))
-	return &out
+	return out
 }
 
 // ============================================================================
@@ -330,7 +336,7 @@ func (n *NamespacedEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 }
 
 func (n *NamespacedEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
-	return namespacedPointRead[Engine, EdgeID, *Edge](ctx, n, id, Engine.GetEdge, n.PrefixEdgeID, n.toUserEdge, nil, false, MVCCVersion{})
+	return namespacedPointRead[Engine, EdgeID, *Edge](ctx, n, id, Engine.GetEdge, n.PrefixEdgeID, func(value *Edge) *Edge { return n.toUserEdge(value, nil) }, nil, false, MVCCVersion{})
 }
 
 func (n *NamespacedEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateRequest) error {
@@ -413,7 +419,7 @@ func (n *NamespacedEngine) GetEdgeBetween(ctx context.Context, startID, endID No
 	if !n.hasEdgePrefix(edge.ID) {
 		return nil, nil
 	}
-	return n.toUserEdge(edge), nil
+	return n.toUserEdge(edge, nil), nil
 }
 
 func (n *NamespacedEngine) GetEdgesByType(ctx context.Context, edgeType string) ([]*Edge, error) {
@@ -553,12 +559,12 @@ func (n *NamespacedEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, vers
 
 // GetEdgeLatestVisible resolves the latest visible edge within the namespace.
 func (n *NamespacedEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
-	return namespacedPointRead[MVCCVisibilityEngine, EdgeID, *Edge](ctx, n, id, MVCCVisibilityEngine.GetEdgeLatestVisible, n.PrefixEdgeID, n.toUserEdge, n.GetEdge, true, MVCCVersion{})
+	return namespacedPointRead[MVCCVisibilityEngine, EdgeID, *Edge](ctx, n, id, MVCCVisibilityEngine.GetEdgeLatestVisible, n.PrefixEdgeID, func(value *Edge) *Edge { return n.toUserEdge(value, nil) }, n.GetEdge, true, MVCCVersion{})
 }
 
 // GetEdgeVisibleAt resolves a snapshot-visible edge within the namespace.
 func (n *NamespacedEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
-	return namespacedPointRead[MVCCVisibilityEngine, EdgeID, *Edge](ctx, n, id, MVCCVisibilityEngine.GetEdgeVisibleAt, n.PrefixEdgeID, n.toUserEdge, nil, true, version)
+	return namespacedPointRead[MVCCVisibilityEngine, EdgeID, *Edge](ctx, n, id, MVCCVisibilityEngine.GetEdgeVisibleAt, n.PrefixEdgeID, func(value *Edge) *Edge { return n.toUserEdge(value, nil) }, nil, true, version)
 }
 
 // GetNodeLatestEffective resolves the latest-effective node within the
@@ -572,7 +578,7 @@ func (n *NamespacedEngine) GetNodeLatestEffective(ctx context.Context, id NodeID
 // namespace, delegating to the wrapped engine when it supports the
 // MVCCLatestEffectiveEngine capability.
 func (n *NamespacedEngine) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
-	return namespacedPointRead[MVCCLatestEffectiveEngine, EdgeID, *Edge](ctx, n, id, MVCCLatestEffectiveEngine.GetEdgeLatestEffective, n.PrefixEdgeID, n.toUserEdge, n.GetEdge, true, MVCCVersion{})
+	return namespacedPointRead[MVCCLatestEffectiveEngine, EdgeID, *Edge](ctx, n, id, MVCCLatestEffectiveEngine.GetEdgeLatestEffective, n.PrefixEdgeID, func(value *Edge) *Edge { return n.toUserEdge(value, nil) }, n.GetEdge, true, MVCCVersion{})
 }
 
 // GetNodeCurrentHead resolves node head metadata within the namespace.
@@ -941,7 +947,7 @@ func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) 
 	if streamer, ok := ResolveStreamingEngine(n.inner); ok {
 		return streamer.StreamEdges(ctx, func(edge *Edge) error {
 			if n.hasEdgePrefix(edge.ID) {
-				return fn(n.toUserEdge(edge))
+				return fn(n.toUserEdge(edge, nil))
 			}
 			return nil // Skip edges not in our namespace
 		})

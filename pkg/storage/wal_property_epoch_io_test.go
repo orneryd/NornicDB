@@ -44,7 +44,7 @@ func TestWALPropertyEpochUnavailableLogRejectsEveryAppend(t *testing.T) {
 			require.Error(t, wal.Append(OpCreateNode, WALNodeData{Node: &Node{ID: "io:a"}}))
 			require.Error(t, wal.AppendBufferedCommit(commit, source.propKeyDict))
 			batch := wal.NewBatch()
-			require.NoError(t, batch.append(OpCreateNode, WALNodeData{Node: &Node{ID: "io:b"}}))
+			require.NoError(t, batch.append(OpCreateNode, WALNodeData{Node: &Node{ID: "io:b"}}, ""))
 			require.Error(t, batch.Commit())
 			require.Error(t, wal.invalidateCleanPropertyEpoch())
 			if want != nil {

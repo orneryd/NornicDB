@@ -8,9 +8,11 @@ import "slices"
 // writes may return while delivery is queued and must detach their payloads.
 func (op *Operation) snapshotForNotification() {
 	op.DeletedEdgeIDs = slices.Clone(op.DeletedEdgeIDs)
-	op.DeletedEdgeFacts = slices.Clone(op.DeletedEdgeFacts)
-	op.OldNode = copyNode(op.OldNode)
-	op.OldEdge = copyEdge(op.OldEdge)
+	// Listener delivery consumes new images and deleted identities only.
+	// Rollback images and derived facts remain owned by the commit frame.
+	op.DeletedEdgeFacts = nil
+	op.OldNode = nil
+	op.OldEdge = nil
 	if op.Node != nil && !(op.embeddingOutcome && op.Node.EmbeddingAttempt() != nil) {
 		op.Node = copyNode(op.Node)
 	}

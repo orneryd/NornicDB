@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -321,6 +322,145 @@ func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
 	return owned
 }
 
+// resultDelivery names who consumes the result of a statement Execute runs: a Go
+// caller that may keep and change it, or a first-party transport that reads it
+// once, in place, to send it to its client (internal/transportread).
+type resultDelivery uint8
+
+const (
+	// ownedDelivery delivers a result the caller owns: every row value is its
+	// own copy (cacheOwnedResult).
+	ownedDelivery resultDelivery = iota
+	// transportDelivery delivers a certified hit as a result shell the caller
+	// owns around the cache's immutable rows (transportResultShell).
+	transportDelivery
+)
+
+// transportResultShell owns mutable result fields while borrowing certified
+// immutable rows. MapKeyOrders stays bound to those rows' map identities and
+// is read-only at the transport boundary. A retained result keeps its rows
+// alive even after cache eviction.
+func transportResultShell(cached *ExecuteResult) *ExecuteResult {
+	if cached == nil {
+		return nil
+	}
+	shell := *cached
+	shell.Columns = slices.Clone(cached.Columns)
+	if cached.Stats != nil {
+		stats := *cached.Stats
+		shell.Stats = &stats
+	}
+	if cached.Administration != nil {
+		administration := *cached.Administration
+		shell.Administration = &administration
+	}
+	if cached.Metadata != nil {
+		shell.Metadata = storage.CopyValue(cached.Metadata, nil).(map[string]interface{})
+	}
+	return &shell
+}
+
+// transportRowsInert certifies the closed, read-only serializer inputs once
+// at publication. Native entity properties use the same value policy; unknown
+// types, custom protocols and cycles retain the ordinary owning-copy path.
+func transportRowsInert(result *ExecuteResult) bool {
+	if result == nil {
+		return true
+	}
+	walk := transportRowWalk{}
+	for _, row := range result.Rows {
+		if !walk.values(row) {
+			return false
+		}
+	}
+	return true
+}
+
+// transportRowWalk certifies one result's row values. It tracks the lists and
+// maps on the path it walks, so a cycle is refused instead of walked: the copy
+// owner preserves cycles, and a certified row must be one no walk chases.
+type transportRowWalk struct {
+	path resultValuePath
+}
+
+func (walk *transportRowWalk) value(value interface{}) bool {
+	switch typed := value.(type) {
+	case []interface{}:
+		return walk.values(typed)
+	case [][]interface{}:
+		for _, row := range typed {
+			if !walk.values(row) {
+				return false
+			}
+		}
+		return true
+	case map[string]interface{}:
+		return walk.mapping(typed)
+	case *storage.Node:
+		return typed == nil || walk.mapping(typed.Properties)
+	case storage.Node:
+		return walk.mapping(typed.Properties)
+	case *storage.Edge:
+		return typed == nil || walk.mapping(typed.Properties)
+	case storage.Edge:
+		return walk.mapping(typed.Properties)
+	}
+	return transportInertLeaf(value)
+}
+
+// transportInertLeaf reports whether value is a leaf a transport reads as a value:
+// an immutable scalar or temporal value, or a list of one scalar type. A list of
+// one scalar type cannot hold anything but its own type, so it needs no walk.
+func transportInertLeaf(value interface{}) bool {
+	switch value.(type) {
+	case nil, string, bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, time.Time, time.Duration:
+		return true
+	case []string, []int, []int32, []int64, []float32, []float64, []bool, []byte:
+		return true
+	default:
+		return false
+	}
+}
+
+func (walk *transportRowWalk) values(values []interface{}) bool {
+	if len(values) == 0 {
+		return true
+	}
+	if !walk.path.enter(values) {
+		return false
+	}
+	ok := true
+	for _, value := range values {
+		if !walk.value(value) {
+			ok = false
+			break
+		}
+	}
+	walk.path.leave()
+	return ok
+}
+
+func (walk *transportRowWalk) mapping(mapping map[string]interface{}) bool {
+	if len(mapping) == 0 {
+		return true
+	}
+	if !walk.path.enter(mapping) {
+		return false
+	}
+	ok := true
+	for _, value := range mapping {
+		if !walk.value(value) {
+			ok = false
+			break
+		}
+	}
+	walk.path.leave()
+	return ok
+}
+
 // Invalidate clears all cached query results.
 //
 // This method is called after write operations (CREATE, DELETE, SET, REMOVE, MERGE)
@@ -444,16 +584,16 @@ func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) str
 
 // moveToFront moves key to front of LRU list.
 func (qc *QueryCache) moveToFront(key string) {
-	// Remove from current position
-	for i, k := range qc.lruList {
-		if k == key {
-			qc.lruList = append(qc.lruList[:i], qc.lruList[i+1:]...)
-			break
+	for i, current := range qc.lruList {
+		if current == key {
+			copy(qc.lruList[1:i+1], qc.lruList[:i])
+			qc.lruList[0] = key
+			return
 		}
 	}
-
-	// Add to front
-	qc.lruList = append([]string{key}, qc.lruList...)
+	qc.lruList = append(qc.lruList, "")
+	copy(qc.lruList[1:], qc.lruList[:len(qc.lruList)-1])
+	qc.lruList[0] = key
 }
 
 // evictOldest removes the least recently used entry.
@@ -526,6 +666,12 @@ type smartCachedResult struct {
 	labels    []string // Labels this query depends on
 	key       string
 
+	// transportInert is whether this entry's published rows are only the inert
+	// value shapes a first-party transport reads in place (transportRowsInert). It
+	// is decided once, at publication, and is the one entry property that lets a
+	// transport hit borrow the rows (transportResultShell) instead of copying them.
+	transportInert bool
+
 	// The provider publication captured before execution. A scalar token keeps
 	// cached results from retaining old providers or their embedding caches.
 	embeddingGeneration uint64
@@ -583,13 +729,17 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
 	key := resultCacheEntryKey(context.Background(), cypher, params)
-	result, _, _, found := sc.getWithTraceForEmbedding(key, 0)
+	result, _, _, found := sc.getWithTraceForEmbedding(key, 0, ownedDelivery)
 	return result, found
 }
 
-// getWithTraceForEmbedding returns an owned cached result, its trace and entity
-// classification only when its embedding generation matches the caller's.
-func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
+// getWithTraceForEmbedding returns the cached result for delivery, its trace and
+// entity classification only when its embedding generation matches the
+// caller's. ownedDelivery detaches the entry for a Go caller
+// (cacheOwnedResult); transportDelivery detaches it for a first-party transport
+// that reads the rows once, as far as the entry was certified inert at
+// publication (transportRowsInert, transportResultShell).
+func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64, delivery resultDelivery) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]
 	sc.mu.RUnlock()
@@ -627,6 +777,11 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 	// Plan 04-03 D-12a: cross-cutting cache_hits_total{cache="query_result"}.
 	sc.observeHit()
+	if delivery == transportDelivery && cached.transportInert {
+		// The transport reads this entry's rows once, in place, so it borrows
+		// them and owns every field around them instead.
+		return transportResultShell(cached.result), cached.trace, cached.entities, true
+	}
 	return cacheOwnedResult(cached.result), cached.trace, cached.entities, true
 }
 
@@ -646,6 +801,8 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
 	result = cacheOwnedResult(result)
 	entities := resultHasMaterializedEntities(result)
+	// The delivery decision is taken here, once, on the image the cache keeps.
+	transportInert := transportRowsInert(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -669,6 +826,7 @@ func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result 
 		labels:    labels,
 		key:       key,
 
+		transportInert:      transportInert,
 		embeddingGeneration: generation,
 	}
 	sc.cache[key] = entry
@@ -887,17 +1045,36 @@ func extractLabelsFromQuery(cypher string) []string {
 // text and the same parameter values (#729). Normalizing the text keeps
 // trivia outside expression-derived column names and a trailing semicolon
 // from defeating a hit. Column-name spelling remains part of the key.
+// Only immutable syntax-derived text is retained. Parameters, authorization,
+// graph generations and search revisions remain request-owned key inputs.
+var resultStatementTexts = newBoundedCache[statementTextKey, string](4096, statementTextShardIndex)
+
 func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
-	source := trimTrailingStatementDelimiters(cypher)
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return ""
 	}
-	var protected []statementPresentationSpan
-	if err == nil {
-		protected = statementExpressionNameSpans(syntax)
+	source := trimTrailingStatementDelimiters(cypher)
+	key := statementTextKey{source: source, cypher25: cypherVersionFromContext(ctx) == "25"}
+	normalized, found := resultStatementTexts.get(key)
+	if !found {
+		syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, key.cypher25, cypherantlr.AcceptedSource)
+		if ctx.Err() != nil {
+			return ""
+		}
+		var protected []statementPresentationSpan
+		if err == nil {
+			protected = statementExpressionNameSpans(syntax)
+		}
+		normalized = normalizeQueryWithPresentation(source, protected)
+		if ctx.Err() != nil {
+			return ""
+		}
+		// Invalid syntax is not a reusable preparation outcome.
+		if err == nil {
+			resultStatementTexts.put(key, normalized)
+		}
 	}
-	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
+	return statementCacheKey(normalized, params)
 }
 
 // =============================================================================

@@ -44,6 +44,9 @@ type BatchWriter struct {
 	pending []pendingEntry // Operations without sequence numbers
 	mu      sync.Mutex
 	txID    string
+	// bytes is the encoded payload size of the pending entries, so a caller
+	// that must bound its own pending data can see it without encoding twice.
+	bytes int
 }
 
 // pendingEntry stores an operation before sequence number assignment.
@@ -52,6 +55,11 @@ type pendingEntry struct {
 	Data      []byte
 	Checksum  uint32
 	Timestamp time.Time
+	// Database is the exact namespace the entry is journaled under, stored as
+	// WALEntry.Database. Replay resolves an entry's entity through it, so a
+	// batched entry keeps its own database instead of taking one from the batch
+	// or from whichever entry the batch happens to hold first.
+	Database string
 }
 
 // NewBatch creates a new batch writer.
@@ -74,23 +82,24 @@ func (w *WAL) NewBatchWithTxID(txID string) *BatchWriter {
 
 // AppendNode adds a node operation to the batch.
 func (b *BatchWriter) AppendNode(op OperationType, node *Node) error {
-	return b.append(op, &WALNodeData{Node: node, TxID: b.txID})
+	return b.append(op, &WALNodeData{Node: node, TxID: b.txID}, "")
 }
 
 // AppendEdge adds an edge operation to the batch.
 func (b *BatchWriter) AppendEdge(op OperationType, edge *Edge) error {
-	return b.append(op, &WALEdgeData{Edge: edge, TxID: b.txID})
+	return b.append(op, &WALEdgeData{Edge: edge, TxID: b.txID}, "")
 }
 
 // AppendDelete adds a delete operation to the batch.
 func (b *BatchWriter) AppendDelete(op OperationType, id string) error {
-	return b.append(op, &WALDeleteData{ID: id, TxID: b.txID})
+	return b.append(op, &WALDeleteData{ID: id, TxID: b.txID}, "")
 }
 
-// append adds a generic operation to the batch.
+// append adds a generic operation to the batch under database, which is the
+// namespace this entry alone is journaled for.
 // NOTE: Sequence numbers are NOT assigned here - they are assigned at commit time.
 // This ensures proper ordering when mixing batch and non-batch operations.
-func (b *BatchWriter) append(op OperationType, data interface{}) error {
+func (b *BatchWriter) append(op OperationType, data interface{}, database string) error {
 	if !config.IsWALEnabled() {
 		return nil
 	}
@@ -109,9 +118,20 @@ func (b *BatchWriter) append(op OperationType, data interface{}) error {
 		Data:      dataBytes,
 		Checksum:  crc32Checksum(dataBytes),
 		Timestamp: time.Now(),
+		Database:  database,
 	}
 	b.pending = append(b.pending, entry)
+	b.bytes += len(dataBytes)
 	return nil
+}
+
+// pendingBytes returns the encoded payload size of the entries this batch has
+// not committed yet. A caller that bounds its own pending data commits when it
+// reaches its bound; one record larger than that bound alone still commits.
+func (b *BatchWriter) pendingBytes() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.bytes
 }
 
 // Commit writes all batched entries and syncs to disk.
@@ -153,8 +173,9 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 		}
 
 		// Number the entry NOW, at commit time, and serialize it into the v3
-		// raw-Data payload, which carries Data without base64.
-		entry, record, err := b.wal.encodeNextRecordLocked(entryBuf, pending.Operation, pending.Data, pending.Checksum, pending.Timestamp, "")
+		// raw-Data payload, which carries Data without base64. The entry keeps
+		// its own database, so replay resolves it exactly as a direct append's.
+		entry, record, err := b.wal.encodeNextRecordLocked(entryBuf, pending.Operation, pending.Data, pending.Checksum, pending.Timestamp, pending.Database)
 		seq := entry.Sequence
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
@@ -164,7 +185,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 		}
 		lastSeq = seq
 
-		if err := b.wal.appendRecordLocked(&entry, record, writeAtomicRecord); err != nil {
+		if err := b.wal.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
 	}
@@ -174,9 +195,16 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 		return 0, 0, fmt.Errorf("wal batch: sync failed: %w", err)
 	}
 
+	// Keep segment retirement with the journal's canonical owner. A bounded
+	// anchor batch must not bypass the rollover policy of ordinary appends.
+	if err := b.wal.maybeRotateLocked(lastSeq); err != nil {
+		return 0, 0, fmt.Errorf("wal batch: rotate failed: %w", err)
+	}
+
 	// Clear batch
 	clear(b.pending)
 	b.pending = b.pending[:0]
+	b.bytes = 0
 	return firstSeq, lastSeq, nil
 }
 
@@ -186,6 +214,7 @@ func (b *BatchWriter) Rollback() {
 	defer b.mu.Unlock()
 	clear(b.pending)
 	b.pending = b.pending[:0]
+	b.bytes = 0
 }
 
 // Len returns the number of pending entries.

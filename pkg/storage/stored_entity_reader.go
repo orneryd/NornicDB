@@ -364,7 +364,7 @@ func (n *NamespacedEngine) GetStoredNode(ctx context.Context, id NodeID) (*Node,
 
 // GetStoredEdge is GetEdge's stored read (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredEdge(ctx context.Context, id EdgeID) (*Edge, error) {
-	return materializedRead(func() (*Edge, error) { return GetStoredEdge(ctx, n.inner, n.PrefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
+	return materializedRead(func() (*Edge, error) { return GetStoredEdge(ctx, n.inner, n.PrefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value, nil) }, false)
 }
 
 // ReadStoredAdjacentEdges is ReadAdjacentEdges' stored read
@@ -399,7 +399,7 @@ func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType
 		if edge == nil || !n.hasEdgePrefix(edge.ID) {
 			return nil
 		}
-		return visit(n.toUserEdge(edge))
+		return visit(n.toUserEdge(edge, nil))
 	})
 }
 
@@ -422,7 +422,7 @@ func (n *NamespacedEngine) toUserEdgesInNamespace(ctx context.Context, edges []*
 		if !n.hasEdgePrefix(edge.ID) {
 			continue
 		}
-		out = append(out, n.toUserEdge(edge))
+		out = append(out, n.toUserEdge(edge, nil))
 	}
 	return out, nil
 }

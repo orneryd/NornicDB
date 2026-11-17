@@ -20,6 +20,7 @@ import (
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -1097,13 +1098,13 @@ func TestGh668_HTTPTemporalEntityProperties(t *testing.T) {
 
 func TestTransactionHTTPOrderedMapAndGraphState(t *testing.T) {
 	for _, testCase := range []struct {
-		value     transactionHTTPOrderedMap
+		value     valueconvert.OrderedJSONMap
 		want      string
 		wantError bool
 	}{
-		{transactionHTTPOrderedMap{}, `{}`, false},
-		{transactionHTTPOrderedMap{keys: []string{"node", "k"}, values: map[string]interface{}{"node": 1, "k": 2}}, `{"node":1,"k":2}`, false},
-		{transactionHTTPOrderedMap{keys: []string{"bad"}, values: map[string]interface{}{"bad": make(chan int)}}, "", true},
+		{valueconvert.OrderedJSONMap{}, `{}`, false},
+		{valueconvert.OrderedJSONMap{Keys: []string{"node", "k"}, Values: map[string]interface{}{"node": 1, "k": 2}}, `{"node":1,"k":2}`, false},
+		{valueconvert.OrderedJSONMap{Keys: []string{"bad"}, Values: map[string]interface{}{"bad": make(chan int)}}, "", true},
 	} {
 		encoded, err := testCase.value.MarshalJSON()
 		if testCase.wantError {

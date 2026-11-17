@@ -242,7 +242,7 @@ func TestStandardRecordsRefusals(t *testing.T) {
 	// second fails the batch without publishing its sequence, the third never runs.
 	batch := w.NewBatch()
 	for _, data := range []walEntityCommitData{small, large, small} {
-		require.NoError(t, batch.append(OpEntityCommit, data))
+		require.NoError(t, batch.append(OpEntityCommit, data, ""))
 	}
 	_, _, err = batch.CommitWithSeq()
 	require.EqualError(t, err, "wal batch: failed to serialize entry seq 3: "+standardRecordsFrameError)

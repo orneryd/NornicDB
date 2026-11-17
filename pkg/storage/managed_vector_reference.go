@@ -110,12 +110,24 @@ func (cache *walManagedAnchorCache) remember(identity, digest [sha256.Size]byte,
 // Callers cannot construct references to arbitrary storage state.
 type ManagedVectorReferences struct{ entries []managedVectorReference }
 
+// managedReferences journals a durable anchor for every image a transaction
+// omits and returns the references its record can carry instead of those
+// coordinates.
+//
+// The anchors of one call go through the anchor batch owner
+// (managedVectorAnchorBatch): prepared by the anchor's canonical preparation
+// owner, numbered, framed and written by the journal's batch writer in bounded
+// batches, and committed before this call returns. A reference is emitted only
+// for an image whose anchor this call left durable, so no record ever omits
+// coordinates the journal could not restore, and no proof of an anchor reaches
+// the journal's cache before the anchor itself is on disk.
 func (w *WAL) managedReferences(ctx context.Context, operations []Operation, admission func() error) (ManagedVectorReferences, error) {
 	var references ManagedVectorReferences
 	if !config.IsWALEnabled() {
 		return references, nil
 	}
 	checkedAdmission := false
+	anchors := w.newManagedVectorAnchorBatch()
 	for index := range operations {
 		operation := &operations[index]
 		if operation.Type != OpUpdateNode || !operation.nodeAnchorEligible || operation.Node == nil || operation.OldNode == nil || len(operation.Node.ChunkEmbeddings) == 0 {
@@ -123,10 +135,12 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation, adm
 		}
 		before, err := managedVectorFingerprint(ctx, operation.OldNode.ChunkEmbeddings)
 		if err != nil {
+			anchors.discard()
 			return ManagedVectorReferences{}, err
 		}
 		after, err := managedVectorFingerprint(ctx, operation.Node.ChunkEmbeddings)
 		if err != nil {
+			anchors.discard()
 			return ManagedVectorReferences{}, err
 		}
 		if before != after {
@@ -137,31 +151,25 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation, adm
 		// anchor is appended, through the existing native admission owner.
 		if !checkedAdmission {
 			if err := admission(); err != nil {
+				anchors.discard()
 				return ManagedVectorReferences{}, err
 			}
 			checkedAdmission = true
 		}
-		identity := sha256.Sum256([]byte(operation.Node.ID))
-		if err := w.lockAdmission(ctx); err != nil {
+		anchored, err := anchors.anchored(ctx, operation.OldNode, sha256.Sum256([]byte(operation.Node.ID)), before)
+		if err != nil {
+			anchors.discard()
 			return ManagedVectorReferences{}, err
 		}
-		anchored := w.managedVectorAnchors.contains(identity, before, w.managedVectorGeneration.Load())
-		w.mu.Unlock()
 		if !anchored {
-			sequence, err := w.appendManagedVectorAnchor(ctx, operation.OldNode)
-			if err != nil {
-				return ManagedVectorReferences{}, err
-			}
-			if sequence == 0 {
-				continue
-			}
-			if err := w.lockAdmission(ctx); err != nil {
-				return ManagedVectorReferences{}, err
-			}
-			w.managedVectorAnchors.remember(identity, before, w.managedVectorGeneration.Load())
-			w.mu.Unlock()
+			continue
 		}
 		references.entries = append(references.entries, managedVectorReference{Change: uint32(index), Digest: before})
+	}
+	// Every anchor an emitted reference relies on is durable before the
+	// reference leaves this owner.
+	if err := anchors.flush(ctx); err != nil {
+		return ManagedVectorReferences{}, err
 	}
 	return references, nil
 }

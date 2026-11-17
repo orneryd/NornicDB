@@ -225,3 +225,138 @@ func TestPublicationCoreFailedCommitRetiresReservedNotification(t *testing.T) {
 	require.Nil(t, b.notificationHead)
 	require.Zero(t, b.db.oracle.stage.pendingCount())
 }
+
+// appendNodePublicationKeys emits one entity key and a fact for every before/
+// after/label change of it. The stage orders all of them on the entity, so one
+// entity is one queue entry and one dependency.
+func TestPublicationCoreOrdersEntityFactsAsOneDependency(t *testing.T) {
+	id := NodeID("db:n")
+	old := &Node{ID: id, Labels: []string{"L", "M"}}
+	written := CopyNode(old)
+	keys, keyErr := appendNodePublicationKeys(t.Context(), nil, nil, id, old, written)
+	require.NoError(t, keyErr)
+	require.Equal(t, id, keys[0], "the entity key precedes its facts")
+	var facts int
+	for _, key := range keys {
+		if _, ok := key.(AffectedFact); ok {
+			facts++
+		}
+	}
+	require.GreaterOrEqual(t, facts, 4, "the fixture needs multiple before/after/label facts")
+	for _, tc := range []struct {
+		name  string
+		older []any
+	}{
+		{"entity key and its facts", keys},
+		{"facts only", keys[1:]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stage publicationStage
+			var observed []int
+			stage.register(10, &commitPublication{keys: tc.older, run: func() { observed = append(observed, 10) }})
+			stage.register(20, &commitPublication{keys: []any{id}, run: func() { observed = append(observed, 20) }})
+			require.Len(t, stage.byKey, 1, "every fact about one entity must share the entity's queue")
+			queue, exists := stage.byKey[id]
+			require.True(t, exists)
+			require.Equal(t, uint64(10), queue.first)
+			require.Equal(t, []uint64{20}, queue.rest)
+			stage.apply(20)
+			require.Equal(t, []int{10, 20}, observed)
+			require.Zero(t, stage.pendingCount())
+			require.Empty(t, stage.byKey)
+		})
+	}
+}
+
+// A commit can publish facts for an entity whose own ID key it does not carry:
+// a node delete publishes its cascaded edges as DeletedEdgeFacts. The stage
+// orders those facts on the entity they name, so an earlier fact-only producer
+// still orders before a later publication of that entity's own key.
+func TestPublicationCoreFactOnlyProducerOrdersWithEntityKey(t *testing.T) {
+	const (
+		node = NodeID("db:n")
+		edge = EdgeID("db:e")
+	)
+	for _, tc := range []struct {
+		name         string
+		older, newer []any
+	}{
+		{"node fact before node key", []any{AffectedFact{NodeID: node, Label: "L", Before: true}}, []any{node}},
+		{"edge fact before edge key", []any{AffectedFact{EdgeID: edge, StartNode: node, EndNode: "db:m", Type: "T", Deleted: true, Before: true}}, []any{edge}},
+		{"differently shaped facts of one entity", []any{AffectedFact{NodeID: node, Label: "L"}}, []any{AffectedFact{NodeID: node, Label: "M", Before: true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stage publicationStage
+			var observed []int
+			stage.register(20, &commitPublication{keys: tc.newer, run: func() { observed = append(observed, 20) }})
+			stage.register(10, &commitPublication{keys: tc.older, run: func() { observed = append(observed, 10) }})
+			require.Len(t, stage.byKey, 1)
+			stage.apply(20)
+			require.Equal(t, []int{10, 20}, observed)
+			require.Zero(t, stage.pendingCount())
+			require.Empty(t, stage.byKey)
+		})
+	}
+}
+
+// Facts of different entities stay independent: a held publication of one
+// entity's facts must not block another entity's publication.
+func TestPublicationCoreDisjointFactEntitiesDoNotWait(t *testing.T) {
+	held, other := NodeID("db:a"), NodeID("db:b")
+	var stage publicationStage
+	entered, release, heldDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var otherDone chan struct{}
+	var releaseOnce sync.Once
+	releaseHeld := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		releaseHeld()
+		awaitPublicationCore(t, heldDone, "held publication cleanup")
+		awaitPublicationCore(t, otherDone, "other publication cleanup")
+	})
+	stage.register(10, &commitPublication{keys: []any{
+		AffectedFact{NodeID: held, Label: "L", Before: true},
+		AffectedFact{NodeID: held, Deleted: true},
+	}, run: func() { close(entered); <-release }})
+	stage.register(20, &commitPublication{keys: []any{other, AffectedFact{NodeID: other, Label: "M", Before: true}}, run: func() {}})
+	go func() { stage.apply(10); close(heldDone) }()
+	if !awaitPublicationCore(t, entered, "held publication rendezvous") {
+		return
+	}
+	otherDone = make(chan struct{})
+	go func() { stage.apply(20); close(otherDone) }()
+	if !awaitPublicationCore(t, otherDone, "disjoint fact publication while the other entity is held") {
+		return
+	}
+	releaseHeld()
+	if !awaitPublicationCore(t, heldDone, "held publication") {
+		return
+	}
+	require.Zero(t, stage.pendingCount())
+}
+
+// The stage must not replace the facts the commit published: the cache
+// projections still visit the original AffectedFacts of pub.keys.
+func TestPublicationCoreKeepsFactKeysForVisitors(t *testing.T) {
+	fact := AffectedFact{EdgeID: "db:e", StartNode: "db:a", EndNode: "db:b", Type: "T", Deleted: true, Before: true}
+	published := []any{
+		NodeID("db:n"),
+		AffectedFact{NodeID: "db:n", Label: "L", Before: true},
+		EdgeID("db:e"),
+		fact,
+	}
+	var want []AffectedFact
+	publicationKeys(published).VisitAffectedFacts(func(visited AffectedFact) { want = append(want, visited) })
+	// Entity IDs and facts both visit as facts: the visitors keep both.
+	require.Len(t, want, 4)
+	require.Equal(t, fact, want[3])
+	pub := &commitPublication{keys: published, run: func() {}}
+	var stage publicationStage
+	stage.register(10, pub)
+	stage.apply(10)
+	require.Equal(t, published, pub.keys, "the stage must not rewrite the published keys")
+	var got []AffectedFact
+	publicationKeys(pub.keys).VisitAffectedFacts(func(visited AffectedFact) { got = append(got, visited) })
+	require.Equal(t, want, got, "cache projections must still see the original facts")
+	require.Zero(t, stage.pendingCount())
+	require.Empty(t, stage.byKey)
+}

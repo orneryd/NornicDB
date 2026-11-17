@@ -155,7 +155,10 @@ func (n *rowEndpointPropertyNode) eval(ctx context.Context, e *StorageExecutor, 
 	if err != nil {
 		return nil, false, err
 	}
-	value, ok := evaluateRowPropertyChain(node, n.property, e, false)
+	value, ok, err := evaluateRowPropertyChain(ctx, node, n.property, e, false, deletedEntityPropertyValue)
+	if err != nil {
+		return nil, false, err
+	}
 	if ok && cache != nil {
 		cache.keep(key, value)
 	}

@@ -33,6 +33,11 @@ import (
 // whose updates commute need no key: counts, label, edge-type and adjacency
 // cache invalidations, pending-embedding candidates.
 //
+// The stage orders an affected fact on the entity it names: every before/
+// after/label fact about one node or edge is one dependency, and a fact that
+// names no entity keeps its own key. The commit keeps the facts themselves,
+// because the cache projections still visit pub.keys.
+//
 // A publication updates in-memory structures and may read immutable commit-
 // version images for accounting. It never commits or takes managed admission,
 // so the stage never waits on itself
@@ -76,6 +81,23 @@ type publicationStage struct {
 	byKey   map[any]publicationKeyQueue // the pending timestamps of each key
 }
 
+// publicationDependencyKey orders all facts about one entity together while
+// preserving the original facts for cache projection. Entity-free facts and
+// other key types retain their original dependencies.
+func publicationDependencyKey(key any) any {
+	fact, ok := key.(AffectedFact)
+	if !ok {
+		return key
+	}
+	if fact.NodeID != "" {
+		return fact.NodeID
+	}
+	if fact.EdgeID != "" {
+		return fact.EdgeID
+	}
+	return fact
+}
+
 // register adds the publication of the commit written at ts. The committer
 // registers it after its write and before ts is finished, so every
 // publication of a lower timestamp is registered once ts is published.
@@ -92,11 +114,13 @@ func (s *publicationStage) register(ts uint64, pub *commitPublication) {
 		s.changed.L = &s.mu
 	}
 	s.pending[ts] = &stagedPublication{ts: ts, keys: pub.keys, run: pub.run}
-	for _, key := range pub.keys {
+	for _, rawKey := range pub.keys {
+		key := publicationDependencyKey(rawKey)
 		queue, exists := s.byKey[key]
 		// Registration holds mu for the entire commit, so another occurrence
 		// of its timestamp is either first or the last appended timestamp.
-		// Entity operations and embedding hints may name the same key.
+		// Entity operations, embedding hints and affected facts may name the
+		// same key.
 		if exists && (queue.first == ts || (len(queue.rest) > 0 && queue.rest[len(queue.rest)-1] == ts)) {
 			continue
 		}
@@ -159,8 +183,8 @@ func (s *publicationStage) runnableLocked(p *stagedPublication) *stagedPublicati
 
 func (s *publicationStage) earliestDependencyLocked(p *stagedPublication) *stagedPublication {
 	var earliest *stagedPublication
-	for _, key := range p.keys {
-		queue := s.byKey[key]
+	for _, rawKey := range p.keys {
+		queue := s.byKey[publicationDependencyKey(rawKey)]
 		if queue.first < p.ts && (earliest == nil || queue.first < earliest.ts) {
 			earliest = s.pending[queue.first]
 		}
@@ -188,7 +212,8 @@ func (s *publicationStage) runLocked(p *stagedPublication) {
 
 func (s *publicationStage) retireLocked(p *stagedPublication) {
 	delete(s.pending, p.ts)
-	for _, key := range p.keys {
+	for _, rawKey := range p.keys {
+		key := publicationDependencyKey(rawKey)
 		queue, exists := s.byKey[key]
 		if !exists {
 			continue // a repeated dependency was already retired

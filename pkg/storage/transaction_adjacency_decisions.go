@@ -69,12 +69,7 @@ func (tx *BadgerTransaction) observeEmptyAdjacencyLocked(ctx context.Context, re
 		request.Types = slices.Clone(request.Types)
 	}
 	request.Headers = true
-	if len(tx.entityLocks.absent) == cap(tx.entityLocks.absent) {
-		grown := make([]AdjacentEdgeRead, len(tx.entityLocks.absent), max(1, 2*len(tx.entityLocks.absent)))
-		copy(grown, tx.entityLocks.absent)
-		tx.entityLocks.absent = grown
-	}
-	tx.entityLocks.absent = append(tx.entityLocks.absent, request)
+	tx.entityLocks.absent = appendDoubled(tx.entityLocks.absent, request)
 	if tx.entityLocks.absenceIndex != nil {
 		at := len(tx.entityLocks.absent) - 1
 		if collision {

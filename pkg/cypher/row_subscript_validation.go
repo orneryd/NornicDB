@@ -234,6 +234,16 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		if isCypherStringQuoteByte(expression[end]) {
 			return quotedStart
 		}
+		// A quoted name is one postfix step of its own (m.`a b`[0]): its extent
+		// is the whole token, so the receiver starts at its opening quote and
+		// the walk below continues through the qualification that name ends.
+		if quotedStart >= 0 && isCypherBacktickByte(expression[quotedStart]) {
+			before, _ := expressionPredecessor(expression, quotedStart)
+			if before >= 0 && isPropertyDotAt(expression, before) {
+				return rowSubscriptReceiverStart(expression, before)
+			}
+			return quotedStart
+		}
 		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
 			start--
 		}

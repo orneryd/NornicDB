@@ -162,9 +162,8 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 		if !bound {
 			return nil, false, nil
 		}
-		value, supported := evaluateRowPropertyChain(receiver, chain, e, false)
-		var err error
-		if !supported {
+		value, supported, err := evaluateRowPropertyChain(ctx, receiver, chain, e, false, deletedEntityPropertyValue)
+		if err == nil && !supported {
 			err = rowPropertyChainTypeError(e.queryVisibleValue(receiver), chain)
 		}
 		return runtimeRowResult(value, supported, err)

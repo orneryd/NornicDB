@@ -127,5 +127,5 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 		p.unknown = true
 		return
 	}
-	p.facts = append(p.facts, fact)
+	p.facts = appendDoubled(p.facts, fact)
 }

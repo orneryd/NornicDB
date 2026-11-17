@@ -89,7 +89,7 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 	}
 
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
-		return engine.materializeMVCCCommit(t.Context(), singleBatchWriter(txn), version, opList)
+		return engine.materializeMVCCCommit(t.Context(), mvccCommitMaterialization{writer: singleBatchWriter(txn), version: version, frame: mustCommitFrame(t, opList)})
 	}))
 
 	head, err := engine.GetNodeCurrentHead(context.Background(), "tenant:u")

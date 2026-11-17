@@ -133,6 +133,20 @@ Multi-connection servers reject `BEGIN` for a shared raw executor. With a plain
 compatibility, but each `RUN` is auto-committed and a later `ROLLBACK` cannot
 undo it.
 
+### Requested access mode
+
+Neo4j drivers send `mode: "r"` for read requests and `mode: "w"` for write
+requests. A read-mode `BEGIN` restricts every statement until the transaction
+ends; a read-mode auto-commit `RUN` restricts only that request. A `RUN` can
+narrow a write transaction to reads, but cannot widen a read transaction.
+
+Updating data or schema in read mode returns
+`Neo.ClientError.Statement.AccessMode` before the update executes. Dynamically
+executed statements inherit the restriction: a nested read is allowed and a
+nested write is refused. `EXPLAIN` remains allowed because it executes no
+update. Requested write mode never grants privileges or overrides a read-only
+database. After a statement failure, the connection requires `RESET`.
+
 ### Explicit transaction lifetime
 
 `BEGIN` accepts Neo4j's `tx_timeout` metadata field as a signed PackStream

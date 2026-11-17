@@ -86,3 +86,56 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectNodeWritesDrainOnlyChangedLabelIncidence(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after []string
+		drained       bool
+	}{
+		{"properties only", []string{"B"}, []string{"B"}, false},
+		{"label order only", []string{"B", "D"}, []string{"D", "B"}, false},
+		{"changed label", []string{"B"}, []string{"C"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newWriteBehindTestEngine(t, time.Hour)
+			ctx := t.Context()
+			_, err := b.CreateNode(ctx, &Node{ID: "test:start", Labels: []string{"A"}})
+			require.NoError(t, err)
+			_, err = b.CreateNode(ctx, &Node{ID: "test:end", Labels: tc.before})
+			require.NoError(t, err)
+			buffered, err := implicitWrite(b, func(tx *BadgerTransaction) error {
+				return tx.CreateEdge(ctx, &Edge{ID: "test:pending", StartNode: "test:start", EndNode: "test:end", Type: "LINK"})
+			})
+			require.NoError(t, err)
+			require.True(t, buffered)
+			require.Positive(t, b.writeBehind.PendingOps(), "the relationship is acknowledged but unapplied")
+			node, err := b.GetNode(ctx, "test:end")
+			require.NoError(t, err)
+			node.Labels = tc.after
+			node.Properties = map[string]interface{}{"changed": true}
+			require.NoError(t, b.UpdateNode(ctx, NodeUpdateRequest{After: node}))
+			if tc.drained {
+				require.Zero(t, b.writeBehind.PendingOps(), "a physical relabel follows the incidence's acknowledgement")
+			} else {
+				require.Positive(t, b.writeBehind.PendingOps(), "a property write must not force an adjacency drain")
+			}
+			require.NoError(t, b.FlushWriteBehind(ctx))
+			for _, label := range []string{"B", "C", "D"} {
+				var want int64
+				for _, current := range tc.after {
+					if current == label {
+						want = 1
+					}
+				}
+				got, err := b.EdgeCountByEndLabelInNamespace(ctx, "test", label, "LINK")
+				require.NoError(t, err)
+				require.Equal(t, want, got, label)
+			}
+			stored, err := b.GetNode(ctx, "test:end")
+			require.NoError(t, err)
+			require.Equal(t, tc.after, stored.Labels)
+			require.Equal(t, true, stored.Properties["changed"])
+		})
+	}
+}

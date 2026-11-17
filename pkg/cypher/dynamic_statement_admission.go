@@ -13,11 +13,14 @@ func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, state
 		return err
 	}
 	state := e.resolvedStatementModeOf(ctx)
-	if state == nil {
+	if state == nil && ctx.Value(readOnlyStatementsKey{}) == nil {
 		return nil
 	}
 	contract, err := readStatementExecutionContract(ctx, statement)
 	if err != nil {
+		return err
+	}
+	if err := readStatementAccessError(ctx, contract); err != nil {
 		return err
 	}
 	if !contract.writes {

@@ -251,8 +251,8 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "hold released before the write", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"\t\tdefer order.release()\n\t}\n\tvar publicationOps []Operation\n\tschema := b.schemaForNodeID(id)",
-			"\t\torder.release()\n\t}\n\tvar publicationOps []Operation\n\tschema := b.schemaForNodeID(id)"}},
+		edits: [][2]string{{"\t\tdefer order.release()\n\t}\n\tvar publicationFrame commitFrame\n\tschema := b.schemaForNodeID(id)",
+			"\t\torder.release()\n\t}\n\tvar publicationFrame commitFrame\n\tschema := b.schemaForNodeID(id)"}},
 		entry: "pkg/storage.BadgerEngine.DeleteNode", want: []string{"unordered write:", ""},
 	},
 	{

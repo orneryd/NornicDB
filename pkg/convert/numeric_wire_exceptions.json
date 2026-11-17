@@ -257,11 +257,11 @@
   },
   "pkg/heimdall/generator_openai.go:openAIGenerator.completeChat": {
     "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
-    "sha256": "7b89da79adb02d30e2d9d0397e02fb09b17ab76846da96bd7106819d8867e9e8"
+    "sha256": "5cc2c662f78e2b2827541bb68263b6abecfc935e8d0155c16d9c3746484527a8"
   },
   "pkg/heimdall/generator_openai.go:openAIGenerator.GenerateStream": {
     "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",
-    "sha256": "427a00bef85bb2e9aeb85aeea8de7a07c808fa718c8f1eaab22dd7a344dd447a"
+    "sha256": "8cbaf2bb876a574dbcdf73ff0bdb4fa23279e808c0e86bd8c6173493fceef85b"
   },
   "pkg/heimdall/generator_openai.go:requestProviderChat": {
     "reason": "Typed model protocol; generated tool arguments are opaque strings and separately decoded through CypherInputJSON.",

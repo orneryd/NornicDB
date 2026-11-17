@@ -1394,7 +1394,7 @@ func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testi
 func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 	memory := NewNamespacedEngine(newTestMemoryEngine(t), "tenant_a")
 	assert.Nil(t, memory.toUserNode(nil, nodeUserView{}))
-	assert.Nil(t, memory.toUserEdge(nil))
+	assert.Nil(t, memory.toUserEdge(nil, nil))
 
 	shallowNode := memory.toUserNode(&Node{ID: "tenant_a:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}}, nodeUserView{})
 	require.NotNil(t, shallowNode)
@@ -1405,7 +1405,7 @@ func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 		StartNode: "tenant_a:n1",
 		EndNode:   "tenant_a:n2",
 		Type:      "KNOWS",
-	})
+	}, nil)
 	require.NotNil(t, shallow)
 	assert.Equal(t, EdgeID("e1"), shallow.ID)
 	assert.Equal(t, NodeID("n1"), shallow.StartNode)
@@ -1417,7 +1417,7 @@ func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 		StartNode: "tenant_a:n3",
 		EndNode:   "tenant_a:n4",
 		Type:      "KNOWS",
-	})
+	}, nil)
 	require.NotNil(t, deep)
 	assert.Equal(t, EdgeID("e2"), deep.ID)
 	assert.Equal(t, NodeID("n3"), deep.StartNode)
@@ -1439,11 +1439,11 @@ func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
 
 	// IDs that don't match the namespace should be returned as-is
 	assert.Equal(t, NodeID("otherdb:n1"), ns.toUserNode(&Node{ID: "otherdb:n1"}, nodeUserView{}).ID)
-	assert.Equal(t, EdgeID("otherdb:e1"), ns.toUserEdge(&Edge{ID: "otherdb:e1"}).ID)
+	assert.Equal(t, EdgeID("otherdb:e1"), ns.toUserEdge(&Edge{ID: "otherdb:e1"}, nil).ID)
 
 	// IDs that match should be stripped
 	assert.Equal(t, NodeID("n1"), ns.toUserNode(&Node{ID: "mydb:n1"}, nodeUserView{}).ID)
-	assert.Equal(t, EdgeID("e1"), ns.toUserEdge(&Edge{ID: "mydb:e1"}).ID)
+	assert.Equal(t, EdgeID("e1"), ns.toUserEdge(&Edge{ID: "mydb:e1"}, nil).ID)
 }
 
 func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {

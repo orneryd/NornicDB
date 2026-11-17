@@ -142,19 +142,24 @@ func BenchmarkNOR307QueryResultCache(b *testing.B) {
 					cache.putWithLabelsAndTrace(key, result, time.Hour, labels, HotPathTrace{})
 				}
 			})
-			b.Run("smart-query-cache/hit", func(b *testing.B) {
-				cache := NewSmartQueryCache(nor307BenchmarkRowCount)
-				cache.putWithLabelsAndTrace(key, result, time.Hour, labels, HotPathTrace{})
-				b.ReportAllocs()
-				b.ResetTimer()
-				for b.Loop() {
-					got, trace, entities, found := cache.getWithTraceForEmbedding(key, 0)
-					if !found {
-						b.Fatal("cached result missing")
+			for _, delivery := range []struct {
+				name string
+				mode resultDelivery
+			}{{"hit", ownedDelivery}, {"transport-hit", transportDelivery}} {
+				b.Run("smart-query-cache/"+delivery.name, func(b *testing.B) {
+					cache := NewSmartQueryCache(nor307BenchmarkRowCount)
+					cache.putWithLabelsAndTrace(key, result, time.Hour, labels, HotPathTrace{})
+					b.ReportAllocs()
+					b.ResetTimer()
+					for b.Loop() {
+						got, trace, entities, found := cache.getWithTraceForEmbedding(key, 0, delivery.mode)
+						if !found {
+							b.Fatal("cached result missing")
+						}
+						nor307BenchmarkSink, nor307BenchmarkTraceSink, nor307BenchmarkEntityFound = got, trace, entities
 					}
-					nor307BenchmarkSink, nor307BenchmarkTraceSink, nor307BenchmarkEntityFound = got, trace, entities
-				}
-			})
+				})
+			}
 		})
 	}
 }

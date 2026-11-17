@@ -440,6 +440,15 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	cw.entityOperations, cw.entityLogicalID, cw.entityMode = physicalOperations, logicalID, tx.commitMode
 	cw.entityCapture = tx.capture
 	engine, namespace := tx.engine, tx.namespace
+	// The commit's logical frame — the operations it reports — is prepared once
+	// here, before the physical materialization that writes the commit and
+	// before the publish closure that hands those operations to publication.
+	// Both consumers read that one fold instead of folding the operations
+	// again.
+	logicalFrame, err := prepareCommitFrame(ctx, operations)
+	if err != nil {
+		return tx.abortCommitLocked(fmt.Errorf("preparing commit publication frame: %w", err))
+	}
 	if len(operations) > 0 || tx.knowledgeSchemaDirty {
 		schema := engine.GetSchemaForNamespace(namespace)
 		// The constraint metadata is captured before the physical commit
@@ -466,7 +475,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 		cw.publish = func(images *commitCacheImages) {
 			knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
-			engine.publishCommitOperations(namespace, schema, operations, true, true, images)
+			engine.publishCommitOperations(namespace, schema, logicalFrame, true, true, images)
 			releaseEntityAuthority()
 			for _, release := range mergeReleases {
 				release()
@@ -495,7 +504,15 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		schemaPublication = lease
 	}
 	if hasWrites {
-		if err := tx.engine.materializeMVCCCommit(ctx, &cw.batchWriter, version, physicalOperations); err != nil {
+		// The commit materializes the frame it writes: the logical frame it
+		// prepared once, unless a cancelled relationship write left the physical
+		// operations without operations the logical ones name.
+		physicalFrame, err := tx.physicalCommitFrame(ctx, logicalFrame, physicalOperations)
+		if err != nil {
+			return tx.abortCommitLocked(fmt.Errorf("preparing mvcc commit state: %w", err))
+		}
+		materialization := mvccCommitMaterialization{writer: &cw.batchWriter, version: version, frame: physicalFrame}
+		if err := tx.engine.materializeMVCCCommit(ctx, materialization); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
 		}
 		if err := tx.writeChangeEventsLocked(ctx, &cw.batchWriter, physicalOperations, version.CommitTimestamp); err != nil {

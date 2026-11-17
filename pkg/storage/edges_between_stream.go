@@ -5,7 +5,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -57,24 +56,13 @@ func MatchEdgesBetween(ctx context.Context, engine Engine, startID, endID NodeID
 	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
 		return matcher.MatchEdgesBetween(ctx, startID, endID, edgeType, properties, match, policy)
 	}
-	// These decorators preserve the logical read view. A namespace is a
-	// boundary, not a transparent unwrap: translate IDs on both sides and
-	// never expose another namespace to the predicate.
+	// The tracing decorator retains its operation span around capability dispatch.
 	switch wrapped := engine.(type) {
 	case *TracedEngine:
 		span := wrapped.startOperation("nornicdb.storage.MatchEdgesBetween", "edge")
 		defer span.End()
 		return MatchEdgesBetween(ctx, wrapped.Engine, startID, endID, edgeType, properties, match, policy)
-	case *WALEngine:
-		return MatchEdgesBetween(ctx, wrapped.engine, startID, endID, edgeType, properties, match, policy)
-	case *NamespacedEngine:
-		edges, err := MatchEdgesBetween(ctx, wrapped.inner, wrapped.PrefixNodeID(startID), wrapped.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
-			return edge != nil && wrapped.hasEdgePrefix(edge.ID) && match(wrapped.toUserEdge(edge))
-		}, policy)
-		if err != nil {
-			return nil, err
-		}
-		return wrapped.toUserEdgesInNamespace(ctx, edges, true, true)
+
 	}
 	edges, err := engine.ReadAdjacentEdges(ctx, AdjacentEdgeRead{Direction: AdjacentBetween, Node: startID, Other: endID})
 	if err != nil {
@@ -364,21 +352,20 @@ func (n *NamespacedEngine) MatchEdgesBetween(ctx context.Context, startID, endID
 	if err := validateEdgeMatchRead(ctx, match, policy); err != nil {
 		return nil, err
 	}
+	// The predicate sees the canonical user projection the returned edges use,
+	// written into one reused destination so no candidate allocates a view.
 	var candidate Edge
 	edges, err := MatchEdgesBetween(ctx, n.inner, n.PrefixNodeID(startID), n.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
 		if !n.hasEdgePrefix(edge.ID) {
 			return false
 		}
-		candidate = *edge
-		candidate.ID = EdgeID(strings.TrimPrefix(string(edge.ID), n.scope))
-		candidate.StartNode, candidate.EndNode = startID, endID
-		return match(&candidate)
+		return match(n.toUserEdge(edge, &candidate))
 	}, policy)
 	if err != nil {
 		return nil, err
 	}
 	for i, edge := range edges {
-		edges[i] = n.toUserEdge(edge)
+		edges[i] = n.toUserEdge(edge, nil)
 	}
 	return edges, nil
 }

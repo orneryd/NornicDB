@@ -154,12 +154,10 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []labelChainItem{{name: "A"}, {expression: "x"}, {name: "B"}}, items2)
 
-	// Readers of the new item forms.
-	readText := deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n[m.k] = m.v, n:$(m.l), n:Fixed"})
-	require.Contains(t, readText, "m.k")
-	require.Contains(t, readText, "m.v")
-	require.Contains(t, readText, "$(m.l)")
-	require.NotContains(t, readText, "Fixed")
+	// Readers of the new item forms: the dynamic key, value and label
+	// expressions are read, the fixed target and label are writes (a deleted
+	// entity's read of them is asserted by
+	// TestDeletedEntityReadsReachClauseValuesAndIterations).
 	var reads, writes stretchTokens
 	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(m.l):A, n[m.k], n.p"}, &reads, &writes)
 	require.True(t, writes.anyNode)

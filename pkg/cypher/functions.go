@@ -142,7 +142,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
 	}
 	if open := rowSubscriptStart(expr); open > 0 {
-		value, _, err := e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+		value, _, err := e.evaluateCypherSubscript(ctx, expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
 			value := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return value, true, getExpressionFailure(ctx)
 		})

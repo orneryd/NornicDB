@@ -155,11 +155,16 @@ func (l *readPipelineListener) EnterForSt(ctx *ForStContext) {
 
 func TestANTLRPreambleAcceptedDirectly(t *testing.T) {
 	for _, query := range []string{
+		"RETURN 1",
+		"EXPLAIN RETURN 1",
+		"PROFILE RETURN 1",
 		"CYPHER 5 RETURN 1",
 		"CYPHER 25 RETURN 1",
 		"CYPHER 25 runtime=slotted RETURN 1",
 		"CYPHER 5.0 RETURN 1",
 		"EXPLAIN CYPHER 25 RETURN 1",
+		"CYPHER 25 PROFILE RETURN 1",
+		"CYPHER 5 CYPHER 25 RETURN 1",
 		"CYPHER RETURN 1",
 	} {
 		if err := Validate(query); err != nil {

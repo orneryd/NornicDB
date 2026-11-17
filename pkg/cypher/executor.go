@@ -2113,33 +2113,34 @@ func statementReadsGraphText(ctx context.Context, cypher string) bool {
 	return expressionReadsGraphText(ctx, cypher)
 }
 
-// statementParametersError is Neo4j's ParameterMissing for a statement that
-// references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
-// Neo4j reports it after the statement compiles, so a statement that is also
-// a syntax or semantic error reports that error (Execute calls this after
-// validateSyntax and validateStatementTypes; the Fabric route after it plans
-// the statement). EXPLAIN runs nothing and needs no
-// values; in a procedure definition, $name is the procedure's argument.
-// Parameter names are reported as the statement wrote them (#734).
+// statementParametersError admits this request's parameter bindings after the
+// statement compiles, on local, internal and Fabric entry points. Missing
+// values are ParameterMissing; supplied dynamic-token values are type-checked
+// before any row or participant executes. EXPLAIN needs no missing values,
+// but rejects supplied values of the wrong type. Procedure arguments belong
+// to their later invocation rather than the definition.
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfile(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
+	if strings.IndexByte(cypher, '$') < 0 || isCreateProcedureCommand(cypher) {
 		return nil
 	}
 	shellParams := e.mergeShellParams(ctx, params)
-	inherited := getParamsFromContext(ctx)
-	missing := statementMissingParameters(cypher, func(name string) bool {
-		if _, ok := shellParams[name]; ok {
-			return true
+	mode, _ := parseExecutionMode(cypher)
+	if mode != ModeExplain {
+		inherited := getParamsFromContext(ctx)
+		missing := statementMissingParameters(cypher, func(name string) bool {
+			if _, ok := shellParams[name]; ok {
+				return true
+			}
+			_, ok := inherited[name]
+			return ok
+		})
+		if len(missing) > 0 {
+			names := quotedVariableNamesFor(ctx, cypher)
+			for i, name := range missing {
+				missing[i] = names.parameterName(name)
+			}
+			return parameterMissingError(missing)
 		}
-		_, ok := inherited[name]
-		return ok
-	})
-	if len(missing) == 0 {
-		return nil
 	}
-	names := quotedVariableNamesFor(ctx, cypher)
-	for i, name := range missing {
-		missing[i] = names.parameterName(name)
-	}
-	return parameterMissingError(missing)
+	return validateWriteTokenParameters(ctx, cypher, shellParams)
 }

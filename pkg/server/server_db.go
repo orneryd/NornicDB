@@ -17,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/internal/localizationboundary"
+	"github.com/orneryd/nornicdb/internal/transportread"
 
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -1152,7 +1153,7 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 			metadata = append(metadata, nested...)
 		}
 		if ordered {
-			return transactionHTTPOrderedMap{keys: keys, values: result}, metadata, nil
+			return valueconvert.OrderedJSONMap{Keys: keys, Values: result}, metadata, nil
 		}
 		return result, metadata, nil
 	default:
@@ -1397,7 +1398,10 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
 			}}
 		}
-		result, err := executor.Execute(cypher.WithClientStatement(ctx), query, params)
+		// The result is projected into this request's response and discarded:
+		// the claim lets the executor hand a certified cached result over instead
+		// of copying it. The projection reads the rows and builds new values.
+		result, err := executor.Execute(transportread.Claim(cypher.WithClientStatement(ctx)), query, params)
 		return result, executor, err
 	}
 }

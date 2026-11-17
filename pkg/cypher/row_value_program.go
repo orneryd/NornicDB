@@ -482,10 +482,11 @@ func (c *rowValueCompiler) compileValue(ctx context.Context, part expressionFrag
 			if c.origins {
 				return c.textValue(part)
 			}
+			property := compileNullTestProperty(ctx, operand)
 			operand, info := c.compile(ctx, expressionPart(operand))
 			parts, infos := []rowValueNode{operand}, []rowValueInfo{info}
 			c.compose(info, parts, infos)
-			return bound(expr, &rowNullTestNode{operand: parts[0], notNull: predicate.notNull}, info)
+			return bound(expr, &rowNullTestNode{operand: parts[0], notNull: predicate.notNull, property: property}, info)
 		}
 	}
 	for _, membership := range []struct {
@@ -941,7 +942,7 @@ func (n *rowPropertyChainNode) eval(ctx context.Context, e *StorageExecutor, val
 	if !bound {
 		return e.evaluateRowValueText(ctx, n.text, values)
 	}
-	return evaluateRowPropertyResult(base, n.chain, e)
+	return evaluateRowPropertyResult(ctx, base, n.chain, e, deletedEntityPropertyValue)
 }
 
 // rowFallbackNode is an expression no form of the row evaluator matches:
@@ -1001,10 +1002,23 @@ func (n *rowComparisonNode) eval(ctx context.Context, e *StorageExecutor, values
 type rowNullTestNode struct {
 	operand rowValueNode
 	notNull bool
+	// property is the operand's own property read when the operand is exactly
+	// one on the value it receives (n.p, (n).p, n['p']), and nil for a computed
+	// or nested operand (n.p + 1, head([n.p]), m.entity.p). A null test asks
+	// whether that property is present, and Neo4j answers a deleted entity's
+	// without loading it, so only this one read may be absent (#907).
+	property *rowNullTestProperty
 }
 
 func (n *rowNullTestNode) eval(ctx context.Context, e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	value, ok, err := n.operand.eval(ctx, e, values, frames)
+	var value interface{}
+	var ok bool
+	var err error
+	if n.property != nil {
+		value, ok, err = n.property.evaluate(ctx, e, values, frames)
+	} else {
+		value, ok, err = n.operand.eval(ctx, e, values, frames)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -1012,6 +1026,38 @@ func (n *rowNullTestNode) eval(ctx context.Context, e *StorageExecutor, values m
 		return nil, false, nil
 	}
 	return nullEvaluationHandler(n.notNull).evaluate(value), true, nil
+}
+
+// rowNullTestProperty is the one property read a null test's operand is: the
+// value it reads from, compiled as its own part, and the property it reads
+// from that value. A deleted entity's property is absent rather than
+// unreadable, and Neo4j answers the test without loading the entity, so this
+// read answers null instead of the statement error (#907).
+type rowNullTestProperty struct {
+	receiver rowValueNode
+	property string
+}
+
+func (p *rowNullTestProperty) evaluate(ctx context.Context, e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+	base, ok, err := p.receiver.eval(ctx, e, values, frames)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return evaluateRowPropertyResult(ctx, base, p.property, e, deletedEntityPropertyPresence)
+}
+
+// compileNullTestProperty records the property read operand is, when the
+// operand is exactly one (nullTestPropertyOperand): the value it reads,
+// compiled as its own part, and the property name. Every other operand keeps
+// nil, so nothing it reads is allowed the null test's read (#907).
+func compileNullTestProperty(ctx context.Context, operand string) *rowNullTestProperty {
+	receiver, property, ok := nullTestPropertyOperand(operand)
+	if !ok {
+		return nil
+	}
+	compiler := rowValueCompiler{}
+	value, _ := compiler.compile(ctx, expressionPart(receiver))
+	return &rowNullTestProperty{receiver: value, property: property}
 }
 
 type rowMembershipNode struct {
@@ -1101,13 +1147,18 @@ func (n *rowPropertyNode) eval(ctx context.Context, e *StorageExecutor, values m
 	if !ok {
 		return e.evaluateRowFallback(ctx, n.text, values, rowFallbackValue)
 	}
-	return evaluateRowPropertyResult(base, n.chain, e)
+	return evaluateRowPropertyResult(ctx, base, n.chain, e, deletedEntityPropertyValue)
 }
 
 // evaluateRowPropertyResult owns the value/error contract after either a bound
 // variable or a computed expression has supplied the base of a property chain.
-func evaluateRowPropertyResult(base interface{}, chain string, e *StorageExecutor) (interface{}, bool, error) {
-	value, ok := evaluateRowPropertyChain(base, chain, e, false)
+// read is what the chain reads: the property value every read of it answers,
+// and the presence a null test's own operand asks about (#907).
+func evaluateRowPropertyResult(ctx context.Context, base interface{}, chain string, e *StorageExecutor, read deletedEntityReadKind) (interface{}, bool, error) {
+	value, ok, err := evaluateRowPropertyChain(ctx, base, chain, e, false, read)
+	if err != nil {
+		return nil, false, err
+	}
 	if !ok {
 		return nil, false, rowPropertyChainTypeError(base, chain)
 	}

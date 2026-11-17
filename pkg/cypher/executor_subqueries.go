@@ -732,20 +732,6 @@ func branchSyntaxImports(ctx context.Context, branch queryBodyBranch, outer func
 	return names, true, nil
 }
 
-// unscopedBranchLocals returns the outer variables (names) that one retained
-// branch of an unscoped CALL body declares itself (branchDeclaresVariable): the
-// branch doesn't receive their outer values through NornicDB's implicit
-// import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(ctx context.Context, branch queryBodyBranch, names []string) []string {
-	var locals []string
-	for _, name := range names {
-		if branchDeclaresVariable(ctx, branch, name) {
-			locals = append(locals, name)
-		}
-	}
-	return locals
-}
-
 // branchDeclaresVariable reports whether a retained branch of an unscoped CALL
 // body declares variable before it reads it: its first use is a node or
 // relationship variable of a MATCH, OPTIONAL MATCH, CREATE or MERGE pattern

@@ -211,7 +211,7 @@ func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereCl
 			params = getParamsFromContext(ctx)
 		}
 		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params}
-		predicate.membership.prepare(&plan.root, compiledRowScope{parameters: params})
+		predicate.membership.prepare(ctx, &plan.root, compiledRowScope{parameters: params})
 		return predicate
 	}
 	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {

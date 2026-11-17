@@ -225,9 +225,8 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	return out, consumed, ok
 }
 
-func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projections []returnProjection, row pipelineRow) ([]interface{}, bool) {
+func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projections []returnProjection, row pipelineRow, profiling bool) ([]interface{}, bool) {
 	values := make([]interface{}, len(projections))
-	profiling := profileRuntimeFromContext(ctx) != nil
 	for index, projection := range projections {
 		// A PROFILE statement binds the item's retained expression origin for
 		// this row; any other statement binds nothing and allocates nothing.

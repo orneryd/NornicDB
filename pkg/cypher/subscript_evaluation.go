@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -11,7 +12,7 @@ import (
 // evaluateCypherSubscript owns receiver/index evaluation order and subscript
 // value checks for row, compiled fallback and context evaluators. Even a null
 // receiver evaluates its index; an index error must not disappear into null.
-func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateCypherSubscript(ctx context.Context, baseExpression, subscript string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
 	base, ok, err := evaluate(baseExpression)
 	if err != nil {
 		return nil, false, err
@@ -40,6 +41,11 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		key, isString := indexValue.(string)
 		if !isString {
 			return nil, false, mapElementAccessByNonStringError(indexValue)
+		}
+		// n[key] reads the property n.key reads, and a deleted entity has no
+		// property to read (#907).
+		if err := deletedEntityReadFailure(ctx, base, deletedEntityPropertyValue); err != nil {
+			return nil, false, err
 		}
 		value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
 		return value, ok, nil

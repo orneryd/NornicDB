@@ -433,8 +433,11 @@ func (operand staticOperand) reversedOperand() staticOperand {
 // reads a type through it and decides through fits or excludes. Each call
 // types the expression in this scope only, so the same text in another
 // scope (a shadowing WITH, another UNION branch) is typed by that scope.
+// A scope that holds a request's parameter values types the parameters it
+// reads by them; a scope that holds none types them as unknown, which is
+// what keeps compilation independent of those values.
 func (scope staticTypeScope) operandOf(ctx context.Context, expression string) staticOperand {
-	operand, err := (staticOperatorChecker{scope: scope}).check(ctx, strings.TrimSpace(expression))
+	operand, err := (staticOperatorChecker{scope: scope, params: scope.params}).check(ctx, strings.TrimSpace(expression))
 	if err != nil {
 		return staticOperand{}
 	}

@@ -183,6 +183,11 @@ func (e *StorageExecutor) evaluateRowFunction(operationCtx context.Context, fact
 		if value == nil {
 			return nil, true, true, nil
 		}
+		// A deleted node's property set is empty; a deleted relationship's is
+		// gone (#907).
+		if err := deletedEntityReadFailure(operationCtx, value, deletedEntityPropertySet); err != nil {
+			return nil, true, false, err
+		}
 		switch entity := value.(type) {
 		case *storage.Node:
 			if entity == nil {
@@ -208,6 +213,11 @@ func (e *StorageExecutor) evaluateRowFunction(operationCtx context.Context, fact
 		}
 		if !resolved {
 			return nil, true, false, nil
+		}
+		// keys(r) reads a deleted relationship's property store; a deleted
+		// node's is the empty set (#907).
+		if err := deletedEntityReadFailure(operationCtx, value, deletedEntityPropertySet); err != nil {
+			return nil, true, false, err
 		}
 		switch entity := value.(type) {
 		case nil:
@@ -240,6 +250,10 @@ func (e *StorageExecutor) evaluateRowFunction(operationCtx context.Context, fact
 		}
 		if !resolved {
 			return nil, true, false, nil
+		}
+		// A deleted entity has no labels left to read (#907).
+		if err := deletedEntityReadFailure(operationCtx, value, deletedEntityLabels); err != nil {
+			return nil, true, false, err
 		}
 		result, err := cypherfn.Labels(value)
 		if err != nil {

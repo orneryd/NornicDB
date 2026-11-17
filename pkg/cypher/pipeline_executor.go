@@ -846,6 +846,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	if pipelineClausesMayDelete(clauses) {
 		ctx = contextslot.Ensure[deletedEntities](ctx)
+	} else {
+		// Every entity property read checks deletion state. Retain its current
+		// value here, including absence, instead of searching the request's
+		// whole context chain for every property of every row.
+		ctx = contextslot.Bind[deletedEntities](ctx)
 	}
 	// A statement's MERGEs learn which of their nodes it writes once, from
 	// all its clauses (a row-ordered stretch below sees only part of them);
@@ -952,11 +957,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source = nil
 			if !completed {
 				return pipelineDecline(ctx, wrote, clause.text)
-			}
-		}
-		if deleted := contextslot.Get[deletedEntities](ctx); !deleted.empty() {
-			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
-				return nil, true, err
 			}
 		}
 		switch clause.kind {

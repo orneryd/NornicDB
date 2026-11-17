@@ -322,13 +322,6 @@
       "property.NewEncoder": 1
     }
   },
-  "pkg/server/transaction_http_ordered_map.go:transactionHTTPOrderedMap.MarshalJSON": {
-    "write_domain": "property",
-    "contract": "External HTTP request values and persisted/native result values, classified separately by direction.",
-    "calls": {
-      "property.Marshal": 2
-    }
-  },
   "pkg/storage/badger_schema.go:BadgerEngine.loadPersistedSchemas": {
     "read_domain": "schema",
     "contract": "Engine startup and native restore read persisted schemas through the sole version-aware schema codec.",

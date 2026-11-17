@@ -63,7 +63,7 @@ func TestMaterializedRemotePathVisitsSourceEntities(t *testing.T) {
 	b := storage.RemoteEntityValue{"elementId": "b", "labels": []interface{}{}, "properties": map[string]interface{}{}}
 	r := storage.RemoteEntityValue{"elementId": "r", "type": "R", "startNodeElementId": "a", "endNodeElementId": "b", "properties": map[string]interface{}{}}
 	recorder := &recordingAccessRecorder{}
-	require.True(t, materializedValue(recorder, storage.RemotePathValue{a, r, b}))
+	require.True(t, materializedValue(recorder, storage.RemotePathValue{a, r, b}, &resultValuePath{}))
 	require.Equal(t, []string{"a", "r", "b"}, recorder.ids)
 }
 

@@ -90,7 +90,6 @@ func TestBranchDeclaresVariableReadsBindingTokens(t *testing.T) {
 	} {
 		require.Equal(t, testCase.declares, branchDeclaresVariable(t.Context(), testRetainedBranches(t, testCase.branch)[0], testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), testRetainedBranches(t, "UNWIND [1] AS /*bound*/ n RETURN n")[0], []string{"n", "k"}))
 }
 
 // The public path reaches the same readers: an unscoped body imports the names

@@ -66,6 +66,18 @@ func archiveMVCCBodyInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn kvWrit
 	return writeMVCCVersionInTxn[R, K](b, txn, id, body, false, atVersion, encode)
 }
 
+// mvccCommitMaterialization is one request to materialize a prepared commit
+// frame: the frame, the version it commits at, and the batch writer it writes
+// through. staged marks a write-behind generation, whose materialization heads
+// and archives against the previous staged head instead of the externally
+// published one.
+type mvccCommitMaterialization struct {
+	writer  *batchWriter
+	version MVCCVersion
+	frame   commitFrame
+	staged  bool
+}
+
 // materializeMVCCCommit writes MVCC head metadata for every committed
 // operation. Post-refactor invariant: primary keys (nodeKey/edgeKey) hold
 // the current head body; historical bodies live only at mvccVersionKey for
@@ -74,21 +86,21 @@ func archiveMVCCBodyInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn kvWrit
 // record on update/delete (gated on retentionRetainsHistory). No-op arcs
 // vanish when the engine runs head-only retention — the common case.
 //
-// Each entity's writes are one unit written through w, so a commit larger
-// than one Badger batch moves to the next batch between units (#703). A
-// node deletion's relationships are units of their own, so deleting a node
-// with any number of relationships fits. A unit repeated in a new batch
-// after it did not fit writes the same keys and values again.
-func (b *BadgerEngine) materializeMVCCCommit(ctx context.Context, w *batchWriter, version MVCCVersion, operations []Operation) error {
-	return b.materializeMVCCCommitWithHeads(ctx, w, version, operations, false)
-}
-
-func (b *BadgerEngine) materializeMVCCCommitWithHeads(ctx context.Context, w *batchWriter, version MVCCVersion, operations []Operation, staged bool) error {
+// It materializes one prepared frame: the frame's own folded states select
+// every entity's committed predecessor and final image, and its operations
+// order the units. It never folds the operations again; the frame's owner
+// prepared them once for every consumer of that same frame (its publication
+// included).
+//
+// Each entity's writes are one unit written through the request's writer, so
+// a commit larger than one Badger batch moves to the next batch between units
+// (#703). A node deletion's relationships are units of their own, so deleting
+// a node with any number of relationships fits. A unit repeated in a new
+// batch after it did not fit writes the same keys and values again.
+func (b *BadgerEngine) materializeMVCCCommit(ctx context.Context, request mvccCommitMaterialization) error {
+	w, version, frame, staged := request.writer, request.version, request.frame, request.staged
 	heads := commitMVCCHeads{b: b, staged: staged}
-	states, err := newCommitStates(ctx, operations)
-	if err != nil {
-		return err
-	}
+	states, operations := frame.states, frame.ops
 	// Bodies of edges created in this commit are already known. Reading their
 	// nonexistent committed body during a cascade opens a Badger history
 	// iterator per edge and repeatedly sorts the growing pending-write set.
@@ -416,7 +428,7 @@ type commitMVCCHeads struct {
 // operation op supersedes, when it supersedes one: the committed predecessor
 // (states) of an update or of a delete, as an update record or as a complete
 // record. The commit writer calls it for each operation's own record, with
-// the batch of the commit as to (materializeMVCCCommitWithHeads); commit
+// the batch of the commit as to (materializeMVCCCommit); commit
 // admission calls it before the journal with a writer that measures the
 // record (measureSupersededHistory, NOR-412). The relationships a node delete
 // removes are archived by separate calls to archiveEdge in both. txn reads

@@ -43,16 +43,16 @@ func TestMaterializedAccessUsesTypedIdentity(t *testing.T) {
 	for _, key := range []string{"_nodeId", "_edgeId"} {
 		t.Run(key, func(t *testing.T) {
 			ordinary := map[string]interface{}{key: "invented", "labels": []string{"L"}}
-			require.False(t, materializedValue(nil, ordinary))
+			require.False(t, materializedValue(nil, ordinary, &resultValuePath{}))
 			ordinary["nested"] = &storage.Node{ID: "actual"}
 			r := &recordingAccessRecorder{}
-			require.True(t, materializedValue(r, ordinary))
+			require.True(t, materializedValue(r, ordinary, &resultValuePath{}))
 			require.Equal(t, []string{"actual"}, r.ids)
 		})
 	}
 	remote := storage.RemoteEntityValue{"elementId": "remote", "labels": []string{"Doc"}, "properties": map[string]interface{}{}}
 	r := &recordingAccessRecorder{}
-	require.True(t, materializedValue(r, remote))
+	require.True(t, materializedValue(r, remote, &resultValuePath{}))
 	require.Equal(t, []string{"remote"}, r.ids)
 }
 
