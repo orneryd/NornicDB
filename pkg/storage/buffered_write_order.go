@@ -26,6 +26,13 @@ type writtenEntities struct {
 	deletedNodes []NodeID
 	edges        []EdgeID
 	relabelled   []NodeID
+	labelWrites  []nodeLabelWrite
+}
+
+// nodeLabelWrite supplies the labels a direct node write will install.
+type nodeLabelWrite struct {
+	id     NodeID
+	labels []string
 }
 
 func (e *writtenEntities) node(id NodeID) {
@@ -68,6 +75,9 @@ func (s *orderStripeSet) add(id string) {
 }
 
 func (s *orderStripeSet) entities(e writtenEntities) {
+	for _, write := range e.labelWrites {
+		s.add(string(write.id))
+	}
 	for _, ids := range [...][]NodeID{e.nodes, e.deletedNodes} {
 		for _, id := range ids {
 			s.add(string(id))
@@ -277,10 +287,24 @@ func (b *BadgerEngine) orderAfterBufferedCommits(ctx context.Context, h *orderHo
 		return false, nil
 	}
 	h.resources.stripes.entities(e)
-	h.resources.b, h.resources.e = b, e
+	h.resources.b = b
 	if err := w.order.lockContext(ctx, &h.resources.stripes, true); err != nil {
 		return false, err
 	}
+	// Compare labels under the same stripe that excludes new endpoint writes.
+	// Only a relabel needs pending adjacency drained before the physical count
+	// adjustment; property-only updates keep their existing buffered ordering.
+	for _, write := range e.labelWrites {
+		before, readErr := b.getNodeProjected(ctx, write.id, []string{}, storedRead)
+		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+			w.order.unlock(&h.resources.stripes, true)
+			return false, readErr
+		}
+		if readErr == nil && !sameLabelSet(before.Labels, write.labels) {
+			e.relabelled = append(e.relabelled, write.id)
+		}
+	}
+	h.resources.e = e
 	held, err := w.holdsEntities(ctx, e)
 	if err != nil {
 		w.order.unlock(&h.resources.stripes, true)

@@ -524,7 +524,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
 	var order orderHold
 	if b.writeBehind != nil {
-		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}})
+		_, orderErr := b.orderAfterBufferedCommits(write.ctx, &order, writtenEntities{nodes: []NodeID{node.ID}, labelWrites: []nodeLabelWrite{{id: node.ID, labels: node.Labels}}})
 		if orderErr != nil {
 			return orderErr
 		}
