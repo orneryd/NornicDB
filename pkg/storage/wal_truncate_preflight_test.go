@@ -187,8 +187,8 @@ func TestTruncateAfterSnapshotCountsRetainedEntriesOfStreamedSegments(t *testing
 		require.NoError(t, manifestErr)
 	}
 	cfg.MaxEntries = 0
-	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 3}))
-	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 4}))
+	require.NoError(t, wal.AppendWithDatabase(OpCheckpoint, map[string]any{"entry": 3}, "alpha"))
+	require.NoError(t, wal.AppendWithDatabase(OpCheckpoint, map[string]any{"entry": 4}, "bravo"))
 
 	require.NoError(t, wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate))
 
@@ -199,5 +199,6 @@ func TestTruncateAfterSnapshotCountsRetainedEntriesOfStreamedSegments(t *testing
 	require.Equal(t, []uint64{3, 4}, []uint64{kept[0].Sequence, kept[1].Sequence})
 	require.JSONEq(t, `{"entry":3}`, string(kept[0].Data))
 	require.JSONEq(t, `{"entry":4}`, string(kept[1].Data))
+	require.Equal(t, []string{"alpha", "bravo"}, []string{kept[0].Database, kept[1].Database}, "retained headers outlive the reused scan buffer")
 	require.Equal(t, int64(3), wal.Stats().EntryCount)
 }
