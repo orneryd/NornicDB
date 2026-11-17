@@ -176,3 +176,39 @@ func TestProviderNameDoesNotSelectProviderPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderNameDelegatingFactoryResolvesItsUpdatedConfig(t *testing.T) {
+	const protocol = "provider-name-delegation"
+	old, existed := heimdallProviderFactories[protocol]
+	t.Cleanup(func() {
+		if existed {
+			heimdallProviderFactories[protocol] = old
+		} else {
+			delete(heimdallProviderFactories, protocol)
+		}
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/chat/completions", r.URL.Path)
+		assert.Equal(t, "Bearer delegated-key", r.Header.Get("Authorization"))
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer server.Close()
+	calls := 0
+	RegisterHeimdallProvider(protocol, func(cfg Config) (Generator, error) {
+		calls++
+		if calls > 1 {
+			return nil, fmt.Errorf("delegation selected its original factory again")
+		}
+		cfg.Provider, cfg.ProviderName = "openai", "UberLLM"
+		cfg.APIURL, cfg.APIKey = server.URL+"/v1", "delegated-key"
+		return NewManager(cfg)
+	})
+	manager, err := NewManager(Config{Enabled: true, Provider: protocol, Model: "vendor/model"})
+	require.NoError(t, err)
+	defer manager.Close()
+	content, err := manager.Generate(t.Context(), "probe", GenerateParams{})
+	require.NoError(t, err)
+	require.Equal(t, "OK", content)
+	require.Equal(t, 1, calls)
+	require.Equal(t, "UberLLM:vendor/model", manager.ModelPath())
+}
