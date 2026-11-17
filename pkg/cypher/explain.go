@@ -104,6 +104,11 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if endsInFinish(ctx, query) {
 		query += " FINISH"
 	}
+	if isCreateConstraintStatement(ctx, query) {
+		if _, err := e.prepareCreateConstraint(ctx, query); err != nil {
+			return nil, err
+		}
+	}
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
 	if !isMetadataCommand(ctx, query, metadataCatalogExecution) {
