@@ -4,9 +4,9 @@
 - [x] Reproduce quoted-expression failures; consolidate quote/comment lookup and fix full postfix receiver chain.
 - [x] Enforce requested Bolt READ scope through canonical resolved statement effects; allow dynamic reads and EXPLAIN.
 - [x] Reproduce and correct misleading disabled-lifecycle startup claim.
-- [ ] Finish deleted-entity receiver checks and structurally bounded null tests; preserve allowed empty views.
+- [x] Finish deleted-entity receiver checks and structurally bounded null tests; preserve allowed empty views, nested containers and own-delete property SET.
 - [ ] Independently verify integrated public behavior and affected packages/races.
-- [ ] Complete first-build exhaustive membership qualification.
+- [x] Complete first-build exhaustive membership qualification for the tested memory-backed 6,000-node population; preserve qualification limits.
 - [ ] Compare cold parser, cache-copy, snapshot overlap and vector-anchor working sets against released v1.4.3.
 - [ ] Resolve every confirmed remaining blocker; record required-correctness costs accurately.
 - [ ] Review duplicate candidates/dispositions and all source inventories without weakening analyzers.
