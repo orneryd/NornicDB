@@ -1746,12 +1746,63 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 	}
 
 	walPath := walActivePath(w.config.Dir)
+	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
+	if err != nil {
+		return fmt.Errorf("wal: cannot load segments for truncation: %w", err)
+	}
+
 	// A failed read may include entries newer than the snapshot. Rewriting the
 	// file from a best-effort subset would turn an observable failure into data
 	// loss, so leave the active handle and WAL intact for recovery.
-	allEntries, readErr := ReadWALEntriesFromDir(ctx, w.config.Dir)
-	if readErr != nil {
-		if errors.Is(readErr, ErrWALCorrupted) || errors.Is(readErr, ErrWALChecksumFailed) {
+	//
+	// The preflight keeps one payload visitor pass per file: a sealed segment
+	// is counted and checked for entries newer than the snapshot without
+	// retaining its payloads, and the active file contributes only the entries
+	// the rewrite keeps. It finishes before the active file is closed or any
+	// retained file changes.
+	var retainedSegments, coveredSegments []WALSegment
+	var retainedSegmentBytes, retainedCount int64
+	var keptEntries []WALEntry
+	preflightErr := func() error {
+		for _, segment := range manifest.Segments {
+			path, pathErr := resolveWALSegmentPath(w.config.Dir, segment.Path)
+			if pathErr != nil {
+				return pathErr
+			}
+			sawNewer := false
+			if err := visitWALEntriesWithLogger(ctx, path, nil, walPayloadBorrowed, func(entry WALEntry) error {
+				if entry.Sequence > snapshotSeq {
+					sawNewer = true
+					retainedCount++
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			// Never discard a segment based solely on inaccurate range metadata.
+			if segment.LastSeq > snapshotSeq || sawNewer {
+				// Retained segments stay in place. Folding them into the new
+				// active file would duplicate their records if the process
+				// stopped before cleanup.
+				retainedSegments = append(retainedSegments, segment)
+				retainedSegmentBytes += segment.SizeBytes
+				continue
+			}
+			coveredSegments = append(coveredSegments, segment)
+		}
+		return visitWALEntriesWithLogger(ctx, walPath, nil, walPayloadBorrowed, func(entry WALEntry) error {
+			if entry.Sequence > snapshotSeq {
+				// The scan buffer expires after this callback; only the retained
+				// tail needs an independent payload for the later rewrite.
+				entry.Data = bytes.Clone(entry.Data)
+				keptEntries = append(keptEntries, entry)
+				retainedCount++
+			}
+			return nil
+		})
+	}()
+	if preflightErr != nil {
+		if errors.Is(preflightErr, ErrWALCorrupted) || errors.Is(preflightErr, ErrWALChecksumFailed) {
 			diag := &CorruptionDiagnostics{
 				Timestamp:      time.Now(),
 				WALPath:        walPath,
@@ -1762,45 +1813,9 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 				diag.FileSize = fi.Size()
 			}
 			diag.diagnoseCause()
-			w.reportCorruption(diag, readErr)
+			w.reportCorruption(diag, preflightErr)
 		}
-		return fmt.Errorf("wal: cannot truncate unreadable WAL: %w", readErr)
-	}
-	activeEntries, err := ReadWALEntries(ctx, walPath, nil)
-	if err != nil {
-		return fmt.Errorf("wal: cannot truncate unreadable active WAL: %w", err)
-	}
-	manifest, err := accessWALManifest(w.config.Dir, walReadManifest, nil)
-	if err != nil {
-		return fmt.Errorf("wal: cannot load segments for truncation: %w", err)
-	}
-	var retainedSegments, coveredSegments []WALSegment
-	var retainedSegmentBytes int64
-	for _, segment := range manifest.Segments {
-		covered := segment.LastSeq <= snapshotSeq
-		if covered {
-			// Never discard a segment based solely on inaccurate range metadata.
-			path, pathErr := resolveWALSegmentPath(w.config.Dir, segment.Path)
-			if pathErr != nil {
-				return pathErr
-			}
-			entries, segmentErr := ReadWALEntries(ctx, path, nil)
-			if segmentErr != nil {
-				return fmt.Errorf("wal: cannot inspect segment for truncation: %w", segmentErr)
-			}
-			for _, entry := range entries {
-				if entry.Sequence > snapshotSeq {
-					covered = false
-					break
-				}
-			}
-		}
-		if covered {
-			coveredSegments = append(coveredSegments, segment)
-		} else {
-			retainedSegments = append(retainedSegments, segment)
-			retainedSegmentBytes += segment.SizeBytes
-		}
+		return fmt.Errorf("wal: cannot truncate unreadable WAL: %w", preflightErr)
 	}
 
 	// Close current WAL file only after all entries have been read safely.
@@ -1813,16 +1828,6 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("wal: failed to close for truncate: %w", err)
-	}
-
-	// Filter entries AFTER snapshot sequence
-	var keptEntries []WALEntry
-	// Retained segments stay in place. Folding them into the new active file
-	// would duplicate their records if the process stopped before cleanup.
-	for _, entry := range activeEntries {
-		if entry.Sequence > snapshotSeq {
-			keptEntries = append(keptEntries, entry)
-		}
 	}
 
 	// Write new WAL with only kept entries
@@ -1930,12 +1935,6 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 	w.loadActiveSegmentState()
 
 	// Update stats
-	var retainedCount int64
-	for _, entry := range allEntries {
-		if entry.Sequence > snapshotSeq {
-			retainedCount++
-		}
-	}
 	w.entries.Store(retainedCount)
 	w.bytes.Store(bytesWritten + retainedSegmentBytes)
 	// The rewrite retired every record the snapshot covers.
@@ -2060,14 +2059,24 @@ func (w *WAL) reopenWAL() error {
 // reading the WAL does not cancel accepted recovery work.
 func ReadWALEntries(ctx context.Context, walPath string, logger *slog.Logger) ([]WALEntry, error) {
 	entries := make([]WALEntry, 0)
-	err := visitWALEntriesWithLogger(ctx, walPath, logger, func(entry WALEntry) error {
+	err := visitWALEntriesWithLogger(ctx, walPath, logger, walPayloadRetained, func(entry WALEntry) error {
 		entries = append(entries, entry)
 		return nil
 	})
 	return entries, err
 }
 
-func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, visit func(WALEntry) error) error {
+// walPayloadLifetime specifies whether a visitor may retain entry.Data after
+// returning. Borrowed scans reuse frame storage; retained scans preserve the
+// existing recovery and diagnostic reader ownership contract.
+type walPayloadLifetime uint8
+
+const (
+	walPayloadRetained walPayloadLifetime = iota
+	walPayloadBorrowed
+)
+
+func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, lifetime walPayloadLifetime, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
@@ -2098,13 +2107,13 @@ func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog
 	// The current atomic format starts with magic "WALE".
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return visitAtomicWALEntries(ctx, file, logger, visit)
+		return visitAtomicWALEntries(ctx, file, logger, lifetime, visit)
 	}
 
 	return fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
-func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, lifetime walPayloadLifetime, visit func(WALEntry) error) error {
 	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
@@ -2113,6 +2122,7 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 	var partialWriteDetected bool
 	var lastGoodSeq uint64
 	var offset uint64
+	var frameBuffer []byte
 	// One logical entry per spanned record; an incomplete group (one whose
 	// last part the file does not hold) is not delivered.
 	var spanned walRecordAssembler
@@ -2173,7 +2183,15 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		}
 		offset += uint64(recordLen)
 		// Read payload
-		payload := make([]byte, payloadLen)
+		var payload []byte
+		if lifetime == walPayloadBorrowed {
+			if cap(frameBuffer) < int(payloadLen) {
+				frameBuffer = make([]byte, payloadLen)
+			}
+			payload = frameBuffer[:payloadLen]
+		} else {
+			payload = make([]byte, payloadLen)
+		}
 		n, err = io.ReadFull(reader, payload)
 		if err == io.ErrUnexpectedEOF || uint32(n) != payloadLen {
 			// Partial payload = incomplete write

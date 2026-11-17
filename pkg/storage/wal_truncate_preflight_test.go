@@ -162,3 +162,42 @@ func TestTruncateAfterSnapshotKeepsSegmentsAcrossReplacementFailures(t *testing.
 		})
 	}
 }
+
+// The streamed preflight counts records it does not keep: statistics must still
+// include the newer entries of a segment retained only because its range
+// metadata understates its contents, plus the active entries the rewrite keeps.
+func TestTruncateAfterSnapshotCountsRetainedEntriesOfStreamedSegments(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	cfg := DefaultWALConfig()
+	cfg.MaxEntries = 2
+	wal, err := NewWAL(dir, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 1}))
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 2}))
+	manifest, err := accessWALManifest(dir, walReadManifest, nil)
+	require.NoError(t, err)
+	require.Len(t, manifest.Segments, 1)
+	segment := filepath.Join(walSegmentsDir(dir), manifest.Segments[0].Path)
+	// The sealed segment holds record 2 but claims to end at 1.
+	manifest.Segments[0].LastSeq = 1
+	{
+		_, manifestErr := accessWALManifest(dir, walPublishManifest, manifest)
+		require.NoError(t, manifestErr)
+	}
+	cfg.MaxEntries = 0
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 3}))
+	require.NoError(t, wal.Append(OpCheckpoint, map[string]any{"entry": 4}))
+
+	require.NoError(t, wal.ManageSnapshot(t.Context(), 1, WALSnapshotTruncate))
+
+	require.FileExists(t, segment)
+	kept, err := ReadWALEntries(t.Context(), walActivePath(dir), nil)
+	require.NoError(t, err)
+	require.Len(t, kept, 2)
+	require.Equal(t, []uint64{3, 4}, []uint64{kept[0].Sequence, kept[1].Sequence})
+	require.JSONEq(t, `{"entry":3}`, string(kept[0].Data))
+	require.JSONEq(t, `{"entry":4}`, string(kept[1].Data))
+	require.Equal(t, int64(3), wal.Stats().EntryCount)
+}

@@ -278,7 +278,7 @@ func VisitWALEntriesAfterFromDir(ctx context.Context, walDir string, afterSeq ui
 	}
 
 	visitFile := func(path string) error {
-		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), func(entry WALEntry) error {
+		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), walPayloadRetained, func(entry WALEntry) error {
 			if entry.Sequence <= afterSeq {
 				return nil
 			}
