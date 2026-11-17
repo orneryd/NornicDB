@@ -793,9 +793,6 @@ mapPair
 // primitive ids
 name
     : symbol
-    | SHORTEST | PATH | PATHS | GROUP | GROUPS
-    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
-    | reservedWord
     ;
 
 symbol

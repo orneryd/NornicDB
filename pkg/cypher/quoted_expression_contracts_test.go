@@ -229,3 +229,20 @@ func TestQuotedExpressionCommaOnlyMapEntriesRejectedOnEverySurface(t *testing.T)
 		}
 	})
 }
+
+// Keyword property names share the same symbol grammar as ordinary names.
+// Factoring the grammar must preserve both map keys and postfix lookup.
+func TestKeywordPropertyNamesKeepValues(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec, ctx := newQuotedExpressionExecutor(t)
+		for _, name := range []string{"SHORTEST", "PATH", "PATHS", "GROUP", "GROUPS", "GRANT", "REVOKE", "DENY", "EXECUTE", "BOOSTED", "PROCEDURE", "DBMS", "TO"} {
+			t.Run(name, func(t *testing.T) {
+				query := "WITH {" + name + ": 7} AS m RETURN m." + name + " AS value"
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+				require.Equal(t, []string{"value"}, result.Columns)
+				require.Equal(t, [][]any{{int64(7)}}, result.Rows)
+			})
+		}
+	})
+}
