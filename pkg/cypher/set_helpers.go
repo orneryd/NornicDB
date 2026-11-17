@@ -45,8 +45,10 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/contextslot"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -273,6 +275,7 @@ func (e *StorageExecutor) generateUUID() string {
 // that state's labels, and storage receives that observation instead of
 // reconstructing it from the entity the clause already changed.
 func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+	deleted := contextslot.Get[deletedEntities](ctx)
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -281,6 +284,18 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		if node := state.node; node != nil {
 			labelsAdded := addedLabelCount(state.labels, node.Labels)
 			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
+				continue
+			}
+			if deleted.contains(node) {
+				// The statement deleted this node itself: Neo4j counts the
+				// assignments but stores nothing on it, and the row keeps the
+				// deleted node's empty view (deletedEntities). Adding a label
+				// reads the deleted node's labels, so it is the statement's
+				// deleted-entity error.
+				node.Properties, node.Labels = state.properties, state.labels
+				if labelsAdded > 0 {
+					return deletedEntityReadFailure(ctx, node, deletedEntityLabels)
+				}
 				continue
 			}
 			state.before = observeNode(node)
@@ -308,6 +323,13 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		}
 		relationship := state.relationship
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
+			continue
+		}
+		if deleted.contains(relationship) {
+			// A deleted relationship keeps its identity, type and endpoints
+			// but no properties: the assignment is counted and dropped
+			// (deletedEntities).
+			relationship.Properties = state.properties
 			continue
 		}
 		state.beforeEdge = observeEdge(relationship)

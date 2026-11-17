@@ -228,20 +228,23 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	gone := &storage.Node{ID: "gone", Labels: []string{"L"}, Properties: map[string]interface{}{"p": 1}}
 	kept := &storage.Node{ID: "kept"}
 	edge := &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept", Properties: map[string]interface{}{"w": 1}}
-	views := deletedEntityViews{executor: exec,
+	views := deletedEntityViews{executor: exec, deleted: &deletedEntities{
 		nodes: map[storage.NodeID]struct{}{"gone": {}},
-		edges: map[storage.EdgeID]struct{}{"e": {}}}
+		edges: map[storage.EdgeID]struct{}{"e": {}}}}
 
 	var nilNode *storage.Node
 	var nilEdge *storage.Edge
 	var nilPath *PathResult
 	for _, value := range []interface{}{nilNode, nilEdge, kept, []interface{}{kept, int64(1)},
-		map[string]interface{}{"a": gone}, map[string]interface{}{"_pathResult": nilPath},
+		map[string]interface{}{"a": kept}, map[string]interface{}{"_pathResult": nilPath},
 		map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{kept}}}} {
 		replaced, changed := views.replace(t.Context(), value)
 		require.False(t, changed)
 		require.Equal(t, value, replaced)
 	}
+	container, changed := views.replace(t.Context(), map[string]interface{}{"a": gone})
+	require.True(t, changed)
+	require.Equal(t, map[string]interface{}{"a": &storage.Node{ID: "gone"}}, container)
 	view, changed := views.replace(t.Context(), edge)
 	require.True(t, changed)
 	require.Equal(t, &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept"}, view)

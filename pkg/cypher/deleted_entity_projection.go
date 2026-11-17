@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -55,14 +56,15 @@ func (d *deletedEntities) empty() bool {
 // deleted with what Neo4j 5.26 returns for it after the DELETE: the same
 // entity without labels or properties, so RETURN n is an empty node and
 // n {.*}, properties(n) and keys(n) are empty. A relationship keeps its type
-// and endpoints (type(r) still answers). Paths and lists holding a deleted
-// entity are rebuilt with its view (#907). Reading a deleted entity's
-// property or labels is an error instead (deletedEntityReadFailure).
+// and endpoints (type(r) still answers). Paths, lists and maps holding a
+// deleted entity are rebuilt with its view (#907), whether the statement
+// built them before or after the DELETE. Reading a deleted entity's property
+// or labels is an error instead (deletedEntityReadFailure).
 func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
 	}
-	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
+	views := deletedEntityViews{executor: e, deleted: deleted}
 	for _, row := range rows {
 		for name, value := range row {
 			if replaced, changed := views.replace(ctx, value); changed {
@@ -77,75 +79,279 @@ func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []
 // properties. A view is equal to the entity by ID, as entities compare.
 type deletedEntityViews struct {
 	executor *StorageExecutor
-	nodes    map[storage.NodeID]struct{}
-	edges    map[storage.EdgeID]struct{}
+	deleted  *deletedEntities
 }
 
 // replace returns value with its deleted entities replaced by their views,
-// and whether anything was replaced.
+// and whether anything was replaced. Lists and maps are walked to any depth,
+// so a container a statement built before its DELETE — m {.entity: n}, a list
+// of such maps, a map nested in a map — reads the deleted entity as its view
+// too (#907). Only a container holding a deleted entity is copied; a list or
+// map that holds none keeps its identity, and so do the entries of a copy the
+// walk had no reason to change (a healthy sibling list or map, an alias, nil).
 func (v *deletedEntityViews) replace(ctx context.Context, value interface{}) (interface{}, bool) {
+	if view, replaced := v.entityView(value); replaced {
+		return view, true
+	}
+	containers := &deletedEntityContainers{views: v}
+	if !containers.mark(value) {
+		return value, false
+	}
+	return containers.rewrite(ctx, value), true
+}
+
+// entityView returns value's view when value is a node or relationship the
+// statement deleted.
+func (v *deletedEntityViews) entityView(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
 	case *storage.Node:
-		if typed == nil {
-			return value, false
-		}
-		if _, deleted := v.nodes[storage.NodeID(typed.IdentityKey())]; deleted {
+		if v.deleted.contains(typed) {
 			return v.node(typed), true
 		}
 	case *storage.Edge:
-		if typed == nil {
-			return value, false
-		}
-		if _, deleted := v.edges[storage.EdgeID(typed.IdentityKey())]; deleted {
+		if v.deleted.contains(typed) {
 			return v.edge(typed), true
-		}
-	case []interface{}:
-		var replaced []interface{}
-		for index, item := range typed {
-			if view, changed := v.replace(ctx, item); changed {
-				if replaced == nil {
-					replaced = append([]interface{}(nil), typed...)
-				}
-				replaced[index] = view
-			}
-		}
-		if replaced != nil {
-			return replaced, true
-		}
-	case map[string]interface{}:
-		var path PathResult
-		switch result := typed["_pathResult"].(type) {
-		case PathResult:
-			path = result
-		case *PathResult:
-			if result == nil {
-				return value, false
-			}
-			path = *result
-		default:
-			return value, false
-		}
-		changed := false
-		nodes := make([]*storage.Node, len(path.Nodes))
-		for index, node := range path.Nodes {
-			nodes[index] = node
-			if view, replaced := v.replace(ctx, node); replaced {
-				nodes[index], changed = view.(*storage.Node), true
-			}
-		}
-		relationships := make([]*storage.Edge, len(path.Relationships))
-		for index, relationship := range path.Relationships {
-			relationships[index] = relationship
-			if view, replaced := v.replace(ctx, relationship); replaced {
-				relationships[index], changed = view.(*storage.Edge), true
-			}
-		}
-		if changed {
-			path.Nodes, path.Relationships = nodes, relationships
-			return v.executor.pathToMapContext(ctx, path), true
 		}
 	}
 	return value, false
+}
+
+// deletedEntityContainer identifies one list or map of a value by identity, so
+// a walk that meets the same container twice — an alias, or a cycle a Go or
+// native handler returned — copies it once and the copy keeps the value's
+// topology.
+type deletedEntityContainer struct {
+	kind byte
+	data uintptr
+	size int
+}
+
+const (
+	deletedEntityContainerList byte = 'l'
+	deletedEntityContainerMap  byte = 'm'
+)
+
+// deletedEntityContainerOf identifies value as a list or map the walk has to
+// consider: an empty list and a nil map have no entry to reach, so they are
+// never a container that changes.
+func deletedEntityContainerOf(value interface{}) (deletedEntityContainer, bool) {
+	switch typed := value.(type) {
+	case []interface{}:
+		if len(typed) == 0 {
+			return deletedEntityContainer{}, false
+		}
+		return deletedEntityContainer{
+			kind: deletedEntityContainerList,
+			data: uintptr(reflect.ValueOf(typed).UnsafePointer()),
+			size: len(typed),
+		}, true
+	case map[string]interface{}:
+		if typed == nil {
+			return deletedEntityContainer{}, false
+		}
+		return deletedEntityContainer{kind: deletedEntityContainerMap, data: uintptr(reflect.ValueOf(typed).UnsafePointer())}, true
+	}
+	return deletedEntityContainer{}, false
+}
+
+// deletedEntityContainers rewrites the lists and maps of one value: it marks
+// the containers a deleted entity is reachable from, then copies exactly those
+// with the entity's view in place. A container nothing below changed keeps its
+// identity, and a copy is recorded before its entries are walked, so a cycle
+// ends at the copy instead of walking for ever.
+type deletedEntityContainers struct {
+	views  *deletedEntityViews
+	marked map[deletedEntityContainer]struct{}
+	clones map[deletedEntityContainer]interface{}
+}
+
+// mark records the containers that must be copied: those a deleted entity is
+// reachable from, as an entry of theirs or of a container below them. It
+// reports whether value itself is one of them.
+func (c *deletedEntityContainers) mark(value interface{}) bool {
+	root, isContainer := deletedEntityContainerOf(value)
+	if !isContainer {
+		return false
+	}
+	parents := make(map[deletedEntityContainer][]deletedEntityContainer)
+	holding := make(map[deletedEntityContainer]struct{})
+	seen := map[deletedEntityContainer]struct{}{root: {}}
+	pending := []interface{}{value}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		container, _ := deletedEntityContainerOf(current)
+		// A path value is rebuilt from its PathResult, so its map entries are
+		// not entries the walk reads: the deleted entity is the path's own.
+		if path, isPath := deletedEntityPathResult(current); isPath {
+			if c.views.pathNeedsRewrite(path) {
+				holding[container] = struct{}{}
+			}
+			continue
+		}
+		forEachDeletedEntityContainerChild(current, func(child interface{}) {
+			if c.views.deleted.contains(child) {
+				holding[container] = struct{}{}
+				return
+			}
+			childContainer, isChildContainer := deletedEntityContainerOf(child)
+			if !isChildContainer {
+				return
+			}
+			parents[childContainer] = append(parents[childContainer], container)
+			if _, visited := seen[childContainer]; visited {
+				return
+			}
+			seen[childContainer] = struct{}{}
+			pending = append(pending, child)
+		})
+	}
+	// A container holds a deleted entity either itself or through a container
+	// below it, whichever way a cycle runs, so the marks come back up from the
+	// containers that hold one.
+	c.marked = make(map[deletedEntityContainer]struct{}, len(holding))
+	c.clones = make(map[deletedEntityContainer]interface{}, len(holding))
+	propagating := make([]deletedEntityContainer, 0, len(holding))
+	for container := range holding {
+		c.marked[container] = struct{}{}
+		propagating = append(propagating, container)
+	}
+	for len(propagating) > 0 {
+		container := propagating[len(propagating)-1]
+		propagating = propagating[:len(propagating)-1]
+		for _, parent := range parents[container] {
+			if _, marked := c.marked[parent]; marked {
+				continue
+			}
+			c.marked[parent] = struct{}{}
+			propagating = append(propagating, parent)
+		}
+	}
+	_, marked := c.marked[root]
+	return marked
+}
+
+// rewrite returns value with the deleted entities the marked containers hold
+// replaced by their views. A container that must change is copied, every other
+// value stays as it is.
+func (c *deletedEntityContainers) rewrite(ctx context.Context, value interface{}) interface{} {
+	container, isContainer := deletedEntityContainerOf(value)
+	if !isContainer {
+		return value
+	}
+	if _, copyIt := c.marked[container]; !copyIt {
+		return value
+	}
+	if clone, copied := c.clones[container]; copied {
+		return clone
+	}
+	if path, isPath := deletedEntityPathResult(value); isPath {
+		clone := c.views.viewPath(ctx, path)
+		c.clones[container] = clone
+		return clone
+	}
+	switch typed := value.(type) {
+	case []interface{}:
+		clone := make([]interface{}, len(typed))
+		c.clones[container] = clone
+		for index, child := range typed {
+			clone[index] = c.entry(ctx, child)
+		}
+		return clone
+	case map[string]interface{}:
+		clone := make(map[string]interface{}, len(typed))
+		c.clones[container] = clone
+		for name, child := range typed {
+			clone[name] = c.entry(ctx, child)
+		}
+		if failure := expressionErrorSlot(ctx); failure != nil {
+			failure.copyMapKeyOrder(typed, clone)
+		}
+		return clone
+	}
+	return value
+}
+
+// entry returns one entry of a copied container: a deleted entity becomes its
+// view, a container holding one becomes its copy, and every other value stays
+// as it is (identity included).
+func (c *deletedEntityContainers) entry(ctx context.Context, child interface{}) interface{} {
+	if view, replaced := c.views.entityView(child); replaced {
+		return view
+	}
+	return c.rewrite(ctx, child)
+}
+
+// deletedEntityPathResult returns the path a map value carries, whatever shape
+// the path value has (pathToMap's or the path-context evaluator's); a map
+// carrying no path, or a nil one, is not a path value.
+func deletedEntityPathResult(value interface{}) (PathResult, bool) {
+	object, isMap := value.(map[string]interface{})
+	if !isMap {
+		return PathResult{}, false
+	}
+	switch result := object["_pathResult"].(type) {
+	case PathResult:
+		return result, true
+	case *PathResult:
+		if result == nil {
+			return PathResult{}, false
+		}
+		return *result, true
+	}
+	return PathResult{}, false
+}
+
+// forEachDeletedEntityContainerChild visits the entries a container's walk
+// reads: a list's items or a map's values.
+func forEachDeletedEntityContainerChild(value interface{}, visit func(interface{})) {
+	switch typed := value.(type) {
+	case []interface{}:
+		for _, child := range typed {
+			visit(child)
+		}
+	case map[string]interface{}:
+		for _, child := range typed {
+			visit(child)
+		}
+	}
+}
+
+// pathNeedsRewrite reports whether the path holds a deleted node or
+// relationship.
+func (v *deletedEntityViews) pathNeedsRewrite(path PathResult) bool {
+	for _, node := range path.Nodes {
+		if v.deleted.contains(node) {
+			return true
+		}
+	}
+	for _, relationship := range path.Relationships {
+		if v.deleted.contains(relationship) {
+			return true
+		}
+	}
+	return false
+}
+
+// viewPath returns the path value with its deleted nodes and relationships
+// replaced by their views (the map shape a path value is published as).
+func (v *deletedEntityViews) viewPath(ctx context.Context, path PathResult) map[string]interface{} {
+	nodes := make([]*storage.Node, len(path.Nodes))
+	for index, node := range path.Nodes {
+		nodes[index] = node
+		if v.deleted.contains(node) {
+			nodes[index] = v.node(node)
+		}
+	}
+	relationships := make([]*storage.Edge, len(path.Relationships))
+	for index, relationship := range path.Relationships {
+		relationships[index] = relationship
+		if v.deleted.contains(relationship) {
+			relationships[index] = v.edge(relationship)
+		}
+	}
+	path.Nodes, path.Relationships = nodes, relationships
+	return v.executor.pathToMapContext(ctx, path)
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
@@ -221,19 +427,38 @@ func deletedEntityReadFailure(ctx context.Context, value interface{}, read delet
 // empty rather than missing, and a property's presence is what a null test
 // answers without an error.
 func (d *deletedEntities) readsDeleted(value interface{}, read deletedEntityReadKind) bool {
+	switch value.(type) {
+	case *storage.Node:
+		if read == deletedEntityPropertySet || read == deletedEntityPropertyPresence {
+			return false
+		}
+	case *storage.Edge:
+		if read == deletedEntityPropertyPresence {
+			return false
+		}
+	default:
+		return false
+	}
+	return d.contains(value)
+}
+
+// contains is the identity owner shared by runtime reads, row-image projection
+// and SET publication. It recognizes only this statement's own deletions.
+func (d *deletedEntities) contains(value interface{}) bool {
+	if d == nil {
+		return false
+	}
 	switch entity := value.(type) {
 	case *storage.Node:
-		if entity == nil || read == deletedEntityPropertySet || read == deletedEntityPropertyPresence {
-			return false
+		if entity != nil {
+			_, found := d.nodes[storage.NodeID(entity.IdentityKey())]
+			return found
 		}
-		_, found := d.nodes[storage.NodeID(entity.IdentityKey())]
-		return found
 	case *storage.Edge:
-		if entity == nil || read == deletedEntityPropertyPresence {
-			return false
+		if entity != nil {
+			_, found := d.edges[storage.EdgeID(entity.IdentityKey())]
+			return found
 		}
-		_, found := d.edges[storage.EdgeID(entity.IdentityKey())]
-		return found
 	}
 	return false
 }
