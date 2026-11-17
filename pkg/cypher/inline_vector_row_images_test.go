@@ -64,7 +64,7 @@ func TestVectorSearchNodeIdentityAcrossReadImages(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		nor413CallLookup(t)
 		const name = "image.identityVector"
-		cleanupAdmissionProcedure(t, name)
+		scopeProcedureRegistration(t, name, userProcedureTable)
 		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1,
 			Returns: []ProcedureColumn{{Name: "component", Type: "FLOAT"}}},
 			func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {

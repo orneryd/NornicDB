@@ -22,7 +22,7 @@ func TestCDCEarliestTracksRetainedPopulationAcrossPruning(t *testing.T) {
 		require.NoError(t, err)
 		capture, _ := storage.ChangeCaptureOf(store)
 		const procedure = "fixture.pruneCdc"
-		cleanupAdmissionProcedure(t, procedure)
+		scopeProcedureRegistration(t, procedure, userProcedureTable)
 		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: procedure, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1, Returns: []ProcedureColumn{{Name: "start", Type: "STRING"}}}, func(ctx context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			_, err := capture.(interface {
 				PruneChangeEvents(context.Context, string, time.Time) (int, error)

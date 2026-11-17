@@ -354,7 +354,7 @@ func TestNOR413VectorReadingCallStatementsKeepResults(t *testing.T) {
 // apoc.cypher.doIt, a writing CALL subquery) write their change and keep the
 // stored chunk vectors, auto-commit and in a transaction.
 func TestNOR413WritingProceduresKeepStoredVectors(t *testing.T) {
-	cleanupAdmissionProcedure(t, "nor413.touch")
+	scopeProcedureRegistration(t, "nor413.touch", userProcedureTable)
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nor413.touch", Mode: ProcedureModeWrite, MinArgs: 2, MaxArgs: 2}, func(ctx context.Context, e *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 		node, ok := args[0].(*storage.Node)
 		if !ok {

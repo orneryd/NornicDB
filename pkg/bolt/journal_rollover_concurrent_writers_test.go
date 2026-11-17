@@ -48,7 +48,10 @@ type rollOverBoltAck struct{ writer, index int }
 // (100 MiB or 100,000 records per segment) and the embedding worker enabled, in
 // the durable mode (synchronous writes, strict durability) and the write-behind
 // mode. Each client alternates a create of a node with about 2 MiB of text and
-// an update of its own node holding 300 stored chunk vectors. It requires that
+// an update with a fresh blob on its own node holding 300 stored chunk vectors.
+// Both operations carry fresh data: unchanged vectors may use compact WAL
+// references and cannot supply the bytes needed to cross two segment limits.
+// It requires that
 // no write fails, that the journal has at least two sealed segments, that its
 // records are in sequence order, that it holds records written by the
 // embedding worker (not that the worker wrote while the clients did), and that
@@ -97,8 +100,8 @@ func TestConcurrentWritersAcrossJournalRollOversOverBolt(t *testing.T) {
 									"w": int64(c), "i": int64(i), "text": fmt.Sprintf("document %d of client %d", i, c), "blob": rollOverBoltBlob(c, i),
 								}, false)
 							} else {
-								_, err = lab.run("MATCH (d:RollOverDoc {writer: $w}) SET d.v = $i CREATE (:RollOverAck {writer: $w, idx: $i})", map[string]any{
-									"w": int64(c), "i": int64(i),
+								_, err = lab.run("MATCH (d:RollOverDoc {writer: $w}) SET d.v = $i, d.blob = $blob CREATE (:RollOverAck {writer: $w, idx: $i})", map[string]any{
+									"w": int64(c), "i": int64(i), "blob": rollOverBoltBlob(c, i),
 								}, i%4 == 1)
 							}
 							mu.Lock()
@@ -181,6 +184,7 @@ func requireRollOverBoltWrites(t *testing.T, where string, nodes []*storage.Node
 	creates := make(map[rollOverBoltAck]string)
 	updates := make(map[rollOverBoltAck]bool)
 	docValue := make(map[int]int64)
+	docBlob := make(map[int]string)
 	for _, node := range nodes {
 		w, ok := node.Properties["writer"].(int64)
 		if !ok || len(node.Labels) == 0 {
@@ -198,6 +202,7 @@ func requireRollOverBoltWrites(t *testing.T, where string, nodes []*storage.Node
 			updates[key] = true
 		case "RollOverDoc":
 			docValue[int(w)], _ = node.Properties["v"].(int64)
+			docBlob[int(w)], _ = node.Properties["blob"].(string)
 		}
 	}
 	for _, ack := range createsAcked {
@@ -214,5 +219,6 @@ func requireRollOverBoltWrites(t *testing.T, where string, nodes []*storage.Node
 	}
 	for writer, index := range last {
 		require.Equal(t, int64(index), docValue[writer], "%s: client %d's node has the value of its last acknowledged update", where, writer)
+		require.True(t, docBlob[writer] == rollOverBoltBlob(writer, index), "%s: client %d has the payload of its last acknowledged update", where, writer)
 	}
 }

@@ -175,7 +175,7 @@ func TestNativeDynamicCoordinatorAtomicCallbacks(t *testing.T) {
 			for _, scenario := range []string{"same-database", "cross-database", "direct-write", "fresh-auth", "fresh-cancel", "root-batch-second-writer", "batch-first-writer", "batch-callback-first-writer", "other-batch-rejected"} {
 				t.Run(scenario, func(t *testing.T) {
 					exec, manager := newApocUseNativeProof(t)
-					cleanupAdmissionProcedure(t, "ownerproof.dynamic")
+					scopeProcedureRegistration(t, "ownerproof.dynamic", userProcedureTable)
 					ctx, cancel := context.WithCancel(context.Background())
 					defer cancel()
 					ctx = WithDatabasePermissionResolver(ctx, "nornic", func(database, permission string) bool { return scenario != "fresh-auth" || database != "other" })
@@ -209,7 +209,7 @@ func TestNativeDynamicCoordinatorAtomicCallbacks(t *testing.T) {
 						if scenario == "root-batch-second-writer" || scenario == "batch-first-writer" || scenario == "batch-callback-first-writer" {
 							action := "CREATE (:OwnerBatch)"
 							if scenario == "batch-callback-first-writer" {
-								cleanupAdmissionProcedure(t, "ownerproof.batchcreate")
+								scopeProcedureRegistration(t, "ownerproof.batchcreate", userProcedureTable)
 								require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.batchcreate", Mode: ProcedureModeWrite}, func(_ context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 									_, err := e.storage.CreateNode(t.Context(), &storage.Node{ID: "batch-direct", Labels: []string{"OwnerBatch"}})
 									return &ExecuteResult{}, err
@@ -274,7 +274,7 @@ func TestNativeDynamicCoordinatorTerminalMetadata(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			executor, engine, store := newWALOutcomeExecutor(t)
 			failure := errors.New("ownerproof terminal failure")
-			cleanupAdmissionProcedure(t, "ownerproof.metadata")
+			scopeProcedureRegistration(t, "ownerproof.metadata", userProcedureTable)
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.metadata", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 				wrapper := membershipOfStorage(e.storage).storage
 				require.Equal(t, "native-value", wrapper.tx.GetMetadata()["request"])
@@ -410,7 +410,7 @@ func TestNativeDynamicCoordinatorCommitCancellation(t *testing.T) {
 					}
 					return err
 				}
-				cleanupAdmissionProcedure(t, "ownerproof.commitcancel")
+				scopeProcedureRegistration(t, "ownerproof.commitcancel", userProcedureTable)
 				require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.commitcancel", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 					result, err := e.Execute(ctx, "CREATE (:WalOutcome) RETURN 1 AS v", nil)
 					if before {
@@ -452,7 +452,7 @@ func TestNativeDynamicCoordinatorIssuedStorageSelection(t *testing.T) {
 						require.NoError(t, err)
 						replacement := &apocUseAuthProbeManager{standardDBManager: standardDBManager{engines: map[string]storage.Engine{"other": alien, "nornic": manager.engines["nornic"]}}}
 						failure := errors.New("issued carrier child rollback")
-						cleanupAdmissionProcedure(t, "ownerproof.issued")
+						scopeProcedureRegistration(t, "ownerproof.issued", userProcedureTable)
 						require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.issued", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "ANY"}}}, func(_ context.Context, nested *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 							fresh := NewStorageExecutor(nested.storage)
 							if spoofed {
@@ -517,7 +517,7 @@ func TestNativeDynamicCoordinatorEmptyReaderOwner(t *testing.T) {
 				return tx.CommitContext(ctx)
 			}
 			var snapshot *storage.BadgerTransaction
-			cleanupAdmissionProcedure(t, "ownerproof.empty")
+			scopeProcedureRegistration(t, "ownerproof.empty", userProcedureTable)
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.empty", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 				wrapper := membershipOfStorage(e.storage).storage
 				snapshot = wrapper.tx
@@ -577,7 +577,7 @@ func TestNativeDynamicCoordinatorEmptyReaderOwner(t *testing.T) {
 
 func TestNativeDynamicCoordinatorDeferredValidationIsNotEmpty(t *testing.T) {
 	forEachHiddenRelationshipFixture(t, func(t *testing.T, base *storage.BadgerEngine, executor *StorageExecutor, before *storage.Edge) {
-		cleanupAdmissionProcedure(t, "ownerproof.hidden")
+		scopeProcedureRegistration(t, "ownerproof.hidden", userProcedureTable)
 		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.hidden", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 			_, err := e.Execute(ctx, hiddenRelationshipMerge+" ON CREATE SET r.payload='stored'", nil)
 			if err != nil {
@@ -600,7 +600,7 @@ func TestNativeDynamicCoordinatorDoesNotGrantManagedBatchException(t *testing.T)
 		t.Run(managed, func(t *testing.T) {
 			executor, manager := newApocUseNativeProof(t)
 			calls := 0
-			cleanupAdmissionProcedure(t, "ownerproof.managedbatch")
+			scopeProcedureRegistration(t, "ownerproof.managedbatch", userProcedureTable)
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.managedbatch", Mode: ProcedureModeWrite}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 				calls++
 				return e.Execute(ctx, "CREATE (:ManagedBatchEscape)", nil)
@@ -632,7 +632,7 @@ func TestNativeDynamicCoordinatorCommitConflictReturnsNoResult(t *testing.T) {
 			_, err := executor.Execute(t.Context(), "CREATE CONSTRAINT owner_unique FOR (n:OwnerUnique) REQUIRE n.key IS UNIQUE", nil)
 			require.NoError(t, err)
 			producedRows := 0
-			cleanupAdmissionProcedure(t, "ownerproof.conflict")
+			scopeProcedureRegistration(t, "ownerproof.conflict", userProcedureTable)
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "ownerproof.conflict", Mode: ProcedureModeWrite, ExecutesStatements: true, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, e *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 				result, err := e.Execute(ctx, "UNWIND [1,1] AS value CREATE (n:OwnerUnique {key:value}) RETURN count(n) AS v", nil)
 				require.NoError(t, err, "deferred native validation follows callback row production")

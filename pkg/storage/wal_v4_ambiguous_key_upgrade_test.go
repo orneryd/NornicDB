@@ -150,6 +150,9 @@ func historicalAmbiguousRecordsFramed(t *testing.T, applied bool, framingVersion
 	t.Cleanup(config.WithWALEnabled())
 	fixture := historicalAmbiguousFixture{dir: t.TempDir(), families: map[byte]int{}}
 	engine := reviewBindingEngine(t, fixture.dir, nil)
+	// Explicit flushes below own application. A long delay cannot prevent a
+	// queued wake-up from applying the batch intended to remain uncommitted.
+	engine.writeBehind.Close()
 	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
 	require.NoError(t, err)
 	engine.SetBufferedCommitWAL(capture)

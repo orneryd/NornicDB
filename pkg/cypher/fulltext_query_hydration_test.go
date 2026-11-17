@@ -52,7 +52,7 @@ func TestFulltextQueryLeavesStoredVectorsUnread(t *testing.T) {
 func TestFulltextResultNativeProcedureReceivesStoredVectors(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		const name = "nativeFulltext.vectorComponent"
-		cleanupAdmissionProcedure(t, name)
+		scopeProcedureRegistration(t, name, userProcedureTable)
 		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1, Returns: []ProcedureColumn{{Name: "value", Type: "FLOAT"}}}, func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{nor413VectorComponent(args[0])}}}, nil
 		}))

@@ -145,10 +145,17 @@ func (s *procedureStatementStats) Value(key interface{}) interface{} {
 	return s.Context.Value(key)
 }
 
-// executeProcedureHandler owns the summary of statement-valued procedures.
-// Their output rows (including APOC statistics rows) are independent of the
-// statement summary. Replace their hand-built summary with the successful
-// nested statements' counters, including iterator/export/custom bodies.
+// executeProcedureHandler owns the summary of statement-valued procedures and
+// the result a handler leaves to the executor. Their output rows (including
+// APOC statistics rows) are independent of the statement summary. Replace
+// their hand-built summary with the successful nested statements' counters,
+// including iterator/export/custom bodies.
+//
+// A handler that reports no failure and returns no result has produced an empty
+// result, not a missing one: the executor supplies the procedure's declared
+// columns and no rows here, the one place a handler's result becomes a
+// statement result. YIELD, a query tail and every transport then consume a
+// real result.
 func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
 	var release func()
 	e, release = e.bindExecutionReadScope(ctx)
@@ -179,14 +186,23 @@ func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc regi
 		}
 		invocation.invocationRows(rows)
 	}
-	if err == nil && (totals.stats != nil || totals.committed != nil) {
-		if result == nil {
-			result = &ExecuteResult{}
+	if err != nil {
+		return result, err
+	}
+	if result == nil {
+		// The columns keep YIELD legal (a declared output is not an unknown
+		// column just because the call produced no rows) and give every
+		// transport an empty result to serialize instead of a missing one.
+		result = &ExecuteResult{
+			Columns: columnNames(procedureDeclaredReturns(proc.Spec)),
+			Rows:    [][]interface{}{},
 		}
+	}
+	if totals.stats != nil || totals.committed != nil {
 		if totals.stats != nil {
 			result.Stats = totals.summary()
 		}
 		result.Stats = mergeQueryStats(result.Stats, totals.committed)
 	}
-	return result, err
+	return result, nil
 }
