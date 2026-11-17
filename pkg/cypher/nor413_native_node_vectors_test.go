@@ -61,7 +61,7 @@ func newNOR413ColdDocGraph(t *testing.T) *largeEmbeddingGraph {
 // directly, in a list and in a map.
 func TestNOR413NativeReadProcedureReceivesStoredVectors(t *testing.T) {
 	const name = "nor413.vectorScore"
-	cleanupAdmissionProcedure(t, name)
+	scopeProcedureRegistration(t, name, userProcedureTable)
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 		Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1,
 		Returns: []ProcedureColumn{{Name: "score", Type: "FLOAT"}},
@@ -138,7 +138,7 @@ func nor413CallLookup(t *testing.T) {
 func nor413RegisterNodeTitle(t *testing.T) {
 	t.Helper()
 	const name = "nor413.nodeTitle"
-	cleanupAdmissionProcedure(t, name)
+	scopeProcedureRegistration(t, name, userProcedureTable)
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 		Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1,
 		Returns: []ProcedureColumn{{Name: "title", Type: "STRING"}},
@@ -290,7 +290,7 @@ func TestNOR413VectorSearchMembershipKeepsOneReadMode(t *testing.T) {
 // the originating node's complete image in automatic and explicit transactions.
 func TestNOR413NativeConsumersAcrossFabric(t *testing.T) {
 	const name = "nor413.fabricScore"
-	cleanupAdmissionProcedure(t, name)
+	scopeProcedureRegistration(t, name, userProcedureTable)
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 		Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1,
 		Returns: []ProcedureColumn{{Name: "score", Type: "FLOAT"}},

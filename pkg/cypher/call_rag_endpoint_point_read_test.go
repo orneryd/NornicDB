@@ -132,7 +132,7 @@ func TestRetrieveRelationshipsUnreadableEndpointIsOneAccessWithoutRow(t *testing
 func TestRetrieveRelationshipEndpointKeepsNativeConsumerVectors(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		const name = "image.endpointvectors"
-		cleanupAdmissionProcedure(t, name)
+		scopeProcedureRegistration(t, name, userProcedureTable)
 		require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 			Name: name, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1,
 			Params:  []ProcedureParam{{Name: "node", Type: "NODE"}},

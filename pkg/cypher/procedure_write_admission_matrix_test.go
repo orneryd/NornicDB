@@ -139,7 +139,7 @@ func admissionMatrixQuery(call string, composite, reject bool) string {
 
 func registerAdmissionMatrixReject(t *testing.T) error {
 	t.Helper()
-	cleanupAdmissionProcedure(t, "u5matrix.reject")
+	scopeProcedureRegistration(t, "u5matrix.reject", userProcedureTable)
 	failure := errors.New("u5 admission matrix rejected after procedure")
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 		Name: "u5matrix.reject", Mode: ProcedureModeRead, Returns: []ProcedureColumn{{Name: "rejected", Type: "INTEGER"}},
@@ -147,32 +147,6 @@ func registerAdmissionMatrixReject(t *testing.T) error {
 		return nil, failure
 	}))
 	return failure
-}
-
-// Restore only the registration owned by this fixture. Other tests may have
-// registered procedures whose contracts must remain in the generated inventory.
-func cleanupAdmissionProcedure(t *testing.T, name string) {
-	t.Helper()
-	r := globalProcedureRegistry
-	r.mu.RLock()
-	previous, existed := r.user[name]
-	r.mu.RUnlock()
-	t.Cleanup(func() {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if existed {
-			r.user[name] = previous
-			return
-		}
-		delete(r.user, name)
-		fold := lowerASCII(name)
-		for other := range r.user {
-			if lowerASCII(other) == fold {
-				return
-			}
-		}
-		delete(r.userFold, fold)
-	})
 }
 
 // Generate the admission grid from every registered contract, rather than a
@@ -212,7 +186,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 								// The controlled handler is registered per case because it
 								// must report this case's invocation and transaction state.
 								setup: func(t *testing.T) {
-									cleanupAdmissionProcedure(t, alias)
+									scopeProcedureRegistration(t, alias, userProcedureTable)
 									require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 										defer func() {
 											if composite && !writeAdmission {

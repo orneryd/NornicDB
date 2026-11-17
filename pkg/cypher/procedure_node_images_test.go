@@ -122,7 +122,7 @@ func TestDeprecatedProcedureAliasKeepsTheOriginalNodeImageContract(t *testing.T)
 func TestProcedureImageDeclarationReplacementUpdatesCachedQuery(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		const name = "image.rebound"
-		cleanupAdmissionProcedure(t, name)
+		scopeProcedureRegistration(t, name, userProcedureTable)
 		graph := newNOR413ColdDocGraph(t)
 		const query = "MATCH (:Hub)-[:HAS]->(n:Doc {k:3}) CALL image.rebound(n) YIELD value RETURN value"
 		for _, images := range []ProcedureNodeImages{MetadataNodeImages, FullNodeImages, MetadataNodeImages} {
