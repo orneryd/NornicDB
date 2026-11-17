@@ -1,3 +1,4 @@
+import {useMonitoringStore} from "../store/monitoringStore";
 import {useMediaQuery} from "../utils/useMediaQuery";
 import { useEffect, useId, useState, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router-dom";
@@ -44,8 +45,8 @@ export function Browser({maintenance = false}: {maintenance?: boolean}) {
   const compactInspector=useMediaQuery('(max-width: 1023px)');
   const [inspectorOpen,setInspectorOpen]=useViewState('inspector',false);
   const [searchParams] = useSearchParams();
+  const stats=useMonitoringStore(state=>state.stats);
   const {
-    stats,
     fetchDatabases,
     databaseList,
     selectedDatabase,

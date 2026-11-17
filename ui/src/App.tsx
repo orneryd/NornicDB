@@ -12,6 +12,7 @@ import { Login } from "./pages/Login";
 import { Browser } from "./pages/Browser";
 import {Schema} from "./pages/Schema";
 import {Backups} from "./pages/Backups";
+import {Health} from './pages/Health';
 import { Security } from "./pages/Security";
 import { AdminUsers } from "./pages/AdminUsers";
 import { DatabaseAccess } from "./pages/DatabaseAccess";
@@ -90,6 +91,8 @@ function AppContent() {
         <Route path="/schema/:database" element={<ProtectedRoute><Schema/></ProtectedRoute>}/>
         <Route path="/schema/:database/:schemaKind/:definition" element={<ProtectedRoute><Schema/></ProtectedRoute>}/>
         <Route path="/backups" element={<ProtectedRoute><Backups/></ProtectedRoute>}/>
+        <Route path="/operations/health" element={<ProtectedRoute><Health/></ProtectedRoute>}/>
+        <Route path="/operations/health/metrics/:metricName" element={<ProtectedRoute><Health/></ProtectedRoute>}/>
         <Route path="/workspace/:database" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
         <Route path="/workspace/:database/nodes/:nodeId" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
         <Route path="/workspace/:database/nodes/:nodeId/edit" element={<ProtectedRoute><Browser /></ProtectedRoute>} />
