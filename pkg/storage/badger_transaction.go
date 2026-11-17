@@ -1136,7 +1136,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 	body := node
 	var err error
 	if !committedImage {
-		body, suppliedNewVectors, err = tx.reconcileManagedEmbeddingsLocked(oldNode, node)
+		body, suppliedNewVectors, err = tx.reconcileManagedEmbeddingsLocked(ctx, oldNode, node)
 		if err != nil {
 			return err
 		}
@@ -1153,7 +1153,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		if invalidated && !committedImage && !suppliedNewVectors {
 			// The normal reconciliation owner already cleared committed keys.
 			tx.clearPendingNodeEmbeddingRangeLocked(node.ID)
-		} else if err := tx.clearNodeEmbeddingRangeLocked(node.ID); err != nil {
+		} else if err := tx.clearNodeEmbeddingRangeLocked(ctx, node.ID); err != nil {
 			return err
 		}
 		if embeddingsSeparate && body == node {
@@ -1246,7 +1246,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 // Embeddings the caller set on node itself (different vectors) are kept as
 // written. The second result reports that replacement so staging can remove
 // obsolete chunk keys without comparing the same vectors a second time.
-func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Node) (*Node, bool, error) {
+func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Context, oldNode, node *Node) (*Node, bool, error) {
 	if len(oldNode.ChunkEmbeddings) == 0 && oldNode.EmbedMeta == nil {
 		// Embeddings this transaction already invalidated, carried back by a
 		// copy of the node read before (REMOVE n:Embedded, n.text SET n.x =
@@ -1292,7 +1292,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	tx.droppedEmbeddings[node.ID] = &Node{ChunkEmbeddings: oldNode.ChunkEmbeddings, EmbedMeta: oldNode.EmbedMeta}
 	node.ChunkEmbeddings = nil
 	node.EmbedMeta = nil
-	if err := tx.scanCommittedEmbeddingKeysLocked(node.ID, func(key []byte) error {
+	if err := tx.scanCommittedEmbeddingKeysLocked(ctx, node.ID, func(key []byte) error {
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
@@ -1336,8 +1336,12 @@ func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID
 // sorts every time an iterator opens. Deleting N nodes in one transaction
 // opened 2-3 iterators per node over up to N such writes: quadratic (#703).
 // The callback owns each key and may retain it in the buffered write set.
-func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, visit func(key []byte) error) error {
+func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(ctx context.Context, nodeID NodeID, visit func(key []byte) error) error {
 	return tx.withSnapshotViewLocked(func(view *badger.Txn) error {
+		absent, err := tx.embeddingAbsence.recordsAbsent(ctx, view)
+		if err != nil || absent {
+			return err
+		}
 		return visitEmbeddingKeys(view, nodeID, visit)
 	})
 }

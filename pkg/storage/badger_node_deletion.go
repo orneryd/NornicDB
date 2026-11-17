@@ -35,12 +35,7 @@ func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id N
 		}
 	}
 	if isStaged {
-		err = tx.scanCommittedEmbeddingKeysLocked(id, func(key []byte) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return w.Delete(key)
-		})
+		err = tx.clearNodeEmbeddingRangeLocked(ctx, id)
 	} else {
 		err = visitEmbeddingKeys(raw, id, w.Delete)
 	}

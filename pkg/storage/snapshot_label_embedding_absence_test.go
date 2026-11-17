@@ -308,3 +308,23 @@ func TestSnapshotEmbeddingAbsenceCancellationPrecedesMemoReuse(t *testing.T) {
 		require.Equal(t, before, proof, "cancellation neither advances nor consumes the proof")
 	}
 }
+
+func TestSnapshotEmbeddingAbsenceKeepsPendingChunkCleanup(t *testing.T) {
+	b := newTestEngine(t)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads+1)
+	tx := nor160BeginPinned(t, b, "test")
+	pinnedAbsenceReadQueryNodes(t, tx, ids)
+	require.True(t, tx.embeddingAbsence.absent)
+	target := ids[0]
+	node, err := tx.GetNode(t.Context(), target)
+	require.NoError(t, err)
+	node.ChunkEmbeddings = [][]float32{makeStoredChunkVector(0.5)}
+	require.NoError(t, tx.UpdateGraphNode(t.Context(), NodeUpdateRequest{After: node, Policy: ClientNodeEdits}))
+	require.NoError(t, tx.DeleteGraphNode(t.Context(), target, CascadeEdges))
+	require.NoError(t, tx.CommitContext(t.Context()))
+	_, err = b.GetStoredNode(t.Context(), target)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.NoError(t, b.withView(func(view *badger.Txn) error {
+		return visitEmbeddingKeys(view, target, func([]byte) error { t.Error("deleted node retained staged chunk storage"); return nil })
+	}))
+}
