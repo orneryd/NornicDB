@@ -180,10 +180,10 @@ func TestRowPredicatePlanEdges(t *testing.T) {
 		require.False(t, ok, text)
 	}
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	ctx := context.Background()
+	ctx := t.Context()
 	operand, ok := parseRowOperand("n.a", rowOperandSimple)
 	require.True(t, ok)
-	_, bound, err := operand.resolveScope(compiledRowScope{executor: exec, ctx: ctx}, deletedEntityPropertyValue)
+	_, bound, err := operand.resolveScope(ctx, compiledRowScope{executor: exec}, deletedEntityPropertyValue)
 	require.NoError(t, err)
 	require.False(t, bound)
 
