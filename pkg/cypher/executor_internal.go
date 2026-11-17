@@ -144,7 +144,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params, true, ownedDelivery)
 	}
 	if _, err := e.admitTransactionStatement(ctx, cypher); err != nil {
 		return nil, err
@@ -164,6 +164,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
+	// The map and projection boundary is read before anything rewrites a pattern
+	// property map into WHERE predicates, as on the public route.
+	if err := validateStaticMapKeys(ctx, cypher); err != nil {
+		return nil, err
+	}
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
 	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")

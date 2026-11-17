@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -26,16 +27,25 @@ const (
 	maxSnapshotNodeLabelCacheBytes = 1 << 20
 )
 
-func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key snapshotLabelCacheKey, nodes []*Node, indexNodesByID bool) {
+// storeSnapshotLabelPrefixLocked retains a stopped label stream for the rest
+// of this pinned snapshot, so the statement's next read of the same label
+// resumes from it. A snapshot that refuses the population (a node outside the
+// cache's shape, a sidecar-bearing node, or the byte/node bound) keeps its
+// ordinary read instead: the refusal itself is not a failure, so it reports
+// no error. A sidecar probe the snapshot cannot answer is a read failure and
+// is returned.
+//
+// Caller must hold tx.mu.
+func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(ctx context.Context, txn *badger.Txn, key snapshotLabelCacheKey, nodes []*Node, indexNodesByID bool) error {
 	if len(nodes) == 0 || len(nodes) > maxSnapshotLabelPrefixNodes {
-		return
+		return nil
 	}
 	previous, exists := tx.snapshotLabelPrefixNodes[key]
 	if exists && len(previous) >= len(nodes) {
-		return
+		return nil
 	}
 	if !exists && len(tx.snapshotLabelPrefixNodes) >= maxSnapshotLabelPrefixStreams {
-		return
+		return nil
 	}
 
 	bytes := 0
@@ -43,21 +53,25 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 	for index, node := range nodes {
 		nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 		if !ok || nodeBytes > maxSnapshotLabelPrefixBytes-bytes {
-			return
+			return nil
 		}
 		// A node whose embedding state lives in the worker sidecar key space
 		// has a clean body but must be excluded from the snapshot caches
 		// like any other embedded node: cached entries are body-only and
 		// would be served without the sidecar embeddings.
-		if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
-			return
+		sidecar, err := tx.nodeHasEmbeddingSidecar(ctx, txn, node.ID)
+		if err != nil {
+			return err
+		}
+		if sidecar {
+			return nil
 		}
 		sizes[index] = nodeBytes
 		bytes += nodeBytes
 	}
 	previousBytes := tx.snapshotLabelPrefixNodeBytes[key]
 	if tx.snapshotLabelPrefixBytes-previousBytes > maxSnapshotLabelPrefixBytes-bytes {
-		return
+		return nil
 	}
 	if tx.snapshotLabelPrefixNodes == nil {
 		tx.snapshotLabelPrefixNodes = make(map[snapshotLabelCacheKey][]*Node, maxSnapshotLabelPrefixStreams)
@@ -75,6 +89,7 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 			tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, sizes[index])
 		}
 	}
+	return nil
 }
 
 func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, identifier NodeID) ([]string, error) {
@@ -127,24 +142,54 @@ func (tx *BadgerTransaction) cacheCommittedNodeLabelsLocked(node *Node) []string
 
 // nodeHasEmbeddingSidecar reports whether nodeID has a worker sidecar
 // metadata record visible in txn. A nil txn (test call sites) skips the probe.
-func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID NodeID) bool {
+//
+// The probe asks the transaction's own snapshot proof first: a pinned snapshot
+// whose whole embedding range holds no record has no sidecar for any node it
+// contains, so the per-node missing-key lookup is skipped for that snapshot
+// instead of being paid once per candidate. A snapshot below the proof's read
+// count and a snapshot that holds an embedding record both keep the ordinary
+// lookup. A missing key is the answer "no sidecar", never an error; a real
+// read failure is returned. Caller holds tx.mu.
+func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(ctx context.Context, txn *badger.Txn, nodeID NodeID) (bool, error) {
 	if txn == nil {
-		return false
+		return false, nil
 	}
-	_, err := txn.Get(embeddingMetaKey(nodeID))
-	return err == nil
+	absent, err := tx.embeddingAbsence.recordsAbsent(ctx, txn)
+	if err != nil {
+		return false, err
+	}
+	if absent {
+		return false, nil
+	}
+	if _, err := txn.Get(embeddingMetaKey(nodeID)); err != nil {
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
-func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, node *Node) {
+// cacheSnapshotPrefixNodeByIDLocked admits one point-read body to the bounded
+// snapshot prefix cache. A body the cache refuses (its shape, its size, or a
+// sidecar-bearing node that must be re-read so embedding hydration runs) is
+// simply not admitted: that refusal reports no error. A sidecar probe the
+// snapshot cannot answer is a read failure and is returned. Caller holds
+// tx.mu.
+func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(ctx context.Context, txn *badger.Txn, node *Node) error {
 	nodeBytes, ok := snapshotLabelPrefixNodeBytes(node)
 	if !ok || nodeBytes > maxSnapshotPrefixNodeCacheBytes {
-		return
+		return nil
 	}
-	// Sidecar-bearing nodes must be re-read so embedding hydration runs.
-	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
-		return
+	sidecar, err := tx.nodeHasEmbeddingSidecar(ctx, txn, node.ID)
+	if err != nil {
+		return err
+	}
+	if sidecar {
+		return nil
 	}
 	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, nodeBytes)
+	return nil
 }
 
 func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *Node, nodeBytes int) {

@@ -144,41 +144,23 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, text())
 
-	// A branch of an unscoped body that declares an outer variable's name
-	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
-	// implicitly imported outer value (unscopedBranchLocals, #907).
-	var branchLocals map[string][]string
-	if !scoped && len(rows) > 0 {
-		var outerNames []string
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") {
-				outerNames = append(outerNames, name)
-			}
-		}
-		branchLocals = map[string][]string{}
-		// Each retained branch is keyed by the text it runs as: its own projected
-		// bytes, which is the branch the UNION executor selects and, without
-		// UNION, the body itself.
-		branchTexts := queryBranchTexts(importBody)
-		for index, branch := range importBody.branches {
-			locals := unscopedBranchLocals(ctx, branch, outerNames)
-			if len(locals) == 0 || index >= len(branchTexts) {
-				continue
-			}
-			branchLocals[branchTexts[index]] = locals
-		}
-	}
-
 	// Names.Visit protects compiled metadata by copying its slice. Resolve the
 	// immutable selection once per call, rather than allocating once per row.
-	var retainedNames []string
-	compiledCall.Retained.Visit(func(names []string) { retainedNames = names }, func() {})
-	var branchRetainedNames [][]string
-	if isUnion {
-		branchRetainedNames = make([][]string, len(compiledCall.Statement.Branches))
-		for index, branch := range compiledCall.Statement.Branches {
-			branch.Retained.Visit(func(names []string) { branchRetainedNames[index] = names }, func() {})
-		}
+	// The compiler owns each branch's input identities. A nested CALL can
+	// declare the same name in its own body without importing an outer value;
+	// source-name scans cannot distinguish those bindings.
+	branches := compiledCall.Statement.Branches
+	if len(branches) == 0 {
+		branches = []resultmetadata.Statement{*compiledCall.Statement}
+	}
+	branchInputs := make([][]string, len(branches))
+	branchRetained := make([][]string, len(branchInputs))
+	for index, branch := range branches {
+		branch.Incoming.Visit(func(names []string) { branchInputs[index] = names }, func() {})
+		branch.Retained.Visit(func(names []string) {
+			branchRetained[index] = names
+			branchInputs[index] = append(branchInputs[index], names...)
+		}, func() {})
 	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
@@ -228,6 +210,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			branchOrdinal := 0
 			runBranch := func(runCtx context.Context, query string) (*ExecuteResult, error) {
 				branchClauses := clauses
+				currentBranch := branchOrdinal
 				if isUnion {
 					if branchOrdinal >= len(importBody.branches) {
 						return nil, unresolvedStatementError()
@@ -243,24 +226,24 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
 					}
 				}
-				branchInput := make(pipelineRow, len(input))
-				scope := make(map[string]struct{}, len(input))
+				if currentBranch >= len(branchInputs) {
+					return nil, unresolvedStatementError()
+				}
+				branchInput := make(pipelineRow, len(branchInputs[currentBranch]))
+				scope := make(map[string]struct{}, len(branchInputs[currentBranch]))
 				for name, value := range input {
-					branchInput[name] = value
-					if !strings.HasPrefix(name, "$") {
+					if strings.HasPrefix(name, "$") {
+						branchInput[name] = value
+					}
+				}
+				for _, name := range branchInputs[currentBranch] {
+					if value, exists := input[name]; exists {
+						branchInput[name] = value
 						scope[name] = struct{}{}
 					}
 				}
-				for _, name := range branchLocals[strings.TrimSpace(query)] {
-					delete(branchInput, name)
-					delete(scope, name)
-				}
 				carried := pipelineRow{}
-				names := retainedNames
-				if isUnion && branchOrdinal > 0 {
-					names = branchRetainedNames[branchOrdinal-1]
-				}
-				for _, name := range names {
+				for _, name := range branchRetained[currentBranch] {
 					carried[name] = branchInput[name]
 				}
 
@@ -277,11 +260,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 			var inner *ExecuteResult
 			var execErr error
-			// A UNION body is executed branch by branch on its text; every other
-			// body runs the retained clauses. Only an unscoped body's branch-local
-			// filter is keyed by the branch text.
+			// UNION selects its retained branches by ordinal; other bodies run
+			// the retained clauses directly. Neither path derives scope from text.
 			branchText := ""
-			if isUnion || len(branchLocals) > 0 {
+			if isUnion {
 				branchText = text()
 			}
 			if isUnion {

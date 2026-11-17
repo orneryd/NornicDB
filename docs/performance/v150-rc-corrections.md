@@ -1066,3 +1066,83 @@ explicit 16 MiB record limit refuses that snapshot. Large property-record and
 canceled-snapshot preservation controls pass with it (3.835 s). The byte counter
 is shared with the existing stored-graph benchmark; no second snapshot codec or
 write path is introduced.
+
+## Small HTTP and Bolt reads versus v1.4.3
+
+The generated database contains 21,748 nodes with 18 integer properties each.
+The measured query returns a map of those properties for three nodes. Each
+route receives three warmups and sequential requests: 10,000 in the first pair
+and 30,000 in each of the two confirmation pairs. Three paired runs
+alternate the revision order. Both revisions use Go 1.27.3 on the same machine;
+no tests, builds or other benchmark processes overlap these measurements.
+
+| Public route | v1.4.3 p50 | Corrected p50 | Change | v1.4.3 bytes/request | Corrected bytes/request |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| HTTP auto-commit | 113.083 µs | 122.416 µs | +8.25% | 67,665 | 68,286 |
+| Bolt | 67.625 µs | 76.667 µs | +13.37% | 38,785 | 38,009 |
+
+These are medians of the three run medians. HTTP p50 ranges are 112.833–115.541
+µs versus 120.791–122.792 µs; Bolt ranges are 67.167–68.000 µs versus
+76.375–77.438 µs. Every response's rows and values are checked; all requests
+succeed. Allocation totals include the client and its result checks. HTTP is
+measured through response consumption; Bolt includes driver record decoding.
+Compare revisions within a route, not HTTP against Bolt.
+
+The earlier candidate measured 149.625 µs for HTTP and 98.250 µs for Bolt.
+Profiles isolated repeated statement preparation and per-field JSON encoder
+setup. The corrections retain normalized statement text and successful static
+map-key preparation in bounded caches, reuse the existing no-rewrite cache for
+statements without label-expression candidates, and encode ordered HTTP maps
+inside the existing JSON domain writer. Parameter values, live procedure
+permissions and graph/search generations remain request-specific. Small Bolt
+pulls resolve session identity once per nonempty pull, as large pulls already do.
+
+The reference is released v1.4.3 (`f2ddd27cfae3788076778a0a0d48c827df046a3b`).
+This qualification covers the named warm small-read workload, not cold parsing,
+authenticated-role throughput, concurrent clients or all query shapes. The
+median latency differences are below the release's 15% tracking threshold;
+they are not presented as parity with v1.4.3.
+
+
+## Durable managed-vector anchor batches
+
+The previous anchor path synchronized each missing image separately. A single
+transaction updating 32,000 vector-bearing nodes therefore performed thousands
+of immediate fsyncs before journaling its property changes. The correction uses
+the existing batch writer, retaining each record's database and limiting pending
+payloads to approximately 1 MiB or 128 anchors. One larger anchor is allowed and
+flushed immediately. Cache proofs become reusable only after successful sync,
+provided the managed-vector generation has not advanced.
+
+A component fixture gives each updated node one 2,048-coordinate vector and
+2,000 bytes of text. Three samples of three operations each invalidate anchor
+reuse outside the timer to measure first use. Median results against the prior
+candidate (not v1.4.3):
+
+| Anchors/transaction | Before | Corrected | Fsyncs before / corrected | Bytes before / corrected | Allocations before / corrected |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4.915 ms | 4.942 ms | 1 / 1 | 49,226 / 44,869 | 23 / 25 |
+| 128 | 660.383 ms | 17.735 ms | 128 / 2 | 3,586,856 / 3,616,720 | 1,189 / 1,198 |
+| 1,024 | 5,071.124 ms | 115.609 ms | 1,024 / 13 | 28,480,176 / 28,494,400 | 9,292 / 9,294 |
+
+Small WAL frames reuse the existing buffered writer's storage. Exact framing,
+checksum, padding, short-write/error and partial-recovery controls remain in the
+same framing owner. The public Bolt regression passes all 8K/16K/32K updates,
+using both one and sixteen statements, followed by restart and vector checks
+(110 seconds locally). Separate controls compare every replayed coordinate by
+float bits and reject cache proofs from a newer generation or failed batch.
+
+A fresh public-storage comparison with released v1.4.3 uses 80 nodes, each with
+1,024 managed vectors of 256 coordinates, plus a named vector. Every stored
+coordinate and final property value is verified after each run. Three alternating
+paired runs report medians of per-run mean operation costs:
+
+| Phase | v1.4.3 | Corrected | v1.4.3 bytes/op | Corrected bytes/op |
+| --- | ---: | ---: | ---: | ---: |
+| First update of each key | 29.945 ms | 21.156 ms | 44,557,615 | 16,131,112 |
+| Repeated updates of one key | 33.150 ms | 10.656 ms | 47,817,712 | 11,029,308 |
+| Rotating 80-key working set | 32.214 ms | 19.952 ms | 51,564,240 | 14,639,558 |
+
+These live-state comparisons do not substitute for the crash/replay controls.
+Temporary databases were removed by the harness. CPU profiles were captured in
+separate passes, outside the ordinary timing samples.

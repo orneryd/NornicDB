@@ -34,11 +34,32 @@ func TestBoltNestedCypherUpdateStats(t *testing.T) {
 	}
 }
 
-func TestBoltNestedCypherReadTransactionAndRollback(t *testing.T) {
-	// The existing session adapter accepts nested writes in a READ-mode BEGIN.
-	// This regression pins that behavior; aggregation must not change promotion.
+func TestBoltNestedCypherReadTransactionRefusesNestedWrite(t *testing.T) {
+	// A READ-mode BEGIN governs every statement of its transaction: a procedure
+	// that runs statement text inherits the restriction, so its resolved
+	// nested write is refused with Neo4j's AccessMode status and creates
+	// nothing.
 	ctx := context.Background()
 	session := newStatementFramingSession(t, neo4jdriver.AccessModeRead)
+	tx, err := session.BeginTransaction(ctx)
+	require.NoError(t, err)
+	_, err = tx.Run(ctx, "CALL apoc.cypher.run($body,{}) YIELD value RETURN value",
+		map[string]any{"body": "CREATE (:NestedRefused) RETURN 1 AS value"})
+	var status *neo4jdriver.Neo4jError
+	require.ErrorAs(t, err, &status)
+	require.Equal(t, "Neo.ClientError.Statement.AccessMode", status.Code)
+	require.NoError(t, tx.Rollback(ctx))
+	result, err := session.Run(ctx, "MATCH (n:NestedRefused) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.True(t, result.Next(ctx))
+	require.EqualValues(t, 0, result.Record().Values[0])
+}
+
+func TestBoltNestedCypherWriteTransactionAndRollback(t *testing.T) {
+	// The nested write's promotion and rollback are unchanged for a WRITE-mode
+	// transaction; aggregation must not change promotion.
+	ctx := context.Background()
+	session := newStatementFramingSession(t)
 	tx, err := session.BeginTransaction(ctx)
 	require.NoError(t, err)
 	result, err := tx.Run(ctx, "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", map[string]any{"body": "CREATE (:NestedRollback) RETURN 1 AS value"})

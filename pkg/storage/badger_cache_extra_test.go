@@ -109,18 +109,18 @@ func TestBadgerCommitPublicationCounts(t *testing.T) {
 	for _, id := range []EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2")), EdgeID(prefixTestID("be-3"))} {
 		creates = append(creates, Operation{Type: OpCreateEdge, Edge: &Edge{ID: id, Type: "REL"}})
 	}
-	b.publishCommitOperations("", nil, creates, true, true, &images)
+	b.publishCommitOperations("", nil, mustCommitFrame(t, creates), true, true, &images)
 	assert.EqualValues(t, 2, b.nodeCount.Load())
 	assert.EqualValues(t, 3, b.edgeCount.Load())
-	b.publishCommitOperations("", nil, []Operation{
+	b.publishCommitOperations("", nil, mustCommitFrame(t, []Operation{
 		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-1"))},
 		{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("be-2"))},
-	}, true, true, &images)
+	}), true, true, &images)
 	assert.EqualValues(t, 1, b.edgeCount.Load())
-	b.publishCommitOperations("", nil, []Operation{
+	b.publishCommitOperations("", nil, mustCommitFrame(t, []Operation{
 		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-1")), EdgesDeleted: 1},
 		{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("bn-2"))},
-	}, true, true, &images)
+	}), true, true, &images)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
@@ -135,7 +135,7 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "", b.db.oracle.published.Load())
 	b.labelCacheInvalidateForNodeLabels(nil, NodeID("x"))
 	b.labelCacheInvalidateForRemovedLabels(nil, nil, NodeID("x"))
-	b.publishCommitOperations("", nil, nil, true, true, &commitCacheImages{})
+	b.publishCommitOperations("", nil, mustCommitFrame(t, nil), true, true, &commitCacheImages{})
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())

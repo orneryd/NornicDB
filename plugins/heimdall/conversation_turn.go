@@ -85,7 +85,7 @@ func (p *WatcherPlugin) OpenTurn(ctx context.Context, conversationID, messageID,
 	if err != nil {
 		return nil, err
 	}
-	turn := &guardian.ConversationTurn{Messages: messages, Database: database, Release: release}
+	turn := &guardian.ConversationTurn{Context: ctx, Messages: messages, Database: database, Release: release}
 	turn.Complete = func(saveCtx context.Context, reply guardian.ConversationReply) error {
 		tools, err := convert.PropertyJSON.Marshal(reply.Tools)
 		if err != nil {

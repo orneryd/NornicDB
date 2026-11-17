@@ -658,7 +658,6 @@ func TestBranchDeclaresVariable(t *testing.T) {
 	} {
 		require.Equal(t, testCase.declares, branchDeclaresVariable(t.Context(), testRetainedBranches(t, testCase.branch)[0], testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), testRetainedBranches(t, "MATCH (n)-->(m) RETURN m, k")[0], []string{"n", "k"}))
 	require.Equal(t, byte(0), previousNonSpace("  ", 2))
 	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
 }

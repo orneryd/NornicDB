@@ -12,18 +12,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// isAggregateFunc checks if expression is an aggregate function (whitespace-tolerant)
+// aggregateCallName reports whether a decoded function name aggregates. The
+// traversal pipeline's aggregate list names them, so one list decides which
+// functions aggregate, and the comparison allocates nothing.
+func aggregateCallName(name string) bool {
+	for _, function := range traversalAggFnNames {
+		if strings.EqualFold(name, function.lower) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAggregateFunc checks if expression is one whole aggregate call. The call's
+// name comes from the canonical callable reader, so an escaped name
+// (`count`(x)) is the same call as count(x); a qualified name
+// (apoc.coll.sum(x)) is not an aggregate.
 func isAggregateFunc(expr string) bool {
-	return inspectFunctionCall(expr, namedFunctionCall, "count", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "sum", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "avg", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "min", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "max", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "collect", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "stdev", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "stdevp", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "percentilecont", nil) ||
-		inspectFunctionCall(expr, namedFunctionCall, "percentiledisc", nil)
+	var facts functionCallFacts
+	return inspectFunctionCall(expr, qualifiedFunctionCall, "", &facts) && aggregateCallName(facts.name)
 }
 
 // containsAggregateFunc checks if expression contains any aggregate function

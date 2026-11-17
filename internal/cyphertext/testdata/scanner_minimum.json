@@ -231,9 +231,7 @@
     "alterDatabaseOption"
   ],
   "pkg/cypher/deleted_entity_projection.go": [
-    "deletedEntityReadsIn",
-    "iterationSourceVariable",
-    "propertyNullTestFollows"
+    "deletedEntityReadFailure"
   ],
   "pkg/cypher/dynamic_tokens.go": [
     "hasDynamicToken",
@@ -760,9 +758,11 @@
   ],
   "pkg/cypher/row_expression.go": [
     "containsRelationshipPattern",
+    "evaluateRowNullTestOperand",
     "findListComprehensionToken",
     "isQualifiedFunctionCall",
     "nextRowPropertySeparator",
+    "nullTestPropertyOperand",
     "rowArithmeticSignIsUnary",
     "splitRowArithmeticTier",
     "stripEnclosingExpressionParentheses",

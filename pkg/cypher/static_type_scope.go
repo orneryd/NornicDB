@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"maps"
 	"strings"
 )
@@ -247,6 +248,13 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 	if err != nil || !ok {
 		return nil, "", err
 	}
+	var boundBody *resultmetadata.Statement
+	if program, bound := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); bound && boundStatementAddresses(program, clause.syntax) {
+		if compiled, found := program.calls[clause.syntax.ID()]; found {
+			boundBody = compiled.call.Statement
+		}
+	}
+
 	var returned typeScope
 	firstReturn := ""
 	typedBranches := 0
@@ -260,9 +268,29 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 			continue
 		}
 		last := clauses[len(clauses)-1]
+		branchInitial := initial
 		retained := initial
 		importing := false
-		if !scoped {
+		if boundBody != nil {
+			// Types consume the same branch membership as execution. A name
+			// inside a nested CALL is not necessarily this branch's outer input.
+			binding := boundBody
+			if len(boundBody.Branches) > 0 {
+				binding = &boundBody.Branches[branchIndex]
+			}
+			branchInitial, retained = typeScope{}, typeScope{}
+			binding.Incoming.Visit(func(names []string) {
+				for _, name := range names {
+					branchInitial[name] = outer[name]
+				}
+			}, func() {})
+			binding.Retained.Visit(func(names []string) {
+				for _, name := range names {
+					retained[name] = outer[name]
+					branchInitial[name] = outer[name]
+				}
+			}, func() {})
+		} else if !scoped {
 			// Unlisted outer names remain implicit imports under the documented
 			// gh648 extension. A leading importing WITH explicitly projects its
 			// listed names (including *), so those names follow ordinary WITH
@@ -281,7 +309,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 				}
 			}
 		}
-		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
+		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(branchInitial), cypher25, subqueryScope{visible: retained})
 		if err != nil {
 			return nil, firstReturn, err
 		}

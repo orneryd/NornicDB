@@ -57,6 +57,25 @@ func findAggregateSpans(expr string) []aggregateSpan {
 	i := 0
 	for i < len(expr) {
 		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			// An escaped aggregate name is the same call as its unquoted
+			// spelling (`count`(x)): the canonical identifier reader decodes
+			// it, and the call is then read exactly as an unquoted one. A
+			// quoted name that qualifies another name (`a`.`count`(x)) is a
+			// property access, not a call, and a string is never a name.
+			if name, isName := cyphertext.ScanIdentifier(expr, i); isName && name.Quoted &&
+				aggregateCallName(name.Value) && functionNameStartsAt(expr, i) {
+				open := name.End
+				for open < len(expr) && cyphertext.IsWhitespaceAt(expr, open) {
+					open++
+				}
+				if open < len(expr) && expr[open] == '(' {
+					if close := findMatchingParen(expr, open); close >= 0 {
+						spans = append(spans, aggregateSpan{start: i, end: close + 1})
+						i = close + 1
+						continue
+					}
+				}
+			}
 			i = end
 			continue
 		}

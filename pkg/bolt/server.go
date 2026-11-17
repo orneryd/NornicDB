@@ -138,6 +138,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/transportread"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -1631,6 +1632,7 @@ type Session struct {
 	inTransaction                   bool
 	txMetadata                      map[string]any // Transaction metadata from BEGIN
 	txDatabase                      string
+	txAccessMode                    requestedAccessMode // BEGIN's requested access mode
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
 	txMergeStatements               []cypher.CommitStatement
@@ -2071,6 +2073,16 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			break
 		}
 
+		// BEGIN's requested access mode governs every statement of the
+		// transaction until the transaction ends, whatever the individual RUNs
+		// of the connection carry.
+		requestedMode, validRequestedMode := accessModeFromMetadata(metadata)
+		if !validRequestedMode {
+			invalidMode := invalidRequestedAccessMode(metadata)
+			err = s.sendTransactionControlError(nornicerrors.WithStatus(invalidMode, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(invalidMode)))
+			break
+		}
+
 		// Pin every explicit transaction provider to the BEGIN database, not only
 		// database-manager adapters. Factory and single-connection raw executors are
 		// session-scoped rather than database-resolving, so a later RUN naming a
@@ -2152,6 +2164,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		s.inTransaction = true
 		s.txMetadata = metadata
 		s.txDatabase = txDatabase
+		s.txAccessMode = requestedMode
 		s.txHasMerge = false
 		s.txHasNonMergeWrite = false
 		s.txMergeStatements = nil
@@ -2322,7 +2335,11 @@ func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, pa
 	}
 
 	// Execute query
-	result, err := a.executor.Execute(ctx, query, paramsMap)
+	// This result is converted once, here, and read by this session's PULL
+	// records: the claim lets the executor hand a certified cached result over
+	// instead of copying it. Nothing between here and the client changes the
+	// result's rows (the SHOW DATABASES filter builds its own list).
+	result, err := a.executor.Execute(transportread.Claim(ctx), query, paramsMap)
 	if err != nil {
 		return nil, err
 	}

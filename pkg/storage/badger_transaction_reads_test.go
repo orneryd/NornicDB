@@ -295,7 +295,7 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 	tx := &BadgerTransaction{}
 	for index := 0; index < maxSnapshotPrefixNodeCacheNodes+5; index++ {
 		node := &Node{ID: NodeID(fmt.Sprintf("test:cached-%03d", index)), Labels: []string{"Person"}}
-		tx.cacheSnapshotPrefixNodeByIDLocked(nil, node)
+		require.NoError(t, tx.cacheSnapshotPrefixNodeByIDLocked(t.Context(), nil, node))
 	}
 	require.Len(t, tx.snapshotPrefixNodeByID, maxSnapshotPrefixNodeCacheNodes)
 	require.NotContains(t, tx.snapshotPrefixNodeByID, NodeID("test:cached-000"), "oldest entries should be evicted first")
@@ -350,7 +350,7 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 		{ID: "test:small", Labels: []string{"Person"}},
 		{ID: "test:larger", Labels: []string{"Person", "Engineer"}, Properties: map[string]any{"name": "Alice"}},
 	}
-	transaction.storeSnapshotLabelPrefixLocked(nil, snapshotLabelCacheKey{projectionKey: "Person"}, nodes, true)
+	require.NoError(t, transaction.storeSnapshotLabelPrefixLocked(t.Context(), nil, snapshotLabelCacheKey{projectionKey: "Person"}, nodes, true))
 	require.Len(t, transaction.snapshotPrefixNodeByID, len(nodes))
 	total := 0
 	for _, node := range nodes {
@@ -365,7 +365,7 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 	}
 	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
 	require.Equal(t, total, transaction.snapshotLabelPrefixBytes)
-	transaction.storeSnapshotLabelPrefixLocked(nil, snapshotLabelCacheKey{projectionKey: "Other"}, nodes, true)
+	require.NoError(t, transaction.storeSnapshotLabelPrefixLocked(t.Context(), nil, snapshotLabelCacheKey{projectionKey: "Other"}, nodes, true))
 	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
 	require.Len(t, transaction.snapshotPrefixNodeOrder, len(nodes))
 }
@@ -380,10 +380,10 @@ func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 	transaction, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
-	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, snapshotLabelCacheKey{projectionKey: "Person"}, []*Node{node}, true)
+	require.NoError(t, transaction.storeSnapshotLabelPrefixLocked(t.Context(), transaction.snapshotTx, snapshotLabelCacheKey{projectionKey: "Person"}, []*Node{node}, true))
 	require.Empty(t, transaction.snapshotLabelPrefixNodes)
 	require.Empty(t, transaction.snapshotPrefixNodeByID)
-	transaction.cacheSnapshotPrefixNodeByIDLocked(transaction.snapshotTx, node)
+	require.NoError(t, transaction.cacheSnapshotPrefixNodeByIDLocked(t.Context(), transaction.snapshotTx, node))
 	require.Empty(t, transaction.snapshotPrefixNodeByID)
 	stored, err := transaction.getCommittedNodeLocked(t.Context(), node.ID)
 	require.NoError(t, err)

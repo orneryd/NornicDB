@@ -22,6 +22,7 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -149,39 +150,32 @@ func (m *DatabaseManager) markMigrationComplete(ctx context.Context) error {
 // Returns true if any unprefixed data is found, false otherwise.
 // Returns an error if scanning fails.
 func (m *DatabaseManager) detectUnprefixedData(ctx context.Context, engine storage.Engine) (bool, error) {
-	// Namespace migration is a one-time operation, not a statement read: it
-	// runs on its own lifetime.
-	allNodes, err := engine.AllNodes(ctx)
-	if err != nil {
+	// Namespace detection needs identities, not entity bodies. Loading whole
+	// nodes here populated the read caches with property/vector payloads before
+	// the server served its first request.
+	found := false
+	checkID := func(id string) error {
+		if strings.Contains(id, ":") {
+			return nil
+		}
+		found = true
+		return storage.ErrIterationStopped
+	}
+	err := engine.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{
+		Projection: []string{}, ApplyDecayFilter: true, StripEmbeddings: true,
+	}, func(node *storage.Node) error { return checkID(string(node.ID)) })
+	if err != nil && !errors.Is(err, storage.ErrIterationStopped) {
 		return false, err
 	}
-
-	// Check if any node doesn't have a namespace prefix
-	// A node has a namespace prefix if its ID contains ":"
-	for _, node := range allNodes {
-		nodeIDStr := string(node.ID)
-		// Check if this looks like unprefixed data
-		// Prefixed data will have format like "nornic:node-123" or "system:node-123"
-		// Unprefixed data will be just "node-123"
-		if !strings.Contains(nodeIDStr, ":") {
-			return true, nil
-		}
+	if found {
+		return true, nil
 	}
-
-	// Also check edges
-	allEdges, err := engine.AllEdges(ctx)
-	if err != nil {
+	err = storage.StreamEdgesWithFallback(ctx, engine, storage.StreamChunkSize,
+		func(edge *storage.Edge) error { return checkID(string(edge.ID)) })
+	if err != nil && !errors.Is(err, storage.ErrIterationStopped) {
 		return false, err
 	}
-
-	for _, edge := range allEdges {
-		edgeIDStr := string(edge.ID)
-		if !strings.Contains(edgeIDStr, ":") {
-			return true, nil
-		}
-	}
-
-	return false, nil
+	return found, nil
 }
 
 // performMigration migrates all unprefixed data to the default database namespace.

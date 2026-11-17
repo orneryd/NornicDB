@@ -654,16 +654,15 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	// An aggregate is a function call: without a parenthesis there is none.
-	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
+	// An aggregate is one whole function call, and its name is the canonical
+	// callable reader's: an escaped name (`count`(x)) is the same call as
+	// count(x). Without a parenthesis there is none.
+	var facts functionCallFacts
+	if !inspectFunctionCall(expr, qualifiedFunctionCall, "", &facts) || !aggregateCallName(facts.name) {
 		return "", "", false, false
 	}
-	open := strings.Index(expr, "(")
-	if open < 0 {
-		return "", "", false, false
-	}
-	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
+	name = lowerASCII(facts.name)
+	inner = strings.TrimSpace(facts.inner)
 	argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
 	inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
 	distinct = argumentSource.Modifier == cyphertext.DistinctArgumentModifier
@@ -1043,12 +1042,13 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	profiling := profileRuntimeFromContext(ctx) != nil
 	if rows == nil && source != nil {
 		// A local the closure captures, so the rows path below doesn't pay
 		// for a captured result variable.
 		sourceProjected := true
 		sourceCompleted := source(func(row pipelineRow) bool {
-			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row, profiling)
 			if !evaluated {
 				sourceProjected = false
 				return false
@@ -1066,7 +1066,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			recordExpressionFailure(ctx, err)
 			return false, true
 		}
-		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row, profiling)
 		if !evaluated {
 			return false, true
 		}
@@ -1096,8 +1096,8 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	if plan == nil {
 		return nil, nil, true, unresolvedStatementError()
 	}
-	// The statement only reads, so no row holds an entity it deleted
-	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
+	// The statement only reads, so no row holds an entity it deleted,
+	// and the RETURN does not aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.

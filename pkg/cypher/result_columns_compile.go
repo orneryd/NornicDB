@@ -73,11 +73,15 @@ type boundClause struct {
 	before, after       map[string]struct{}
 	beforeIDs, afterIDs map[string]statementBindingID
 	outputs             resultmetadata.Names
-	plan                *returnProjectionPlan
-	projectionSyntax    []cypherantlr.SyntaxNode
-	body                *boundBody
-	expressionDepth     int
-	transparent         bool // an unbound WITH EMBEDDING candidate
+	// participantOwned records that the graph this CALL's USE clause selects
+	// owns the procedure's signature; the local registry's arity and declared
+	// result schema then do not answer for it.
+	participantOwned bool
+	plan             *returnProjectionPlan
+	projectionSyntax []cypherantlr.SyntaxNode
+	body             *boundBody
+	expressionDepth  int
+	transparent      bool // an unbound WITH EMBEDDING candidate
 }
 
 type commandScopeTransfer uint8
@@ -542,6 +546,11 @@ func (compilation *boundCompilation) enterClause(ctx context.Context, clause *bo
 	case pipelineClauseFilter:
 		clause.step.Kind = resultmetadata.ClauseFilter
 	case pipelineClauseCall:
+		// The CALL's USE clause names the graph that runs it, and that graph owns
+		// the procedure's signature; the local registry's arity and declared
+		// returns must not answer for it.
+		clause.participantOwned = clause.branch.graph.selected &&
+			compilation.owner.executor.participantOwnsProcedureSignature(ctx, compilation.owner.source, clause.branch.graph.start, clause.branch.graph.end)
 		compilation.procedure(clause)
 	case pipelineClauseCallSubquery:
 		clause.step.Kind = resultmetadata.ClauseCallSubquery
@@ -656,7 +665,7 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 		node := clause.source.syntax
 		proc, found := globalProcedureRegistry.Get(node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName())
 		yield := yieldFromSyntax(node)
-		if found && proc.Spec.ResultSchemas != nil && (yield == nil || yield.yieldAll) {
+		if found && !clause.participantOwned && proc.Spec.ResultSchemas != nil && (yield == nil || yield.yieldAll) {
 			clause.branch.columns = resultmetadata.KnownColumnAlternatives(proc.Spec.ResultSchemas())
 		}
 	}
@@ -825,7 +834,11 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	node := clause.source.syntax
 	name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 	procedure, found := globalProcedureRegistry.Get(name)
-	if found {
+	// A CALL the selected graph owns is admitted by that graph's own registry: a
+	// registration of the same name here declares neither its arity nor the
+	// columns its yields carry. Every other CALL keeps the local registry's arity
+	// and declared returns, as one database reports them.
+	if found && !clause.participantOwned {
 		if arguments := procedureArgumentTextsFromSyntax(node); arguments != nil {
 			if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
 				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, clause.source.start, err)
@@ -835,8 +848,8 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	}
 	yield := yieldFromSyntax(node)
 	outputs := projectedProcedureNodeNames(node)
-	if !found {
-		if !clause.branch.graph.selected {
+	if !found || clause.participantOwned {
+		if !found && !clause.branch.graph.selected {
 			compilation.fail(resultmetadata.ReasonUnknownProcedure, clause.source.start, unknownProcedureError(name))
 			return
 		}

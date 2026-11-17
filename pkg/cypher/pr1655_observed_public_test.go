@@ -230,7 +230,7 @@ func TestNewlyObservedTargetDeletedBeforeMutationReturnsConflict(t *testing.T) {
 	}
 }
 
-func TestPR1655ExecuteOwnDeleteIsNotRetryable(t *testing.T) {
+func TestOwnDeletePropertySetDoesNotResurrectEntities(t *testing.T) {
 	for _, edge := range []bool{false, true} {
 		t.Run(fmt.Sprintf("edge=%v", edge), func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "own_delete")
@@ -243,12 +243,11 @@ func TestPR1655ExecuteOwnDeleteIsNotRetryable(t *testing.T) {
 				query = "MATCH ()-[r:TARGET]->() DELETE r WITH r SET r.value = 'new'"
 			}
 			_, err = exec.Execute(ctx, query, nil)
-			require.NotErrorIs(t, err, storage.ErrConflict, "own deletion cannot be repaired by retrying")
+			require.NoError(t, err, "property SET after own DELETE is counted without publishing an update")
 			if edge {
-				require.ErrorIs(t, err, storage.ErrNotFound)
 				edges, readErr := store.GetEdgesByType(ctx, "TARGET")
 				require.NoError(t, readErr)
-				require.Len(t, edges, 1, "failed relationship update rolls back its own deletion")
+				require.Empty(t, edges, "SET cannot resurrect the relationship deleted by its own statement")
 			} else {
 				// DETACH DELETE clears the subsequent node view, which is skipped.
 				require.NoError(t, err)

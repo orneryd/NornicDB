@@ -53,7 +53,7 @@ func scopeStorageEvent[Callback storageEventCallback](callback Callback, views [
 				return
 			}
 			if view := firstStorageEventView(views, string(edge.ID)); view != nil {
-				handler(view.toUserEdge(edge))
+				handler(view.toUserEdge(edge, nil))
 			}
 		})).(Callback)
 	case NodeDeleteCallback:

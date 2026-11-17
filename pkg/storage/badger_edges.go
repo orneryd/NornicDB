@@ -139,7 +139,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 	}
 
 	var image *Edge
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 
 	// Capture before physical assembly can acquire the commit gate.
 	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
@@ -147,12 +147,19 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 		return preparationErr
 	}
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
+		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpCreateEdge, Edge: image}}
-		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
+		operations := []Operation{{Type: OpCreateEdge, Edge: image}}
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
@@ -232,7 +239,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, publish, keys, notification, &publicationOps, write.stagePublication)
+	}, publish, keys, notification, &publicationFrame.ops, write.stagePublication)
 
 	return err
 }
@@ -405,19 +412,26 @@ func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateR
 		}
 		defer order.release()
 	}
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 	// Capture before physical assembly can acquire the commit gate.
 	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
 	if preparationErr != nil {
 		return preparationErr
 	}
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationOps, true, true, images)
+		b.publishCommitOperations(namespaceForEdgeID(edge.ID), schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpUpdateEdge, Edge: image, OldEdge: oldEdge}}
-		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
+		operations := []Operation{{Type: OpUpdateEdge, Edge: image, OldEdge: oldEdge}}
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
@@ -604,7 +618,7 @@ func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateR
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, publish, keys, notification, &publicationOps, write.stagePublication)
+	}, publish, keys, notification, &publicationFrame.ops, write.stagePublication)
 
 	return err
 }
@@ -651,7 +665,7 @@ func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 		edge, _ = b.GetEdge(ctx, id)
 	}
 
-	var publicationOps []Operation
+	var publicationFrame commitFrame
 	schema := b.GetSchemaForNamespace(namespaceForEdgeID(id))
 	// Capture before physical assembly can acquire the commit gate.
 	constraints, preparationErr := capturePublicationConstraintView(write.ctx, schema)
@@ -659,12 +673,19 @@ func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 		return preparationErr
 	}
 	publish := func(images *commitCacheImages) {
-		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationOps, true, true, images)
+		b.publishCommitOperations(namespaceForEdgeID(id), schema, publicationFrame, true, true, images)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {
-		publicationOps = []Operation{{Type: OpDeleteEdge, EdgeID: id, OldEdge: edge}}
-		capturePublicationOperations(notification, publicationOps)
-		return appendOperationPublicationKeys(preparationContext, nil, &constraints, publicationOps)
+		operations := []Operation{{Type: OpDeleteEdge, EdgeID: id, OldEdge: edge}}
+		// The frame publication reads is prepared here, once the commit's final
+		// operations exist.
+		frame, err := prepareCommitFrame(preparationContext, operations)
+		if err != nil {
+			return nil, err
+		}
+		publicationFrame = frame
+		capturePublicationOperations(notification, operations)
+		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
@@ -714,7 +735,7 @@ func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
-	}, publish, keys, notification, &publicationOps, write.stagePublication)
+	}, publish, keys, notification, &publicationFrame.ops, write.stagePublication)
 
 	return err
 }

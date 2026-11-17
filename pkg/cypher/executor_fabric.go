@@ -443,6 +443,28 @@ var fabricUnionContract = fabric.UnionContract{
 	},
 }
 
+// participantOwnsProcedureSignature resolves the selected graph's signature
+// ownership before local arity or result-schema checks. Remote and dynamically
+// selected participants validate their own procedure registrations.
+func (e *StorageExecutor) participantOwnsProcedureSignature(ctx context.Context, source string, useStart, useEnd int) bool {
+	if e.dbManager == nil || useStart < 0 || useEnd <= useStart || useEnd > len(source) {
+		return false
+	}
+	// The binding owner has already validated this statement's grammar, so the
+	// selection needs only its graph reference; the statement text after the
+	// clause is the clause the USE grammar requires after a reference.
+	selection, _, hasUse, err := parseUseClause(ctx, source[useStart:], false, cyphertext.AcceptedSource)
+	if err != nil || !hasUse {
+		return false
+	}
+	if selection.IsDynamic() {
+		// The selection is chosen at run time, so no local registry owns it.
+		return true
+	}
+	graph := resolveGraphSelection(e.dbManager, selection.Name)
+	return graph.constituent && graph.remote
+}
+
 // validateFabricSemanticScopes checks the variable scopes of a Fabric
 // statement as one graph does: translate quoted variables, then desugar
 // label expressions before checking scopes. Only this validation copy is
@@ -474,27 +496,9 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		// owns its procedures' signatures and their columns and resolves them when
 		// it compiles the fragment; every other selection keeps the local
 		// registry's terminal answer, as one database reports it.
-		participantOwnsSignature := func(obligation resultmetadata.SchemaObligation) bool {
-			if e.dbManager == nil || obligation.UseStart < 0 || obligation.UseEnd <= obligation.UseStart || obligation.UseEnd > len(desugared) {
-				return false
-			}
-			// The binding owner has already validated this statement's grammar, so the
-			// selection needs only its graph reference; the statement text after the
-			// clause is the clause the USE grammar requires after a reference.
-			selection, _, hasUse, err := parseUseClause(ctx, desugared[obligation.UseStart:], false, cyphertext.AcceptedSource)
-			if err != nil || !hasUse {
-				return false
-			}
-			if selection.IsDynamic() {
-				// The selection is chosen at run time, so no local registry owns it.
-				return true
-			}
-			graph := resolveGraphSelection(e.dbManager, selection.Name)
-			return graph.constituent && graph.remote
-		}
 		_, err = e.admitStatement(ctx, desugared, fabricAdmission{
 			schema: func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
-				if participantOwnsSignature(obligation) {
+				if e.participantOwnsProcedureSignature(ctx, desugared, obligation.UseStart, obligation.UseEnd) {
 					return resultmetadata.Columns{}, errParticipantSignatureDeferred
 				}
 				return resultmetadata.Columns{}, unknownProcedureError(obligation.Procedure)

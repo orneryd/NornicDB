@@ -351,7 +351,7 @@ func buildAtomicWALRecord(t *testing.T, entry WALEntry) []byte {
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
-	_, err = writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+	_, err = writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 	require.NoError(t, err)
 
 	return buf.Bytes()
@@ -543,7 +543,7 @@ func TestWALTailRepairHelpers(t *testing.T) {
 
 		invalidJSONSecond := func() []byte {
 			var buf bytes.Buffer
-			_, err := writeAtomicRecord(&buf, []byte(`{"broken"`), walFormatVersionCurrent)
+			_, err := writeAtomicRecordBufio(&buf, []byte(`{"broken"`), walFormatVersionCurrent)
 			require.NoError(t, err)
 			return buf.Bytes()
 		}

@@ -218,7 +218,7 @@ func TestCallScopePublicTransitionConsumers(t *testing.T) {
 						return result
 					}
 					cases := callscopetest.TransitionCases()
-					require.Len(t, cases, 443)
+					require.Len(t, cases, 451)
 					mismatches := 0
 					for _, test := range cases {
 						item := callscopetest.Case{Name: test.Name, Reference: test.Query}

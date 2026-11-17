@@ -30,6 +30,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			if node == nil {
 				return nil
 			}
+			// n.property of an entity the statement deleted has no value to
+			// read (#907).
+			if err := deletedEntityReadFailure(ctx, node, deletedEntityPropertyValue); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
 			// has_embedding is stored in EmbedMeta by the managed embedding system
 			if propName == "has_embedding" {
 				return nodeHasEmbeddingValue(node)
@@ -43,12 +49,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			if rel == nil {
 				return nil
 			}
+			if err := deletedEntityReadFailure(ctx, rel, deletedEntityPropertyValue); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
 			if val, ok := e.queryEntityProperties(rel)[propName]; ok {
 				return val
 			}
 			return nil
 		}
 		if val, ok := e.boundValue(ctx, varName); ok {
+			if err := deletedEntityReadFailure(ctx, val, deletedEntityPropertyValue); err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
 			if property, supported := rowPropertyValue(e.queryVisibleValue(val), propName); supported {
 				return property
 			}

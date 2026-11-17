@@ -1,6 +1,10 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // nodeBodyAccess keeps mutable query results detached. Commit validation may
 // borrow an immutable version-matched body only for its immediate comparisons.
@@ -9,6 +13,20 @@ type nodeBodyAccess uint8
 const (
 	nodeBodyDetached nodeBodyAccess = iota
 	nodeBodyBorrowed
+)
+
+// nodeBodyCacheAdmission controls insertion of newly decoded bodies. Query
+// reads admit reusable bodies; one-pass checkpoint streams reuse resident
+// version-matched bodies without admitting cold ones or evicting query data.
+type nodeBodyCacheAdmission uint8
+
+const (
+	// nodeBodyCacheAdmit admits a body decoded on a cache miss.
+	nodeBodyCacheAdmit nodeBodyCacheAdmission = iota
+	// nodeBodyCacheNoAdmit decodes without admitting. A body already cached at
+	// this record's version is still read, exactly as an admitting read reads
+	// it.
+	nodeBodyCacheNoAdmit
 )
 
 type nodeItemHydration uint8
@@ -29,7 +47,11 @@ const (
 // decodes, a transaction's chunk-decode memo or nil, goes to the hydration's
 // record reader (embeddingRecordReader.decodes). Only a full-embedding
 // hydration decodes chunk vectors.
-func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, embeddingRecordsAbsent bool, decodes *embeddingChunkDecodes) (*Node, error) {
+//
+// admission decides whether a body this read decoded is admitted to that cache.
+// A no-admission read still takes a matching entry, detached exactly as an
+// admitting read takes it, and simply does not fill a miss.
+func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration, admission nodeBodyCacheAdmission, embeddingRecordsAbsent bool, decodes *embeddingChunkDecodes) (*Node, error) {
 	node, hit := b.cacheLoadNodeBody(id, item.Version(), nil, nodeBodyDetached)
 	if !hit {
 		err := item.Value(func(value []byte) error {
@@ -43,7 +65,9 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 		if node == nil {
 			return nil, ErrNotFound
 		}
-		b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
+		if admission == nodeBodyCacheAdmit {
+			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
+		}
 	}
 	var err error
 	switch hydrate {
@@ -60,6 +84,82 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 	}
 	b.bindNodeReadSource(node, id, item.Version())
 	return node, nil
+}
+
+// embeddingRecordsAbsentAt proves absence only within this transaction's snapshot.
+// Chunks, shards and sidecar metadata share prefixEmbedding; any matching record
+// keeps ordinary per-node hydration. An empty nodePrefix checks all namespaces.
+func embeddingRecordsAbsentAt(ctx context.Context, txn *badger.Txn, nodePrefix string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	prefix := make([]byte, 0, 1+len(nodePrefix))
+	prefix = append(prefix, prefixEmbedding)
+	prefix = append(prefix, nodePrefix...)
+	options := badger.DefaultIteratorOptions
+	options.Prefix = prefix
+	options.PrefetchValues = false
+	it := txn.NewIterator(options)
+	defer it.Close()
+	it.Seek(prefix)
+	absent := !it.ValidForPrefix(prefix)
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return absent, nil
+}
+
+// Delay the iterator cost until the snapshot has a population to hydrate.
+const snapshotEmbeddingAbsenceProbeReads = 64
+
+// snapshotEmbeddingAbsence is one retained "this immutable physical snapshot
+// holds no embedding record at all" proof, with the count of the node reads
+// that may take it. It belongs to one snapshot, never to a node: its owner (a
+// transaction's pinned snapshot, a scan's own view) keeps one record keyed by
+// that snapshot's read version, so a re-pinned snapshot proves again and
+// nothing is retained per node.
+type snapshotEmbeddingAbsence struct {
+	// readTs is the ReadTs of the snapshot this record belongs to; a
+	// different version restarts the count and the proof.
+	readTs uint64
+	// reads counts the node reads of that snapshot that needed the embedding
+	// state, so a bounded read never pays for the probe.
+	reads uint64
+	// proved reports that absent is this snapshot's answered range proof.
+	proved bool
+	// absent is that proof: the snapshot holds no embedding record at all.
+	absent bool
+}
+
+// recordsAbsent reuses only snapshot's own range proof, and reports false to
+// a read that may not take it: a snapshot below the threshold and a snapshot
+// that holds an embedding record both keep their ordinary per-node lookups. It
+// is not concurrency-safe; a transaction owns its record under tx.mu and a
+// scan owns the view it reads.
+func (p *snapshotEmbeddingAbsence) recordsAbsent(ctx context.Context, snapshot *badger.Txn) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	readTs := snapshot.ReadTs()
+	if p.readTs != readTs {
+		*p = snapshotEmbeddingAbsence{readTs: readTs}
+	}
+	if p.proved {
+		return p.absent, nil
+	}
+	p.reads++
+	if p.reads < snapshotEmbeddingAbsenceProbeReads {
+		return false, nil
+	}
+	absent, err := embeddingRecordsAbsentAt(ctx, snapshot, "")
+	if err != nil {
+		// A canceled read keeps no proof: the count stays at the threshold, so
+		// the next read of this snapshot probes again.
+		return false, err
+	}
+	p.proved = true
+	p.absent = absent
+	return absent, nil
 }
 
 // bindNodeReadSource gives a decoded image the identity of the pinned body
@@ -94,7 +194,7 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 // label and MVCC projection readers. A nil projection retains full hydration.
 func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
 	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, false, nil)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}
 	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
 	if !cached {

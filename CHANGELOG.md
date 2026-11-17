@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve local bindings in CALL UNION branches after nested CALLs.
+
 - Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
 - Fix composite-index estimate undercounts when write-behind flushes between committed and pending reads.
 - Align grouped numeric literal statement classification with execution without changing permission requirements.
@@ -116,6 +118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   search and Cypher result caches through the canonical installation owner.
 
 ### Fixed
+
+- Enforce Bolt read requests across transaction statements and dynamically executed queries while allowing nested reads and EXPLAIN.
+- Preserve quoted property chains, quoted schema names and mixed map-projection selectors; reject malformed maps before execution rewrites.
+- Report MVCC lifecycle startup as enabled only when retention actually enables it.
 
 - Historical WAL upgrades stage every converted file before publishing their
   recovery backup. Failed preparation leaves source files unchanged and cleans

@@ -41,10 +41,10 @@ func TestRetiredStorageStringsCollectible(t *testing.T) {
 		},
 		"snapshot_node_order": func(key string) any {
 			owner := &BadgerTransaction{}
-			owner.cacheSnapshotPrefixNodeByIDLocked(nil, &Node{ID: NodeID(key)})
+			require.NoError(t, owner.cacheSnapshotPrefixNodeByIDLocked(t.Context(), nil, &Node{ID: NodeID(key)}))
 			require.Contains(t, owner.snapshotPrefixNodeByID, NodeID(key))
 			for i := 0; i < maxSnapshotPrefixNodeCacheNodes; i++ {
-				owner.cacheSnapshotPrefixNodeByIDLocked(nil, &Node{ID: NodeID(fmt.Sprintf("test:keep%d", i))})
+				require.NoError(t, owner.cacheSnapshotPrefixNodeByIDLocked(t.Context(), nil, &Node{ID: NodeID(fmt.Sprintf("test:keep%d", i))}))
 			}
 			require.NotContains(t, owner.snapshotPrefixNodeByID, NodeID(key))
 			return owner

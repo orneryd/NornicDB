@@ -169,7 +169,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			return evaluateRowPropertyResult(base, chain, e)
+			return evaluateRowPropertyResult(operationCtx, base, chain, e, deletedEntityPropertyValue)
 		}
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
@@ -320,7 +320,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 		{suffix: " IS NULL"},
 	} {
 		if operand, nullTest := nullPredicateOperand(operationCtx, expr, strings.TrimSpace(predicate.suffix)); nullTest {
-			value, ok, err := e.evaluateRowValue(operationCtx, operand, values)
+			value, ok, err := e.evaluateRowNullTestOperand(operationCtx, operand, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -373,7 +373,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 	}
 
 	if open := rowSubscriptStart(expr); open > 0 {
-		return e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+		return e.evaluateCypherSubscript(operationCtx, expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
 			return e.evaluateRowValue(operationCtx, part, values)
 		})
 	}
@@ -515,7 +515,7 @@ func (e *StorageExecutor) evaluateRowValueText(operationCtx context.Context, exp
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			return evaluateRowPropertyResult(base, chain, e)
+			return evaluateRowPropertyResult(operationCtx, base, chain, e, deletedEntityPropertyValue)
 		}
 	}
 	return e.evaluateRowFallback(operationCtx, expr, values, rowFallbackValue)
@@ -1083,7 +1083,14 @@ func (e *StorageExecutor) evaluateRowQuantifier(ctx context.Context, expr string
 // decay is active, plain parameter maps can be read without projecting every
 // unrelated member. Entity receivers and the final value still use the same
 // visibility owner as a complete query projection.
-func evaluateRowPropertyChain(value interface{}, chain string, executor *StorageExecutor, direct bool) (interface{}, bool) {
+//
+// Every step reads its receiver, so every receiver is checked where it is
+// read: a step from an entity the statement deleted has no property value to
+// answer, and is the statement error (#907), whichever expression handed the
+// chain that entity. read is what the chain reads: deletedEntityPropertyValue
+// everywhere, and deletedEntityPropertyPresence for the one read a null
+// test's own operand is (evaluateRowNullTestOperand).
+func evaluateRowPropertyChain(ctx context.Context, value interface{}, chain string, executor *StorageExecutor, direct bool, read deletedEntityReadKind) (interface{}, bool, error) {
 	projectRemaining := executor != nil && executor.queryPropertyDecayEnabled()
 	for start := 0; start < len(chain); {
 		end := len(chain)
@@ -1093,7 +1100,14 @@ func evaluateRowPropertyChain(value interface{}, chain string, executor *Storage
 			property = normalizePropertyKey(strings.TrimSpace(chain[start:end]))
 		}
 		if property == "" {
-			return nil, false
+			return nil, false, nil
+		}
+		// A caller with no statement context has no deleted entities to
+		// read.
+		if ctx != nil {
+			if err := deletedEntityReadFailure(ctx, value, read); err != nil {
+				return nil, false, err
+			}
 		}
 		if projectRemaining {
 			// A map lookup itself does not inspect its other values. Once a
@@ -1106,7 +1120,7 @@ func evaluateRowPropertyChain(value interface{}, chain string, executor *Storage
 		}
 		next, ok := rowPropertyValue(value, property)
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		value = next
 		if end == len(chain) {
@@ -1117,7 +1131,97 @@ func evaluateRowPropertyChain(value interface{}, chain string, executor *Storage
 	if projectRemaining {
 		value = executor.projectVisibleQueryValue(value)
 	}
-	return value, true
+	return value, true, nil
+}
+
+// evaluateRowNullTestOperand evaluates the operand of an IS NULL or IS NOT NULL
+// test. When the operand is exactly one property read on the value it receives
+// (n.p, (n).p, n['p']), that read is the one the test asks about: Neo4j answers
+// whether a deleted entity's property is present without loading the entity, so
+// the read answers null instead of the statement error. Any other operand
+// (n.p + 1, head([n.p]), (CASE ... END), m.entity.p) is read as an expression
+// like any other, so the reads inside it are the statement error (#907).
+func (e *StorageExecutor) evaluateRowNullTestOperand(ctx context.Context, operand string, values map[string]interface{}) (interface{}, bool, error) {
+	receiver, property, ok := nullTestPropertyOperand(operand)
+	if !ok {
+		return e.evaluateRowValue(ctx, operand, values)
+	}
+	base, resolved, err := e.evaluateRowValue(ctx, receiver, values)
+	if err != nil || !resolved {
+		return nil, resolved, err
+	}
+	return evaluateRowPropertyResult(ctx, base, property, e, deletedEntityPropertyPresence)
+}
+
+// nullTestPropertyOperand splits a null test's operand into the value it reads
+// and the property it reads from that value, when the operand is exactly one
+// property read: a variable's property (n.p), a parenthesized variable's
+// ((n).p), or a variable's string key (n['p']). A computed or nested operand
+// (n.p + 1, head([n.p]), m.entity.p) is not one read, and takes no part of the
+// null test's own read (#907).
+func nullTestPropertyOperand(expr string) (receiver, property string, ok bool) {
+	expr = strings.TrimSpace(expr)
+	if inner, enclosed := stripEnclosingExpressionParentheses(expr); enclosed {
+		return nullTestPropertyOperand(inner)
+	}
+	if open := rowSubscriptStart(expr); open > 0 {
+		// n['p'] reads the property n.p reads.
+		key, literal := parseLiteralValue(strings.TrimSpace(expr[open+1 : len(expr)-1]))
+		name, isString := key.(string)
+		if !literal || !isString {
+			return "", "", false
+		}
+		receiver, ok := nullTestPropertyReceiver(expr[:open])
+		if !ok {
+			return "", "", false
+		}
+		return receiver, name, true
+	}
+	dot := topLevelSymbolIndex(expr, ".")
+	for dot > 0 {
+		next := topLevelSymbolIndex(expr[dot+1:], ".")
+		if next < 0 {
+			break
+		}
+		dot += next + 1
+	}
+	if dot <= 0 {
+		return "", "", false
+	}
+	target, ok := nullTestPropertyReceiver(expr[:dot])
+	if !ok {
+		return "", "", false
+	}
+	property, ok = rowSymbolicName(strings.TrimSpace(expr[dot+1:]))
+	if !ok {
+		return "", "", false
+	}
+	return target, property, true
+}
+
+// nullTestPropertyReceiver is expr read as the variable a null test's single
+// property read is on: a variable, parenthesized as a group or not (n, (n)),
+// quoted or not. A computed value (m.entity, head([n])) is not that variable.
+func nullTestPropertyReceiver(expr string) (string, bool) {
+	expr = strings.TrimSpace(expr)
+	if inner, enclosed := stripEnclosingExpressionParentheses(expr); enclosed {
+		expr = inner
+	}
+	if _, ok := rowSymbolicName(expr); !ok {
+		return "", false
+	}
+	return expr, true
+}
+
+// rowSymbolicName is expr read as one symbolic name: an identifier (p) or a
+// backtick-quoted name (`p q`), decoded. A literal word (true, null) names the
+// literal and a string literal is data, neither a name (#907).
+func rowSymbolicName(expr string) (string, bool) {
+	name, ok := cyphertext.ScanIdentifier(expr, 0)
+	if !ok || name.End != len(expr) || name.Value == "" || isLiteralKeyword(name.Value) {
+		return "", false
+	}
+	return name.Value, true
 }
 
 // isQualifiedFunctionCall reports whether expr is one call of a qualified
@@ -1572,7 +1676,11 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if left, nullTest := nullPredicateOperand(ctx, expression, strings.TrimSpace(operator)); nullTest {
-			value, ok := e.rowPredicateOperand(ctx, left, values)
+			value, ok, err := e.evaluateRowNullTestOperand(ctx, left, values)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				ok = false
+			}
 			if !ok {
 				value = nil
 			}

@@ -37,7 +37,7 @@ func TestRowOperandPolicyPopulations(t *testing.T) {
 		if !ok {
 			t.Fatalf("did not compile %q", test.text)
 		}
-		value, resolved, err := operand.evaluate(exec, compiledRowScope{executor: exec, values: map[string]interface{}{"n": map[string]interface{}{"k": int64(4), "list": []interface{}{1, 2}}}})
+		value, resolved, err := operand.evaluate(t.Context(), exec, compiledRowScope{executor: exec, values: map[string]interface{}{"n": map[string]interface{}{"k": int64(4), "list": []interface{}{1, 2}}}})
 		if test.wantError {
 			if err == nil {
 				t.Errorf("%q lost runtime error", test.text)

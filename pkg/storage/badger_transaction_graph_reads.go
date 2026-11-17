@@ -61,11 +61,18 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 		return projectCachedNodeForRead(node, properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
+		// Like the prefix cache, a node with worker-sidecar embeddings is
+		// read again so their hydration runs. The probe is this snapshot's
+		// own answer: a snapshot that holds no embedding record at all
+		// answers it once for every cached node.
 		sidecar := false
-		_ = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-			sidecar = tx.nodeHasEmbeddingSidecar(txn, nodeID)
-			return nil
-		})
+		if sidecarErr := tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			var probeErr error
+			sidecar, probeErr = tx.nodeHasEmbeddingSidecar(ctx, txn, nodeID)
+			return probeErr
+		}); sidecarErr != nil {
+			return nil, sidecarErr
+		}
 		if !sidecar {
 			return projectCachedNodeForRead(node, properties, true), nil
 		}
@@ -647,7 +654,12 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		// prefix is locked transaction state: store it only while still held.
 		if frame.held && err == ErrIterationStopped && !engineOverlaid && tx.snapshotTx != nil {
 			cacheEndpointNodes := properties == nil && !tx.engine.visibilityFiltered()
-			tx.storeSnapshotLabelPrefixLocked(tx.snapshotTx, cacheKey, completed, cacheEndpointNodes)
+			// The stopped stream is retained only while this transaction still
+			// holds the snapshot it read; a store the snapshot cannot answer
+			// (a canceled or failed sidecar probe) is a read failure.
+			if storeErr := tx.storeSnapshotLabelPrefixLocked(ctx, tx.snapshotTx, cacheKey, completed, cacheEndpointNodes); storeErr != nil {
+				return storeErr
+			}
 		}
 		return err
 	}
@@ -779,7 +791,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		err = tx.engine.StreamNodesWithOptions(ctx, opts, emitCommitted)
 	} else if tx.snapshotTx != nil {
 		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
+			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, nodeBodyCacheAdmit, emitCommitted)
 		})
 	} else {
 		err = tx.streamCommittedNodesLocked(ctx, opts, inScope, emitCommitted)
@@ -1166,12 +1178,18 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		// Like the prefix cache, a node with worker-sidecar embeddings is
-		// read again so their hydration runs.
+		// read again so their hydration runs. The probe is this snapshot's
+		// own answer: a snapshot that holds no embedding record at all
+		// answers it once for every cached node, and a probe the snapshot
+		// cannot answer is a read failure rather than a cache hit.
 		sidecar := false
-		_ = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-			sidecar = tx.nodeHasEmbeddingSidecar(txn, nodeID)
-			return nil
-		})
+		if sidecarErr := tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			var probeErr error
+			sidecar, probeErr = tx.nodeHasEmbeddingSidecar(ctx, txn, nodeID)
+			return probeErr
+		}); sidecarErr != nil {
+			return nil, sidecarErr
+		}
 		if !sidecar {
 			return copyNode(node), nil
 		}
@@ -1239,8 +1257,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 		// its ordinary read path rather than inheriting a cached answer.
 		if previouslyRead && !tx.engine.visibilityFiltered() {
 			cacheErr := tx.withSnapshotViewLocked(func(snapshot *badger.Txn) error {
-				tx.cacheSnapshotPrefixNodeByIDLocked(snapshot, node)
-				return nil
+				return tx.cacheSnapshotPrefixNodeByIDLocked(ctx, snapshot, node)
 			})
 			if cacheErr != nil {
 				return nil, cacheErr

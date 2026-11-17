@@ -58,7 +58,7 @@ type entityWriteLock struct {
 type entityWriteLocks struct {
 	inline [2]entityWriteLock
 	held   []entityWriteLock
-	index  map[uniqueConstraintLockKey]int
+	index  map[entityWriteLockIdentity]int
 	schema *SchemaManager
 	latest int
 	// endpoints and edges are the other ends and the relationships a read of
@@ -76,9 +76,24 @@ type entityWriteLocks struct {
 
 const entityWriteLockIndexAfter = 8
 
+// entityWriteLockIdentity is what a held lock is indexed by: the entity kind
+// and the namespace-full entity ID. Every held request is an entity write key
+// (entityWriteLockKey), whose only set fields are those two, so the index
+// stores the identity instead of the whole canonical key the request and its
+// release keep.
+type entityWriteLockIdentity struct {
+	kind uint8
+	id   string
+}
+
+// entityWriteIdentity is key's identity for that index.
+func (key uniqueConstraintLockKey) entityWriteIdentity() entityWriteLockIdentity {
+	return entityWriteLockIdentity{kind: key.entityKind, id: key.entityID}
+}
+
 func (locks *entityWriteLocks) find(key uniqueConstraintLockKey) *entityWriteLock {
 	if locks.index != nil {
-		if at, found := locks.index[key]; found {
+		if at, found := locks.index[key.entityWriteIdentity()]; found {
 			return &locks.held[at]
 		}
 		return nil
@@ -97,11 +112,11 @@ func (locks *entityWriteLocks) add(request uniqueConstraintLockRequest) *entityW
 	}
 	locks.held = append(locks.held, entityWriteLock{request: request})
 	if locks.index != nil {
-		locks.index[request.key] = len(locks.held) - 1
+		locks.index[request.key.entityWriteIdentity()] = len(locks.held) - 1
 	} else if len(locks.held) > entityWriteLockIndexAfter {
-		locks.index = make(map[uniqueConstraintLockKey]int, 2*len(locks.held))
+		locks.index = make(map[entityWriteLockIdentity]int, 2*len(locks.held))
 		for at := range locks.held {
-			locks.index[locks.held[at].request.key] = at
+			locks.index[locks.held[at].request.key.entityWriteIdentity()] = at
 		}
 	}
 	return &locks.held[len(locks.held)-1]

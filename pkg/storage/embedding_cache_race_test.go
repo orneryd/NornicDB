@@ -32,7 +32,7 @@ func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 			embedded := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embedded))
 			cw := &commitWriter{engine: b, durableVersion: b.db.oracle.published.Load()}
-			b.publishCommitOperations(namespaceForNodeID(written.ID), nil, []Operation{{Type: late.kind, Node: written}}, false, false, &cw.cacheImages)
+			b.publishCommitOperations(namespaceForNodeID(written.ID), nil, mustCommitFrame(t, []Operation{{Type: late.kind, Node: written}}), false, false, &cw.cacheImages)
 			cw.publishCacheImages()
 
 			got, err := b.GetNode(t.Context(), node.ID)

@@ -1358,10 +1358,12 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 
 		if db.lifecycleManager != nil {
 			db.lifecycleManager.StartLifecycle(db.buildCtx)
-			if db.config.Database.MVCCLifecycleCycleInterval > 0 {
-				log.Printf("🔄 MVCC lifecycle manager enabled (cycle=%s)", db.config.Database.MVCCLifecycleCycleInterval)
-			} else {
-				log.Printf("🔄 MVCC lifecycle manager enabled in manual-only mode")
+			if db.lifecycleManager.IsLifecycleEnabled() {
+				if db.config.Database.MVCCLifecycleCycleInterval > 0 {
+					log.Printf("🔄 MVCC lifecycle manager enabled (cycle=%s)", db.config.Database.MVCCLifecycleCycleInterval)
+				} else {
+					log.Printf("🔄 MVCC lifecycle manager enabled in manual-only mode")
+				}
 			}
 		}
 		if db.config != nil && db.config.Compliance.RetentionEnabled && db.retentionManager != nil {

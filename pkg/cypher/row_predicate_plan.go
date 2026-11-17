@@ -47,6 +47,8 @@ type plannedRowValue struct {
 	isInteger bool
 }
 
+// compiledRowScope holds row bindings. Operand reads receive the statement
+// context explicitly so reused scopes cannot retain a different request lifetime.
 type compiledRowScope struct {
 	executor   *StorageExecutor
 	values     map[string]interface{}
@@ -112,10 +114,13 @@ func (value plannedRowValue) materialize() interface{} {
 	return value.value
 }
 
-func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) (plannedRowValue, bool, error) {
+func (operand *rowOperand) evaluate(ctx context.Context, e *StorageExecutor, scope compiledRowScope) (plannedRowValue, bool, error) {
 	scope.executor = e
 	if operand.compiled == nil {
-		value, ok := operand.resolveScope(scope)
+		value, ok, err := operand.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return plannedRowValue{}, false, err
+		}
 		if !ok && operand.kind == rowOperandPropertyChain {
 			if base, bound := scope.lookup(operand.variable); bound {
 				return plannedRowValue{}, false, rowPropertyChainTypeError(base, operand.chain)
@@ -124,7 +129,7 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 		integer, isInteger := cypherIntegerOperand(value)
 		return plannedRowValue{value: value, integer: integer, isInteger: isInteger}, ok, nil
 	}
-	left, leftOK, err := operand.compiled.left.evaluate(e, scope)
+	left, leftOK, err := operand.compiled.left.evaluate(ctx, e, scope)
 	if err != nil || !leftOK {
 		return plannedRowValue{}, leftOK, err
 	}
@@ -135,7 +140,7 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 		integer, ok, err := evaluateCypherSizeInteger(left.materialize())
 		return plannedRowValue{integer: integer, isInteger: ok}, ok, err
 	}
-	right, rightOK, err := operand.compiled.right.evaluate(e, scope)
+	right, rightOK, err := operand.compiled.right.evaluate(ctx, e, scope)
 	if err != nil || !rightOK {
 		return plannedRowValue{}, rightOK, err
 	}
@@ -168,25 +173,25 @@ func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
 	return (value != nil) == bool(handler)
 }
 
-// resolve returns the operand's value for the row. ok is false when the row
-// doesn't bind the operand's variable or parameter; the caller then evaluates
-// the part as text, as evaluateRowExpression would resolve it further.
-func (o *rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
-	return o.resolveScope(compiledRowScope{values: values})
-}
-
-func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
+// resolveScope returns the operand's value for the row. ok is false when the
+// row doesn't bind the operand's variable or parameter; the caller then
+// evaluates the part as text, as evaluateRowExpression would resolve it
+// further. read is what a property chain reads, so the statement error of a
+// deleted receiver is the chain's own (#907); a null test passes the presence
+// of the property for the single read its operand is.
+func (o *rowOperand) resolveScope(ctx context.Context, scope compiledRowScope, read deletedEntityReadKind) (interface{}, bool, error) {
 	switch o.kind {
 	case rowOperandLiteral:
-		return o.literal, true
+		return o.literal, true, nil
 	case rowOperandPropertyChain:
 		base, bound := scope.lookup(o.variable)
 		if !bound {
-			return nil, false
+			return nil, false, nil
 		}
-		return evaluateRowPropertyChain(base, o.chain, scope.executor, o.directProperty)
+		return evaluateRowPropertyChain(ctx, base, o.chain, scope.executor, o.directProperty, read)
 	default:
-		return scope.lookup(o.variable)
+		value, ok := scope.lookup(o.variable)
+		return value, ok, nil
 	}
 }
 
@@ -560,9 +565,9 @@ type compiledRowMemberships struct {
 	count    int
 }
 
-func (memberships *compiledRowMemberships) prepare(part *rowPredicatePart, scope compiledRowScope) {
+func (memberships *compiledRowMemberships) prepare(ctx context.Context, part *rowPredicatePart, scope compiledRowScope) {
 	if part.membership != nil {
-		if value, ok := part.right.resolveScope(scope); ok {
+		if value, ok, err := part.right.resolveScope(ctx, scope, deletedEntityPropertyValue); err == nil && ok {
 			if items, ok := toInterfaceSlice(value); ok {
 				comparable, nonComparable, hasNull := part.membership.getValidated(items)
 				entry := compiledRowMembership{part: part, comparable: comparable, nonComparable: nonComparable, hasNull: hasNull}
@@ -576,7 +581,7 @@ func (memberships *compiledRowMemberships) prepare(part *rowPredicatePart, scope
 		}
 	}
 	for index := range part.parts {
-		memberships.prepare(&part.parts[index], scope)
+		memberships.prepare(ctx, &part.parts[index], scope)
 	}
 }
 
@@ -650,11 +655,11 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 		return value, err
 	case rowPredicateComparison:
 		if part.left.compiled != nil || part.right.compiled != nil {
-			left, leftOK, err := part.left.evaluate(e, scope)
+			left, leftOK, err := part.left.evaluate(ctx, e, scope)
 			if err != nil {
 				return nil, err
 			}
-			right, rightOK, err := part.right.evaluate(e, scope)
+			right, rightOK, err := part.right.evaluate(ctx, e, scope)
 			if err != nil {
 				return nil, err
 			}
@@ -671,8 +676,14 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 			}
 			return part.operator.evaluate(leftValue, rightValue), nil
 		}
-		left, leftOK := part.left.resolveScope(scope)
-		right, rightOK := part.right.resolveScope(scope)
+		left, leftOK, err := part.left.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
+		right, rightOK, err := part.right.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
 		if !leftOK || !rightOK {
 			return textValue()
 		}
@@ -681,15 +692,27 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 		}
 		return part.operator.evaluate(left, right), nil
 	case rowPredicateString:
-		left, leftOK := part.left.resolveScope(scope)
-		right, rightOK := part.right.resolveScope(scope)
+		left, leftOK, err := part.left.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
+		right, rightOK, err := part.right.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
 		if !leftOK || !rightOK {
 			return textValue()
 		}
 		return rowStringPredicateValue(left, right, part.stringPredicate), nil
 	case rowPredicateIn:
-		needle, needleOK := part.left.resolveScope(scope)
-		haystack, haystackOK := part.right.resolveScope(scope)
+		needle, needleOK, err := part.left.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
+		haystack, haystackOK, err := part.right.resolveScope(ctx, scope, deletedEntityPropertyValue)
+		if err != nil {
+			return nil, err
+		}
 		if !needleOK || !haystackOK {
 			return textValue()
 		}
@@ -713,7 +736,18 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 		}
 		return member, nil
 	case rowPredicateIsNull, rowPredicateIsNotNull:
-		value, ok := part.left.resolveScope(scope)
+		// A null test asks only whether the property is present, and a deleted
+		// entity's is not: its own single property read answers null. Any
+		// other operand reads as usual, so a deleted read inside it is the
+		// statement error (#907).
+		read := deletedEntityPropertyValue
+		if part.left.kind == rowOperandPropertyChain && part.left.directProperty {
+			read = deletedEntityPropertyPresence
+		}
+		value, ok, err := part.left.resolveScope(ctx, scope, read)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return textValue()
 		}

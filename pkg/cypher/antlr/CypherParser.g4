@@ -45,7 +45,7 @@ script
 // statement. The parser accepts and discards it so callers need not strip
 // the preamble themselves; it does not change execution semantics.
 cypherPreamble
-    : cypherGroup*
+    : cypherGroup+
     ;
 
 cypherGroup
@@ -80,7 +80,7 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix* cypherPreamble? queryPrefix* useClause? (regularQuery | standaloneCall | privilegeCommand | schemaCommand | administrationCommand | showCommand | terminateCommand)
+    : queryPrefix* (cypherPreamble queryPrefix*)? useClause? (regularQuery | standaloneCall | privilegeCommand | schemaCommand | administrationCommand | showCommand | terminateCommand)
     ;
 
 useClause
@@ -793,9 +793,6 @@ mapPair
 // primitive ids
 name
     : symbol
-    | SHORTEST | PATH | PATHS | GROUP | GROUPS
-    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
-    | reservedWord
     ;
 
 symbol

@@ -166,8 +166,9 @@ func resultHasMaterializedEntities(result *ExecuteResult) bool {
 // stopping at the first.
 func materializedRows(recorder materializedAccessRecorder, rows [][]interface{}) bool {
 	found := false
+	var path resultValuePath
 	for _, row := range rows {
-		if materializedValues(recorder, row) {
+		if materializedValues(recorder, row, &path) {
 			if recorder == nil {
 				return true
 			}
@@ -178,10 +179,14 @@ func materializedRows(recorder materializedAccessRecorder, rows [][]interface{})
 }
 
 // materializedValues is materializedRows for a list of values.
-func materializedValues(recorder materializedAccessRecorder, values []interface{}) bool {
+func materializedValues(recorder materializedAccessRecorder, values []interface{}, path *resultValuePath) bool {
+	if !path.enter(values) {
+		return false
+	}
+	defer path.leave()
 	found := false
 	for _, value := range values {
-		if materializedValue(recorder, value) {
+		if materializedValue(recorder, value, path) {
 			if recorder == nil {
 				return true
 			}
@@ -193,7 +198,7 @@ func materializedValues(recorder materializedAccessRecorder, values []interface{
 
 // materializedValue is materializedRows for one value, including the nodes
 // and relationships inside maps and lists.
-func materializedValue(recorder materializedAccessRecorder, value interface{}) bool {
+func materializedValue(recorder materializedAccessRecorder, value interface{}, path *resultValuePath) bool {
 	id := ""
 	switch v := value.(type) {
 	case *storage.Node:
@@ -212,7 +217,7 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		}
 		found := false
 		for _, entity := range v {
-			if materializedValue(recorder, entity) {
+			if materializedValue(recorder, entity, path) {
 				if recorder == nil {
 					return true
 				}
@@ -229,16 +234,20 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 			return false
 		}
 	case PathResult:
-		return materializedPathResult(recorder, &v)
+		return materializedPathResult(recorder, &v, path)
 	case *PathResult:
-		return materializedPathResult(recorder, v)
+		return materializedPathResult(recorder, v, path)
 	case map[string]interface{}:
-		if path, ok := cypherPathResultOf(v, v, true); ok {
-			return materializedPathResult(recorder, &path)
+		if !path.enter(v) {
+			return false
+		}
+		defer path.leave()
+		if decoded, ok := cypherPathResultOf(v, v, true); ok {
+			return materializedPathResult(recorder, &decoded, path)
 		}
 		found := false
 		for _, nested := range v {
-			if materializedValue(recorder, nested) {
+			if materializedValue(recorder, nested, path) {
 				if recorder == nil {
 					return true
 				}
@@ -247,11 +256,15 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		}
 		return found
 	case []interface{}:
-		return materializedValues(recorder, v)
+		return materializedValues(recorder, v, path)
 	case []map[string]interface{}:
+		if !path.enter(v) {
+			return false
+		}
+		defer path.leave()
 		found := false
 		for _, nested := range v {
-			if materializedValue(recorder, nested) {
+			if materializedValue(recorder, nested, path) {
 				if recorder == nil {
 					return true
 				}
@@ -271,13 +284,13 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 // materializedPathResult visits the native entities carried by a local path.
 // The typed carrier is authoritative, so its public map fields are not walked
 // a second time.
-func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult, traversal *resultValuePath) bool {
 	if path == nil {
 		return false
 	}
 	found := false
 	for _, node := range path.Nodes {
-		if materializedValue(recorder, node) {
+		if materializedValue(recorder, node, traversal) {
 			if recorder == nil {
 				return true
 			}
@@ -285,7 +298,7 @@ func materializedPathResult(recorder materializedAccessRecorder, path *PathResul
 		}
 	}
 	for _, relationship := range path.Relationships {
-		if materializedValue(recorder, relationship) {
+		if materializedValue(recorder, relationship, traversal) {
 			if recorder == nil {
 				return true
 			}

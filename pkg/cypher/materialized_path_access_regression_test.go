@@ -36,19 +36,19 @@ func TestMaterializedPathUsesTypedCarrier(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &recordingAccessRecorder{}
-			require.True(t, materializedValue(recorder, tc.value))
+			require.True(t, materializedValue(recorder, tc.value, &resultValuePath{}))
 			require.Equal(t, []string{"a", "b", "e"}, recorder.ids)
 		})
 	}
 
 	var nilPath *PathResult
-	require.False(t, materializedValue(nil, nilPath))
+	require.False(t, materializedValue(nil, nilPath, &resultValuePath{}))
 	for _, value := range []interface{}{
 		map[string]interface{}{"_pathResult": map[string]interface{}{"nodes": []interface{}{}, "relationships": []interface{}{}}},
 		[]interface{}{int64(1), map[string]interface{}{"elementId": "ordinary"}},
 	} {
 		recorder := &recordingAccessRecorder{}
-		require.False(t, materializedValue(recorder, value), "%#v", value)
+		require.False(t, materializedValue(recorder, value, &resultValuePath{}), "%#v", value)
 		require.Empty(t, recorder.ids, "%#v", value)
 	}
 }
@@ -111,7 +111,7 @@ func BenchmarkMaterializedValuePath(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				if !materializedValue(recorder, tc.value) {
+				if !materializedValue(recorder, tc.value, &resultValuePath{}) {
 					b.Fatal("path was not recognized")
 				}
 			}

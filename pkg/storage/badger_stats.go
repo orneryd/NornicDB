@@ -919,7 +919,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		view.Close() // the canceled capture retires the scan
 		return captureErr
 	}
-	return b.streamNodesWithOptionsAtView(ctx, view.readAndClose, overlay, opts, fn)
+	return b.streamNodesWithOptionsAtView(ctx, view.readAndClose, overlay, opts, nodeBodyCacheAdmit, fn)
 }
 
 // streamNodesWithOptionsAtView is the one capture+merge body of an
@@ -928,7 +928,9 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 // and visited after the scan. StreamNodesWithOptions reads the engine's current
 // point; the pinned stored snapshot source reads its own, with the same options,
 // projection and hydration. overlay is the capture taken with this view.
-func (b *BadgerEngine) streamNodesWithOptionsAtView(ctx context.Context, read scanRead, overlay *capturedNodes, opts StreamNodesOptions, fn func(*Node) error) error {
+// admission is the scan's body cache admission: every caller admits, except the
+// whole-population pinned stored snapshot source.
+func (b *BadgerEngine) streamNodesWithOptionsAtView(ctx context.Context, read scanRead, overlay *capturedNodes, opts StreamNodesOptions, admission nodeBodyCacheAdmission, fn func(*Node) error) error {
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
@@ -949,7 +951,7 @@ func (b *BadgerEngine) streamNodesWithOptionsAtView(ctx context.Context, read sc
 		return err
 	}
 	err := read(ctx, func(txn *badger.Txn) error {
-		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
+		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, admission, emit)
 	})
 	if err != nil {
 		return err
@@ -987,7 +989,7 @@ func (b *BadgerEngine) streamNodesWithOptionsAtView(ctx context.Context, read sc
 // therefore reads the label and not every node in scope (NOR-407). With
 // decay tombstones in play the pass over every record is kept: it shows a
 // node whose label entry a tombstone hides.
-func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, fn func(node *Node) error) error {
+func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *badger.Txn, opts StreamNodesOptions, admission nodeBodyCacheAdmission, fn func(node *Node) error) error {
 	nowNanos := DecayScoringTime()
 	// A projected or filtered scan decodes through one scan-scoped decoder
 	// (#857). It resolves each stored property token through this read
@@ -999,21 +1001,20 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 	}
 	// A single prefix check in the same snapshot proves that no sidecar or
 	// chunk exists for any node in this scan. Avoid one missing-key lookup per
-	// node when a database (or scoped prefix) has no embedding records.
+	// node when a database (or scoped prefix) has no embedding records. The
+	// proof comes from its one owner, which the pinned point-read route also
+	// asks for its own snapshot.
 	embeddingRecordsAbsent := false
 	if opts.WithEmbeddings && projected == nil {
-		prefix := append([]byte{prefixEmbedding}, opts.Prefix...)
-		iteratorOptions := badger.DefaultIteratorOptions
-		iteratorOptions.Prefix = prefix
-		iteratorOptions.PrefetchValues = false
-		it := txn.NewIterator(iteratorOptions)
-		it.Seek(prefix)
-		embeddingRecordsAbsent = !it.ValidForPrefix(prefix)
-		it.Close()
+		absent, err := embeddingRecordsAbsentAt(ctx, txn, opts.Prefix)
+		if err != nil {
+			return err
+		}
+		embeddingRecordsAbsent = absent
 	}
 
 	visit := func(txn *badger.Txn, item *badger.Item) error {
-		node, err := b.readStreamNodeItem(ctx, txn, item, opts, projected, nowNanos, embeddingRecordsAbsent)
+		node, err := b.readStreamNodeItem(ctx, txn, item, opts, admission, projected, nowNanos, embeddingRecordsAbsent)
 		if err != nil {
 			// A record this scan cannot decode fails the scan: skipping it would
 			// return the rest of the population as if it were all of it.
@@ -1095,7 +1096,9 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 // emitted entity image is the one the native scan would emit. A nil node with no
 // error is a row the decoder rejected; a decode failure is returned to the
 // caller, which fails its read rather than publishing a partial population.
-func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, item *badger.Item, opts StreamNodesOptions, projected *projectedNodeDecoder, nowNanos int64, embeddingRecordsAbsent bool) (*Node, error) {
+// admission is the scan's body cache admission, independent of the hydration the
+// row asks for.
+func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, item *badger.Item, opts StreamNodesOptions, admission nodeBodyCacheAdmission, projected *projectedNodeDecoder, nowNanos int64, embeddingRecordsAbsent bool) (*Node, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -1104,12 +1107,12 @@ func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, 
 	var node *Node
 	var err error
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && !opts.scanDecodesFilter() {
-		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata, false, nil)
+		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata, admission, false, nil)
 	} else if opts.WithEmbeddings && projected == nil && len(item.Key()) > 1 {
 		// Reuse the version-keyed body cache through the same snapshot owner
 		// as point reads. Unlike the current-value cache, it never requires
 		// replaying a user callback when concurrent writes advance the view.
-		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemFullEmbeddings, embeddingRecordsAbsent, nil)
+		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemFullEmbeddings, admission, embeddingRecordsAbsent, nil)
 	} else {
 		err = item.Value(func(val []byte) error {
 			key := item.Key()
@@ -1347,6 +1350,12 @@ func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
+	ctx := context.Background()
+	// Selection reads physical records, so first make every earlier acknowledged
+	// generation visible there. Replay errors must stop the reset before writes.
+	if err := b.FlushWriteBehind(ctx); err != nil {
+		return 0, fmt.Errorf("clear embeddings: drain acknowledged writes: %w", err)
+	}
 
 	// Collect first and write later: the scan reads every in-scope body before
 	// the reset changes any of them, so an unreadable or misattributed record
@@ -1400,7 +1409,6 @@ func (b *BadgerEngine) clearEmbeddingsForPrefix(idPrefix string, journal func(id
 	// time; ordinary writes retain the same lock order. The canonical update
 	// also publishes the node's pending-embedding marker.
 	cleared := 0
-	ctx := context.Background()
 	for _, id := range nodeIDs {
 		_, err := b.inMutationTransaction(ctx, string(id), true, func(tx *BadgerTransaction) error {
 			node, err := tx.LockNodeForWrite(ctx, id)

@@ -104,6 +104,11 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if endsInFinish(ctx, query) {
 		query += " FINISH"
 	}
+	if isCreateConstraintStatement(ctx, query) {
+		if _, err := e.prepareCreateConstraint(ctx, query); err != nil {
+			return nil, err
+		}
+	}
 	// Catalog commands are validated by their typed command preparation; graph
 	// body composition has no clauses to validate in their native DDL syntax.
 	if !isMetadataCommand(ctx, query, metadataCatalogExecution) {
@@ -162,7 +167,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	}
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
-	result, execErr := e.executeRouted(ctx, query, nil)
+	result, execErr := e.executeRouted(ctx, query, nil, ownedDelivery)
 	totalTime := time.Since(startTime)
 
 	// A statement that fails fails its PROFILE too, as in Neo4j: the error

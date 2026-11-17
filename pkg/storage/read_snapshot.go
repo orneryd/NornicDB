@@ -139,7 +139,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 			if s.nodesTouched[nodeID] {
 				continue // the write-behind overlay shadows this committed row
 			}
-			node, err := s.b.readStreamNodeItem(ctx, txn, it.Item(), opts, nil, 0, false)
+			node, err := s.b.readStreamNodeItem(ctx, txn, it.Item(), opts, nodeBodyCacheAdmit, nil, 0, false)
 			if err != nil {
 				// The native scan fails its read on a row it cannot decode;
 				// the capture must not report the rest as the whole population.
@@ -305,7 +305,7 @@ func (s *namespacedReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge)
 		if edge == nil || !s.n.hasEdgePrefix(edge.ID) {
 			return nil
 		}
-		return fn(s.n.toUserEdge(edge))
+		return fn(s.n.toUserEdge(edge, nil))
 	})
 }
 

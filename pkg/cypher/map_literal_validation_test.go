@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"testing"
 
@@ -44,4 +45,19 @@ func TestMapLiteralArgumentsUseConvergedFunctionEvaluation(t *testing.T) {
 	if !reflect.DeepEqual(value, want) {
 		t.Fatalf("value = %#v, want %#v", value, want)
 	}
+}
+
+func TestStaticMapKeyPreparationReuseDoesNotAdmitInvalidText(t *testing.T) {
+	const valid = "RETURN {prepared_map_key: $value} AS m"
+	require.NoError(t, validateStaticMapKeys(t.Context(), valid))
+	require.NoError(t, validateStaticMapKeys(t.Context(), valid))
+	_, cached := validatedStaticMapTexts.get(statementTextKey{source: valid})
+	require.True(t, cached)
+	const invalid = "RETURN {prepared_map_key: 1,} AS m"
+	require.Error(t, validateStaticMapKeys(t.Context(), invalid))
+	_, cached = validatedStaticMapTexts.get(statementTextKey{source: invalid})
+	require.False(t, cached)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, validateStaticMapKeys(canceled, valid), context.Canceled)
 }
