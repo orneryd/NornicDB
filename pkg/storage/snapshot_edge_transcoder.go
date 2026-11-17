@@ -120,7 +120,8 @@ func (t *snapshotEdgeTranscoder) writeBody(b *BadgerEngine, txn *badger.Txn, id 
 		}
 	}
 	if ids != nil {
-		*edge = *ids.toUserEdge(edge)
+		// The transcoder already owns this image.
+		ids.toUserEdge(edge, edge)
 	}
 	return true, write(streamSnapshotEdge, t)
 }

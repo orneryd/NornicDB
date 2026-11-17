@@ -305,7 +305,7 @@ func (s *namespacedReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge)
 		if edge == nil || !s.n.hasEdgePrefix(edge.ID) {
 			return nil
 		}
-		return fn(s.n.toUserEdge(edge))
+		return fn(s.n.toUserEdge(edge, nil))
 	})
 }
 

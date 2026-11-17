@@ -396,7 +396,7 @@ func (n *NamespacedEngine) StreamEdgesByType(ctx context.Context, edgeType strin
 		if edge == nil || !n.hasEdgePrefix(edge.ID) {
 			return nil
 		}
-		return visit(n.toUserEdge(edge))
+		return visit(n.toUserEdge(edge, nil))
 	})
 }
 

@@ -120,5 +120,5 @@ func (s *namespacedEntityReadSnapshot) ReadEdge(ctx context.Context, id EdgeID) 
 	if err != nil || edge == nil {
 		return nil, err
 	}
-	return s.n.toUserEdge(edge), nil
+	return s.n.toUserEdge(edge, nil), nil
 }

@@ -62,7 +62,7 @@ func (w *snapshotStoredEdgeWriter) stream(ctx context.Context, engine Engine, sc
 
 func (w *snapshotStoredEdgeWriter) visit(edge *Edge) error {
 	if w.ids != nil {
-		edge = w.ids.toUserEdge(edge)
+		edge = w.ids.toUserEdge(edge, nil)
 	}
 	return w.write(streamSnapshotEdge, edge)
 }
