@@ -33,7 +33,10 @@ func observedExecutionPlan(query string, result *ExecuteResult, elapsed time.Dur
 		op := &PlanOperator{
 			OperatorType: kind, Description: clause.Source,
 			ActualRows: clause.Rows, RowsObserved: clause.RowsObserved,
-			DBHits: clause.DBHits, DBHitsObserved: clause.DBHitsObserved,
+			// Entered clauses start with zero exclusive reads. Reader children
+			// carry their own counts; opaque callbacks below invalidate the
+			// owning clause rather than turning their accesses into zero.
+			DBHits: clause.DBHits, DBHitsObserved: clause.DBHitsObserved || clause.Executions > 0,
 			Arguments: map[string]interface{}{"executions": clause.Executions},
 		}
 		operators[clause.ID] = op
