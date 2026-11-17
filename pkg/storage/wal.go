@@ -1763,6 +1763,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 	var retainedSegments, coveredSegments []WALSegment
 	var retainedSegmentBytes, retainedCount int64
 	var keptEntries []WALEntry
+	unreadableKind := "WAL"
 	preflightErr := func() error {
 		for _, segment := range manifest.Segments {
 			path, pathErr := resolveWALSegmentPath(w.config.Dir, segment.Path)
@@ -1790,6 +1791,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 			}
 			coveredSegments = append(coveredSegments, segment)
 		}
+		unreadableKind = "active WAL"
 		return visitWALEntriesWithLogger(ctx, walPath, nil, walPayloadBorrowed, func(entry WALEntry) error {
 			if entry.Sequence > snapshotSeq {
 				// The scan buffer expires after this callback; only the retained
@@ -1815,7 +1817,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 			diag.diagnoseCause()
 			w.reportCorruption(diag, preflightErr)
 		}
-		return fmt.Errorf("wal: cannot truncate unreadable WAL: %w", preflightErr)
+		return fmt.Errorf("wal: cannot truncate unreadable %s: %w", unreadableKind, preflightErr)
 	}
 
 	// Close current WAL file only after all entries have been read safely.
