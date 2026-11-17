@@ -419,6 +419,11 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	gen := b.nodeCacheGen.current()
 	var sourceTs uint64
 	var loaded []*Node
+	// absence is this scan's view's one embedding-absence proof: the view's own
+	// snapshot answers its embedding range question once, instead of one missing
+	// sidecar and chunk lookup per hydrated row (snapshotEmbeddingAbsence). It
+	// is keyed by that view's read version, so another view proves again.
+	var absence snapshotEmbeddingAbsence
 	resident := false
 	var population, walked []NodeID
 	keepWalk, walkedAll := false, false
@@ -513,6 +518,20 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		if options.scanDecodesFilter() {
 			filtered = newProjectedNodeDecoder(b, txn, options)
 		}
+		// readHydrated reads one label row with the embedding hydration the scan
+		// asks of it. A row that settles embedding state takes this view's
+		// absence proof, so a view whose whole embedding range is empty pays no
+		// per-node sidecar and chunk lookup; a body-only row asks none of it.
+		readHydrated := func(nodeID NodeID, item *badger.Item, hydrate nodeItemHydration) (*Node, error) {
+			absent := false
+			if hydrate != nodeItemBodyOnly {
+				var absentErr error
+				if absent, absentErr = absence.recordsAbsent(ctx, txn); absentErr != nil {
+					return nil, absentErr
+				}
+			}
+			return b.readNodeItemInTxn(txn, item, nodeID, hydrate, nodeBodyCacheAdmit, absent, nil)
+		}
 		// readItem reads the row of a label entry. kept says that the filter
 		// has already kept the node on a cached image: a filter is settled
 		// once for a node.
@@ -520,8 +539,13 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if filtered != nil && resident && !kept {
 				// The scan repeats: keep the node's query image, which holds the
 				// properties the filter reads and none of the stored vectors. A
-				// node whose image cannot be read is left to the scan decoder.
-				if image, err := b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil); err == nil {
+				// node whose image cannot be read is left to the scan decoder; a
+				// proof this view cannot take is a scan failure.
+				absent, absentErr := absence.recordsAbsent(ctx, txn)
+				if absentErr != nil {
+					return nil, absentErr
+				}
+				if image, err := b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, absent, nil); err == nil {
 					// Images that together are more than the cache's whole byte
 					// budget cannot all be kept, as one such image cannot
 					// (copyNodeForReadCache): the scan reads no further one, and
@@ -544,7 +568,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if kept {
 				// The row the scan's options ask for, as the scan decoder
 				// hydrates a body it keeps.
-				node, err := b.readNodeItemInTxn(txn, item, nodeID, filtered.hydration, nodeBodyCacheAdmit, false, nil)
+				node, err := readHydrated(nodeID, item, filtered.hydration)
 				if err != nil {
 					return nil, fmt.Errorf("scanning node %q: %w", nodeID, err)
 				}
@@ -569,7 +593,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return node, nil
 			}
 			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil)
+				return readHydrated(nodeID, item, nodeItemQueryMetadata)
+			}
+			if properties == nil {
+				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}

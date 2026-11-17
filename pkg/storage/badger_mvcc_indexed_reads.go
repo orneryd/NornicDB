@@ -308,12 +308,32 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	// benchmark).
 	var covers bool
 	coversDecided := false
+	// absence is this view's one embedding-absence proof: the scan's own
+	// snapshot answers its range question once instead of paying one missing
+	// sidecar and chunk lookup per hydrated node (snapshotEmbeddingAbsence).
+	var absence snapshotEmbeddingAbsence
 	return view(func(txn *badger.Txn) error {
+		// readHydrated reads one candidate with the embedding hydration the
+		// scan asks of it. A row that settles embedding state takes this
+		// view's absence proof, so a view whose whole embedding range is empty
+		// pays one probe instead of one missing lookup per row.
+		readHydrated := func(nodeID NodeID, item *badger.Item, hydrate nodeItemHydration) (*Node, error) {
+			absent, absentErr := absence.recordsAbsent(ctx, txn)
+			if absentErr != nil {
+				return nil, absentErr
+			}
+			return b.readNodeItemInTxn(txn, item, nodeID, hydrate, nodeBodyCacheAdmit, absent, nil)
+		}
 		// readItem reads one node from its stored record; item.Version keys
-		// the decoded-body cache.
+		// the decoded-body cache. A full or query-metadata row settles this
+		// snapshot's embedding state; a projected row decodes its projection
+		// alone.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if queryNodes {
-				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata, nodeBodyCacheAdmit, false, nil)
+				return readHydrated(nodeID, item, nodeItemQueryMetadata)
+			}
+			if properties == nil {
+				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}

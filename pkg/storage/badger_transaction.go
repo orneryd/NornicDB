@@ -188,12 +188,15 @@ type BadgerTransaction struct {
 	// uses chunkDecodes, and only when it reads the pinned snapshot
 	// (readPinnedSnapshotNodeLocked) with vectors.
 	readingWriteTarget bool
-	// pinnedEmbeddingAbsence is this transaction's one retained "the pinned
-	// snapshot holds no embedding record" proof, with the count of the node
-	// reads that may take it (pinnedEmbeddingRecordsAbsentLocked). It is keyed
-	// by that snapshot's read version, so a re-pinned snapshot proves again;
-	// nothing is retained per node and nothing outlives the transaction.
-	pinnedEmbeddingAbsence pinnedEmbeddingAbsence
+	// embeddingAbsence is this transaction's one retained "the pinned snapshot
+	// holds no embedding record" proof, with the count of the node reads that
+	// may take it (snapshotEmbeddingAbsence.recordsAbsent). It is keyed by that
+	// snapshot's read version, so a re-pinned snapshot proves again; nothing is
+	// retained per node and nothing outlives the transaction. Every read of
+	// this transaction's own embedding state asks it, so the point route and
+	// the cache-admission probes that ask whether a node has a worker sidecar
+	// share the one proof. Caller holds tx.mu.
+	embeddingAbsence snapshotEmbeddingAbsence
 	// connectedDeletes are nodes a non-DETACH DELETE deleted while
 	// relationships still connected them (DeleteGraphNode with RejectConnected), with their
 	// state before: deleted for scans and lookups by label, still the

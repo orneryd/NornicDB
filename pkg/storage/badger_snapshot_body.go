@@ -109,12 +109,17 @@ func embeddingRecordsAbsentAt(ctx context.Context, txn *badger.Txn, nodePrefix s
 	return absent, nil
 }
 
-// Delay the iterator cost until the transaction has a population to hydrate.
-const pinnedEmbeddingAbsenceProbeReads = 64
+// Delay the iterator cost until the snapshot has a population to hydrate.
+const snapshotEmbeddingAbsenceProbeReads = 64
 
-// pinnedEmbeddingAbsence belongs to one immutable physical snapshot, not a node.
-type pinnedEmbeddingAbsence struct {
-	// readTs is the ReadTs of the pinned snapshot this record belongs to; a
+// snapshotEmbeddingAbsence is one retained "this immutable physical snapshot
+// holds no embedding record at all" proof, with the count of the node reads
+// that may take it. It belongs to one snapshot, never to a node: its owner (a
+// transaction's pinned snapshot, a scan's own view) keeps one record keyed by
+// that snapshot's read version, so a re-pinned snapshot proves again and
+// nothing is retained per node.
+type snapshotEmbeddingAbsence struct {
+	// readTs is the ReadTs of the snapshot this record belongs to; a
 	// different version restarts the count and the proof.
 	readTs uint64
 	// reads counts the node reads of that snapshot that needed the embedding
@@ -126,18 +131,21 @@ type pinnedEmbeddingAbsence struct {
 	absent bool
 }
 
-// pinnedEmbeddingRecordsAbsentLocked reuses only this snapshot's range proof.
-// Pending-node reads bypass this path. The caller holds tx.mu.
-func (tx *BadgerTransaction) pinnedEmbeddingRecordsAbsentLocked(ctx context.Context, snapshot *badger.Txn) (bool, error) {
+// recordsAbsent reuses only snapshot's own range proof, and reports false to
+// a read that may not take it: a snapshot below the threshold and a snapshot
+// that holds an embedding record both keep their ordinary per-node lookups. It
+// is not concurrency-safe; a transaction owns its record under tx.mu and a
+// scan owns the view it reads.
+func (p *snapshotEmbeddingAbsence) recordsAbsent(ctx context.Context, snapshot *badger.Txn) (bool, error) {
 	readTs := snapshot.ReadTs()
-	if tx.pinnedEmbeddingAbsence.readTs != readTs {
-		tx.pinnedEmbeddingAbsence = pinnedEmbeddingAbsence{readTs: readTs}
+	if p.readTs != readTs {
+		*p = snapshotEmbeddingAbsence{readTs: readTs}
 	}
-	if tx.pinnedEmbeddingAbsence.proved {
-		return tx.pinnedEmbeddingAbsence.absent, nil
+	if p.proved {
+		return p.absent, nil
 	}
-	tx.pinnedEmbeddingAbsence.reads++
-	if tx.pinnedEmbeddingAbsence.reads < pinnedEmbeddingAbsenceProbeReads {
+	p.reads++
+	if p.reads < snapshotEmbeddingAbsenceProbeReads {
 		return false, nil
 	}
 	absent, err := embeddingRecordsAbsentAt(ctx, snapshot, "")
@@ -146,8 +154,8 @@ func (tx *BadgerTransaction) pinnedEmbeddingRecordsAbsentLocked(ctx context.Cont
 		// the next read of this snapshot probes again.
 		return false, err
 	}
-	tx.pinnedEmbeddingAbsence.proved = true
-	tx.pinnedEmbeddingAbsence.absent = absent
+	p.proved = true
+	p.absent = absent
 	return absent, nil
 }
 

@@ -76,10 +76,11 @@ func (tx *BadgerTransaction) readsPinnedSnapshotBodyLocked() bool {
 // asked about: a snapshot whose whole embedding range holds no record has no
 // separately stored embedding state for any node it contains, so the read
 // passes that absence proof to the body owner instead of making one missing
-// sidecar and chunk lookup per node (pinnedEmbeddingRecordsAbsentLocked). The
-// proof belongs to this snapshot's read version and only ever claims absence
-// for it, so a node whose vectors this transaction staged itself is unaffected:
-// the pending overlay answers that read before this route runs.
+// sidecar and chunk lookup per node (snapshotEmbeddingAbsence.recordsAbsent on
+// the transaction's own record). The proof belongs to this snapshot's read
+// version and only ever claims absence for it, so a node whose vectors this
+// transaction staged itself is unaffected: the pending overlay answers that
+// read before this route runs.
 func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
 	hydration := nodeItemQueryMetadata
 	var decodes *embeddingChunkDecodes
@@ -101,7 +102,7 @@ func (tx *BadgerTransaction) readPinnedSnapshotNodeLocked(ctx context.Context, n
 		if getErr != nil {
 			return getErr
 		}
-		embeddingRecordsAbsent, probeErr := tx.pinnedEmbeddingRecordsAbsentLocked(ctx, snapshot)
+		embeddingRecordsAbsent, probeErr := tx.embeddingAbsence.recordsAbsent(ctx, snapshot)
 		if probeErr != nil {
 			return probeErr
 		}

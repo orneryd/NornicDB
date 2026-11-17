@@ -55,7 +55,7 @@ func pinnedAbsenceReadQueryNodes(t *testing.T, tx *BadgerTransaction, ids []Node
 // reuses it. Body-held vectors are never suppressed by it.
 func TestPinnedSnapshotEmbeddingAbsenceProvesEmptyRangeOnce(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads+8)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads+8)
 	// Named vectors and small chunk vectors live in the node body, not in the
 	// embedding key range, so the range proof has nothing to do with them.
 	inline := NodeID("test:pinned-absence-inline")
@@ -76,24 +76,24 @@ func TestPinnedSnapshotEmbeddingAbsenceProvesEmptyRangeOnce(t *testing.T) {
 	// A bounded read of the snapshot keeps the per-node lookup: the proof costs
 	// one iterator over the embedding range and is not worth taking for a
 	// single node.
-	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:pinnedEmbeddingAbsenceProbeReads-1]) {
+	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:snapshotEmbeddingAbsenceProbeReads-1]) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.False(t, tx.pinnedEmbeddingAbsence.proved, "a bounded read must not take the range proof")
-	require.Equal(t, uint64(pinnedEmbeddingAbsenceProbeReads-1), tx.pinnedEmbeddingAbsence.reads)
+	require.False(t, tx.embeddingAbsence.proved, "a bounded read must not take the range proof")
+	require.Equal(t, uint64(snapshotEmbeddingAbsenceProbeReads-1), tx.embeddingAbsence.reads)
 
 	// The snapshot's 64th node read answers the range question once.
-	node, err := tx.GetQueryNode(t.Context(), ids[pinnedEmbeddingAbsenceProbeReads-1])
+	node, err := tx.GetQueryNode(t.Context(), ids[snapshotEmbeddingAbsenceProbeReads-1])
 	require.NoError(t, err)
 	require.Empty(t, node.ChunkEmbeddings)
-	proof := tx.pinnedEmbeddingAbsence
+	proof := tx.embeddingAbsence
 	require.True(t, proof.proved)
 	require.True(t, proof.absent, "a snapshot with no embedding record proves its range empty")
 	require.Equal(t, tx.snapshotTx.ReadTs(), proof.readTs, "the proof belongs to the snapshot the reads run on")
 
 	// Every later read of this snapshot reuses that one record, so the route
 	// retains nothing per node.
-	for _, later := range pinnedAbsenceReadQueryNodes(t, tx, ids[pinnedEmbeddingAbsenceProbeReads:]) {
+	for _, later := range pinnedAbsenceReadQueryNodes(t, tx, ids[snapshotEmbeddingAbsenceProbeReads:]) {
 		require.Empty(t, later.ChunkEmbeddings)
 		require.Empty(t, later.EmbedMeta)
 	}
@@ -101,14 +101,14 @@ func TestPinnedSnapshotEmbeddingAbsenceProvesEmptyRangeOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chunks, full.ChunkEmbeddings, "vectors the body carries are never suppressed by the range proof")
 	require.Equal(t, named, full.NamedEmbeddings)
-	require.Equal(t, proof, tx.pinnedEmbeddingAbsence, "the snapshot keeps one proof record, not one per node")
+	require.Equal(t, proof, tx.embeddingAbsence, "the snapshot keeps one proof record, not one per node")
 }
 
 // A snapshot that does hold an embedding record never answers absent, so every
 // node keeps its own hydration and stored vectors still arrive exactly.
 func TestPinnedSnapshotEmbeddingAbsenceKeepsLookupWhenSnapshotHoldsEmbeddings(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads+1)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads+1)
 	withVectors := ids[0]
 	chunks := [][]float32{{0.125, 0.25}, {0.5, 0.75}}
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(t.Context(), embeddingWriteback(t, b, withVectors, chunks, map[string]any{"has_embedding": true, "chunk_count": len(chunks)}, time.Time{})))
@@ -118,8 +118,8 @@ func TestPinnedSnapshotEmbeddingAbsenceKeepsLookupWhenSnapshotHoldsEmbeddings(t 
 	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids) {
 		require.Empty(t, node.ChunkEmbeddings, "a query row carries embedding metadata, never vectors")
 	}
-	require.True(t, tx.pinnedEmbeddingAbsence.proved, "the snapshot still answers its range question once")
-	require.False(t, tx.pinnedEmbeddingAbsence.absent, "a snapshot holding an embedding record never claims absence")
+	require.True(t, tx.embeddingAbsence.proved, "the snapshot still answers its range question once")
+	require.False(t, tx.embeddingAbsence.absent, "a snapshot holding an embedding record never claims absence")
 
 	// The per-node lookup stays, so the separately stored chunks hydrate.
 	full, err := tx.GetNode(t.Context(), withVectors)
@@ -134,7 +134,7 @@ func TestPinnedSnapshotEmbeddingAbsenceKeepsLookupWhenSnapshotHoldsEmbeddings(t 
 // that snapshot's nodes are read; a transaction pinned afterwards sees it.
 func TestPinnedSnapshotEmbeddingAbsenceKeepsPeerEmbeddingsOutOfPinnedSnapshot(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads)
 	peer := ids[len(ids)-1]
 	chunks := [][]float32{{0.5, 0.75}}
 
@@ -146,11 +146,11 @@ func TestPinnedSnapshotEmbeddingAbsenceKeepsPeerEmbeddingsOutOfPinnedSnapshot(t 
 	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:len(ids)-1]) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.False(t, tx.pinnedEmbeddingAbsence.proved)
+	require.False(t, tx.embeddingAbsence.proved)
 	old, err := tx.GetNode(t.Context(), peer)
 	require.NoError(t, err)
 	require.Empty(t, old.ChunkEmbeddings, "a peer's post-cut embedding state stays out of the pinned snapshot")
-	require.True(t, tx.pinnedEmbeddingAbsence.absent, "the snapshot that proved its range empty is this transaction's own")
+	require.True(t, tx.embeddingAbsence.absent, "the snapshot that proved its range empty is this transaction's own")
 
 	// A transaction pinned after the peer's write reads the stored vectors.
 	fresh := nor160BeginPinned(t, b, "test")
@@ -163,15 +163,15 @@ func TestPinnedSnapshotEmbeddingAbsenceKeepsPeerEmbeddingsOutOfPinnedSnapshot(t 
 // proof cannot suppress them.
 func TestPinnedSnapshotEmbeddingAbsenceKeepsOwnStagedVectors(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads+1)
-	target := ids[pinnedEmbeddingAbsenceProbeReads]
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads+1)
+	target := ids[snapshotEmbeddingAbsenceProbeReads]
 
 	tx := nor160BeginPinned(t, b, "test")
 	require.True(t, tx.readsPinnedSnapshotBodyLocked())
-	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:pinnedEmbeddingAbsenceProbeReads]) {
+	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:snapshotEmbeddingAbsenceProbeReads]) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.True(t, tx.pinnedEmbeddingAbsence.absent)
+	require.True(t, tx.embeddingAbsence.absent)
 
 	before, err := tx.GetQueryNode(t.Context(), target)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestPinnedSnapshotEmbeddingAbsenceKeepsOwnStagedVectors(t *testing.T) {
 // next read of the same snapshot still answers with it.
 func TestPinnedSnapshotEmbeddingAbsenceHonorsCancellation(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads)
 	last := ids[len(ids)-1]
 
 	tx := nor160BeginPinned(t, b, "test")
@@ -203,8 +203,8 @@ func TestPinnedSnapshotEmbeddingAbsenceHonorsCancellation(t *testing.T) {
 	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids[:len(ids)-1]) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.False(t, tx.pinnedEmbeddingAbsence.proved)
-	require.Equal(t, uint64(pinnedEmbeddingAbsenceProbeReads-1), tx.pinnedEmbeddingAbsence.reads)
+	require.False(t, tx.embeddingAbsence.proved)
+	require.Equal(t, uint64(snapshotEmbeddingAbsenceProbeReads-1), tx.embeddingAbsence.reads)
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -212,20 +212,20 @@ func TestPinnedSnapshotEmbeddingAbsenceHonorsCancellation(t *testing.T) {
 	_, err := tx.readPinnedSnapshotNodeLocked(canceled, last, false, visibleRead)
 	tx.mu.Unlock()
 	require.ErrorIs(t, err, context.Canceled)
-	require.False(t, tx.pinnedEmbeddingAbsence.proved, "a canceled read never keeps a proof")
+	require.False(t, tx.embeddingAbsence.proved, "a canceled read never keeps a proof")
 
 	node, err := tx.GetQueryNode(t.Context(), last)
 	require.NoError(t, err)
 	require.Empty(t, node.ChunkEmbeddings)
-	require.True(t, tx.pinnedEmbeddingAbsence.proved, "the next read of the snapshot takes it")
-	require.True(t, tx.pinnedEmbeddingAbsence.absent)
+	require.True(t, tx.embeddingAbsence.proved, "the next read of the snapshot takes it")
+	require.True(t, tx.embeddingAbsence.absent)
 }
 
 // An advanced snapshot proves its own range: the previous cut's absence is
 // never inherited, so a record that landed in between becomes visible.
 func TestPinnedSnapshotEmbeddingAbsenceRecomputesAfterSnapshotContinuation(t *testing.T) {
 	b := newTestEngine(t)
-	ids := pinnedAbsenceSeededNodes(t, b, pinnedEmbeddingAbsenceProbeReads)
+	ids := pinnedAbsenceSeededNodes(t, b, snapshotEmbeddingAbsenceProbeReads)
 	target := ids[0]
 	chunks := [][]float32{{0.5, 0.75}}
 
@@ -237,9 +237,9 @@ func TestPinnedSnapshotEmbeddingAbsenceRecomputesAfterSnapshotContinuation(t *te
 	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.True(t, tx.pinnedEmbeddingAbsence.proved)
-	require.True(t, tx.pinnedEmbeddingAbsence.absent)
-	previous := tx.pinnedEmbeddingAbsence.readTs
+	require.True(t, tx.embeddingAbsence.proved)
+	require.True(t, tx.embeddingAbsence.absent)
+	previous := tx.embeddingAbsence.readTs
 
 	// A peer stores embeddings, then the transaction continues onto a snapshot
 	// taken past that commit.
@@ -253,14 +253,14 @@ func TestPinnedSnapshotEmbeddingAbsenceRecomputesAfterSnapshotContinuation(t *te
 	full, err := tx.GetNode(t.Context(), target)
 	require.NoError(t, err)
 	require.Equal(t, chunks, full.ChunkEmbeddings, "the refreshed snapshot's embedding record hydrates")
-	require.Equal(t, refreshed, tx.pinnedEmbeddingAbsence.readTs)
-	require.False(t, tx.pinnedEmbeddingAbsence.proved, "the refreshed snapshot has proved nothing yet")
+	require.Equal(t, refreshed, tx.embeddingAbsence.readTs)
+	require.False(t, tx.embeddingAbsence.proved, "the refreshed snapshot has proved nothing yet")
 
 	for _, node := range pinnedAbsenceReadQueryNodes(t, tx, ids) {
 		require.Empty(t, node.ChunkEmbeddings)
 	}
-	require.True(t, tx.pinnedEmbeddingAbsence.proved)
-	require.False(t, tx.pinnedEmbeddingAbsence.absent, "a snapshot holding that record never claims absence")
+	require.True(t, tx.embeddingAbsence.proved)
+	require.False(t, tx.embeddingAbsence.absent, "a snapshot holding that record never claims absence")
 }
 
 // BenchmarkPinnedSnapshotEmbeddingAbsence measures one pinned pass over a
