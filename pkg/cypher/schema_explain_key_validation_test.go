@@ -28,6 +28,8 @@ func TestExplainKeyConstraintValidatesPropertyReferences(t *testing.T) {
 				"EXPLAIN CREATE CONSTRAINT node_key FOR (n:Review) REQUIRE (n.a, n.b) IS NODE KEY",
 				"EXPLAIN CREATE CONSTRAINT relationship_key FOR ()-[r:Review]-() REQUIRE (r.a, r.b) IS RELATIONSHIP KEY",
 				"EXPLAIN CREATE CONSTRAINT unique_key FOR (n:Review) REQUIRE (n.a, n.b) IS UNIQUE",
+				"EXPLAIN CREATE CONSTRAINT unevaluated_options FOR (n:Review) REQUIRE n.a IS UNIQUE OPTIONS {indexProvider: toString(1 / 0)}",
+				"EXPLAIN CREATE CONSTRAINT missing_options FOR (n:Review) REQUIRE n.a IS UNIQUE OPTIONS $options",
 			} {
 				t.Run(statement, func(t *testing.T) {
 					exec, store := newTestExecutor(t)
