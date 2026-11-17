@@ -44,6 +44,11 @@ func validateListOperands(ctx context.Context, cypher string, params map[string]
 // operand in text (the operand after an IN keyword outside quotes) and the
 // offset of that IN, stopping at the first error.
 func forEachListOperand(ctx context.Context, text string, visit func(start, in int) error) error {
+	// Without the ASCII operator spelling there can be no list operand.
+	// Candidate texts still use the canonical quote/name-aware reader below.
+	if !containsFold(text, "IN") {
+		return nil
+	}
 	for i := 0; i < len(text); i++ {
 		if end, quoted := skipCypherLexicalToken(text, i); quoted {
 			i = end - 1

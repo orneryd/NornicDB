@@ -814,13 +814,17 @@ func (s *Session) handlePull(data []byte) error {
 	} else {
 		// Small batches: send individually (avoids buffer allocation overhead)
 		pullN := options.limit
+		rowContext := s.parentContext()
+		if pullN != 0 && stream.index < len(stream.result.Rows) {
+			rowContext = s.withSessionIdentity(rowContext)
+		}
 		for stream.index < len(stream.result.Rows) {
 			if pullN == 0 {
 				break
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(s.withSessionIdentity(s.parentContext()), row, stream.database, stream.delivery); err != nil {
+			if err := s.writeRecordNoFlush(rowContext, row, stream.database, stream.delivery); err != nil {
 				return err
 			}
 

@@ -98,7 +98,7 @@ func policyTestWriter(t *testing.T, w *WAL, path string) func(large bool) error 
 		t.Cleanup(func() { _ = w.Close() })
 		return func(large bool) error {
 			batch := w.NewBatch()
-			if err := batch.append(OpEntityCommit, data(large)); err != nil {
+			if err := batch.append(OpEntityCommit, data(large), ""); err != nil {
 				return err
 			}
 			return batch.Commit()

@@ -139,7 +139,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("missing trailer is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		record := buf.Bytes()
 		require.Greater(t, len(record), 8)
@@ -156,7 +156,7 @@ func TestCheckWALIntegrity_AtomicBranches(t *testing.T) {
 	t.Run("invalid magic after good record is reported", func(t *testing.T) {
 		payload := buildAtomicIntegrityPayload(t, 1)
 		var buf bytes.Buffer
-		_, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+		_, err := writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 		require.NoError(t, err)
 		// Append malformed header-like bytes with wrong magic.
 		_, err = buf.Write([]byte{0x00, 0x01, 0x02, 0x03, walFormatVersionCurrent, 0, 0, 0, 0})

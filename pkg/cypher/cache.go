@@ -1045,17 +1045,36 @@ func extractLabelsFromQuery(cypher string) []string {
 // text and the same parameter values (#729). Normalizing the text keeps
 // trivia outside expression-derived column names and a trailing semicolon
 // from defeating a hit. Column-name spelling remains part of the key.
+// Only immutable syntax-derived text is retained. Parameters, authorization,
+// graph generations and search revisions remain request-owned key inputs.
+var resultStatementTexts = newBoundedCache[statementTextKey, string](4096, statementTextShardIndex)
+
 func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
-	source := trimTrailingStatementDelimiters(cypher)
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return ""
 	}
-	var protected []statementPresentationSpan
-	if err == nil {
-		protected = statementExpressionNameSpans(syntax)
+	source := trimTrailingStatementDelimiters(cypher)
+	key := statementTextKey{source: source, cypher25: cypherVersionFromContext(ctx) == "25"}
+	normalized, found := resultStatementTexts.get(key)
+	if !found {
+		syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, key.cypher25, cypherantlr.AcceptedSource)
+		if ctx.Err() != nil {
+			return ""
+		}
+		var protected []statementPresentationSpan
+		if err == nil {
+			protected = statementExpressionNameSpans(syntax)
+		}
+		normalized = normalizeQueryWithPresentation(source, protected)
+		if ctx.Err() != nil {
+			return ""
+		}
+		// Invalid syntax is not a reusable preparation outcome.
+		if err == nil {
+			resultStatementTexts.put(key, normalized)
+		}
 	}
-	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
+	return statementCacheKey(normalized, params)
 }
 
 // =============================================================================

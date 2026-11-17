@@ -145,3 +145,27 @@ func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"t-1"}}, result.Rows)
 }
+
+func TestResultStatementTextReuseKeepsRequestInputs(t *testing.T) {
+	const query = "RETURN $value AS cached_text_value"
+	ctx := t.Context()
+	first := resultCacheEntryKey(ctx, query, map[string]interface{}{"value": int64(1)})
+	key := statementTextKey{source: query}
+	normalized, found := resultStatementTexts.get(key)
+	require.True(t, found)
+	require.Equal(t, statementCacheKey(normalized, map[string]interface{}{"value": int64(1)}), first)
+	require.NotEqual(t, first, resultCacheEntryKey(ctx, query, map[string]interface{}{"value": int64(2)}))
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.Empty(t, resultCacheEntryKey(canceled, query, nil))
+	ctx25 := context.WithValue(ctx, cypherVersionKey{}, "25")
+	require.Equal(t, first, resultCacheEntryKey(ctx25, query, map[string]interface{}{"value": int64(1)}))
+	_, found = resultStatementTexts.get(statementTextKey{source: query, cypher25: true})
+	require.True(t, found, "dialects must prepare distinct immutable entries")
+	const invalid = "RETURN ("
+	_ = resultCacheEntryKey(ctx, invalid, nil)
+	_, found = resultStatementTexts.get(statementTextKey{source: invalid})
+	require.False(t, found, "failed preparation must not be retained")
+	// Reuse must preserve expression-derived column spelling.
+	require.NotEqual(t, resultCacheEntryKey(ctx, "RETURN 1 IS  NULL", nil), resultCacheEntryKey(ctx, "RETURN 1 IS\tNULL", nil))
+}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"os"
 	"strings"
 	"testing"
@@ -16,9 +17,11 @@ import (
 // vectors an embedding worker acknowledged. These tests drive the existing
 // owners the component uses:
 //
-//   - WAL.appendManagedVectorAnchor is the only writer of the record; its
-//     sequence, checksum, framing and roll-over are the journal's existing
-//     owners (encodeNextRecordLocked, appendRecordLocked, maybeRotateLocked).
+//   - managedVectorAnchorRecord is the record's one preparation owner, and
+//     managedVectorAnchorBatch (over the journal's BatchWriter) is its only
+//     writer: sequence, checksum and framing are the journal's existing owners
+//     (encodeNextRecordLocked, appendRecordLocked), and its batches are synced
+//     and flushed by the journal's syncLocked.
 //   - walRecordMaySpan is the one approval that lets that record span frames
 //     under WALRecordsStandard; every other operation keeps the 16 MiB limit.
 //   - ReplayWALEntry/replayManagedVectorAnchor is the one apply owner, and it
@@ -118,6 +121,24 @@ func managedAnchorEntry(t *testing.T, dir string) (WALEntry, walManagedVectorAnc
 	return *found, payload
 }
 
+// journalManagedAnchor journals one committed node image's anchor through the
+// anchor batch owner the reference path uses and returns the error its caller
+// would see. An anchor reaches the file when its batch commits, so this call
+// carries exactly the durability an anchor record gives its caller.
+func journalManagedAnchor(t *testing.T, wal *WAL, before *Node) error {
+	t.Helper()
+	anchors := wal.newManagedVectorAnchorBatch()
+	digest, err := managedVectorFingerprint(t.Context(), before.ChunkEmbeddings)
+	if err != nil {
+		return err
+	}
+	if _, err := anchors.anchored(t.Context(), before, sha256.Sum256([]byte(before.ID)), digest); err != nil {
+		anchors.discard()
+		return err
+	}
+	return anchors.flush(t.Context())
+}
+
 // An anchor larger than one 16 MiB frame is written in parts and reads back
 // whole under both record policies: the anchor's own approved spanning
 // capability is not the journal's record policy. The record carries the
@@ -137,12 +158,10 @@ func TestManagedVectorAnchorAboveFrameLimitSpansFrames(t *testing.T) {
 			cfg.RecordPolicy = policy.cfg
 			wal, acknowledged := managedAnchorFixture(t, cfg, chunks, 1)
 
-			seq, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-			require.NoError(t, err, "an anchor larger than one frame must be journaled")
+			require.NoError(t, journalManagedAnchor(t, wal, acknowledged), "an anchor larger than one frame must be journaled")
 			require.NoError(t, wal.Sync())
 
 			entry, payload := managedAnchorEntry(t, wal.Config().Dir)
-			require.Equal(t, seq, entry.Sequence)
 			require.Equal(t, "test", entry.Database)
 			require.Greater(t, len(entry.Data), int(walMaxEntrySize), "the anchor is larger than one frame")
 			require.Equal(t, walFormatVersionSpanned, entry.framingVersion, "the record was stored in parts")
@@ -164,7 +183,7 @@ func TestManagedVectorAnchorAboveFrameLimitSpansFrames(t *testing.T) {
 					continue
 				}
 				require.Equal(t, OpRecordPart, frame.op)
-				require.Equal(t, seq, frame.seq)
+				require.Equal(t, entry.Sequence, frame.seq)
 				parts++
 			}
 			require.GreaterOrEqual(t, parts, 2, "a record over one frame is written in parts")
@@ -207,16 +226,16 @@ func TestManagedVectorAnchorWithoutLastPartIsNotPublished(t *testing.T) {
 
 	wal, acknowledged := managedAnchorFixture(t, nil, 17000, 2)
 	walSpannedChunkBytes = 64 << 10
-	seq, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, acknowledged))
 	require.NoError(t, wal.Close())
 	dir := wal.Config().Dir
 
+	stored, _ := managedAnchorEntry(t, dir)
 	frames := walTestFrames(t, walActivePath(dir))
 	var partFrames []walTestFrame
 	for _, frame := range frames {
 		if frame.version == walFormatVersionSpanned {
-			require.Equal(t, seq, frame.seq)
+			require.Equal(t, stored.Sequence, frame.seq)
 			partFrames = append(partFrames, frame)
 		}
 	}
@@ -254,8 +273,7 @@ func TestManagedVectorAnchorWithoutLastPartIsNotPublished(t *testing.T) {
 	for _, entry := range entries {
 		require.NotEqual(t, opManagedVectorAnchor, entry.Operation)
 	}
-	_, err = reopened.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, reopened, acknowledged))
 	_, payload := managedAnchorEntry(t, dir)
 	require.Equal(t, acknowledged.ChunkEmbeddings, payload.SourceNode.ChunkEmbeddings)
 }
@@ -265,8 +283,7 @@ func TestManagedVectorAnchorWithoutLastPartIsNotPublished(t *testing.T) {
 // vectors as the store has them.
 func TestManagedVectorAnchorReplayRestoresOnlyManagedState(t *testing.T) {
 	wal, acknowledged := managedAnchorFixture(t, nil, 24, 3)
-	_, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, acknowledged))
 	require.NoError(t, wal.Sync())
 
 	recovered, err := managedAnchorReplay(t, wal.Config().Dir, func(engine *MemoryEngine) {
@@ -294,8 +311,7 @@ func TestManagedVectorAnchorReplayRestoresOnlyManagedState(t *testing.T) {
 // restored onto a body that moved on.
 func TestManagedVectorAnchorReplayRejectsOtherSource(t *testing.T) {
 	wal, acknowledged := managedAnchorFixture(t, nil, 8, 4)
-	_, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, acknowledged))
 	require.NoError(t, wal.Sync())
 	dir := wal.Config().Dir
 
@@ -337,8 +353,7 @@ func TestManagedVectorAnchorReplayRejectsOtherSource(t *testing.T) {
 // does not feed the embedding keeps the restored vectors.
 func TestManagedVectorAnchorSurvivesLaterPropertyUpdate(t *testing.T) {
 	wal, acknowledged := managedAnchorFixture(t, nil, 12, 5)
-	_, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, acknowledged))
 	require.NoError(t, wal.Sync())
 
 	recovered, err := managedAnchorReplay(t, wal.Config().Dir, func(engine *MemoryEngine) {
@@ -368,14 +383,13 @@ func TestManagedVectorGenerationAdvancesOnManagedVectorOwners(t *testing.T) {
 	wal, acknowledged := managedAnchorFixture(t, nil, 4, 6)
 	require.EqualValues(t, 1, wal.managedVectorGeneration.Load(), "publishing the fixture's vectors journals one audit")
 
-	_, err := wal.appendManagedVectorAnchor(t.Context(), acknowledged)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, acknowledged))
 	require.EqualValues(t, 1, wal.managedVectorGeneration.Load(), "adding an anchor does not invalidate other anchor proofs")
 	require.NoError(t, wal.AppendWithDatabase(OpUpdateEmbedding, WALNodeData{Node: &Node{ID: "anchor-node"}}, "test"))
 	require.EqualValues(t, 2, wal.managedVectorGeneration.Load(), "generic audit append invalidates proofs too")
 
 	native := newTestMemoryEngine(t)
-	_, err = native.CreateNode(t.Context(), managedAnchorBody(acknowledged.UpdatedAt))
+	_, err := native.CreateNode(t.Context(), managedAnchorBody(acknowledged.UpdatedAt))
 	require.NoError(t, err)
 	wrapped := NewWALEngine(native, wal)
 	require.NoError(t, wrapped.UpdateNodeEmbeddingSidecar(t.Context(), embeddingWriteback(t, wrapped.GetInnerEngine(), managedAnchorID, acknowledged.ChunkEmbeddings, acknowledged.EmbedMeta, time.Time{})))
@@ -398,17 +412,15 @@ func TestManagedVectorAnchorPayloadKeepsStoredTypes(t *testing.T) {
 	source := CopyNode(acknowledged)
 	source.EmbedMeta = map[string]any{"has_embedding": true, "embedded_at": stamped}
 
-	seq, err := wal.appendManagedVectorAnchor(t.Context(), source)
-	require.NoError(t, err)
+	require.NoError(t, journalManagedAnchor(t, wal, source))
 	require.NoError(t, wal.Sync())
 	entry, payload := managedAnchorEntry(t, wal.Config().Dir)
-	require.Equal(t, seq, entry.Sequence)
+	require.NotZero(t, entry.Sequence, "the anchor is a numbered journal record")
 	embeddedAt, ok := payload.SourceNode.EmbedMeta["embedded_at"].(time.Time)
 	require.True(t, ok, "a registered temporal type survives the record: %T", payload.SourceNode.EmbedMeta["embedded_at"])
 	require.True(t, stamped.Equal(embeddedAt))
 
 	unqualified := CopyNode(acknowledged)
 	unqualified.ID = "unqualified"
-	_, err = wal.appendManagedVectorAnchor(t.Context(), unqualified)
-	require.ErrorIs(t, err, ErrInvalidID, "the sidecar owner restores only database-qualified IDs")
+	require.ErrorIs(t, journalManagedAnchor(t, wal, unqualified), ErrInvalidID, "the sidecar owner restores only database-qualified IDs")
 }

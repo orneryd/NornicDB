@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 )
@@ -44,6 +45,16 @@ const opManagedVectorAnchor OperationType = "managed_vector_anchor"
 // writes and the only one it replays.
 const managedVectorAnchorVersion uint8 = 1
 
+// managedVectorAnchorBatchBytes bounds the encoded anchor records one batch
+// holds before it is committed and released, so a caller that needs many
+// anchors at once keeps a bounded working set and pays one journal sync per
+// batch rather than one per anchor. One anchor whose own record exceeds the
+// bound is still journaled: the bound is checked after a record is queued.
+const managedVectorAnchorBatchBytes = 1 << 20
+
+// A count bound also limits proof lookup work when individual images are tiny.
+const managedVectorAnchorBatchEntries = 128
+
 // ErrManagedVectorAnchorSource reports an anchor whose recorded source is not
 // the node the store has committed: the node is gone, or its body changed
 // after the vectors were acknowledged. Replay changes nothing for it - it
@@ -66,31 +77,23 @@ type walManagedVectorAnchorPayload struct {
 	SourceNode *Node `msgpack:"source_node"`
 }
 
-// appendManagedVectorAnchor journals the acknowledged managed embedding state
-// of before and returns the record's sequence number. before must be the node
-// as the store has committed it (its ID is database-qualified, and its body,
-// chunk vectors and embedding metadata are the acknowledged state); vectors
-// still being computed are not an anchor.
+// managedVectorAnchorRecord prepares the one anchor record of before and
+// returns it with the database it is journaled under. It is the anchor's one
+// preparation owner, used by every writer of the record.
 //
-// The record is numbered, written, framed and rolled over by the journal's
-// existing append owners (encodeNextRecordLocked, appendRecordLocked,
-// maybeRotateLocked), so it keeps the journal's ordering and its one sequence
-// and checksum contract. It asks no admission question: its framing is decided
-// by its operation (walRecordSpansFrames), not by the record policy the WAL was
-// constructed with, and this method never changes that policy or adds a
-// segmentation owner of its own.
-func (w *WAL) appendManagedVectorAnchor(ctx context.Context, before *Node) (uint64, error) {
-	if w == nil {
-		return 0, ErrWALClosed
-	}
+// before must be the node as the store has committed it (its ID is
+// database-qualified, and its body, chunk vectors and embedding metadata are
+// the acknowledged state); vectors still being computed are not an anchor.
+func managedVectorAnchorRecord(ctx context.Context, before *Node) (walManagedVectorAnchorPayload, string, error) {
+	var payload walManagedVectorAnchorPayload
 	if ctx == nil {
-		return 0, fmt.Errorf("wal: managed vector anchor requires a context: %w", ErrInvalidData)
+		return payload, "", fmt.Errorf("wal: managed vector anchor requires a context: %w", ErrInvalidData)
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return payload, "", err
 	}
 	if before == nil || before.ID == "" {
-		return 0, fmt.Errorf("wal: managed vector anchor requires the committed source node: %w", ErrInvalidData)
+		return payload, "", fmt.Errorf("wal: managed vector anchor requires the committed source node: %w", ErrInvalidData)
 	}
 	// The embedding sidecar owner writes a node's managed state only for a
 	// database-qualified ID (BadgerEngine.UpdateNodeEmbeddingSidecar), and
@@ -98,18 +101,13 @@ func (w *WAL) appendManagedVectorAnchor(ctx context.Context, before *Node) (uint
 	// would refuse could never be restored, so it is not journaled either.
 	database, _, qualified := ParseDatabasePrefix(string(before.ID))
 	if !qualified {
-		return 0, fmt.Errorf("wal: managed vector anchor requires a database-qualified node ID %q: %w", before.ID, ErrInvalidID)
+		return payload, "", fmt.Errorf("wal: managed vector anchor requires a database-qualified node ID %q: %w", before.ID, ErrInvalidID)
 	}
-
-	payload := walManagedVectorAnchorPayload{
+	payload = walManagedVectorAnchorPayload{
 		Version:    managedVectorAnchorVersion,
 		SourceNode: managedVectorAnchorSource(database, before),
 	}
-	seq, err := w.appendWithDatabase(opManagedVectorAnchor, &payload, database, false)
-	if err != nil {
-		return 0, err
-	}
-	return seq, nil
+	return payload, database, nil
 }
 
 // managedVectorAnchorSource returns the node image the anchor records: the
@@ -121,6 +119,151 @@ func managedVectorAnchorSource(database string, before *Node) *Node {
 	source.ID = NodeID(StripDatabasePrefix(database, string(before.ID)))
 	source.NamedEmbeddings = nil
 	return &source
+}
+
+// managedVectorAnchorProof is the reusable proof of one journaled anchor: the
+// hashed node identity and the hash of the managed vector image it recorded.
+// The proof is the same value the anchor cache stores, so a batch can hold the
+// proofs of the anchors it has queued without holding any entity, vector slice
+// or caller ID.
+type managedVectorAnchorProof struct {
+	identity [sha256.Size]byte
+	digest   [sha256.Size]byte
+}
+
+// managedVectorAnchorBatch journals proven anchors for one caller through the
+// journal's existing batch owner (BatchWriter), so the anchors of one
+// transaction are numbered, framed, written and synced by the journal's one
+// record order (encodeNextRecordLocked, appendRecordLocked, syncLocked)
+// instead of one sync per anchor. Anchors are released in bounded batches
+// (managedVectorAnchorBatchBytes), so the pending data stays bounded however
+// many anchors the caller needs.
+//
+// A proof is reused only after its anchor's batch is durable: the proofs of a
+// batch become cache entries after CommitWithSeq returned without error, and a
+// batch that fails or is cancelled yields neither references nor proofs.
+type managedVectorAnchorBatch struct {
+	wal     *WAL
+	batch   *BatchWriter
+	pending []managedVectorAnchorProof
+}
+
+// newManagedVectorAnchorBatch starts the anchor batch of one caller.
+func (w *WAL) newManagedVectorAnchorBatch() managedVectorAnchorBatch {
+	return managedVectorAnchorBatch{wal: w}
+}
+
+// anchored reports whether the journal already holds a durable anchor for the
+// image (identity, digest), and journals one when it does not. A true result
+// means the anchor is durable before the caller returns from flush: an anchor
+// this batch queued but has not committed yet is only a promise that flush
+// keeps, and its proof is never remembered until then.
+func (a *managedVectorAnchorBatch) anchored(ctx context.Context, before *Node, identity, digest [sha256.Size]byte) (bool, error) {
+	if a.pendingProof(identity, digest) {
+		return true, nil
+	}
+	// The anchor cache is read under the WAL mutex, its one owner, as before.
+	if err := a.wal.lockAdmission(ctx); err != nil {
+		return false, err
+	}
+	known := a.wal.managedVectorAnchors.contains(identity, digest, a.wal.managedVectorGeneration.Load())
+	a.wal.mu.Unlock()
+	if known {
+		return true, nil
+	}
+	return a.append(ctx, before, identity, digest)
+}
+
+// append prepares before's anchor with the anchor's canonical preparation
+// owner and queues it in this batch, committing the batch when its encoded
+// pending data reaches managedVectorAnchorBatchBytes. The reports whether the
+// record was queued: a journal that is not enabled writes nothing, so the
+// caller must not emit a reference to an anchor that will never exist.
+func (a *managedVectorAnchorBatch) append(ctx context.Context, before *Node, identity, digest [sha256.Size]byte) (bool, error) {
+	payload, database, err := managedVectorAnchorRecord(ctx, before)
+	if err != nil {
+		return false, err
+	}
+	if a.batch == nil {
+		// Allocate only when a missing image actually needs journaling, not
+		// for ordinary writes or an entirely warm anchor working set.
+		a.batch = &BatchWriter{wal: a.wal}
+	}
+	queued := a.batch.Len()
+	if err := a.batch.append(opManagedVectorAnchor, &payload, database); err != nil {
+		return false, fmt.Errorf("wal: failed to journal managed vector anchor: %w", err)
+	}
+	if a.batch.Len() == queued {
+		return false, nil
+	}
+	a.pending = append(a.pending, managedVectorAnchorProof{identity: identity, digest: digest})
+	if len(a.pending) < managedVectorAnchorBatchEntries && a.batch.pendingBytes() < managedVectorAnchorBatchBytes {
+		return true, nil
+	}
+	return true, a.flush(ctx)
+}
+
+// flush commits this batch and remembers its proofs once the batch is durable.
+// A commit that fails or a cancelled caller discards the batch: the records of
+// a failed commit may be incomplete, and the caller's transaction fails, so no
+// proof may outlive it. Anchors an earlier flush committed stay durable; they
+// record acknowledged managed state whether or not the caller's transaction
+// completes.
+func (a *managedVectorAnchorBatch) flush(ctx context.Context) error {
+	if a.batch == nil || a.batch.Len() == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		a.discard()
+		return err
+	}
+	// An intervening vector audit or journal retirement invalidates reuse.
+	// Never stamp an older anchor with the newer provenance epoch.
+	generation := a.wal.managedVectorGeneration.Load()
+	if _, _, err := a.batch.CommitWithSeq(); err != nil {
+		a.discard()
+		return err
+	}
+	proofs := a.pending
+	a.pending = a.pending[:0]
+	if len(proofs) == 0 {
+		return nil
+	}
+	// The batch is durable: only now may its proofs be reused, at the epoch the
+	// journal has reached after the write.
+	if err := a.wal.lockAdmission(ctx); err != nil {
+		return err
+	}
+	if a.wal.managedVectorGeneration.Load() != generation {
+		a.wal.mu.Unlock()
+		return nil
+	}
+	for _, proof := range proofs {
+		a.wal.managedVectorAnchors.remember(proof.identity, proof.digest, generation)
+	}
+	a.wal.mu.Unlock()
+	return nil
+}
+
+// discard drops the anchors this batch has not committed and the proofs that
+// belong to them.
+func (a *managedVectorAnchorBatch) discard() {
+	if a.batch != nil {
+		a.batch.Rollback()
+	}
+	a.pending = a.pending[:0]
+}
+
+// pendingProof reports whether this batch already queued an anchor for exactly
+// this image, whose proof flush will remember once the batch is durable, so the
+// same image is anchored once per batch rather than once per operation.
+func (a *managedVectorAnchorBatch) pendingProof(identity, digest [sha256.Size]byte) bool {
+	for _, proof := range a.pending {
+		if proof.identity == identity && proof.digest == digest {
+			return true
+		}
+	}
+	return false
 }
 
 // replayManagedVectorAnchor restores the managed embedding state an anchor

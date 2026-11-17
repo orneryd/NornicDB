@@ -80,3 +80,12 @@ func (c *boundedCache[K, V]) put(key K, value V) {
 	sh.m[key] = value
 	sh.mu.Unlock()
 }
+
+// statementTextKey distinguishes immutable preparation outcomes by exact text
+// and grammar dialect; it carries no request values or registry decisions.
+type statementTextKey struct {
+	source   string
+	cypher25 bool
+}
+
+func statementTextShardIndex(k statementTextKey) int { return boundedCacheStringShardIndex(k.source) }

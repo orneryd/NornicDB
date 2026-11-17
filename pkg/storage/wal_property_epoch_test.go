@@ -218,7 +218,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	// Batch writes share the same unbound boundary owner.
 	require.NoError(t, reopened.AppendBufferedCommit(commit, source.propKeyDict))
 	batch := reopened.NewBatch()
-	require.NoError(t, batch.append(OpBufferedCommit, &unbound))
+	require.NoError(t, batch.append(OpBufferedCommit, &unbound, ""))
 	require.NoError(t, batch.Commit())
 	entries, err = ReadWALEntriesFromDir(t.Context(), reopened.Config().Dir)
 	require.NoError(t, err)

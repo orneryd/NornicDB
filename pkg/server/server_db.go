@@ -1153,7 +1153,7 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 			metadata = append(metadata, nested...)
 		}
 		if ordered {
-			return transactionHTTPOrderedMap{keys: keys, values: result}, metadata, nil
+			return valueconvert.OrderedJSONMap{Keys: keys, Values: result}, metadata, nil
 		}
 		return result, metadata, nil
 	default:

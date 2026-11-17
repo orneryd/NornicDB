@@ -6,13 +6,30 @@ import (
 	"strings"
 )
 
+var validatedStaticMapTexts = newBoundedCache[statementTextKey, struct{}](4096, statementTextShardIndex)
+
 // validateStaticMapKeys rejects malformed symbolic map keys before either
 // parser frontend or executor can normalize them. Braces without a top-level
 // key/value separator are ignored because they may delimit a subquery. It is
 // also the one owner of the map literal / map projection boundary: a brace a
 // variable precedes is a projection, whose entries include a bare variable
 // selector, and an empty entry is malformed in either shape.
-func validateStaticMapKeys(ctx context.Context, query string) error {
+func validateStaticMapKeys(ctx context.Context, query string) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key := statementTextKey{source: query, cypher25: cypherVersionFromContext(ctx) == "25"}
+	if _, found := validatedStaticMapTexts.get(key); found {
+		return nil
+	}
+	// Map-key grammar is text-only. Cache only successful, complete checks;
+	// property values and runtime parameter validation still run per statement.
+	defer func() {
+		if err == nil && ctx.Err() == nil {
+			validatedStaticMapTexts.put(key, struct{}{})
+		}
+	}()
+
 	upper := upperASCII(strings.TrimSpace(query))
 	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(ctx, query, "OPTIONS") >= 0 {
 		return nil

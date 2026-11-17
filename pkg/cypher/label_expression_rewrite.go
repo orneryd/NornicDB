@@ -102,11 +102,20 @@ func (m labelPatternMode) clause() string {
 // and nil when nothing changes. ctx is the caller's lifetime; it is read by
 // the shortestPath binding check a MATCH pattern may reach.
 func desugarLabelExpressions(ctx context.Context, query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+	if err := ctx.Err(); err != nil {
+		return query, nil, err
+	}
+	if rewriteFree(rewriteFreeLabelExpressionCandidates, cypher25, query) {
+		return query, nil, nil
+	}
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(ctx, query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
 		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
 		!mayTestExpressionLabels(query) {
+		if ctx.Err() == nil {
+			markRewriteFree(rewriteFreeLabelExpressionCandidates, cypher25, query)
+		}
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{ctx: ctx, query: query, params: params, cypher25: cypher25}

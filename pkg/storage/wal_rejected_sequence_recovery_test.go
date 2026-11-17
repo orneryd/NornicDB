@@ -120,7 +120,7 @@ func TestRejectedRecordDoesNotHideWriteAfterSnapshotRestart(t *testing.T) {
 			policy: WALRecordsStandard,
 			refuse: func(t *testing.T, w *WAL, oversize walEntityCommitData) {
 				batch := w.NewBatch()
-				require.NoError(t, batch.append(OpEntityCommit, oversize))
+				require.NoError(t, batch.append(OpEntityCommit, oversize, ""))
 				_, _, err := batch.CommitWithSeq()
 				var rejection *walRecordRejection
 				require.ErrorAs(t, err, &rejection, "the batch reports the journal's record refusal")
@@ -133,8 +133,8 @@ func TestRejectedRecordDoesNotHideWriteAfterSnapshotRestart(t *testing.T) {
 			policy: WALRecordsStandard,
 			refuse: func(t *testing.T, w *WAL, oversize walEntityCommitData) {
 				batch := w.NewBatch()
-				require.NoError(t, batch.append(OpCheckpoint, map[string]interface{}{"reason": "accepted-prefix"}))
-				require.NoError(t, batch.append(OpEntityCommit, oversize))
+				require.NoError(t, batch.append(OpCheckpoint, map[string]interface{}{"reason": "accepted-prefix"}, ""))
+				require.NoError(t, batch.append(OpEntityCommit, oversize, ""))
 				_, _, err := batch.CommitWithSeq()
 				var rejection *walRecordRejection
 				require.ErrorAs(t, err, &rejection, "the batch reports the journal's record refusal")

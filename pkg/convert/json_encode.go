@@ -104,6 +104,18 @@ func prepareJSON(value interface{}) interface{} {
 	return preparedJSON{value}
 }
 
+// OrderedJSONMap is a borrowed JSON object whose keys are emitted in the
+// supplied order. Only Keys are emitted; a missing key has a null value.
+// Keys and Values must remain unchanged for the duration of encoding.
+// For example, OrderedJSONMap{Keys: []string{"id"}, Values: map[string]interface{}{"id": int64(7)}}
+// encodes as {"id":7}.
+type OrderedJSONMap struct {
+	Keys   []string
+	Values map[string]interface{}
+}
+
+func (value OrderedJSONMap) MarshalJSON() ([]byte, error) { return marshalJSON(value, false) }
+
 type preparedJSON struct{ value interface{} }
 
 func (value preparedJSON) MarshalJSON() ([]byte, error) { return marshalJSON(value.value, false) }
@@ -259,6 +271,26 @@ func (state *jsonWriterState) any(value interface{}) error {
 	state.typedState = false
 	defer func() { state.typedState = typedState }()
 	switch value := value.(type) {
+	case OrderedJSONMap:
+		state.depth++
+		defer func() { state.depth-- }()
+		visit, tracked, err := state.trackContainer(reflect.ValueOf(value.Values))
+		if err != nil {
+			return err
+		}
+		if tracked {
+			defer delete(state.active, visit)
+		}
+		state.openContainer('{')
+		for index, key := range value.Keys {
+			state.elementSeparator(index == 0)
+			state.data = appendJSONString(state.data, key, state.escapeHTML)
+			state.colon()
+			if err := state.any(value.Values[key]); err != nil {
+				return err
+			}
+		}
+		state.closeContainer('}', len(value.Keys) == 0)
 	case nil:
 		state.data = append(state.data, "null"...)
 	case string:
@@ -304,6 +336,31 @@ func jsonValueMethods(typ reflect.Type) jsonEncodingMethods {
 	}
 	actual, _ := jsonMethods.LoadOrStore(typ, methods)
 	return actual.(jsonEncodingMethods)
+}
+
+// trackContainer shares cycle detection between ordinary and ordered objects.
+// Shallow acyclic values need neither a visit map nor retained references.
+func (state *jsonWriterState) trackContainer(value reflect.Value) (jsonEncodingVisit, bool, error) {
+	if state.depth <= 1000 || (value.Kind() != reflect.Pointer && value.Kind() != reflect.Map && value.Kind() != reflect.Slice) || value.IsNil() {
+		return jsonEncodingVisit{}, false, nil
+	}
+	visit := jsonEncodingVisit{kind: value.Kind()}
+	if value.Kind() == reflect.Map {
+		visit.ptr = uintptr(value.UnsafePointer())
+	} else {
+		visit.ptr = value.Pointer()
+	}
+	if value.Kind() == reflect.Slice {
+		visit.length = value.Len()
+	}
+	if state.active[visit] {
+		return visit, false, &json.UnsupportedValueError{Value: value, Str: "encountered a cycle via " + value.Type().String()}
+	}
+	if state.active == nil {
+		state.active = make(map[jsonEncodingVisit]bool)
+	}
+	state.active[visit] = true
+	return visit, true, nil
 }
 
 func (state *jsonWriterState) value(value reflect.Value) error {
@@ -352,27 +409,14 @@ func (state *jsonWriterState) value(value reflect.Value) error {
 	}
 	state.depth++
 	defer func() { state.depth-- }()
-	// The ordinary acyclic path allocates no visit map. Deep graphs retain
-	// cycle errors without copying or modifying the source containers.
-	if state.depth > 1000 && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Map || value.Kind() == reflect.Slice) && !value.IsNil() {
-		visit := jsonEncodingVisit{kind: value.Kind()}
-		if value.Kind() == reflect.Map {
-			visit.ptr = uintptr(value.UnsafePointer())
-		} else {
-			visit.ptr = value.Pointer()
-		}
-		if value.Kind() == reflect.Slice {
-			visit.length = value.Len()
-		}
-		if state.active[visit] {
-			return &json.UnsupportedValueError{Value: value, Str: "encountered a cycle via " + typ.String()}
-		}
-		if state.active == nil {
-			state.active = make(map[jsonEncodingVisit]bool)
-		}
-		state.active[visit] = true
+	visit, tracked, err := state.trackContainer(value)
+	if err != nil {
+		return err
+	}
+	if tracked {
 		defer delete(state.active, visit)
 	}
+
 	switch value.Kind() {
 	case reflect.Pointer:
 		return state.value(value.Elem())

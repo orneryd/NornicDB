@@ -8,6 +8,7 @@ const (
 	rewriteFreeFunctionAliases rewriteFreePass = iota + 1
 	rewriteFreeCypher25Expressions
 	rewriteFreeQueryStructure
+	rewriteFreeLabelExpressionCandidates
 )
 
 type rewriteFreeKey struct {

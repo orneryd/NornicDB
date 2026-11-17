@@ -68,7 +68,7 @@ func TestWriteAtomicRecordV2_MatchesBuild(t *testing.T) {
 		want, wantLen := buildAtomicRecord(payload, walFormatVersionCurrent)
 
 		var buf bytes.Buffer
-		gotLen, err := writeAtomicRecord(&buf, payload, walFormatVersionCurrent)
+		gotLen, err := writeAtomicRecordBufio(&buf, payload, walFormatVersionCurrent)
 		if err != nil {
 			t.Fatalf("writeAtomicRecord failed: %v", err)
 		}
@@ -125,4 +125,47 @@ func TestWriteAtomicRecordV2Bufio_ErrorBranches(t *testing.T) {
 			t.Fatalf("expected write error")
 		}
 	})
+}
+
+func TestWriteAtomicRecordBufioClearsReusedPadding(t *testing.T) {
+	var output bytes.Buffer
+	writer := bufio.NewWriterSize(&output, 256)
+	for size := 0; size < 64; size++ {
+		output.Reset()
+		writer.Reset(&output)
+		available := writer.AvailableBuffer()
+		dirty := available[:cap(available)]
+		for i := range dirty {
+			dirty[i] = 0xa5
+		}
+		payload := bytes.Repeat([]byte{byte(size)}, size)
+		want, length := buildAtomicRecord(payload, walFormatVersionCurrent)
+		gotLength, err := writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		if gotLength != length || !bytes.Equal(want, output.Bytes()) {
+			t.Fatalf("payload=%d length=%d want=%d bytes=%x want=%x", size, gotLength, length, output.Bytes(), want)
+		}
+	}
+}
+
+func TestWriteAtomicRecordBufioSmallFrameAllocatesNothing(t *testing.T) {
+	writer := bufio.NewWriterSize(io.Discard, 256)
+	payload := []byte("a small durable record")
+	allocations := testing.AllocsPerRun(100, func() {
+		writer.Reset(io.Discard)
+		if _, err := writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Flush(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("small buffered frames allocate %v times, want zero", allocations)
+	}
 }

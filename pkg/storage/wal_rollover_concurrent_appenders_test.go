@@ -298,7 +298,7 @@ func TestWALRollOverWithConcurrentAppenders(t *testing.T) {
 								for k := range values {
 									part := fmt.Sprintf("%s.%d", id, k)
 									values[k] = rollOverValue(part, tc.size/3)
-									if err := batch.append(OpTxCommit, WALTxData{TxID: part, Metadata: map[string]string{"v": string(values[k])}}); err != nil {
+									if err := batch.append(OpTxCommit, WALTxData{TxID: part, Metadata: map[string]string{"v": string(values[k])}}, ""); err != nil {
 										acks.fail("batch append %s: %v", part, err)
 										return
 									}
