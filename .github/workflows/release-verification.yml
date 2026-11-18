@@ -53,6 +53,7 @@ jobs:
       - name: Record exact PR revisions
         id: revisions
         env:
+          EVENT_NAME: ${{ github.event_name }}
           EXPECTED_HEAD: ${{ inputs.head || github.event.pull_request.head.sha }}
           BASE_SHA: ${{ inputs.base || github.event.pull_request.base.sha }}
         run: |
@@ -61,10 +62,17 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$EXPECTED_HEAD" ]]
           git cat-file -e "${BASE_SHA}^{commit}"
-          git merge-base --is-ancestor "$BASE_SHA" HEAD || {
-            echo "The main PR base is not an ancestor of the release head; sync main and request verification again." >&2
-            exit 1
-          }
+          if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
+            if [[ "$EVENT_NAME" != pull_request_target ]]; then
+              echo "Manual verification requires an ancestor baseline." >&2
+              exit 1
+            fi
+            if ! integrated_tree=$(git merge-tree --write-tree HEAD "$BASE_SHA") ||
+               [[ "$integrated_tree" != "$(git rev-parse 'HEAD^{tree}')" ]]; then
+              echo "The release head is missing changes from main or conflicts with it; sync main and verify again." >&2
+              exit 1
+            fi
+          fi
           echo "head=$EXPECTED_HEAD" >> "$GITHUB_OUTPUT"
           echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Discover all existing coverage groups
