@@ -117,7 +117,8 @@ jobs:
       CGO_ENABLED: "1"
     needs: coverage-plan
     if: ${{ inputs.test_only != true }}
-    runs-on: ubuntu-latest
+    # Keep the large Cypher shard on the trusted local runner; other groups stay parallel on GitHub.
+    runs-on: ${{ matrix.group == 'cypher' && 'nornic-trusted' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -198,7 +199,7 @@ jobs:
       CGO_ENABLED: "1"
     needs: coverage-plan
     if: ${{ inputs.test_only == true }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.shard == 'cypher' && 'nornic-trusted' || 'ubuntu-latest' }}
     timeout-minutes: 360
     strategy:
       fail-fast: false

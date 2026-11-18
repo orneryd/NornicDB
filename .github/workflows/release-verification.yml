@@ -107,7 +107,9 @@ jobs:
     env:
       CGO_ENABLED: "1"
     needs: prepare
-    runs-on: ubuntu-latest
+    # Only the trusted, same-repository release head reaches this job.
+    # Route Cypher coverage and make-test shards to the isolated local runner.
+    runs-on: ${{ matrix.item == 'cypher' && 'nornic-trusted' || 'ubuntu-latest' }}
     timeout-minutes: 360
     strategy:
       fail-fast: false
