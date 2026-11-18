@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   select:
+    continue-on-error: true
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     outputs:
@@ -31,7 +32,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/scripts/graphify_ingest_gate.py
+      - name: Warn when release selection fails
+        if: ${{ failure() }}
+        run: echo "::warning::Graphify ingestion could not select a release branch. See the failed step for details."
   ingest:
+    if: ${{ needs.select.outputs.branch != '' }}
+    continue-on-error: true
     needs: select
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -77,3 +83,6 @@ jobs:
           NORNICDB_PASSWORD: ${{ secrets.NORNICDB_PASSWORD }}
           NORNICDB_DATABASE: ${{ vars.NORNICDB_DATABASE || 'nornicdbcode' }}
         run: python .github/scripts/graphify_ci.py ingest
+      - name: Warn when the graph refresh fails
+        if: ${{ failure() }}
+        run: echo "::warning::Graphify ingestion did not complete. The rolling code graph may be stale. See the failed step for details."
