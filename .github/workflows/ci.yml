@@ -1,10 +1,12 @@
 name: CI
 
-# Release-to-main pull requests request release-verification.yml; other PRs
-# do not run CI automatically. Manual GitHub runs require
-# approval through the admin-approved-actions environment before jobs start.
+# Release-to-main PRs request release verification separately. Same-repository
+# PRs into release branches and manual CI runs wait for one administrator approval.
 # See CONTRIBUTING.md, "Development workflow".
 on:
+  pull_request_target:
+    branches: ['release/**']
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   workflow_call:
     inputs:
       ref:
@@ -53,6 +55,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.coverage-plan.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -90,6 +93,7 @@ jobs:
         run: make build
 
   coverage-plan:
+    if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository }}
     environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     outputs:
@@ -98,7 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || inputs.branch || github.ref }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.ref || inputs.branch || github.ref }}
           persist-credentials: false
       - id: groups
         env:
@@ -163,11 +167,10 @@ jobs:
   coverage:
     name: Test and Coverage
     needs: [coverage-plan, coverage-groups, test]
-    if: ${{ always() && inputs.test_only != true }}
-    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    if: ${{ !cancelled() && needs.coverage-plan.result == 'success' && inputs.test_only != true }}
     runs-on: ubuntu-latest
     env:
-      COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+      COVERALLS_REPO_TOKEN: ${{ github.event_name != 'pull_request_target' && secrets.COVERALLS_REPO_TOKEN || '' }}
       PLAN_RESULT: ${{ needs.coverage-plan.result }}
       GROUP_RESULT: ${{ needs.coverage-groups.result }}
       BUILD_RESULT: ${{ needs.test.result }}
@@ -262,8 +265,7 @@ jobs:
   make-test:
     name: make test
     needs: [coverage-plan, make-test-shards, make-test-lint]
-    if: ${{ always() && inputs.test_only == true }}
-    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
+    if: ${{ !cancelled() && needs.coverage-plan.result == 'success' && inputs.test_only == true }}
     runs-on: ubuntu-latest
     steps:
       - name: Require all shards and lint
