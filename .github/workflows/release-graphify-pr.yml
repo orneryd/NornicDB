@@ -108,11 +108,20 @@ jobs:
         with:
           name: pr-graph
           path: ${{ runner.temp }}/graphify-artifact
-      - name: Trust the configured database certificate
+      - name: Join the private NornicDB tailnet
+        if: ${{ needs.extract.outputs.outcome == 'success' }}
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:nornic-ci
+      - name: Check private NornicDB reachability
         if: ${{ needs.extract.outputs.outcome == 'success' }}
         env:
-          NORNICDB_CA_PEM: ${{ secrets.NORNICDB_CA_PEM }}
-        run: python .github/scripts/graphify_tls.py
+          NORNICDB_URI: ${{ vars.NORNICDB_TAILNET_URI }}
+        run: |
+          test -n "$NORNICDB_URI"
+          curl --fail --silent --show-error --max-time 10 "$NORNICDB_URI/health" >/dev/null
       - name: Analyze the PR and publish its advisory comment
         id: check
         if: ${{ needs.extract.outputs.outcome == 'success' }}
@@ -122,7 +131,7 @@ jobs:
           PR_NUMBER: ${{ needs.authorize.outputs.number }}
           PR_BASE_SHA: ${{ needs.authorize.outputs.base }}
           PR_HEAD_SHA: ${{ needs.authorize.outputs.head }}
-          NORNICDB_URI: ${{ secrets.NORNICDB_URI }}
+          NORNICDB_URI: ${{ vars.NORNICDB_TAILNET_URI }}
           NORNICDB_USER: ${{ secrets.NORNICDB_USER }}
           NORNICDB_PASSWORD: ${{ secrets.NORNICDB_PASSWORD }}
           NORNICDB_DATABASE: ${{ vars.NORNICDB_DATABASE || 'nornicdbcode' }}
