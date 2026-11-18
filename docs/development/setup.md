@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- The Go toolchain in `go.mod` (currently 1.27.3)
+- The Go toolchain in `go.mod` (currently 1.27.4)
 - Node.js 24 and npm for UI/documentation builds
 - Git
 - Make (optional, for build shortcuts)

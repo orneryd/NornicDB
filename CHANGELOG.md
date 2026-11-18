@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1]
+
+### Security
+
+- Update the Go build toolchain to 1.27.4 and `golang.org/x/net` to v0.63.0.
+- Update klauspost/compress to v1.20.2 to fix a panic reported by the Go vulnerability scanner in the WAL compression dependency.
+- Use patched Node.js versions for UI builds, documentation, and CI.
+
 ## [1.5.0]
 
 - Keep cycle-safe result inspection allocation-free for scalar and shallow results.

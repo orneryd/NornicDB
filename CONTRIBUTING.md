@@ -15,7 +15,7 @@
 
 ## Local setup
 
-Use the Go toolchain declared in `go.mod` (currently 1.27.3), Node.js 24 for the documentation portal, npm, Git, and Make. CGO/native build paths require a supported C/C++ toolchain and their matching libraries. Docker is needed for container builds and the Neo4j differential checks; `gh` is needed for repository/release helpers.
+Use the Go toolchain declared in `go.mod` (currently 1.27.4), Node.js 24 for the documentation portal, npm, Git, and Make. CGO/native build paths require a supported C/C++ toolchain and their matching libraries. Docker is needed for container builds and the Neo4j differential checks; `gh` is needed for repository/release helpers.
 
 ```bash
 git clone https://github.com/orneryd/NornicDB.git
