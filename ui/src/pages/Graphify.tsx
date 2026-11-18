@@ -1,3 +1,6 @@
+import {MAIN_NODE_QUERY,NAMED_ENTRY_QUERY,NAMED_ENTRY_PARAMS,ENTRY_CANDIDATE_QUERY,rankEntryCandidates,isTestSource,type RankedEntry,type EntryCandidate} from "../utils/graphifyEntry";
+import {PageHeader} from "../components/common/PageHeader";
+import "./Graphify.css";
 import {useViewState} from '../utils/useUrlState';
 import { useCallback, useEffect, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
@@ -169,12 +172,6 @@ function communityCohesion(communityOf: ReadonlyMap<string, string>, rootId: str
   return force;
 }
 
-// The rooted view starts from the repository's main entry point. The ingest
-// (Soraban/code-intelligence) tags that node with a second label, :Main, so it
-// is fetched directly. A database without one falls back to ENTRY_CANDIDATE_QUERY.
-const MAIN_NODE_QUERY = `MATCH (n:Main)
-RETURN n.id AS id, n.label AS label LIMIT 1`;
-
 const DEFAULT_DEPTH = 3;
 const NEIGHBORHOOD_LIMIT = 20000;
 
@@ -183,21 +180,6 @@ const NEIGHBORHOOD_LIMIT = 20000;
 // handful of nodes, and adding the dense import/contains edges blows past
 // the node limit at any depth.
 const CALL_RELATION_TYPES = ["CALLS", "METHOD", "REFERENCES"];
-
-// Fallback root when no :Main node exists: the function with the most
-// connected nodes (distinct neighbors over every edge except the structural
-// CONTAINS link). It must be a function defined in the code: symbol_kind is
-// 'function' only for a callable with a source file, so external dependency
-// symbols (no source_file), classes and file containers are never picked. A
-// file or a leaf would have no call edges and render as a single node.
-// Candidates are ranked by connectivity and the first outside test code wins.
-const ENTRY_CANDIDATE_LIMIT = 50;
-const ENTRY_CANDIDATE_QUERY = `MATCH (a)-[r]-(b)
-WHERE a.symbol_kind = 'function' AND a.source_file <> '' AND type(r) <> 'CONTAINS' AND id(a) <> id(b)
-WITH a, count(DISTINCT b) AS degree
-ORDER BY degree DESC
-LIMIT ${ENTRY_CANDIDATE_LIMIT}
-RETURN a.id AS id, a.label AS label, a.source_file AS source_file, degree`;
 
 // three-forcegraph's runtime disables DAG layout on a falsy mode, but its
 // typings only accept the DagMode union; route through a null-tolerant cast.
@@ -337,16 +319,6 @@ function graphifyLabel(fileType: string | undefined): string {
   return label || "Entity";
 }
 
-function isTestSource(sourceFile: string | undefined): boolean {
-  const path = String(sourceFile ?? "").toLowerCase();
-  if (!path) return false;
-  const name = path.split("/").pop() ?? "";
-  if (name.endsWith("_test.go") || name.startsWith("test_")) return true;
-  if (/\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs)$/.test(name)) return true;
-  if (/(^|\/)(test|tests|testing|spec|specs)(\/|$)/.test(path)) return true;
-  return false;
-}
-
 function chunk<T>(items: T[], size: number): T[][] {
   const batches: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -447,7 +419,7 @@ export function Graphify() {
   // graphify id -> internal storage id, so findSimilar can seed the vector
   // lookup without an extra query for nodes loaded from the neighborhood.
   const publicToInternalRef = useRef<Map<string, string>>(new Map());
-  const searchTimerRef = useRef<number | null>(null);
+
 
   const [databases, setDatabases] = useState<string[]>([]);
   const [database, setDatabase] = useViewState<string>('database', "");
@@ -467,11 +439,17 @@ export function Graphify() {
   const [communityLegend, setCommunityLegend] = useState<Array<{ id: string; name: string; size: number }>>([]);
   const colorByRef = useRef<"kind" | "community">("kind");
   const groupByCommunityRef = useRef(true);
+  const [advanced,setAdvanced]=useViewState('advanced',false);
+  const [floating,setFloating]=useViewState('floating',false);
+  const [help,setHelp]=useViewState('help',false);
+  const [bodyExpanded,setBodyExpanded]=useViewState('sourceBody',true);
+  const [linksExpanded,setLinksExpanded]=useViewState('connections',true);
+  const [symbolList,setSymbolList]=useViewState('symbols',false);
+  const [entryCandidates,setEntryCandidates]=useState<RankedEntry[]>([]);
   const [controlsVisible, setControlsVisible] = useViewState('controls', true);
   // Filter entries are managed as add/remove lists in the filter panel;
   // applying them reloads the graph with the lists sent to the
-  // neighborhood endpoint. All lists persist in localStorage so settings
-  // survive reloads and restarts.
+  // neighborhood endpoint. The URL owns all non-secret view state.
   const [includeLabels, setIncludeLabels] = useViewState<string[]>('graphify.includeLabels', []);
   const [includeEdgeTypes, setIncludeEdgeTypes] = useViewState<string[]>('graphify.includeEdgeTypes', [...CALL_RELATION_TYPES]);
   const [includeNames, setIncludeNames] = useViewState<string[]>('graphify.includeNames', []);
@@ -499,14 +477,17 @@ export function Graphify() {
   const [neighbors, setNeighbors] = useState<Neighbor[]>([]);
   const [search, setSearch] = useViewState('q', "");
   const [searchResults, setSearchResults] = useState<Array<{ id: string; label: string; sourceFile?: string; score?: number }>>([]);
+  const [searchLoading,setSearchLoading]=useState(false);
+  const [searchError,setSearchError]=useState('');
   const [similarLoading, setSimilarLoading] = useState(false);
   const [similarCount, setSimilarCount] = useState<number | null>(null);
-  const [panelBounds, setPanelBounds] = useState(() => clampPanelBounds({
+  const [defaultPanelBounds] = useState(() => clampPanelBounds({
     left: window.innerWidth - 400,
     top: Math.min(264, window.innerHeight - 496),
     width: 384,
     height: 480,
   }, window.innerWidth, window.innerHeight));
+  const [panelBounds,setPanelBounds]=useViewState('inspectorBounds',defaultPanelBounds,true);
   const [uploadOpen, setUploadOpen] = useViewState('upload', false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadDbName, setUploadDbName] = useState("");
@@ -520,6 +501,7 @@ export function Graphify() {
   const rootIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if(!floating)return;
     const clamp = () => setPanelBounds(current => {
       const panel = panelRef.current?.getBoundingClientRect();
       const next = clampPanelBounds({
@@ -537,7 +519,7 @@ export function Graphify() {
       observer.disconnect();
       window.removeEventListener("resize", clamp);
     };
-  }, [selected != null]);
+  }, [selected != null,floating]);
 
   // --- Database list -------------------------------------------------------
 
@@ -924,43 +906,30 @@ export function Graphify() {
       let rootId = customRootRef.current?.id ?? null;
       let rootLabel = customRootRef.current?.label ?? "main entry";
       if (!rootId) {
-        setStatus("resolving main entry point...");
-        try {
-          const mainResp = await api.executeCypherOnDatabase(
-            dbName,
-            MAIN_NODE_QUERY,
-          );
-          const mainRow = rowsFromCypher(mainResp)[0];
-          if (mainRow?.id != null) {
-            rootId = String(mainRow.id);
-            if (mainRow.label != null) rootLabel = String(mainRow.label);
+        setStatus("Finding suggested starting points…");
+        const candidates: EntryCandidate[]=[];
+        for(const [query,explicit] of [[MAIN_NODE_QUERY,true],[NAMED_ENTRY_QUERY,false],[ENTRY_CANDIDATE_QUERY,false]] as const){
+          const response=await api.executeCypherOnDatabase(dbName,query,query===NAMED_ENTRY_QUERY?NAMED_ENTRY_PARAMS:{});
+          if(response.errors?.length)throw new Error(response.errors.map(error=>error.message).join('; '));
+          for(const row of rowsFromCypher(response))if(row.id!=null)candidates.push({
+            id:String(row.id),label:String(row.label??row.id),source_file:typeof row.source_file==='string'?row.source_file:undefined,
+            degree:Number(row.degree??0),explicit,internalId:row.internalId!=null?String(row.internalId):undefined,
+          });
+          if(query===ENTRY_CANDIDATE_QUERY){
+            const seeds=rankEntryCandidates(candidates).filter(entry=>entry.internalId).slice(0,128);
+            if(seeds.length){
+              const sample=await api.getGraphNeighborhood({nodeIds:seeds.map(entry=>entry.internalId!),depth:1,limit:2000,relationshipTypes:CALL_RELATION_TYPES,direction:'both',database:dbName});
+              const adjacent=new Map<string,Set<string>>();
+              for(const edge of sample.edges){for(const [from,to] of [[edge.source,edge.target],[edge.target,edge.source]]){if(from===to)continue;const ids=adjacent.get(from)??new Set<string>();ids.add(to);adjacent.set(from,ids);}}
+              for(const entry of candidates)entry.degree=adjacent.get(entry.internalId??'')?.size??0;
+            }
           }
-        } catch {
-          // no :Main node; use the best-connected function below
+          // Explicit markers and recognizable entries do not need a whole-graph connectivity scan.
+          if((rankEntryCandidates(candidates)[0]?.score??0)>=200)break;
         }
-      }
-      if (!rootId) {
-        try {
-          const entryResp = await api.executeCypherOnDatabase(
-            dbName,
-            ENTRY_CANDIDATE_QUERY,
-          );
-          const entry = rowsFromCypher(entryResp).find(
-            (row) =>
-              row.id != null &&
-              !isTestSource(
-                typeof row.source_file === "string"
-                  ? row.source_file
-                  : undefined,
-              ),
-          );
-          if (entry) {
-            rootId = String(entry.id);
-            if (entry.label != null) rootLabel = String(entry.label);
-          }
-        } catch {
-          // fall through to the last-resort root below
-        }
+        const ranked=rankEntryCandidates(candidates);
+        setEntryCandidates(ranked);
+        if(ranked[0]){rootId=ranked[0].id;rootLabel=ranked[0].label;}
       }
       setStatus(
         `walking ${rootLabel} neighborhood at depth ${depth} in '${dbName}'...`,
@@ -981,7 +950,7 @@ export function Graphify() {
         // from an older ingest): root at the first node in the database.
         const anyResp = await api.executeCypherOnDatabase(
           dbName,
-          `MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, n.label AS label LIMIT 1`,
+          `MATCH (n) WHERE n.id IS NOT NULL RETURN n.id AS id, n.label AS label ORDER BY n.id LIMIT 1`,
         );
         const anyRows = rowsFromCypher(anyResp);
         if (anyRows[0]?.id != null) {
@@ -1575,40 +1544,23 @@ export function Graphify() {
     }
   }, [selected, database, resolveInternalId, mergeIntoGraph]);
 
-  const onSearch = useCallback(
-    (value: string) => {
-      setSearch(value);
-      if (searchTimerRef.current != null) {
-        window.clearTimeout(searchTimerRef.current);
-      }
-      if (value.trim().length < 2) {
-        setSearchResults([]);
-        return;
-      }
-      searchTimerRef.current = window.setTimeout(async () => {
-        try {
-          const results = await api.searchNodes(value.trim(), 12, database || undefined);
-          setSearchResults(
-            results.map((r) => {
-              const props = r.node?.properties ?? {};
-              return {
-                id: String(props.id ?? r.node.id),
-                label: String(props.label ?? props.id ?? r.node.id),
-                sourceFile:
-                  typeof props.source_file === "string"
-                    ? props.source_file
-                    : undefined,
-                score: r.rrf_score ?? r.score,
-              };
-            }),
-          );
-        } catch {
-          setSearchResults([]);
-        }
-      }, 250);
-    },
-    [database],
-  );
+  useEffect(()=>{
+    let live=true;
+    setSearchError('');setSearchResults([]);
+    if(search.trim().length<2||!database){setSearchLoading(false);return;}
+    setSearchLoading(true);
+    const timer=window.setTimeout(async()=>{
+      try{
+        const results=await api.searchNodes(search.trim(),12,database);
+        if(live)setSearchResults(results.map(result=>{const props=result.node?.properties??{};return {
+          id:String(props.id??result.node.id),label:String(props.label??props.id??result.node.id),
+          sourceFile:typeof props.source_file==='string'?props.source_file:undefined,score:result.rrf_score??result.score,
+        };}));
+      }catch(error){if(live)setSearchError(error instanceof Error?error.message:'Symbol search failed');}
+      finally{if(live)setSearchLoading(false);}
+    },250);
+    return()=>{live=false;window.clearTimeout(timer);};
+  },[search,database]);
 
   const focusSearchResult = useCallback(
     async (result: { id: string; label: string; sourceFile?: string; score?: number }) => {
@@ -1656,25 +1608,29 @@ export function Graphify() {
   }, []);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#04060c] text-norse-silver font-display">
-      <div ref={containerRef} className="absolute inset-0" />
+    <div className={`graphify-workspace ${controlsVisible?"has-source":""} ${selected&&!floating?"has-inspector":""} ${floating?"floating-inspector":""}`}>
+      <PageHeader title="Code graph" actions={<><button type="button" onClick={()=>setHelp(value=>!value)} aria-expanded={help}>Graph controls</button><button type="button" onClick={()=>setSymbolList(value=>!value)} aria-expanded={symbolList}>Browse symbols</button></>}/>
+      <div className="graphify-canvas" ref={containerRef} role="region" aria-label="Interactive 3D code graph" />
+      {!source&&<section className="graphify-empty"><h2>Explore how a project connects</h2><p>Load a code graph database or import a Graphify graph.json artifact. Choose a starting point, then follow its calls and references.</p></section>}
+
+      {symbolList&&<section className="graphify-symbols" aria-label="Loaded symbols"><h2>Loaded symbols ({nodeCount})</h2><p>Select a symbol to inspect it without using the canvas.</p><ul>{Array.from(nodeByIdRef.current.values()).filter(node=>!search||`${node.label} ${node.sourceFile}`.toLowerCase().includes(search.toLowerCase())).slice(0,200).map(node=><li key={node.id}><button aria-pressed={selectedId===node.id} onClick={()=>focusNode(node.id)}>{node.label}<small>{node.sourceFile}</small></button></li>)}</ul>{nodeCount>200&&<p>Showing up to 200 matches. Search to narrow the list.</p>}</section>}
 
       {/* Title strip */}
-      <div className="absolute top-4 left-4 z-10 pointer-events-none select-none">
+      <div className="graphify-context">
         <div className="flex items-baseline gap-3">
           <span className="text-2xl font-semibold tracking-wide text-white">
-            NornicDB
+            Project map
           </span>
           <span className="text-nornic-accent text-sm uppercase tracking-[0.3em]">
-            Code Graph
+            3D call graph
           </span>
         </div>
-        <div className="mt-1 text-xs text-norse-silver/70 max-w-md">
+        <div className="mt-1 text-xs text-norse-silver max-w-md">
           {source
             ? `${source.kind === "db" ? `database: ${source.name}` : source.name} · ${nodeCount} nodes · ${loadedLinks} links`
             : "graphify tree explorer"}
         </div>
-        <div className="mt-1 flex items-center gap-2 text-[10px] text-norse-silver/50 font-mono flex-wrap">
+        <div className="mt-1 flex items-center gap-2 text-[10px] text-norse-silver font-mono flex-wrap">
           {colorBy === "community" && communityLegend.length > 0
             ? communityLegend.map((entry) => (
                 <span key={entry.id} className="inline-flex items-center gap-1" title={`${entry.size} nodes`}>
@@ -1696,9 +1652,10 @@ export function Graphify() {
             </span>
           ))}
         </div>
+      {help&&<section className="graphify-help"><h2>Navigate the graph</h2><p>Drag to rotate · scroll or pinch to zoom · right-drag to pan. Select a symbol to inspect its source and connections. Browse symbols provides keyboard-accessible selection.</p><button onClick={()=>graphRef.current&&frameRootGraph(graphRef.current,rootIdRef.current)}>Return to starting point</button></section>}
       </div>
 
-      {/* Controls (top-right) */}
+      {/* Source setup and scope stay beside the graph. */}
       <button
         type="button"
         aria-label={controlsVisible ? "Hide filters" : "Show filters"}
@@ -1706,24 +1663,24 @@ export function Graphify() {
         aria-expanded={controlsVisible}
         aria-controls="graphify-filter-pane"
         onClick={() => setControlsVisible(visible => !visible)}
-        className="absolute top-5 right-5 z-30 flex h-7 w-7 items-center justify-center rounded border border-sky-500/30 bg-norse-shadow/95 text-sky-300 hover:text-white"
+        className="graphify-source-toggle"
       >
-        {controlsVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        {controlsVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />} {controlsVisible?"Hide source & filters":"Source & filters"}
       </button>
       {controlsVisible && (
-      <div id="graphify-filter-pane" className="absolute top-4 right-4 z-10 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-sky-500/30 bg-norse-shadow/85 backdrop-blur px-4 py-3 shadow-[0_0_24px_rgba(56,189,248,0.15)]">
+      <div id="graphify-filter-pane" className="graphify-source">
         <div className="flex items-baseline justify-between pr-7">
           <span className="text-xs uppercase tracking-[0.25em] text-sky-300">
-            Graph Source
+            Source & scope
           </span>
-          <span className="text-[10px] text-norse-silver/60 font-mono">graphify</span>
+          <span className="text-[10px] text-norse-silver font-mono">graphify</span>
         </div>
 
         <div className="mt-3 flex items-center gap-2">
           <select
             value={database}
             aria-label="Code graph database"
-            onChange={(e) => setDatabase(e.target.value)}
+            onChange={(e) => {customRootRef.current=null;setCustomRoot(null);setSelectedId(null);setEntryCandidates([]);setDatabase(e.target.value);}}
             className="flex-1 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
           >
             {selectableDatabases.length === 0 && (
@@ -1744,8 +1701,8 @@ export function Graphify() {
           </button>
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-norse-silver/70">
+        <div className="graphify-scope-controls">
+          <label className="flex items-center gap-1 text-xs text-norse-silver">
             depth
             <input
               type="number"
@@ -1759,7 +1716,7 @@ export function Graphify() {
               className="w-14 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver focus:outline-none focus:border-sky-400"
             />
           </label>
-          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
+          <label className="flex items-center gap-1 text-xs text-norse-silver select-none cursor-pointer">
             <input
               type="checkbox"
               checked={groupByCommunity}
@@ -1768,7 +1725,7 @@ export function Graphify() {
             />
             group by community
           </label>
-          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none">
+          <label className="flex items-center gap-1 text-xs text-norse-silver select-none">
             color
             <select
               value={colorBy}
@@ -1779,7 +1736,7 @@ export function Graphify() {
               <option value="community">community</option>
             </select>
           </label>
-          <label className="flex items-center gap-1 text-xs text-norse-silver/80 select-none cursor-pointer">
+          <label className="flex items-center gap-1 text-xs text-norse-silver select-none cursor-pointer">
             <input
               type="checkbox"
               checked={showTests}
@@ -1796,18 +1753,19 @@ export function Graphify() {
             }}
             disabled={loading}
             title="re-root at the main entry of the graphify graph"
-            className="flex-1 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver/80 hover:border-sky-400 disabled:opacity-40"
+            className="flex-1 rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver hover:border-sky-400 disabled:opacity-40"
           >
-            ↺ main entry
+            Detect starting point
           </button>
         </div>
 
-        <div className="mt-3 border-t border-norse-rune/60 pt-2">
+        {entryCandidates.length>0&&<div className="graphify-entry"><label htmlFor="graphify-entry">Starting point</label><select id="graphify-entry" value={customRoot?.id??rootIdRef.current??''} onChange={event=>{const entry=entryCandidates.find(item=>item.id===event.target.value);if(entry)setCustomRoot({id:entry.id,label:entry.label});}}>{customRoot&&!entryCandidates.some(entry=>entry.id===customRoot.id)&&<option value={customRoot.id}>{customRoot.label} (selected symbol)</option>}{entryCandidates.map(entry=><option key={entry.id} value={entry.id}>{entry.label} · {entry.source_file}</option>)}</select><p>{entryCandidates.find(entry=>entry.id===(customRoot?.id??rootIdRef.current))?.reason??'Manually selected symbol'}. Suggestions are heuristics; a library may have no single main.</p></div>}
+        <details className="graphify-advanced" open={advanced} onToggle={event=>{if(event.currentTarget.open!==advanced)setAdvanced(event.currentTarget.open)}}><summary>Advanced filters</summary>
           <div className="flex items-baseline justify-between">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/60">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver">
               Filters
             </span>
-            <span className="text-[10px] text-norse-silver/50 font-mono">
+            <span className="text-[10px] text-norse-silver font-mono">
               include · exclude
             </span>
           </div>
@@ -1909,18 +1867,18 @@ export function Graphify() {
                 setExcludeProps([]);
               }}
               disabled={loading}
-              className="rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver/80 hover:border-sky-400 disabled:opacity-40"
+              className="rounded border border-norse-rune bg-norse-night px-2 py-1.5 text-xs text-norse-silver hover:border-sky-400 disabled:opacity-40"
             >
               reset
             </button>
           </div>
-          <div className="mt-1.5 text-[10px] text-norse-silver/50 font-mono leading-snug">
+          <div className="mt-1.5 text-[10px] text-norse-silver font-mono leading-snug">
             filters apply automatically when you add or remove an entry ·
             names match the symbol name exactly · properties match key +
             optional value, optionally scoped to a label or edge type —
             exclusions may split the graph into components
           </div>
-        </div>
+        </details>
 
         <div className="mt-2 flex items-center gap-2">
           <button
@@ -1932,13 +1890,13 @@ export function Graphify() {
                 setUploadDbName("nornicdbcode");
               }
             }}
-            className="flex-1 text-center rounded border border-dashed border-norse-rune bg-norse-night/60 px-2 py-1.5 text-xs text-norse-silver/70 hover:border-sky-400 cursor-pointer"
+            className="flex-1 text-center rounded border border-dashed border-norse-rune bg-norse-night/60 px-2 py-1.5 text-xs text-norse-silver hover:border-sky-400 cursor-pointer"
           >
             upload graphify artifact
           </button>
         </div>
 
-        <div className="mt-2 text-[10px] text-norse-silver/50 font-mono leading-snug">
+        <div className="mt-2 text-[10px] text-norse-silver font-mono leading-snug">
           starts at the graphify main entry · click a symbol and use
           “start graph from this symbol” to re-root · drag to rotate · scroll
           to zoom · right-drag to pan
@@ -1948,17 +1906,18 @@ export function Graphify() {
 
       {/* Upload dialog */}
       {uploadOpen && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/60">
-          <div className="w-96 rounded-lg border border-sky-500/40 bg-norse-shadow/95 backdrop-blur p-4 shadow-[0_0_24px_rgba(56,189,248,0.2)]">
+        <div className="graphify-upload" role="region" aria-label="Import Graphify artifact">
+          <div className="graphify-upload-content">
             <div className="text-xs uppercase tracking-[0.25em] text-sky-300">
-              Ingest graphify artifact
+              Import Graphify artifact
             </div>
-            <label className="mt-3 block cursor-pointer rounded border border-dashed border-norse-rune bg-norse-night/60 px-3 py-2 text-xs text-norse-silver/70 hover:border-sky-400">
+            <p className="mt-2 text-sm text-norse-silver">Imports graph.json into a new database. You can delete the demo database at any time from Databases. Updating an existing database requires the explicit sync option below.</p>
+            <label className="mt-3 block cursor-pointer rounded border border-dashed border-norse-rune bg-norse-night/60 px-3 py-2 text-xs text-norse-silver hover:border-sky-400">
               {uploadFile ? uploadFile.name : "choose graph.json artifact"}
               <input
                 type="file"
                 accept=".json,application/json"
-                className="hidden"
+                aria-label="Graphify artifact file"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
@@ -1980,11 +1939,12 @@ export function Graphify() {
               />
             </label>
             <div className="mt-3">
-              <label className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/50">
+              <label htmlFor="graphify-upload-database" className="text-[10px] uppercase tracking-[0.2em] text-norse-silver">
                 database name
               </label>
               <input
                 type="text"
+                id="graphify-upload-database"
                 value={uploadDbName}
                 onChange={(e) => {
                   setUploadDbName(e.target.value);
@@ -2002,7 +1962,7 @@ export function Graphify() {
                 <div className="mt-1 text-[11px] text-red-400">{uploadError}</div>
               )}
               {databases.includes(uploadDbName.trim()) && (
-                <label className="mt-2 flex items-start gap-2 text-xs text-norse-silver/80">
+                <label className="mt-2 flex items-start gap-2 text-xs text-norse-silver">
                   <input
                     type="checkbox"
                     checked={updateExisting}
@@ -2034,7 +1994,7 @@ export function Graphify() {
                     style={{ width: `${Math.min(100, Math.max(0, uploadProgress.percent))}%` }}
                   />
                 </div>
-                <div className="mt-1 text-[10px] text-norse-silver/60 font-mono truncate">
+                <div className="mt-1 text-[10px] text-norse-silver font-mono truncate">
                   {uploadProgress.label}
                 </div>
               </div>
@@ -2048,7 +2008,7 @@ export function Graphify() {
                   }
                 }}
                 disabled={loading}
-                className="rounded border border-norse-rune bg-norse-night px-3 py-1.5 text-xs text-norse-silver/80 hover:border-sky-400 disabled:opacity-40"
+                className="rounded border border-norse-rune bg-norse-night px-3 py-1.5 text-xs text-norse-silver hover:border-sky-400 disabled:opacity-40"
               >
                 cancel
               </button>
@@ -2065,14 +2025,18 @@ export function Graphify() {
       )}
 
       {/* Search (top-center) */}
-      <div className={`absolute ${components.length > 1 ? "top-12" : "top-4"} left-1/2 -translate-x-1/2 z-10 w-72`}>
+      <div className="graphify-search" role="search" aria-label="Find a code symbol">
         <input
           type="text"
           value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="search nodes…"
-          className="w-full rounded border border-norse-rune bg-norse-shadow/85 backdrop-blur px-3 py-1.5 text-xs text-norse-silver placeholder:text-norse-silver/40 focus:outline-none focus:border-sky-400"
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Find a symbol or source file…"
+          aria-label="Find a symbol or source file"
+          className="w-full rounded border border-norse-rune bg-norse-shadow/85 backdrop-blur px-3 py-1.5 text-xs text-norse-silver placeholder:text-norse-silver focus:outline-none focus:border-sky-400"
         />
+        {searchLoading&&<p role="status">Searching symbols…</p>}
+        {searchError&&<p role="alert">{searchError}</p>}
+        {!searchLoading&&!searchError&&search.trim().length>=2&&searchResults.length===0&&<p>No matching symbols. Try a function name or source file.</p>}
         {searchResults.length > 0 && (
           <div className="mt-1 max-h-64 overflow-y-auto rounded border border-norse-rune bg-norse-shadow/95 backdrop-blur">
             {searchResults.map((result) => (
@@ -2082,7 +2046,7 @@ export function Graphify() {
                 className="block w-full text-left px-3 py-1.5 text-xs text-norse-silver hover:bg-norse-rune/40 truncate"
               >
                 <span className="truncate">{result.label}</span>
-                <span className="text-norse-silver/40 ml-1">
+                <span className="text-norse-silver ml-1">
                   {result.sourceFile ?? ""}
                   {result.score != null && (
                     <span className="text-pink-300 ml-1">
@@ -2111,7 +2075,7 @@ export function Graphify() {
             className="rounded-b-lg border border-t-0 border-norse-rune bg-norse-shadow/95 backdrop-blur px-3 py-2 shadow-lg"
           >
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/60">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver">
               disconnected components ({components.length})
             </span>
             {activeComponent != null && (
@@ -2162,14 +2126,14 @@ export function Graphify() {
       )}
 
       {/* Status bar (bottom) */}
-      <div className="absolute bottom-4 left-4 right-4 z-10 flex items-center gap-4 rounded-lg border border-norse-rune bg-norse-shadow/80 backdrop-blur px-4 py-3">
+      <div className="graphify-status" role="status" aria-live="polite">
         <div
           className={`w-2.5 h-2.5 rounded-full ${
             loading ? "bg-frost-glacier animate-pulse" : error ? "bg-red-500" : "bg-nornic-primary status-connected"
           }`}
         />
-        <div className="flex-1 min-w-0 text-xs text-norse-silver/80 truncate font-mono">
-          {status}
+        <div className="flex-1 min-w-0 text-xs text-norse-silver truncate font-mono">
+          {error??status}
         </div>
         {uploadProgress && (
           <div className="w-44 h-1.5 rounded-full bg-norse-rune/50 overflow-hidden shrink-0" title={uploadProgress.label}>
@@ -2194,18 +2158,19 @@ export function Graphify() {
         <div
           ref={panelRef}
           data-testid="graphify-details"
-          style={{
+          aria-label="Symbol inspector"
+          style={floating?{
             ...panelBounds,
             minWidth: "min(280px, calc(100vw - 32px))",
             minHeight: "min(180px, calc(100vh - 32px))",
             maxWidth: `calc(100vw - ${panelBounds.left + 16}px)`,
             maxHeight: `calc(100vh - ${panelBounds.top + 16}px)`,
-          }}
-          className="absolute z-20 flex flex-col rounded-lg border border-purple-500/30 bg-norse-shadow/90 backdrop-blur overflow-hidden shadow-[0_0_24px_rgba(168,85,247,0.15)]"
+          }:undefined}
+          className="graphify-inspector"
         >
           <div
             onPointerDown={(e) => {
-              if (e.button !== 0) return;
+              if (!floating || e.button !== 0) return;
               if ((e.target as HTMLElement).closest("button")) return;
               e.preventDefault();
               e.stopPropagation();
@@ -2245,11 +2210,13 @@ export function Graphify() {
               <div className="text-sm font-semibold text-white truncate">
                 {selected.label}
               </div>
-              <div className="text-[10px] text-norse-silver/50 font-mono truncate">
+              <div className="text-[10px] text-norse-silver font-mono truncate">
                 {selected.id}
               </div>
             </div>
+            <button type="button" aria-pressed={floating} onClick={()=>setFloating(value=>!value)}>{floating?'Dock inspector':'Float inspector'}</button>
             <button
+              aria-label="Close symbol inspector"
               onClick={() => {
                 selectedIdRef.current = null;
                 setSelectedId(null);
@@ -2259,13 +2226,13 @@ export function Graphify() {
                 setNeighbors([]);
                 applySelectionVisuals(null);
               }}
-              className="ml-2 text-norse-silver/60 hover:text-white text-xs"
+              className="ml-2 text-norse-silver hover:text-white text-xs"
             >
               ✕
             </button>
           </div>
 
-          <button
+          {floating&&<button
             type="button"
             aria-label="Resize details"
             title="Resize details"
@@ -2288,26 +2255,26 @@ export function Graphify() {
             onPointerUp={() => { resizeRef.current = null; }}
             onPointerCancel={() => { resizeRef.current = null; }}
             onLostPointerCapture={() => { resizeRef.current = null; }}
-            className="absolute bottom-0 right-0 z-30 p-1 text-norse-silver/60 hover:text-white cursor-nwse-resize touch-none"
+            className="absolute bottom-0 right-0 z-30 p-1 text-norse-silver hover:text-white cursor-nwse-resize touch-none"
           >
             <Grip size={14} />
-          </button>
+          </button>}
           <div className="px-4 py-3 text-xs space-y-2 flex-1 min-h-0 overflow-auto">
             <div className="grid grid-cols-[88px_1fr] gap-x-2 gap-y-1 font-mono">
-              <span className="text-norse-silver/50">file_type</span>
+              <span className="text-norse-silver">file_type</span>
               <span className="text-sky-300">{selected.fileType}</span>
-              <span className="text-norse-silver/50">source</span>
+              <span className="text-norse-silver">source</span>
               <span className="truncate">
                 {selected.sourceFile ?? "—"}
                 {selected.sourceLocation ? `:${selected.sourceLocation}` : ""}
               </span>
               {selected.nodeKind && (
                 <>
-                  <span className="text-norse-silver/50">kind</span>
+                  <span className="text-norse-silver">kind</span>
                   <span className="truncate">{selected.nodeKind}</span>
                 </>
               )}
-              <span className="text-norse-silver/50">degree</span>
+              <span className="text-norse-silver">degree</span>
               <span>{selected.degree}</span>
             </div>
 
@@ -2320,9 +2287,9 @@ export function Graphify() {
                   setTimeout(() => void loadFromDatabase(), 0);
                 }}
                 disabled={loading}
-                className="w-full rounded bg-purple-500/90 hover:bg-purple-400 text-slate-950 text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
+                className="w-full rounded bg-nornic-primary hover:bg-nornic-secondary text-slate-950 text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
               >
-                ⭮ start graph from this symbol
+                Start graph from this symbol
               </button>
             )}
 
@@ -2330,17 +2297,18 @@ export function Graphify() {
               <button
                 onClick={() => void findSimilarArm()}
                 disabled={similarLoading}
-                className="w-full rounded bg-pink-500/90 hover:bg-pink-400 text-slate-950 text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
+                className="w-full rounded bg-norse-rune hover:bg-norse-night text-norse-silver text-xs font-semibold px-3 py-1.5 disabled:opacity-40"
               >
                 {similarLoading
                   ? "searching similar…"
-                  : `◈ find similar nodes${similarCount != null ? ` (${similarCount} spawned)` : ""}`}
+                  : `Find similar symbols${similarCount != null ? ` (${similarCount} added)` : ""}`}
               </button>
             )}
 
-            <div>
+            <details open={bodyExpanded} onToggle={event=>{if(event.currentTarget.open!==bodyExpanded)setBodyExpanded(event.currentTarget.open)}}>
+              <summary>Source code</summary>
               <div className="flex items-baseline justify-between">
-                <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/50">
+                <span className="text-[10px] uppercase tracking-[0.2em] text-norse-silver">
                   body{bodySource === "db" ? " (from database)" : bodySource === "artifact" ? " (in graph)" : ""}
                 </span>
                 {bodyLoading && (
@@ -2354,15 +2322,15 @@ export function Graphify() {
                   {body}
                 </pre>
               ) : (
-                <div className="mt-1 text-norse-silver/40">
+                <div className="mt-1 text-norse-silver">
                   no body available{bodyLoading ? "" : " (not in artifact or database)"}
                 </div>
               )}
-            </div>
+            </details>
 
             {neighbors.length > 0 && (
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.2em] text-norse-silver/50">
+              <details open={linksExpanded} onToggle={event=>{if(event.currentTarget.open!==linksExpanded)setLinksExpanded(event.currentTarget.open)}}><summary>Connections ({neighbors.length})</summary>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-norse-silver">
                   links ({neighbors.length} shown)
                 </div>
                 <div className="mt-1 max-h-56 overflow-y-auto">
@@ -2376,14 +2344,14 @@ export function Graphify() {
                         {n.direction === "in" ? "← " : "→ "}
                       </span>
                       <span className="text-sky-300">{n.relation}</span>
-                      <span className="text-norse-silver/50">
+                      <span className="text-norse-silver">
                         {n.direction === "in" ? " ← " : " → "}
                       </span>
                       <span className="text-norse-silver truncate">{n.label}</span>
                     </button>
                   ))}
                 </div>
-              </div>
+              </details>
             )}
           </div>
         </div>

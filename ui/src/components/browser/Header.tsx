@@ -5,13 +5,15 @@
 
 import { useEffect, useState } from "react";
 import {
-  MessageCircle,
   LogOut,
 } from "lucide-react";
 import { useAppStore } from "../../store/appStore";
 import { api } from "../../utils/api";
 import type { DatabaseStats } from "../../utils/api";
 import { BASE_PATH, joinBasePath } from "../../utils/basePath";
+import {Button} from "../common/Button";
+import {MessageCircle} from "lucide-react";
+import {useAssistantAvailability} from "../common/AssistantAvailability";
 import {ServerStatus} from "../common/ServerStatus";
 
 interface HeaderProps {
@@ -25,6 +27,7 @@ export function Header({
   stats,
   onAIChatClick,
 }: HeaderProps) {
+  const {available} = useAssistantAvailability();
   const logout = useAppStore((state) => state.logout);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [logoutError, setLogoutError] = useState(false);
@@ -136,15 +139,12 @@ export function Header({
 
         {/* Connection Status */}
         <div className="flex min-w-0 flex-1 basis-auto flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onAIChatClick}
-            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-valhalla-gold/20 hover:bg-valhalla-gold/30 text-valhalla-gold border border-valhalla-gold/30"
-            title="Open AI Assistant"
-          >
-            <MessageCircle className="w-4 h-4" />
-            <span>AI Assistant</span>
-          </button>
+          <Button variant="secondary" size="sm" icon={MessageCircle}
+            onClick={onAIChatClick} disabled={!available}
+            className="assistant-header-launcher"
+            title={available ? 'Open AI Assistant' : 'AI assistant unavailable'}>
+            AI Assistant
+          </Button>
 
           {authEnabled && (
             <button

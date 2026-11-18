@@ -15,7 +15,7 @@ function Chip(props: {
         type="button"
         aria-label={`remove ${props.text}`}
         onClick={props.onRemove}
-        className="text-norse-silver/60 hover:text-red-300"
+        className="text-norse-silver hover:text-red-300"
       >
         ×
       </button>
@@ -45,7 +45,7 @@ export function FilterChipList(props: {
   };
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] text-norse-silver/60">{props.label}</span>
+      <span className="text-[10px] text-norse-silver">{props.label}</span>
       {props.entries.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {props.entries.map((entry) => (
@@ -61,6 +61,7 @@ export function FilterChipList(props: {
         <input
           type="text"
           value={draft}
+          aria-label={props.label}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -76,7 +77,7 @@ export function FilterChipList(props: {
           type="button"
           onClick={add}
           aria-label={`add ${props.label}`}
-          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver/70 hover:border-sky-400"
+          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver hover:border-sky-400"
         >
           +
         </button>
@@ -130,7 +131,7 @@ export function PropertyFilterList(props: {
   };
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[10px] text-norse-silver/60">{props.label}</span>
+      <span className="text-[10px] text-norse-silver">{props.label}</span>
       {props.entries.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {props.entries.map((entry) => (
@@ -177,7 +178,7 @@ export function PropertyFilterList(props: {
           type="button"
           onClick={add}
           aria-label={`add ${props.label}`}
-          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver/70 hover:border-sky-400"
+          className="rounded border border-norse-rune bg-norse-night px-1.5 py-1 text-[11px] text-norse-silver hover:border-sky-400"
         >
           +
         </button>
