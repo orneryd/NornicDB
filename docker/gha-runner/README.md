@@ -2,8 +2,9 @@
 
 This image runs one repository-scoped Linux Actions runner in Docker. It is
 registered with the `nornic-trusted` label and no default labels, so workflows
-must explicitly opt in. The CI and release-verification workflows send only
-their Cypher test shards here; other shards continue on GitHub-hosted runners.
+must explicitly opt in. The CI and release-verification workflows send their
+Cypher and storage census test shards here; other shards continue on
+GitHub-hosted runners. With one runner, local shards execute sequentially.
 
 The runner is intended for trusted, same-repository code. CI dispatch still
 requires the `admin-approved-actions` environment, and automatic release
