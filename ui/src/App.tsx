@@ -24,6 +24,7 @@ import {PivotDemo} from './pages/PivotDemo';
 import {Demos} from './pages/Demos';
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BASE_PATH } from "./utils/basePath";
+import {AssistantAvailabilityProvider} from "./components/common/AssistantAvailability";
 import { AppNavigation } from "./components/common/AppNavigation";
 import {useUrlState,UrlStateProvider} from './utils/useUrlState';
 import {DemoSeedProvider} from './components/common/DemoSeed';
@@ -70,6 +71,7 @@ function AppContent() {
   const [assistantRunning,setAssistantRunning]=useState(0);
   return (
       <UrlStateProvider>
+      <AssistantAvailabilityProvider>
       <DemoSeedProvider>
       <TrailingSlashCanonicalizer />
       <div className="application-shell">
@@ -218,6 +220,7 @@ function AppContent() {
       </div>
       <AssistantRoot onActivityChange={setAssistantRunning}/>
       </DemoSeedProvider>
+      </AssistantAvailabilityProvider>
       </UrlStateProvider>
   );
 }
