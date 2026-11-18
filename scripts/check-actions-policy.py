@@ -96,7 +96,16 @@ def violations(name, workflow):
                 or "state=closed" not in steps[0].get("run", "")):
             errors.append(f"{name}: invalid develop PR governance workflow")
         return errors
-    if set(triggers) - {"push", "workflow_dispatch", "workflow_call"}:
+    release_ci = name == "ci.yml" and "coverage-plan" in workflow.get("jobs", {})
+    allowed = {"push", "workflow_dispatch", "workflow_call"}
+    if release_ci:
+        allowed.add("pull_request_target")
+        if triggers.get("pull_request_target") != {
+            "branches": ["release/**"],
+            "types": ["opened", "reopened", "synchronize", "ready_for_review", "edited"],
+        } or workflow.get("permissions") != {"contents": "read"}:
+            errors.append(f"{name}: invalid release PR CI trigger or permissions")
+    if set(triggers) - allowed:
         errors.append(f"{name}: automatic non-push event is forbidden")
     if "push" in triggers and (name not in PUSH_WORKFLOWS or triggers["push"] != PUSH_WORKFLOWS[name]):
         errors.append(f"{name}: push differs from approved main/tag publishing triggers")
@@ -110,19 +119,20 @@ def violations(name, workflow):
         }
         expected_conditions = {
             "test": "${{ inputs.test_only != true }}", "coverage-groups": "${{ inputs.test_only != true }}",
-            "coverage": "${{ always() && inputs.test_only != true }}",
+            "coverage": "${{ !cancelled() && needs.coverage-plan.result == 'success' && inputs.test_only != true }}",
             "make-test-shards": "${{ inputs.test_only == true }}", "make-test-lint": "${{ inputs.test_only == true }}",
-            "make-test": "${{ always() && inputs.test_only == true }}",
+            "make-test": "${{ !cancelled() && needs.coverage-plan.result == 'success' && inputs.test_only == true }}",
         }
         if (set(jobs) != set(expected_needs) | {"coverage-plan"}
-                or jobs["coverage-plan"].get("environment") != GATE or jobs["coverage-plan"].get("needs")):
+                or jobs["coverage-plan"].get("environment") != GATE or jobs["coverage-plan"].get("needs")
+                or jobs["coverage-plan"].get("if") != "${{ github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository }}"):
             errors.append(f"{name}: CI plan lacks its administrator approval gate")
         for job_name, expected_job_needs in expected_needs.items():
             job = jobs.get(job_name, {})
             needs = job.get("needs", [])
             needs = [needs] if isinstance(needs, str) else needs
             if (set(needs) != expected_job_needs or job.get("if") != expected_conditions[job_name]
-                    or (job_name in ("coverage", "make-test") and job.get("environment") != GATE)):
+                    or "environment" in job):
                 errors.append(f"{name}/{job_name}: runner can bypass the approved CI plan")
         return errors
     for job_name, job in workflow.get("jobs", {}).items():
@@ -143,8 +153,14 @@ def self_test():
     assert violations("ci.yml", {**base, "on": {"push": {"branches": ["develop"]}}})
     assert violations("release-verification.yml", {**base, "on": {"push": {"branches": ["**"]}}})
     assert violations("release-verification.yml", {**base, "on": {"push": {"tags": ["*"]}}})
-    # Manual release verification retains an explicit administrator gate.
     import copy
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    assert not violations("ci.yml", ci)
+    for job, field in (("coverage-plan", "environment"), ("coverage-plan", "if"), ("make-test-shards", "needs")):
+        bad = copy.deepcopy(ci)
+        bad["jobs"][job].pop(field)
+        assert violations("ci.yml", bad)
+    # Manual release verification retains an explicit administrator gate.
     release = yaml.safe_load((ROOT / ".github/workflows/release-verification.yml").read_text())
     assert not violations("release-verification.yml", release)
     for field in ("environment", "if"):
