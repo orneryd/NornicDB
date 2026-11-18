@@ -131,10 +131,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - name: Prepare UI and llama libraries
+      - name: Prepare UI assets
         run: |
           (cd ui && npm ci && npm run build)
+      - name: Prepare llama libraries
+        if: ${{ matrix.item != 'cypher' }}
+        run: |
           bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Prepare pinned llama libraries from runner
+        if: ${{ matrix.item == 'cypher' }}
+        run: |
+          cmp lib/llama/CPU_IMAGE_DIGEST /opt/nornic-llama/CPU_IMAGE_DIGEST
+          cp /opt/nornic-llama/libllama_linux_amd64.a lib/llama/
+          cp -a /opt/nornic-llama/include/. lib/llama/
       - name: Run coverage group
         if: ${{ matrix.kind == 'coverage' }}
         env:

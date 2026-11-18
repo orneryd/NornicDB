@@ -38,3 +38,7 @@ duration under a real CI shard before increasing concurrency.
 
 The runner release tarball is pinned by SHA-256 in the Dockerfile. Update both
 the version and hash when rebuilding for a newer runner release.
+The image also includes llama CPU libraries at the digest recorded by
+`lib/llama/CPU_IMAGE_DIGEST`; update the Dockerfile pin when that digest changes.
+This lets the isolated runner prepare the identical libraries without access
+to the host's Docker socket.

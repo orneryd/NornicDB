@@ -142,7 +142,14 @@ jobs:
       - name: Build UI assets
         run: cd ui && npm ci && npm run build
       - name: Prepare llama CPU libs
+        if: ${{ matrix.group != 'cypher' }}
         run: bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Prepare pinned llama CPU libs from runner
+        if: ${{ matrix.group == 'cypher' }}
+        run: |
+          cmp lib/llama/CPU_IMAGE_DIGEST /opt/nornic-llama/CPU_IMAGE_DIGEST
+          cp /opt/nornic-llama/libllama_linux_amd64.a lib/llama/
+          cp -a /opt/nornic-llama/include/. lib/llama/
       - name: Test and generate coverage for group
         env:
           TEST_GROUPS_ONLY: ${{ matrix.group }}
@@ -224,7 +231,14 @@ jobs:
       - name: Build UI assets
         run: cd ui && npm ci && npm run build
       - name: Prepare llama CPU libs
+        if: ${{ matrix.shard != 'cypher' }}
         run: bash scripts/hydrate-llama-cpu-libs.sh
+      - name: Prepare pinned llama CPU libs from runner
+        if: ${{ matrix.shard == 'cypher' }}
+        run: |
+          cmp lib/llama/CPU_IMAGE_DIGEST /opt/nornic-llama/CPU_IMAGE_DIGEST
+          cp /opt/nornic-llama/libllama_linux_amd64.a lib/llama/
+          cp -a /opt/nornic-llama/include/. lib/llama/
       - name: Check out trusted sharding helper
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

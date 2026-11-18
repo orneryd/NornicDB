@@ -1,3 +1,5 @@
+FROM timothyswt/llama-cpu-libs:v0.7.0@sha256:ec78fcac54c5f6d8f4cb7db4d41cae2eb856d348579001a41328bde839d2f028 AS llama-libs
+
 FROM ubuntu:24.04
 
 ARG RUNNER_VERSION=2.338.2
@@ -17,6 +19,10 @@ RUN useradd --uid 1001 --create-home --shell /bin/bash runner \
     && echo "${RUNNER_SHA256}  /tmp/runner.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/runner.tar.gz -C /opt/actions-runner \
     && rm /tmp/runner.tar.gz
+
+COPY --from=llama-libs /output/lib/libllama_combined.a /opt/nornic-llama/libllama_linux_amd64.a
+COPY --from=llama-libs /output/include/ /opt/nornic-llama/include/
+RUN printf '%s\n' 'sha256:ec78fcac54c5f6d8f4cb7db4d41cae2eb856d348579001a41328bde839d2f028' > /opt/nornic-llama/CPU_IMAGE_DIGEST
 
 COPY entrypoint.sh /usr/local/bin/nornic-runner-entrypoint
 RUN chmod +x /usr/local/bin/nornic-runner-entrypoint
