@@ -2,6 +2,8 @@ import { Link, useLocation } from "react-router-dom";
 import { useMediaQuery } from "../../utils/useMediaQuery";
 import { useUrlState } from "../../utils/useUrlState";
 
+import {useAssistantAvailability} from "./AssistantAvailability";
+
 const groups = [
   ["Workspace", [["Query, search & graph", "/"]]],
   [
@@ -43,6 +45,7 @@ const groups = [
 ] as const;
 
 export function AppNavigation({assistantRunning=0}:{assistantRunning?:number}) {
+  const {available} = useAssistantAvailability();
   const { params, patch } = useUrlState();
   const mobile = useMediaQuery("(max-width: 767px)");
   const { pathname, search } = useLocation();
@@ -108,7 +111,7 @@ export function AppNavigation({assistantRunning=0}:{assistantRunning?:number}) {
             })}
           </section>
         ))}
-        <button type="button" className="assistant-app-launcher" onClick={()=>patch({assistant:"open"})}>AI assistant{assistantRunning>0&&<span>{assistantRunning} running</span>}</button>
+        <button type="button" className="assistant-app-launcher" disabled={!available} title={available?"Open AI Assistant":"AI assistant unavailable"} onClick={()=>patch({assistant:"open"})}>AI assistant{assistantRunning>0&&<span>{assistantRunning} running</span>}</button>
       </details>
     </nav>
   );
