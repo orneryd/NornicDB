@@ -22,7 +22,7 @@ Actions runner settings, then start a runner with a dedicated data volume:
 ```sh
 docker volume create nornic-gh-runner-1-data
 docker run -d --name nornic-gh-runner-1 --restart unless-stopped \
-  --memory 10g --cpus 10 \
+  --memory 11g --cpus 10 \
   -e GITHUB_URL=https://github.com/orneryd/NornicDB \
   -e RUNNER_NAME=buttocks-ci-1 \
   -e RUNNER_TOKEN="$REGISTRATION_TOKEN" \
