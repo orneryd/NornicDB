@@ -1,6 +1,6 @@
 module github.com/orneryd/nornicdb
 
-go 1.27.3
+go 1.27.4
 
 require (
 	cloud.google.com/go/kms v1.33.0
@@ -22,7 +22,7 @@ require (
 	github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2 v2.0.11
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.16
 	github.com/hybridgroup/yzma v1.30.0
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.20.2
 	github.com/neo4j/neo4j-go-driver/v4 v4.4.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
@@ -49,11 +49,11 @@ require (
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
-	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.61.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.43.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/net v0.63.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 	golang.org/x/tools v0.52.0
 	google.golang.org/api v0.310.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b

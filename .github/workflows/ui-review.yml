@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.22.3'
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
