@@ -5,6 +5,8 @@ registered with the `nornic-trusted` label and no default labels, so workflows
 must explicitly opt in. The CI and release-verification workflows send their
 Cypher and storage census test shards here; other shards continue on
 GitHub-hosted runners. With one runner, local shards execute sequentially.
+The 15 GiB container limit is nearly the Docker VM's entire 15.6 GiB memory
+allocation, which Plane also shares. Monitor host and VM memory under load.
 
 The runner is intended for trusted, same-repository code. CI dispatch still
 requires the `admin-approved-actions` environment, and automatic release
@@ -23,7 +25,7 @@ Actions runner settings, then start a runner with a dedicated data volume:
 ```sh
 docker volume create nornic-gh-runner-1-data
 docker run -d --name nornic-gh-runner-1 --restart unless-stopped \
-  --memory 11g --cpus 10 \
+  --memory 15g --cpus 10 \
   -e GITHUB_URL=https://github.com/orneryd/NornicDB \
   -e RUNNER_NAME=buttocks-ci-1 \
   -e RUNNER_TOKEN="$REGISTRATION_TOKEN" \
