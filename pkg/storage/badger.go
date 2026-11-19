@@ -172,7 +172,9 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	durableCaches durableCacheState
+	startupCleanShutdown        bool
+	startupCleanShutdownChecked bool
+	durableCaches               durableCacheState
 	// Author: NOR-288 lane (Codex), 2026-10-26. One native application owner
 	// per live accepted logical command; terminal publication retires the entry.
 	acceptedApplications map[acceptedApplicationKey]*acceptedEntityApplication // guarded by mu
@@ -1188,15 +1190,27 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load persisted schema: %w", err)
 	}
+	// Consume the one-use marker before trusting derived counts. A crash during
+	// startup must not leave a stale clean marker for the following open.
+	clean, err := engine.takeCleanShutdownMarker(engine.work.Context())
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to check clean shutdown: %w", err)
+	}
+	// A migration may have rewritten graph bodies or derived keys after the
+	// previous clean shutdown. Its old marker cannot certify this new layout.
+	clean = clean && !engine.migrationDidRun
+	engine.startupCleanShutdown = clean
+	engine.startupCleanShutdownChecked = true
 
-	if err := engine.ensureLabelCounts(engine.work.Context()); err != nil {
+	if err := engine.ensureLabelCountsOnOpen(engine.work.Context(), clean); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label counts: %w", err)
 	}
 
 	// Per-type edge counts (issue #638): marker-gated verify/rebuild pass
 	// over the edge-type index, same shape as the label counts above.
-	if err := engine.ensureEdgeTypeCounts(engine.work.Context()); err != nil {
+	if err := engine.ensureEdgeTypeCountsOnOpen(engine.work.Context(), clean); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
 	}

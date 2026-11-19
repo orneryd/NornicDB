@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +40,14 @@ func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	// Storage startup consumes the marker before it can trust persisted
+	// counters. A crash before the owner asks for derived-index readiness
+	// must therefore force verification on the next open.
+	require.NoError(t, restarted.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(cleanShutdownMarkerKey)
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		return nil
+	}))
 	clean, err = restarted.ConsumeCleanShutdownMarker(context.Background())
 	require.NoError(t, err)
 	require.True(t, clean)

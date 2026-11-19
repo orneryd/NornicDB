@@ -16,6 +16,41 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if err := b.ensureOpen(false); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	clean := b.startupCleanShutdown
+	if !b.startupCleanShutdownChecked {
+		var err error
+		clean, err = b.takeCleanShutdownMarker(ctx)
+		if err != nil {
+			return false, err
+		}
+	}
+	b.startupCleanShutdown = false
+	b.startupCleanShutdownChecked = true
+	if clean {
+		// The marker also certifies the temporal index format.
+		current, err := b.temporalIndexFormatIsCurrent()
+		if err != nil {
+			return false, err
+		}
+		if current {
+			b.temporalIndexReady.Store(true)
+		} else if err := b.RebuildTemporalIndexes(ctx); err != nil {
+			return false, err
+		}
+	}
+	return clean, nil
+}
+
+func (b *BadgerEngine) takeCleanShutdownMarker(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if !b.work.Enter() {
 		return false, ErrStorageClosed
 	}
@@ -43,21 +78,6 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		if err := b.db.Sync(); err != nil {
 			return false, err
 		}
-		// The marker certifies the derived storage indexes as current, which
-		// the startup rebuild then skips; the temporal history index is one of
-		// them, so NO OVERLAP validation can trust it (#1126). Without this a
-		// clean restart left every temporal constraint on the label scan.
-		// A store whose temporal index predates the stable key format is
-		// rebuilt once first: its entries were keyed per process.
-		current, err := b.temporalIndexFormatIsCurrent()
-		if err != nil {
-			return false, err
-		}
-		if current {
-			b.temporalIndexReady.Store(true)
-		} else if err := b.RebuildTemporalIndexes(ctx); err != nil {
-			return false, err
-		}
 	}
 	return clean, nil
 }
@@ -80,5 +100,9 @@ func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	return b.db.Sync()
+	if err := b.db.Sync(); err != nil {
+		return err
+	}
+	b.startupCleanShutdownChecked = false
+	return nil
 }
