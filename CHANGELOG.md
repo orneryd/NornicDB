@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
+- Allow remote database factories to reenter the catalog without deadlocking storage selection.
 
 - Preserve transaction cleanup failures alongside BEGIN setup errors.
 - Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
