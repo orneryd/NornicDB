@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Preserve transaction cleanup failures alongside BEGIN setup errors.
+- Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
 
 ## [1.5.1]
 
