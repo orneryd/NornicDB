@@ -120,3 +120,39 @@ func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	_, err = restarted.GetNode(t.Context(), "nornic:pending")
 	require.NoError(t, err)
 }
+func TestConcurrentCleanShutdownMarkerConsumption(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "db")
+	engine, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	require.NoError(t, engine.MarkCleanShutdown(t.Context()))
+	require.NoError(t, engine.Close())
+
+	restarted, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+
+	const callers = 32
+	type result struct {
+		clean bool
+		err   error
+	}
+	results := make(chan result, callers)
+	start := make(chan struct{})
+	for range callers {
+		go func() {
+			<-start
+			clean, err := restarted.ConsumeCleanShutdownMarker(t.Context())
+			results <- result{clean, err}
+		}()
+	}
+	close(start)
+	consumed := 0
+	for range callers {
+		got := <-results
+		if got.clean {
+			consumed++
+		}
+		require.NoError(t, got.err)
+	}
+	require.Equal(t, 1, consumed)
+}

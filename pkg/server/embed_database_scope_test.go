@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,9 @@ func TestClearDatabaseEmbeddingsThroughManagerStorage(t *testing.T) {
 }
 
 func TestEmbedRegenerateDatabaseScopePermissionAndResponse(t *testing.T) {
-	s, _ := setupTestServer(t)
+	s, _ := setupTestServerWithDatabaseConfig(t, func(config *nornicdb.Config) {
+		config.Memory.EmbeddingEnabled = true
+	}, nil)
 	s.db.SetEmbedder(&countingEmbedder{dims: 1024})
 	require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "scope_target"}))
 	engine := seedEmbeddedNode(t, s, s.dbManager.DefaultDatabaseName(), "other-database-sentinel")
@@ -49,8 +52,9 @@ func TestEmbedRegenerateDatabaseScopePermissionAndResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Equal(t, "scope_target", response["database"])
 	require.Eventually(t, func() bool {
-		return !hasEmbedding(t, target, "target-sentinel")
-	}, 5*time.Second, 20*time.Millisecond, "the accepted regeneration must clear the target's old vector")
+		node, err := target.GetNode(t.Context(), "target-sentinel")
+		return err == nil && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) == 1024
+	}, 5*time.Second, 20*time.Millisecond, "the accepted regeneration must replace the target's old vector")
 	require.True(t, hasEmbedding(t, engine, "other-database-sentinel"))
 	other, err := engine.GetNode(t.Context(), "other-database-sentinel")
 	require.NoError(t, err)

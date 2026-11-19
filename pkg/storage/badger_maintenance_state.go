@@ -13,6 +13,8 @@ var cleanShutdownMarkerKey = []byte{prefixMVCCMeta, prefixMVCCMetaCleanShutdown}
 // shutdown marker. Removing it before serving traffic makes an ungraceful exit
 // conservative: the next startup cannot mistake the crashed run for a clean one.
 func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
+	b.cleanShutdownMu.Lock()
+	defer b.cleanShutdownMu.Unlock()
 	clean := b.startupCleanShutdown
 	observed, err := b.takeCleanShutdownMarker(ctx)
 	if err != nil {
@@ -76,6 +78,8 @@ func (b *BadgerEngine) takeCleanShutdownMarker(ctx context.Context) (bool, error
 // MarkCleanShutdown durably records that all writers were stopped and flushed.
 // It must be called only at the end of an orderly owner shutdown.
 func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
+	b.cleanShutdownMu.Lock()
+	defer b.cleanShutdownMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

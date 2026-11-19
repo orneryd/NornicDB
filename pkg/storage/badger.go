@@ -172,6 +172,7 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
+	cleanShutdownMu             sync.Mutex // serializes marker consumption and publication
 	startupCleanShutdown        bool
 	startupCleanShutdownChecked bool
 	durableCaches               durableCacheState
