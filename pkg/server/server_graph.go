@@ -947,9 +947,15 @@ func (c graphCollection) components() []graphPayload {
 }
 
 func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
-	projection, releaseProjection := storage.BeginQueryResultProjection(engine)
+	// The request owns this projection scope: it is acquired with ctx, so a
+	// cancelled request stops waiting instead of blocking behind an unrelated
+	// exclusive REVEAL scope, and it reads nothing once that scope is refused.
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer releaseProjection()
 	collection := newGraphCollection()
+	if err := ctx.Err(); err != nil {
+		return collection, err
+	}
 	type queueEntry struct {
 		nodeID string
 		depth  int
@@ -1051,8 +1057,14 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 }
 
 func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, sourceID, targetID string, limit int, filters graphFilterSet) (graphCollection, error) {
-	projection, releaseProjection := storage.BeginQueryResultProjection(engine)
+	// The request owns this projection scope: it is acquired with ctx, so a
+	// cancelled request stops waiting instead of blocking behind an unrelated
+	// exclusive REVEAL scope, and it reads nothing once that scope is refused.
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer releaseProjection()
+	if err := ctx.Err(); err != nil {
+		return graphCollection{}, err
+	}
 	if sourceID == targetID {
 		collection := newGraphCollection()
 		node, err := engine.GetNode(ctx, storage.NodeID(sourceID))
