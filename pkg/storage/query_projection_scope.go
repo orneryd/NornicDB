@@ -50,6 +50,9 @@ func (lease *queryProjectionLease) release() {
 // engines acquire independent scopes. Database property policy is not cached
 // in this marker: projections still resolve their supplied database engine.
 // Release exactly once with defer; contexts borrowed from it must not outlive it.
+// The acquisition waits with ctx: a cancelled or expired caller returns without
+// a lease instead of waiting for unrelated reveal work, and the returned context
+// is then ctx itself, so the caller's own cancellation stops its reads.
 // For example: ctx, release := BeginQueryRevealScopeContext(ctx, engine, false).
 func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal bool) (context.Context, func()) {
 	be, _ := UnwrapEngine(engine).(*BadgerEngine)
@@ -62,7 +65,12 @@ func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal boo
 			return ctx, func() {}
 		}
 	}
-	be.beginQueryRevealScope(reveal)
+	if be.beginQueryRevealScope(ctx, reveal) != nil {
+		// The caller's cancellation refused the scope. No lease was recorded, so
+		// there is nothing to release and no reveal mode to report; the caller's
+		// cancelled context remains the authority that ends its work.
+		return ctx, func() {}
+	}
 	lease := &queryProjectionLease{}
 	lease.scope.engine, lease.scope.reveal = be, reveal
 	lease.scope.active.Store(true)
@@ -141,6 +149,9 @@ func InheritQueryRevealScopes(ctx context.Context, scopes RevealScopes) context.
 // BeginQueryResultProjectionContext joins an already owned query scope or
 // acquires a normal one for an external query. It is safe for a service called
 // by a scoped Cypher procedure: it never recursively acquires the same RWMutex.
+// The acquisition waits with ctx, so a cancelled caller returns without a lease
+// and must stop its own work; the returned context then reports that
+// cancellation, and the projection applies no scope-derived reveal mode.
 // For example: ctx, view, release := BeginQueryResultProjectionContext(ctx, engine);
 // defer release(); return view.Node(node). A reused scope never reuses another
 // database's policy or namespace. Do not retain ctx or view after release.
