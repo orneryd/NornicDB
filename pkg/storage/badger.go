@@ -442,10 +442,14 @@ type BadgerEngine struct {
 	graphMutationVersions graphMutationVersions
 
 	// Knowledge-layer decay scoring (Phase 4).
-	decayEnabled  bool
-	accumulator   accessIncrementor
-	revealAll     atomic.Bool
-	revealQueryMu sync.RWMutex
+	decayEnabled bool
+	accumulator  accessIncrementor
+	revealAll    atomic.Bool
+	// revealQueryMu serializes query reveal modes: REVEAL executions hold it
+	// exclusively while normal queries hold it shared. Its context-aware
+	// acquisition lets a cancelled request stop waiting instead of blocking
+	// behind unrelated reveal work (badger_decay_filter.go).
+	revealQueryMu contextRWMutex
 
 	// The entities suppressed on demand (badger_manual_suppression.go), as
 	// kind+ID, and their count, which reads check before taking the lock.

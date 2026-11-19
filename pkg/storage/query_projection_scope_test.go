@@ -1,12 +1,13 @@
 package storage
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"context"
-	"github.com/stretchr/testify/require"
+	"sync"
 	"testing"
 	"time"
+
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/stretchr/testify/require"
 )
 
 func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
@@ -74,6 +75,83 @@ func TestQueryProjectionScopeBorrowingAndCancellation(t *testing.T) {
 	require.ErrorIs(t, borrowed.Err(), context.Canceled)
 	_, _, releaseDisabled := BeginQueryResultProjectionContext(ctx, newTestMemoryEngine(t))
 	releaseDisabled()
+}
+
+// TestQueryRevealScopeCancellationAbandonsRevealWait pins the corrected
+// acquisition owner: while an unrelated execution holds the exclusive REVEAL
+// scope, a cancelled projection abandons the wait on the caller's context,
+// records no lease and releases nothing. A healthy scope afterwards is
+// unaffected, so cancellation neither blocks unrelated work nor poisons later
+// requests.
+func TestQueryRevealScopeCancellationAbandonsRevealWait(t *testing.T) {
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	defer be.Close()
+	be.SetDecayEnabled(true)
+
+	releaseReveal := be.BeginQueryRevealScope(true)
+	var revealOnce sync.Once
+	unlockReveal := func() { revealOnce.Do(releaseReveal) }
+	defer unlockReveal()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	waited := make(chan context.Context, 1)
+	t.Cleanup(setAdmissionWaitObserver(func(owner any, waitCtx context.Context) {
+		if owner == &be.revealQueryMu {
+			select {
+			case waited <- waitCtx:
+			default:
+			}
+		}
+	}))
+
+	type acquisition struct {
+		ctx     context.Context
+		release func()
+	}
+	done := make(chan acquisition, 1)
+	go func() {
+		acquired, _, release := BeginQueryResultProjectionContext(ctx, be)
+		done <- acquisition{ctx: acquired, release: release}
+	}()
+	// The admission observer proves the acquisition is genuinely waiting in the
+	// reveal scope; the cancellation below then measures whether that wait ends.
+	var admission context.Context
+	observed := false
+	select {
+	case admission = <-waited:
+		observed = true
+	case <-time.After(5 * time.Second):
+	}
+
+	cancel()
+	var acquired acquisition
+	settled := false
+	select {
+	case acquired = <-done:
+		settled = true
+	case <-time.After(time.Second):
+	}
+	if !settled {
+		unlockReveal()
+		acquired = <-done
+		t.Fatal("a cancelled projection stayed blocked behind unrelated exclusive REVEAL work")
+	}
+	require.True(t, observed, "the acquisition must wait in the reveal scope, not acquire ahead of it")
+	require.Same(t, ctx, admission, "the acquisition must wait on the caller's context")
+	require.ErrorIs(t, acquired.ctx.Err(), context.Canceled)
+	_, owned := QueryRevealScopes(acquired.ctx).Mode(be)
+	require.False(t, owned, "a refused acquisition must record no lease")
+	acquired.release()
+
+	unlockReveal()
+	healthyCtx, _, healthyRelease := BeginQueryResultProjectionContext(t.Context(), be)
+	reveal, owned := QueryRevealScopes(healthyCtx).Mode(be)
+	require.True(t, owned)
+	require.False(t, reveal)
+	healthyRelease()
+	require.False(t, be.revealAll.Load(), "the released healthy scope leaves no reveal mode")
 }
 
 // TestQueryRevealScopesHandle covers the typed lease handle captured from a
