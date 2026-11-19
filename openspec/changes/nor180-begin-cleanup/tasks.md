@@ -8,8 +8,8 @@
 - [x] Verify NOR-180 WAL producer/consumer, BEGIN and Fabric cleanup regression matrix.
 - [x] Run duplicate checker and document actual reuse analysis and limitations (service unavailable; not a pass).
 - [x] Run make verify-list; start make verify, then cancel at maintainer request.
-- [ ] Finish affected pkg/cypher package check; maintainer requests focused/package checks locally and CI after the fix.
-- [ ] Open the release fix PR with milestone v1.5.2 and evidence-backed status.
+- [x] Finish affected pkg/cypher package check; `go test -tags=nolocalllm -timeout 30m ./pkg/cypher` passed on macOS ARM64.
+- [x] Open the release fix PR with milestone v1.5.2 and evidence-backed status.
 
 Baseline: d6ec7766e, production-identical to v1.5.1 cb0a574f. Failing evidence:
 /tmp/nor180-v151-begin-repro-{macos,linux}-v2.log. The v1 probe was invalid: its
