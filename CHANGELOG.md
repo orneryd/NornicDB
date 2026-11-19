@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve transaction cleanup failures alongside BEGIN setup errors.
+
 ## [1.5.1]
 
 ### Security
