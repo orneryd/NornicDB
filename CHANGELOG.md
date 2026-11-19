@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
+
 - Preserve transaction cleanup failures alongside BEGIN setup errors.
 
 ## [1.5.1]
