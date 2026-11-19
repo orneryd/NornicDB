@@ -2400,6 +2400,22 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 // database namespace. The vector index follows through the same per-node
 // storage commits (clearEmbeddings). It does not reset the shared worker.
 func (db *DB) ClearDatabaseEmbeddings(database string, engine storage.Engine) (int, error) {
+	// DatabaseManager wraps its namespaced view for size tracking. Follow only
+	// transparent engine wrappers, then validate the namespace before clearing.
+	for depth := 0; depth < 16; depth++ {
+		if _, ok := engine.(*storage.NamespacedEngine); ok {
+			break
+		}
+		wrapper, ok := engine.(storage.EngineUnwrapper)
+		if !ok {
+			return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")
+		}
+		next := wrapper.GetInnerEngine()
+		if next == nil || next == engine {
+			return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")
+		}
+		engine = next
+	}
 	namespace, ok := engine.(*storage.NamespacedEngine)
 	if !ok || database == "" || namespace.Namespace() != database {
 		return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")

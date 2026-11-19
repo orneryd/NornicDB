@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +40,14 @@ func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	// Storage startup consumes the marker before it can trust persisted
+	// counters. A crash before the owner asks for derived-index readiness
+	// must therefore force verification on the next open.
+	require.NoError(t, restarted.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(cleanShutdownMarkerKey)
+		require.ErrorIs(t, err, badger.ErrKeyNotFound)
+		return nil
+	}))
 	clean, err = restarted.ConsumeCleanShutdownMarker(context.Background())
 	require.NoError(t, err)
 	require.True(t, clean)
@@ -110,4 +119,40 @@ func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	require.True(t, clean)
 	_, err = restarted.GetNode(t.Context(), "nornic:pending")
 	require.NoError(t, err)
+}
+func TestConcurrentCleanShutdownMarkerConsumption(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "db")
+	engine, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	require.NoError(t, engine.MarkCleanShutdown(t.Context()))
+	require.NoError(t, engine.Close())
+
+	restarted, err := NewBadgerEngine(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+
+	const callers = 32
+	type result struct {
+		clean bool
+		err   error
+	}
+	results := make(chan result, callers)
+	start := make(chan struct{})
+	for range callers {
+		go func() {
+			<-start
+			clean, err := restarted.ConsumeCleanShutdownMarker(t.Context())
+			results <- result{clean, err}
+		}()
+	}
+	close(start)
+	consumed := 0
+	for range callers {
+		got := <-results
+		if got.clean {
+			consumed++
+		}
+		require.NoError(t, got.err)
+	}
+	require.Equal(t, 1, consumed)
 }
