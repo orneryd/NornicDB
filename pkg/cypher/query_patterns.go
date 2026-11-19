@@ -8,6 +8,7 @@
 //   - Mutual Relationship: (a)-[:TYPE]->(b)-[:TYPE]->(a) - cycle back to start
 //   - Incoming Count Aggregation: MATCH (x)<-[:TYPE]-(y) RETURN x, count(y)
 //   - Edge Property Aggregation: RETURN avg(r.prop), count(r) GROUP BY node
+//     (executed by the shared clause pipeline, not a separate reducer)
 //   - Large Result Set: Any traversal with LIMIT > 100
 package cypher
 
@@ -36,8 +37,10 @@ const (
 	// Optimized via single-pass edge counting
 	PatternOutgoingCountAgg
 
-	// PatternEdgePropertyAgg detects avg/sum/count on edge properties
-	// Optimized via single-pass accumulation
+	// PatternEdgePropertyAgg detects avg/sum/min/max/count on edge properties.
+	// ExecuteOptimized answers it by running the same clause pipeline as the
+	// general path, so this pattern names a documented optimizer entry point
+	// rather than a second aggregation implementation.
 	PatternEdgePropertyAgg
 
 	// PatternLargeResultSet detects queries returning many rows (LIMIT > 100)

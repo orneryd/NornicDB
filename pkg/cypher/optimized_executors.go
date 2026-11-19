@@ -7,14 +7,13 @@
 // Performance characteristics:
 //   - MutualRelationship: O(E) instead of O(N * D²)
 //   - IncomingCountAgg: O(E) instead of O(N * separate_calls)
-//   - EdgePropertyAgg: O(E) single-pass accumulation
+//   - EdgePropertyAgg: delegates to the clause pipeline (shared owner)
 //   - LargeResultSet: Batch node lookups, pre-allocation
 package cypher
 
 import (
 	"context"
 	"fmt"
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 
@@ -96,9 +95,13 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 		}
 
 	case PatternEdgePropertyAgg:
-		result, err := e.executeEdgePropertyAggOptimized(ctx, query, patternInfo)
-		if err == nil {
-			return result, true
+		// The detector-supported edge-property aggregate shape runs on the
+		// shared clause pipeline, which owns grouping, null-only groups,
+		// projection width and aggregate typing. A shape the pipeline
+		// declines or fails stays unhandled so callers keep the general path.
+		outcome := e.executePipeline(ctx, query)
+		if outcome.handled() {
+			return outcome.result, true
 		}
 
 	case PatternLargeResultSet:
@@ -178,131 +181,6 @@ func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context,
 			name := e.getPropertyString(node, "name")
 			result.Rows = append(result.Rows, []interface{}{name, row.count})
 		}
-	}
-
-	return result, nil
-}
-
-// =============================================================================
-// Edge Property Aggregation Optimization
-// Pattern: MATCH ()-[r:TYPE]->() RETURN avg(r.prop), count(r)
-// Algorithm: Single pass accumulation
-// =============================================================================
-
-type edgeAggStats struct {
-	sum      float64
-	count    int64
-	min      float64
-	max      float64
-	hasValue bool
-}
-
-func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
-	// This optimization handles queries like:
-	// MATCH (c)-[r:REVIEWED]->(p) RETURN p.name, avg(r.rating), count(r)
-	// GROUP BY p (the end node)
-
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	// Get all edges
-	allEdges, err := e.storage.AllEdges(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build aggregation map: EndNode → stats
-	aggMap := make(map[storage.NodeID]*edgeAggStats)
-
-	for _, edge := range allEdges {
-		// Get property value
-		propVal, exists := edge.Properties[info.AggProperty]
-		if !exists {
-			continue
-		}
-
-		// Convert to float64
-		numVal, numeric := valueconvert.NumericFloat64(propVal)
-		if !numeric {
-			continue
-		}
-
-		// Get or create stats
-		stats, exists := aggMap[edge.EndNode]
-		if !exists {
-			stats = &edgeAggStats{min: numVal, max: numVal}
-			aggMap[edge.EndNode] = stats
-		}
-
-		// Update stats
-		stats.sum += numVal
-		stats.count++
-		stats.hasValue = true
-		if numVal < stats.min {
-			stats.min = numVal
-		}
-		if numVal > stats.max {
-			stats.max = numVal
-		}
-	}
-
-	// Build columns from RETURN clause (respects aliases)
-	returnItems := e.extractReturnItemsFromQuery(ctx, query)
-	result.Columns = e.buildColumnsFromReturnItems(returnItems)
-
-	// Convert to result rows
-	type aggRow struct {
-		nodeID storage.NodeID
-		stats  *edgeAggStats
-	}
-	rows := make([]aggRow, 0, len(aggMap))
-	for nodeID, stats := range aggMap {
-		if stats.hasValue {
-			rows = append(rows, aggRow{nodeID: nodeID, stats: stats})
-		}
-	}
-
-	// Sort by avg descending (common pattern)
-	sort.Slice(rows, func(i, j int) bool {
-		avgI := rows[i].stats.sum / float64(rows[i].stats.count)
-		avgJ := rows[j].stats.sum / float64(rows[j].stats.count)
-		return avgI > avgJ
-	})
-
-	// Apply LIMIT
-	limit := len(rows)
-	if info.Limit > 0 && info.Limit < limit {
-		limit = info.Limit
-	}
-
-	// Build result with node properties
-	nodeCache := make(map[storage.NodeID]*storage.Node)
-	for i := 0; i < limit; i++ {
-		row := rows[i]
-		node := e.getNodeCached(ctx, row.nodeID, nodeCache)
-		if node == nil {
-			continue
-		}
-
-		resultRow := []interface{}{e.getPropertyString(node, "name")}
-		for _, fn := range info.AggFunctions {
-			switch fn {
-			case "count":
-				resultRow = append(resultRow, row.stats.count)
-			case "sum":
-				resultRow = append(resultRow, row.stats.sum)
-			case "avg":
-				resultRow = append(resultRow, row.stats.sum/float64(row.stats.count))
-			case "min":
-				resultRow = append(resultRow, row.stats.min)
-			case "max":
-				resultRow = append(resultRow, row.stats.max)
-			}
-		}
-		result.Rows = append(result.Rows, resultRow)
 	}
 
 	return result, nil

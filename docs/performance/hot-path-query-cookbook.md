@@ -36,7 +36,10 @@ Optimized executor patterns:
 - `PatternMutualRelationship`: `MATCH (a)-[:T]->(b)-[:T]->(a) RETURN ...`
 - `PatternIncomingCountAgg`: `MATCH (x)<-[:T]-(y) RETURN x.name, count(y)`
 - `PatternOutgoingCountAgg`: `MATCH (x)-[:T]->(y) RETURN x.name, count(y)`
-- `PatternEdgePropertyAgg`: grouped edge-property aggregates such as `avg(r.prop), count(r)`
+- `PatternEdgePropertyAgg`: grouped edge-property aggregates such as `avg(r.prop), count(r)`.
+  `ExecuteOptimized` answers this pattern by running the same clause pipeline as the general
+  path, so it adds no separate aggregation implementation and no separate performance profile;
+  the documented entry point exists for callers that detect the pattern themselves.
 - `PatternLargeResultSet`: large `MATCH ... LIMIT > 100` result sets routed to batched lookup execution
 
 Not every fast query in this cookbook maps 1:1 to a single trace flag, but every traced or optimized hot path currently exposed by the executor is represented here.

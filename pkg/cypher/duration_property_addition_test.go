@@ -8,7 +8,7 @@ import (
 )
 
 func TestDurationAdditionPropertyUsesRuntimeType(t *testing.T) {
-	exec := newClassificationExecutor(t)
+	exec := newStatementExecutor(t, "test", "CREATE (:A {v: 1, f: 1.5, s: 'x', b: true, l: [1], ls: ['a']})-[:R]->(:B)")
 	for _, expression := range []string{"duration('P1D') + n.v", "du + n.v"} {
 		query := "MATCH (n:A) WITH n, duration('P1D') AS du RETURN " + expression + " AS v"
 		requireStatus(t, exec, query, nil, "Neo.ClientError.Statement.TypeError", "Cannot add `Duration` and `Long`")

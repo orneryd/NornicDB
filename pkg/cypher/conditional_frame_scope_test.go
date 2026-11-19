@@ -11,16 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// conditionalFrameExecutor creates the two rows the conditional-arm cases read
-// and returns the executor that runs them.
-func conditionalFrameExecutor(t *testing.T) *StorageExecutor {
-	t.Helper()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "conditional_frame"))
-	_, err := exec.Execute(context.Background(), "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})", nil)
-	require.NoError(t, err)
-	return exec
-}
-
 // A conditional's arm is compiled in its own frame: the clauses before the
 // conditional, the enclosing subquery's imports and its sibling arms' absence.
 // Its columns are the admitted compile-only candidate's own, so an arm that
@@ -29,7 +19,7 @@ func conditionalFrameExecutor(t *testing.T) *StorageExecutor {
 // settings through the public Execute path.
 func TestConditionalArmsCompileInTheirFrame(t *testing.T) {
 	forEachCypherParserSetting(t, func(t *testing.T) {
-		exec := conditionalFrameExecutor(t)
+		exec := newStatementExecutor(t, "conditional_frame", "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})")
 		l := func(values ...interface{}) []interface{} { return values }
 		for _, tc := range []struct {
 			name    string
@@ -113,7 +103,7 @@ func TestConditionalArmsCompileInTheirFrame(t *testing.T) {
 // candidate's scope owner, and it happens before the statement's effects.
 func TestConditionalArmInvalidScopeHasNoEffect(t *testing.T) {
 	forEachCypherParserSetting(t, func(t *testing.T) {
-		exec := conditionalFrameExecutor(t)
+		exec := newStatementExecutor(t, "conditional_frame", "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})")
 		_, err := exec.Execute(context.Background(),
 			"CYPHER 25 MATCH (p:FrameCondition) CALL (p) { WHEN p.age > 35 THEN CREATE (:FrameMutation) RETURN nope AS k ELSE CREATE (:FrameMutation) RETURN 1 AS k } RETURN k", nil)
 		require.Error(t, err)
@@ -128,7 +118,7 @@ func TestConditionalArmInvalidScopeHasNoEffect(t *testing.T) {
 // disagree and an arm that names an unknown procedure fail as before.
 func TestConditionalArmDiagnostics(t *testing.T) {
 	forEachCypherParserSetting(t, func(t *testing.T) {
-		exec := conditionalFrameExecutor(t)
+		exec := newStatementExecutor(t, "conditional_frame", "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})")
 		_, err := exec.Execute(context.Background(), "CYPHER 25 WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y", nil)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 		require.Contains(t, err.Error(), "same return column names")
@@ -144,7 +134,7 @@ func TestConditionalArmDiagnostics(t *testing.T) {
 // that owns no clause is an error rather than an empty header.
 func TestRegionalStatementColumnsReadsTheBoundProduct(t *testing.T) {
 	forEachCypherParserSetting(t, func(t *testing.T) {
-		exec := conditionalFrameExecutor(t)
+		exec := newStatementExecutor(t, "conditional_frame", "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})")
 		query := "MATCH (p:FrameCondition) RETURN p.name AS n"
 		region := cyphertext.Span{Start: strings.Index(query, "RETURN"), End: len(query)}
 		columns, err := exec.regionalStatementColumns(context.Background(), query, region)
@@ -163,7 +153,7 @@ func TestRegionalStatementColumnsReadsTheBoundProduct(t *testing.T) {
 // Lowering is unchanged: a conditional still becomes the CASE guard and the
 // guarded CALL subquery, and NEXT still becomes the nested CALL.
 func TestConditionalLoweringKeepsItsExecutionForm(t *testing.T) {
-	exec := conditionalFrameExecutor(t)
+	exec := newStatementExecutor(t, "conditional_frame", "CREATE (:FrameCondition {name: 'Ann', age: 40}), (:FrameCondition {name: 'Bob', age: 20})")
 	rewritten, rewrite, err := desugarQueryStructure(context.Background(),
 		"MATCH (p) CALL (p) { WHEN p.age > 35 THEN RETURN 1 AS k ELSE RETURN 2 AS k }", exec)
 	require.NoError(t, err)
