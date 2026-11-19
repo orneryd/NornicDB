@@ -474,6 +474,10 @@ func (b *BadgerEngine) rebuildLabelCounts(ctx context.Context, counts map[string
 }
 
 func (b *BadgerEngine) ensureLabelCounts(ctx context.Context) error {
+	return b.ensureLabelCountsOnOpen(ctx, false)
+}
+
+func (b *BadgerEngine) ensureLabelCountsOnOpen(ctx context.Context, clean bool) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
@@ -481,6 +485,15 @@ func (b *BadgerEngine) ensureLabelCounts(ctx context.Context) error {
 	// base keys again before verification compares them.
 	if err := b.foldAllLabelCountDeltas(ctx); err != nil {
 		return err
+	}
+	if clean {
+		ready, err := b.labelCountReady()
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
 	}
 	// Verification and rebuild rewrite the base keys: they hold the count
 	// lock, as every rewrite of them does (rebuildAuthoritativeLabelCountsLocked).
