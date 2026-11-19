@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -33,19 +34,30 @@ func (b *BadgerEngine) SetRevealAll(reveal bool) {
 
 // BeginQueryRevealScope guards a query's reveal mode against concurrent queries
 // on the same engine. Reveal queries take an exclusive scope while normal
-// queries take a shared scope so they cannot observe revealAll=true.
+// queries take a shared scope so they cannot observe revealAll=true. The caller
+// holds no lifetime here, so the acquisition waits until the scope is granted;
+// context-owning callers use BeginQueryRevealScopeContext.
 func (b *BadgerEngine) BeginQueryRevealScope(reveal bool) func() {
-	b.beginQueryRevealScope(reveal)
+	_ = b.beginQueryRevealScope(context.Background(), reveal)
 	return func() { b.endQueryRevealScope(reveal) }
 }
 
-func (b *BadgerEngine) beginQueryRevealScope(reveal bool) {
+// beginQueryRevealScope is the canonical reveal-scope acquisition: REVEAL
+// executions take it exclusively and normal queries take it shared, so a normal
+// query never observes another execution's revealAll=true. It waits with ctx
+// rather than for an unbounded lifetime, so a cancelled or expired caller stops
+// waiting instead of blocking behind an unrelated execution's scope. A refused
+// acquisition records no reveal mode and acquires nothing: the caller's own
+// cancellation is what ends its work.
+func (b *BadgerEngine) beginQueryRevealScope(ctx context.Context, reveal bool) error {
 	if reveal {
-		b.revealQueryMu.Lock()
+		if err := b.revealQueryMu.LockContext(ctx); err != nil {
+			return err
+		}
 		b.revealAll.Store(true)
-		return
+		return nil
 	}
-	b.revealQueryMu.RLock()
+	return b.revealQueryMu.RLockContext(ctx)
 }
 
 func (b *BadgerEngine) endQueryRevealScope(reveal bool) {
