@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detach caller-owned nested evidence and configuration in the in-memory inference stores: `EdgeMetaStore` append/import/read/export and `NodeConfigStore` set/import/get/export no longer share mutable maps or slices with callers or retained state.
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 - Allow remote database factories to reenter the catalog without deadlocking storage selection.
+- Allow accepted-write settlement callbacks to close the WAL engine without waiting on their own completing join.
+- Report a definite Raft log discard to its settlement observer outside the accepted work and shutdown drain that observer may re-enter, and bound Raft's accepted commit waiter by the recorded decision instead of the delivered settlement.
 
 - Preserve transaction cleanup failures alongside BEGIN setup errors.
 - Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
