@@ -10,18 +10,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestCompositeEngine(t *testing.T) (*CompositeEngine, *NamespacedEngine, *NamespacedEngine) {
+// newTestCompositeEngine builds the two-constituent fixture over one in-memory
+// engine. Callers may name constituent "a"'s access mode so participant
+// admission contracts are pinned against this one fixture owner; "a" is
+// writable when they do not.
+func newTestCompositeEngine(t *testing.T, accessModeA ...string) (*CompositeEngine, *NamespacedEngine, *NamespacedEngine) {
 	t.Helper()
 	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 
+	mode := "read_write"
+	if len(accessModeA) > 0 {
+		mode = accessModeA[0]
+	}
 	nsA := NewNamespacedEngine(badger, "a")
 	nsB := NewNamespacedEngine(badger, "b")
 	composite := NewCompositeEngine(
 		map[string]Engine{"a": nsA, "b": nsB},
 		map[string]string{"a": "a", "b": "b"},
-		map[string]string{"a": "read_write", "b": "read_write"},
+		map[string]string{"a": mode, "b": "read_write"},
 	)
 	return composite, nsA, nsB
 }
