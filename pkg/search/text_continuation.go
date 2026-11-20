@@ -307,7 +307,7 @@ func (s *Service) startTextContinuation(
 		if err != nil {
 			return nil, err
 		}
-		page, err := registry.Start(ctx, scope, stream, request.N)
+		page, err := registry.Start(ctx, scope, ownStream(stream), request.N)
 		if err != nil {
 			return nil, err
 		}
