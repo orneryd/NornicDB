@@ -1,17 +1,18 @@
 package storage
 
-// R9-1 forced overlap (campaign scratch test, no product change).
-// Deterministic trigger for the replay-path failure: the background write-behind generation apply is forced to
-// overlap the direct replay of a buffered_commit journal entry. Test-side only: a wrapper around
-// WriteBehindBuffer.apply holds every generation apply that starts during journal replay until the replay of the
-// first buffered_commit entry visited while an apply is held (the target), then sleeps offset_ms and calls the
-// original apply. Replay goes through r9RecoverCopy (a copy of RecoverIntoEngine, wal_recovery_stream.go:30-128,
-// with an entry hook); this covers the replay path only, not the real nornicdb.Open start-up.
-// Env: R9_ROOT, R9_DIAG_STORE (as the cause test); R9_FORCED_WB=on|off (default on; off is the control, the same
-// replay into an engine with write-behind off, where no generation apply exists); R9_FORCED_OFFSETS_MS
-// (comma-separated, default 0,1,2,3,4,5,6,8,10,12,15,20,25,30,40,50); R9_FORCED_HOLD_MAX_MS (default 10000,
-// releases a held apply if no target is reached, counted as gate_timeout).
-// Prints one R9FORCED run line per offset and an R9FORCED SUMMARY line; fails when any run reports Failed > 0.
+// R9-1 overlap-inducing replay (campaign scratch test, no product change).
+// Steps, per offset in R9_OVERLAP_OFFSETS_MS: copy the store's data directory; open a fresh engine (write-behind
+// as R9_OVERLAP_WB); with write-behind on, wrap WriteBehindBuffer.apply; replay the latest snapshot and the
+// journal through r9RecoverCopy (a copy of RecoverIntoEngine, wal_recovery_stream.go:30-128, with an entry hook);
+// close the engine. The wrapper, armed when the hook sees the first journal entry, holds every apply that starts
+// while armed. When the hook sees the first buffered_commit entry while at least one apply is held (the target),
+// it disarms the wrapper and releases the held applies, before that entry's replay; each released apply sleeps
+// offset_ms and then runs. A held apply that sees no release within R9_OVERLAP_HOLD_MAX_MS (default 10000) runs
+// and counts as a gate timeout.
+// Env: R9_ROOT, R9_DIAG_STORE (as the cause test); R9_OVERLAP_WB=on|off (default on); R9_OVERLAP_OFFSETS_MS
+// (default 0,1,2,3,4,5,6,8,10,12,15,20,25,30,40,50); R9_OVERLAP_HOLD_MAX_MS.
+// Prints one R9OVERLAP run line per offset and an R9OVERLAP SUMMARY line; fails when any run reports Failed > 0,
+// a top-level replay error or a close error.
 
 import (
 	"context"
@@ -62,7 +63,7 @@ func (g *r9Gate) wrap(b *BadgerEngine) {
 	}
 }
 
-func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
+func TestR9OverlapInducingV150AsyncdocsSnapClean(t *testing.T) {
 	storeRoot := os.Getenv("R9_ROOT")
 	if storeRoot == "" {
 		storeRoot = "/work/tnrun/v152-upg"
@@ -76,14 +77,14 @@ func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
 		t.Fatalf("selected store is missing or incomplete (no data/MANIFEST): %s (%v)", source, err)
 	}
 	r9CauseLatestSnapshot(t, source)
-	wb := os.Getenv("R9_FORCED_WB")
+	wb := os.Getenv("R9_OVERLAP_WB")
 	if wb == "" {
 		wb = "on"
 	}
 	if wb != "on" && wb != "off" {
-		t.Fatalf("R9_FORCED_WB=%q: want on or off", wb)
+		t.Fatalf("R9_OVERLAP_WB=%q: want on or off", wb)
 	}
-	offs := os.Getenv("R9_FORCED_OFFSETS_MS")
+	offs := os.Getenv("R9_OVERLAP_OFFSETS_MS")
 	if offs == "" {
 		offs = "0,1,2,3,4,5,6,8,10,12,15,20,25,30,40,50"
 	}
@@ -91,22 +92,22 @@ func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
 	for _, f := range strings.Split(offs, ",") {
 		v, err := strconv.Atoi(strings.TrimSpace(f))
 		if err != nil || v < 0 {
-			t.Fatalf("R9_FORCED_OFFSETS_MS: bad offset %q", f)
+			t.Fatalf("R9_OVERLAP_OFFSETS_MS: bad offset %q", f)
 		}
 		offsets = append(offsets, v)
 	}
 	holdMax := 10 * time.Second
-	if v, err := strconv.Atoi(os.Getenv("R9_FORCED_HOLD_MAX_MS")); err == nil && v > 0 {
+	if v, err := strconv.Atoi(os.Getenv("R9_OVERLAP_HOLD_MAX_MS")); err == nil && v > 0 {
 		holdMax = time.Duration(v) * time.Millisecond
 	}
-	root, err := os.MkdirTemp(storeRoot, "r9forced-")
+	root, err := os.MkdirTemp(storeRoot, "r9overlap-")
 	if err != nil {
 		t.Fatalf("scratch area below %s: %v", storeRoot, err)
 	}
 	defer os.RemoveAll(root)
 	defer func() { r9EntryHook = nil }()
 	ctx := context.Background()
-	failedRuns, heldRuns, timeoutRuns := 0, 0, 0
+	failedRuns, heldRuns, timeoutRuns, replayErrRuns, closeErrRuns := 0, 0, 0, 0, 0
 	for i, off := range offsets {
 		work := filepath.Join(root, strconv.Itoa(i))
 		data := filepath.Join(work, "data")
@@ -142,7 +143,7 @@ func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
 		g.armed.Store(false)
 		g.release()
 		r9EntryHook = nil
-		_ = fresh.Close()
+		cerr := fresh.Close()
 		target := "none"
 		targetErr := "<none>"
 		if s := g.target.Load(); s != 0 {
@@ -153,10 +154,10 @@ func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
 				}
 			}
 		}
-		fmt.Printf("R9FORCED run=%d wb=%s offset_ms=%d applied=%d skipped=%d failed=%d target_seq=%s held_at_target=%d applies_held=%d gate_timeouts=%d target_err=%s err=%v\n",
-			i, wb, off, res.Applied, res.Skipped, res.Failed, target, g.heldAtTarget, g.held.Load(), g.timeouts.Load(), targetErr, rerr)
+		fmt.Printf("R9OVERLAP run=%d wb=%s offset_ms=%d applied=%d skipped=%d failed=%d target_seq=%s held_at_target=%d applies_held=%d gate_timeouts=%d target_err=%s err=%v close_err=%v\n",
+			i, wb, off, res.Applied, res.Skipped, res.Failed, target, g.heldAtTarget, g.held.Load(), g.timeouts.Load(), targetErr, rerr, cerr)
 		for _, e := range res.Errors {
-			fmt.Printf("R9FORCED run=%d error seq=%d op=%v err=%v\n", i, e.Sequence, e.Operation, e.Error)
+			fmt.Printf("R9OVERLAP run=%d error seq=%d op=%v err=%v\n", i, e.Sequence, e.Operation, e.Error)
 		}
 		if res.Failed > 0 {
 			failedRuns++
@@ -167,11 +168,20 @@ func TestR9ForcedOverlapV150AsyncdocsSnapClean(t *testing.T) {
 		if g.timeouts.Load() > 0 {
 			timeoutRuns++
 		}
+		if rerr != nil {
+			replayErrRuns++
+		}
+		if cerr != nil {
+			closeErrRuns++
+		}
 		_ = os.RemoveAll(work)
 	}
-	fmt.Printf("R9FORCED SUMMARY wb=%s runs=%d failed_runs=%d runs_with_target=%d runs_with_gate_timeout=%d\n",
-		wb, len(offsets), failedRuns, heldRuns, timeoutRuns)
+	fmt.Printf("R9OVERLAP SUMMARY wb=%s runs=%d failed_runs=%d runs_with_target=%d runs_with_gate_timeout=%d runs_with_replay_error=%d runs_with_close_error=%d\n",
+		wb, len(offsets), failedRuns, heldRuns, timeoutRuns, replayErrRuns, closeErrRuns)
 	if failedRuns > 0 {
-		t.Errorf("forced overlap: %d of %d replays refused journal entries (write-behind %s)", failedRuns, len(offsets), wb)
+		t.Errorf("overlap-inducing replay: %d of %d replays refused journal entries (write-behind %s)", failedRuns, len(offsets), wb)
+	}
+	if replayErrRuns+closeErrRuns > 0 {
+		t.Errorf("replays with a top-level error %d, with a close error %d", replayErrRuns, closeErrRuns)
 	}
 }

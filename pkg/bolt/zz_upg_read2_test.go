@@ -131,7 +131,7 @@ func TestV152SnapshotRebuild(t *testing.T) {
 							t.Errorf("%s: the upgrade itself is refused (entry 4), so this order does not reach the rebuild: %v", tag, err)
 							return
 						}
-						require.NoError(t, db.Close())
+						uprClose(t, tag+" upgrade", db)
 					}
 					uprDamage(t, data)
 					db, err := uprOpen(t, tag+" rebuild", name, data, true)
@@ -145,7 +145,7 @@ func TestV152SnapshotRebuild(t *testing.T) {
 						t.Errorf("%s: the start did not rebuild the damaged store", tag)
 					}
 					m1, c1, e1 := uprCompare(tag+" rebuilt", want, uprCapture(t, db.GetBaseStorageForManager()))
-					require.NoError(t, db.Close())
+					uprClose(t, tag+" rebuild", db)
 					db, err = uprOpen(t, tag+" second", name, data, true)
 					if err != nil {
 						fmt.Printf("UPR_REBUILD_RESULT %s step=second FAILED err=%v\n", tag, err)
@@ -153,7 +153,7 @@ func TestV152SnapshotRebuild(t *testing.T) {
 						return
 					}
 					m2, c2, e2 := uprCompare(tag+" second", want, uprCapture(t, db.GetBaseStorageForManager()))
-					require.NoError(t, db.Close())
+					uprClose(t, tag+" second", db)
 					fmt.Printf("UPR_REBUILD_RESULT %s rebuilt=%v missing=%d changed=%d extra=%d second_missing=%d second_changed=%d second_extra=%d\n", tag, rebuilt, m1, c1, e1, m2, c2, e2)
 					if m1+c1+e1+m2+c2+e2 != 0 {
 						t.Errorf("%s: acknowledged state differs after the rebuild", tag)
