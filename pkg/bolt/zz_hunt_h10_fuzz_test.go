@@ -15,6 +15,8 @@ package bolt
 // Run: go test ./pkg/bolt -run '^$' -fuzz '^FuzzHuntH10PackStream$' -fuzztime 30m -parallel 1
 
 import (
+	"path/filepath"
+	"os"
 	"fmt"
 	"io"
 	"net"
@@ -50,6 +52,12 @@ func FuzzHuntH10PackStream(f *testing.F) {
 	}
 	f.Add(huntH10Struct(0x10, "RETURN 1", map[string]any{}, map[string]any{}))
 	f.Fuzz(func(t *testing.T, data []byte) {
+		huntH10Remember("FuzzHuntH10PackStream", data)
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, data)
+			}
+		}()
 		done := make(chan struct{})
 		var value any
 		var err error
@@ -117,6 +125,12 @@ func FuzzHuntH10BoltStream(f *testing.F) {
 	f.Add(append(append([]byte{}, hello...), goodbye...))
 	f.Add(hello)
 	f.Fuzz(func(t *testing.T, stream []byte) {
+		huntH10Remember("FuzzHuntH10BoltStream", stream)
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, stream)
+			}
+		}()
 		addr := huntH10Server(t)
 		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 		if err != nil {
@@ -142,4 +156,16 @@ func FuzzHuntH10BoltStream(f *testing.F) {
 			t.Fatalf("hang: server neither answered to the end nor closed within 5 s after half-close (stream %x)", stream)
 		}
 	})
+}
+
+// huntH10Remember keeps the input being run in $HUNT_H10_LAST_DIR/<target>.last
+// (the lab's shared /work/tnrun dataset), so that an input that crashes the
+// process outside the fuzz goroutine survives the job.
+func huntH10Remember(target string, data []byte) {
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, target+".last"), data, 0o644)
 }

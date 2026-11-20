@@ -46,6 +46,12 @@ func FuzzHuntH10CSVImport(f *testing.F) {
 	f.Add("id:ID,\"quoted, name\",:LABEL\n1,\"a \"\"b\"\" c\",Q\n")
 	f.Add("id:ID,v:int[],:LABEL\n1,1;2;3,L\n2,9223372036854775807,L\n")
 	f.Fuzz(func(t *testing.T, csv string) {
+		huntH10Remember("FuzzHuntH10CSVImport", []byte(csv))
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, csv)
+			}
+		}()
 		dir := t.TempDir()
 		path := filepath.Join(dir, "nodes.csv")
 		if err := os.WriteFile(path, []byte(csv), 0o600); err != nil {
@@ -91,4 +97,16 @@ func FuzzHuntH10CSVImport(f *testing.F) {
 			}
 		}
 	})
+}
+
+// huntH10Remember keeps the input being run in $HUNT_H10_LAST_DIR/<target>.last
+// (the lab's shared /work/tnrun dataset), so that an input that crashes the
+// process outside the fuzz goroutine survives the job.
+func huntH10Remember(target string, data []byte) {
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, target+".last"), data, 0o644)
 }

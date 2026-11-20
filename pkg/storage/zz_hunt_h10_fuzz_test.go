@@ -12,6 +12,8 @@ package storage
 // Run: go test ./pkg/storage -run '^$' -fuzz '^FuzzHuntH10WALPayload$' -fuzztime 30m -parallel 1
 
 import (
+	"path/filepath"
+	"os"
 	"bytes"
 	"testing"
 	"time"
@@ -33,6 +35,12 @@ func FuzzHuntH10WALPayload(f *testing.F) {
 		f.Add(append([]byte(nil), payload...))
 	}
 	f.Fuzz(func(t *testing.T, payload []byte) {
+		huntH10Remember("FuzzHuntH10WALPayload", payload)
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, payload)
+			}
+		}()
 		var decoded WALEntry
 		var err error
 		done := make(chan struct{})
@@ -62,4 +70,16 @@ func FuzzHuntH10WALPayload(f *testing.F) {
 			t.Fatalf("round trip differs for input %x:\nfirst  %+v\nsecond %+v", payload, decoded, second)
 		}
 	})
+}
+
+// huntH10Remember keeps the input being run in $HUNT_H10_LAST_DIR/<target>.last
+// (the lab's shared /work/tnrun dataset), so that an input that crashes the
+// process outside the fuzz goroutine survives the job.
+func huntH10Remember(target string, data []byte) {
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, target+".last"), data, 0o644)
 }

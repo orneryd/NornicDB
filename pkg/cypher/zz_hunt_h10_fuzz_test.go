@@ -80,6 +80,12 @@ func FuzzHuntH10NornicParse(f *testing.F) {
 	huntH10Seeds(f)
 	parser := NewParser()
 	f.Fuzz(func(t *testing.T, query string) {
+		huntH10Remember("FuzzHuntH10NornicParse", []byte(query))
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, query)
+			}
+		}()
 		huntH10Bounded(t, 10*time.Second, query, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -91,6 +97,12 @@ func FuzzHuntH10NornicParse(f *testing.F) {
 func FuzzHuntH10ANTLRParse(f *testing.F) {
 	huntH10Seeds(f)
 	f.Fuzz(func(t *testing.T, query string) {
+		huntH10Remember("FuzzHuntH10ANTLRParse", []byte(query))
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, query)
+			}
+		}()
 		huntH10Bounded(t, 10*time.Second, query, func() {
 			_, _ = antlr.Parse(query)
 		})
@@ -100,6 +112,12 @@ func FuzzHuntH10ANTLRParse(f *testing.F) {
 func FuzzHuntH10Execute(f *testing.F) {
 	huntH10Seeds(f)
 	f.Fuzz(func(t *testing.T, query string) {
+		huntH10Remember("FuzzHuntH10Execute", []byte(query))
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic: %v (input %q)", r, query)
+			}
+		}()
 		engine := storage.NewMemoryEngine()
 		defer engine.Close()
 		executor := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
@@ -109,4 +127,16 @@ func FuzzHuntH10Execute(f *testing.F) {
 			_, _ = executor.Execute(ctx, query, nil)
 		})
 	})
+}
+
+// huntH10Remember keeps the input being run in $HUNT_H10_LAST_DIR/<target>.last
+// (the lab's shared /work/tnrun dataset), so that an input that crashes the
+// process outside the fuzz goroutine survives the job.
+func huntH10Remember(target string, data []byte) {
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, target+".last"), data, 0o644)
 }
