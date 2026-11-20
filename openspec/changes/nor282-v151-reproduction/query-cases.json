@@ -1,0 +1,1896 @@
+{
+  "schema": "nor282-query-cases/v1",
+  "issue": {
+    "id": "NOR-282",
+    "title": "apoc.text clean/split/replace/urlencode/urldecode/indexOf return different values from APOC 5.26.30",
+    "url": "https://linear.app/nornicdb/issue/NOR-282/apoctext-cleansplitreplaceurlencodeurldecodeindexof-return-different",
+    "reproduction_head": "d6ec7766e6e73dbae401ae547aa3c8b6e4c327b5",
+    "note": "Backend at the reproduction head is identical to shipped v1.5.1 cb0a574f per the delegated context. This corpus is reproduction evidence only; it authorizes no production change."
+  },
+  "reference": {
+    "route": "public Cypher execution over the registered APOC plugin surface (the bundled plugin's compiled handlers), on both supported parser paths",
+    "neo4j": "5.26.30 community, official image sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c (parent fresh run)",
+    "apoc": "APOC Core 5.26.30, bundled jar sha256 4c60fdab264230d60745d31d55d6cb668e66061daba7c5fa6777ed457b49b798, RETURN apoc.version() = 5.26.30",
+    "historical_runtime_job": "j20261026225649-50004-35b0 (Neo4j 5.26.30, official JAR digest verified)",
+    "confirmed_rotation": "NornicDB plugin handlers are installed from apoc.Initialize/GetInfo; none of the case owners is an engine built-in, so no built-in shortcut can answer these calls",
+    "fresh_reference": "fresh-parent-reference.json - every apoc.text expectation below is that run's result for the same query; the six apoc.util names are recorded there as absent from APOC (missing_function), so their advertised NornicDB expectation is unchanged"
+  },
+  "confidence_levels": {
+    "fresh_confirmed": "The parent fresh reference run on Neo4j 5.26.30 community with APOC Core 5.26.30 (official image digest and bundled jar sha256 recorded in fresh-parent-reference.json, RETURN apoc.version() = 5.26.30). The expectation below is that run's kind and value for the same query.",
+    "runtime_confirmed": "Historical APOC 5.26.30 runtime reference values recorded in a Linear comment with the verified reference job.",
+    "recorded": "Values recorded in the NOR-282 original description's historical comparison table (source: receipt 516c, sig/handoff/r73/1615-v5-found-defects.md).",
+    "source_derived": "Values derived from the pinned APOC 5.26.30 source semantics documented in the imported comments; runtime confirmation is pending for the parent.",
+    "advertised_nornicdb": "NornicDB's own advertised contract (registration example or doc comment). These owners are NornicDB extensions with no APOC counterpart; APOC parity must not be claimed.",
+    "pending": "The imported evidence explicitly leaves the reference expectation undecided or unverified. Do not assert an APOC expectation before the parent's fresh Neo4j/APOC reference run."
+  },
+  "comment_map": {
+    "origin_issue": {
+      "source": "linear NOR-282 description",
+      "plane": "original",
+      "linear_created_at": "2026-10-26T21:34:41.088Z"
+    },
+    "retest_b098f7e70": {
+      "source": "linear comment 6e3b3c0c-3723-4d4e-92b8-67612ea26f14",
+      "plane": "de8a5428-f168-4693-a218-a7ab53970686",
+      "linear_created_at": "2026-11-04T23:32:01.422Z",
+      "content": "Retested on release head b098f7e70 (#1683); NOT FIXED; same reproduction as 31208b17f."
+    },
+    "retest_31208b17f": {
+      "source": "linear comment f27e38c7-e64c-4794-8544-977e115c659d",
+      "plane": "92d54eae-827a-43f6-b8e8-17f198908a83",
+      "linear_created_at": "2026-11-04T19:36:43.129Z",
+      "content": "Verification on 31208b17f (#1682); all six recorded differences reproduce: clean, split, replace, urlencode, urldecode, indexOf."
+    },
+    "capitalize_decapitalize_nulls": {
+      "source": "linear comment b7b218ca-1cc2-4a62-9616-724853d167a1",
+      "plane": "03d792f2-709e-407b-99f5-889ce2039034",
+      "linear_created_at": "2026-10-29T18:24:35.512Z",
+      "content": "capitalize('') fails in APOC (Strings.java substring on empty); decapitalize(null) returns null in APOC, while both parser paths reject null for func(string)string. capitalize('') expectation to be decided against APOC."
+    },
+    "label_normalize_moved": {
+      "source": "linear comment 67c49762-d9c6-433b-9e0e-2cfe385bf8e6",
+      "plane": "417a6a37-68e7-48f8-89d8-ccb285d5de23",
+      "linear_created_at": "2026-10-26T23:12:11.578Z",
+      "content": "apoc.label.normalize moved to NOR-290; out of this issue."
+    },
+    "base64_url_placeholders": {
+      "source": "linear comment a7733d28-60d7-4335-a2cc-ccabe3775009",
+      "plane": "8c669dae-6228-4535-a063-e756f657f9d6",
+      "linear_created_at": "2026-10-26T23:08:32.496Z",
+      "content": "apoc.text base64 and apoc.util Base64/URL registrations are identity/two-character placeholders; registrations advertise real Base64 and full percent-encoding."
+    },
+    "converter_runtime_values": {
+      "source": "linear comment 5d9e0807-9fb3-4b24-99e8-0f3138cc3828",
+      "plane": "3226af89-0979-4f89-9aeb-ac9b7662dcc8",
+      "linear_created_at": "2026-10-26T23:06:15.723Z",
+      "content": "Runtime-confirmed converter values: upperCamelCase('ßeta world')=SSetaWorld, upperCamelCase('ǳungla world')=ǱunglaWorld, camelCase('𐐨abc world')=𐐀abcWorld, punctuation removed for both converters, camelCase('hello foo.bar')=helloFooBar."
+    },
+    "converter_source_values": {
+      "source": "linear comment ff3a9354-2c98-4ced-8135-3e0e18f200e3",
+      "plane": "b62c217b-435d-447c-a1ea-525a33f0d504",
+      "linear_created_at": "2026-10-26T22:32:39.433Z",
+      "content": "Source-derived converter values (Strings.java 559-569, 576-577): camelCase removes punctuation; upperCamelCase uppercases the first UTF-16 unit."
+    }
+  },
+  "out_of_scope": [
+    "apoc.text.capitalizeAll / apoc.text.decapitalizeAll (NOR-207)",
+    "apoc.label.normalize (NOR-290)",
+    "statement cancellation work in orneryd/NornicDB#1615",
+    "new text functions",
+    "production fixes, edits to other worktrees, commits, pushes, PRs, external writes, SSH or Docker"
+  ],
+  "cases": [
+    {
+      "id": "clean_recorded",
+      "owner": "apoc.text.clean",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.clean('  a  b  ') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Clean",
+        "args": [
+          "  a  b  "
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "ab"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; APOC clean deletes whitespace, NornicDB keeps one space.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a b"
+      },
+      "fresh_reference_id": "clean_spaces"
+    },
+    {
+      "id": "clean_internal_spaces",
+      "owner": "apoc.text.clean",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.clean('hello   world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Clean",
+        "args": [
+          "hello   world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "helloworld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "derived_from_recorded_clean_row"
+      ],
+      "note": "Derived from the recorded clean row: APOC removes whitespace instead of collapsing it.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference_id": "clean_internal_spaces"
+    },
+    {
+      "id": "clean_empty",
+      "owner": "apoc.text.clean",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.clean('') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Clean",
+        "args": [
+          ""
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": ""
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "derived_from_recorded_clean_row"
+      ],
+      "note": "Empty input has no whitespace to delete.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": ""
+      },
+      "fresh_reference_id": "clean_empty"
+    },
+    {
+      "id": "clean_controls",
+      "owner": "apoc.text.clean",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.clean('a\\tb\\nc') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Clean",
+        "args": [
+          "a\tb\nc"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "derived_from_recorded_clean_row",
+        "query_uses_cypher_escapes"
+      ],
+      "note": "The query spells the controls as Cypher \\t and \\n escapes; direct args carry the raw characters.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a b c"
+      },
+      "fresh_reference_id": "clean_controls"
+    },
+    {
+      "id": "split_recorded",
+      "owner": "apoc.text.split",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.split('a1b2c','[0-9]') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "a1b2c",
+          "[0-9]"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; APOC splits on a regex, NornicDB splits on the literal delimiter.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "a1b2c"
+        ]
+      },
+      "fresh_reference_id": "split_digits"
+    },
+    {
+      "id": "split_empty_pattern",
+      "owner": "apoc.text.split",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.split('abc','') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "abc",
+          ""
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_empty"
+      ],
+      "note": "Java String.split(\"\") splits between characters and drops the leading empty token.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      },
+      "fresh_reference_id": "split_empty_pattern"
+    },
+    {
+      "id": "split_no_match",
+      "owner": "apoc.text.split",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.split('abc','[0-9]') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "abc",
+          "[0-9]"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_no_match"
+      ],
+      "note": "A regex with no match leaves one token.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      },
+      "fresh_reference_id": "split_no_match"
+    },
+    {
+      "id": "split_multiple_matches",
+      "owner": "apoc.text.split",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.split('a1b22c','[0-9]') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "a1b22c",
+          "[0-9]"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "",
+          "c"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_multiple"
+      ],
+      "note": "Adjacent matches produce an empty token between them.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "a1b22c"
+        ]
+      },
+      "fresh_reference_id": "split_multiple_matches"
+    },
+    {
+      "id": "split_invalid_pattern",
+      "owner": "apoc.text.split",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.split('a1b2c','[') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "a1b2c",
+          "["
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_invalid"
+      ],
+      "note": "The fresh APOC reference fails this call as a function error instead of returning a value. The exported NornicDB owner returns ['a1b2c'] and cannot signal an error, so parity needs an error path; error text identity is not asserted.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "a1b2c"
+        ]
+      },
+      "fresh_reference_id": "split_invalid_pattern"
+    },
+    {
+      "id": "replace_recorded",
+      "owner": "apoc.text.replace",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.replace('a1b2c','[0-9]','X') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "a1b2c",
+          "[0-9]",
+          "X"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "aXbXc"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; APOC replaces every regex match, NornicDB replaces the literal old string.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a1b2c"
+      },
+      "fresh_reference_id": "replace_digits"
+    },
+    {
+      "id": "replace_multiple_literals",
+      "owner": "apoc.text.replace",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.replace('hello','l','L') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "hello",
+          "l",
+          "L"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "heLLo"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_multiple"
+      ],
+      "note": "A literal-safe pattern repeats; both owners agree today, which the observed assertion records.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "heLLo"
+      },
+      "fresh_reference_id": "replace_multiple_literals"
+    },
+    {
+      "id": "replace_no_match",
+      "owner": "apoc.text.replace",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.replace('abc','[0-9]','X') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "abc",
+          "[0-9]",
+          "X"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_no_match"
+      ],
+      "note": "No match leaves the text unchanged.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "fresh_reference_id": "replace_nomatch"
+    },
+    {
+      "id": "replace_capture_group",
+      "owner": "apoc.text.replace",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.replace('a1b2','([0-9])','[$1]') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "a1b2",
+          "([0-9])",
+          "[$1]"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "a[1]b[2]"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "java_replacement_syntax"
+      ],
+      "note": "Java Matcher replacement expands $1; the Go owner would need equivalent replacement semantics.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a1b2"
+      },
+      "fresh_reference_id": "replace_capture_group"
+    },
+    {
+      "id": "replace_invalid_pattern",
+      "owner": "apoc.text.replace",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.replace('abc','[','X') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "abc",
+          "[",
+          "X"
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_regex_invalid"
+      ],
+      "note": "The fresh APOC reference fails this call as a function error instead of returning a value. The exported NornicDB owner returns 'abc' unchanged and cannot signal an error, so parity needs an error path; error text identity is not asserted.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "fresh_reference_id": "replace_invalid"
+    },
+    {
+      "id": "urlencode_recorded",
+      "owner": "apoc.text.urlencode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urlencode('a+b/é') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urlencode",
+        "args": [
+          "a+b/é"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "a%2Bb%2F%C3%A9"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; APOC percent-encodes reserved and non-ASCII characters.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a+b/é"
+      },
+      "fresh_reference_id": "urlencode_original"
+    },
+    {
+      "id": "urlencode_space",
+      "owner": "apoc.text.urlencode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urlencode('hello world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urlencode",
+        "args": [
+          "hello world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello+world"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_encoding_space",
+        "registration_example_conflict"
+      ],
+      "note": "Java URLEncoder form-encodes space as '+' and the fresh APOC reference returns hello+world; apoc/apoc.go:425 advertises hello%20world for the same call, so the registration example must be corrected by the separately authorized fix.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello+world"
+      },
+      "fresh_reference_id": "urlencode_space"
+    },
+    {
+      "id": "urlencode_unicode",
+      "owner": "apoc.text.urlencode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urlencode('é') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urlencode",
+        "args": [
+          "é"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "%C3%A9"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_encoding_unicode"
+      ],
+      "note": "UTF-8 percent-encoding of a BMP non-ASCII character.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "é"
+      },
+      "fresh_reference_id": "urlencode_unicode"
+    },
+    {
+      "id": "urldecode_recorded",
+      "owner": "apoc.text.urldecode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urldecode('%C3%A9%2B') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "%C3%A9%2B"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "é+"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; %2B decodes to a literal plus.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "%C3%A9%2B"
+      },
+      "fresh_reference_id": "urldecode_original"
+    },
+    {
+      "id": "urldecode_percent20",
+      "owner": "apoc.text.urldecode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urldecode('hello%20world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "hello%20world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_encoding_space",
+        "registration_example_agrees"
+      ],
+      "note": "apoc/apoc.go:426 advertises this exact call, and Java URLDecoder agrees.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello%20world"
+      },
+      "fresh_reference_id": "urldecode_percent20"
+    },
+    {
+      "id": "urldecode_plus",
+      "owner": "apoc.text.urldecode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urldecode('hello+world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "hello+world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_encoding_plus"
+      ],
+      "note": "Java URLDecoder decodes '+' as space, as apoc/apoc.go:426's own example requires.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference_id": "urldecode_plus"
+    },
+    {
+      "id": "urldecode_malformed",
+      "owner": "apoc.text.urldecode",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.urldecode('%zz') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "%zz"
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_encoding_malformed"
+      ],
+      "note": "The fresh APOC reference fails this call as a function error on the malformed percent escape. The exported NornicDB owner returns '%zz' unchanged and cannot signal an error, so parity needs an error path; error text identity is not asserted.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "%zz"
+      },
+      "fresh_reference_id": "urldecode_malformed"
+    },
+    {
+      "id": "indexof_recorded",
+      "owner": "apoc.text.indexOf",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.indexOf('aλb','b') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "aλb",
+          "b"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 2
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "Original issue row; APOC reports a UTF-16 code-unit index, NornicDB a UTF-8 byte offset.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 3
+      },
+      "fresh_reference_id": "index_bmp"
+    },
+    {
+      "id": "indexof_ascii",
+      "owner": "apoc.text.indexOf",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.indexOf('hello world','world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "hello world",
+          "world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 6
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_index_ascii"
+      ],
+      "note": "apoc/apoc.go:429 advertises this exact call.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 6
+      },
+      "fresh_reference_id": "indexof_ascii"
+    },
+    {
+      "id": "indexof_bmp",
+      "owner": "apoc.text.indexOf",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.indexOf('aλb','λ') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "aλb",
+          "λ"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 1
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_index_bmp"
+      ],
+      "note": "A BMP character is one UTF-16 code unit and two UTF-8 bytes.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 1
+      },
+      "fresh_reference_id": "indexof_bmp"
+    },
+    {
+      "id": "indexof_supplementary",
+      "owner": "apoc.text.indexOf",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.indexOf('𐐨abc','abc') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "𐐨abc",
+          "abc"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 2
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_index_supplementary"
+      ],
+      "note": "U+10428 is one supplementary code point, two UTF-16 code units and four UTF-8 bytes. The fresh APOC reference returns 2, the UTF-16 code-unit index of 'abc'; the byte-offset owner returns 4.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 4
+      },
+      "fresh_reference_id": "indexof_supplementary"
+    },
+    {
+      "id": "indexof_missing",
+      "owner": "apoc.text.indexOf",
+      "origin": "origin_issue",
+      "query": "RETURN apoc.text.indexOf('abc','z') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "abc",
+          "z"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": -1
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_index_missing"
+      ],
+      "note": "Java String.indexOf returns -1 and the fresh APOC reference run confirms -1 for a missing substring; the original matrix only said 'missing result'.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": -1
+      },
+      "fresh_reference_id": "index_missing"
+    },
+    {
+      "id": "capitalize_empty",
+      "owner": "apoc.text.capitalize",
+      "origin": "capitalize_decapitalize_nulls",
+      "query": "RETURN apoc.text.capitalize('') AS value",
+      "direct": null,
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "public_only"
+      ],
+      "note": "The fresh APOC reference fails apoc.text.capitalize('') as a function error while NornicDB returns ''. Asserted through public execution on both parser paths only, because the exported Go owner cannot return an error.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": ""
+      },
+      "fresh_reference_id": "capitalize_empty"
+    },
+    {
+      "id": "decapitalize_null",
+      "owner": "apoc.text.decapitalize",
+      "origin": "capitalize_decapitalize_nulls",
+      "query": "RETURN apoc.text.decapitalize(null) AS value",
+      "direct": null,
+      "reference": {
+        "kind": "value",
+        "value": null
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "public_only",
+        "null_argument_transport"
+      ],
+      "note": "The fresh APOC reference returns null (StringUtils.uncapitalize accepts null); both NornicDB parser paths reject null for a func(string)string.",
+      "nornicdb_observed": {
+        "kind": "error"
+      },
+      "fresh_reference_id": "decapitalize_null"
+    },
+    {
+      "id": "text_base64_encode_hello",
+      "owner": "apoc.text.base64Encode",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.text.base64Encode('hello') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Base64Encode",
+        "args": [
+          "hello"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "The imported comment records this expected value; the current owner is an identity placeholder.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "fresh_reference_id": "base64_encode"
+    },
+    {
+      "id": "text_base64_decode_hello",
+      "owner": "apoc.text.base64Decode",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.text.base64Decode('aGVsbG8=') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Base64Decode",
+        "args": [
+          "aGVsbG8="
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [],
+      "note": "The imported comment records this expected value; the current owner is an identity placeholder.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "fresh_reference_id": "base64_decode"
+    },
+    {
+      "id": "text_base64_encode_unicode",
+      "owner": "apoc.text.base64Encode",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.text.base64Encode('é') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Base64Encode",
+        "args": [
+          "é"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "w6k="
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "utf8_bytes"
+      ],
+      "note": "Base64 of the UTF-8 bytes C3 A9.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "é"
+      },
+      "fresh_reference_id": "text_base64_encode_unicode"
+    },
+    {
+      "id": "util_base64_encode_hello",
+      "owner": "apoc.util.encodeBase64",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.encodeBase64('hello') AS value",
+      "direct": {
+        "package": "util",
+        "function": "EncodeBase64",
+        "args": [
+          "hello"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "confidence": "advertised_nornicdb",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "apoc/apoc.go:618 advertises this call. Validate the advertised contract only; do not claim APOC parity.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "fresh_reference_id": "util_base64_encode_hello"
+    },
+    {
+      "id": "util_base64_decode_hello",
+      "owner": "apoc.util.decodeBase64",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.decodeBase64('aGVsbG8=') AS value",
+      "direct": {
+        "package": "util",
+        "function": "DecodeBase64",
+        "args": [
+          "aGVsbG8="
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "confidence": "advertised_nornicdb",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "apoc/apoc.go:619 advertises this call. Validate the advertised contract only; do not claim APOC parity.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "fresh_reference_id": "util_base64_decode_hello"
+    },
+    {
+      "id": "util_encode_url_space",
+      "owner": "apoc.util.encodeURL",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.encodeURL('hello world') AS value",
+      "direct": {
+        "package": "util",
+        "function": "EncodeURL",
+        "args": [
+          "hello world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello%20world"
+      },
+      "confidence": "advertised_nornicdb",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "registration_vs_doc_comment_conflict",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "apoc/apoc.go:620 advertises 'hello%20world'; apoc/util/util.go:433 documents 'hello+world' for the same call. The parent must choose the advertised contract before a fix.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello+world"
+      },
+      "fresh_reference_id": "util_encode_url_space"
+    },
+    {
+      "id": "util_decode_url_percent20",
+      "owner": "apoc.util.decodeURL",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.decodeURL('hello%20world') AS value",
+      "direct": {
+        "package": "util",
+        "function": "DecodeURL",
+        "args": [
+          "hello%20world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "confidence": "advertised_nornicdb",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "apoc/apoc.go:621 advertises this call and the placeholder currently does not satisfy it.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello%20world"
+      },
+      "fresh_reference_id": "util_decode_url_percent20"
+    },
+    {
+      "id": "util_encode_url_unicode",
+      "owner": "apoc.util.encodeURL",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.encodeURL('é') AS value",
+      "direct": {
+        "package": "util",
+        "function": "EncodeURL",
+        "args": [
+          "é"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "%C3%A9"
+      },
+      "confidence": "advertised_nornicdb",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "advertised_full_percent_encoding",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "The imported comment states the registration expects full percent-encoding.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "é"
+      },
+      "fresh_reference_id": "util_encode_url_unicode"
+    },
+    {
+      "id": "util_decode_url_plus",
+      "owner": "apoc.util.decodeURL",
+      "origin": "base64_url_placeholders",
+      "query": "RETURN apoc.util.decodeURL('hello+world') AS value",
+      "direct": {
+        "package": "util",
+        "function": "DecodeURL",
+        "args": [
+          "hello+world"
+        ]
+      },
+      "reference": {
+        "kind": "ambiguous",
+        "alternatives": [
+          "hello world",
+          "hello+world"
+        ]
+      },
+      "confidence": "pending",
+      "flags": [
+        "nornic_extension_no_apoc_counterpart",
+        "plus_decoding_unspecified",
+        "do_not_assert_before_contract_decision",
+        "apoc_counterpart_absent_fresh_confirmed"
+      ],
+      "note": "NornicDB advertises neither a route nor a query-form contract for '+' in this extension. Path-style decoding keeps '+' and form-style decoding maps it to space.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference_id": "util_decode_url_plus"
+    },
+    {
+      "id": "upper_camel_eszett",
+      "owner": "apoc.text.upperCamelCase",
+      "origin": "converter_runtime_values",
+      "query": "RETURN apoc.text.upperCamelCase('ßeta world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "UpperCamelCase",
+        "args": [
+          "ßeta world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "SSetaWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_eszett"
+      ],
+      "note": "Runtime-confirmed APOC 5.26.30 value; the first UTF-16 unit uppercases with string expansion.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "ßetaWorld"
+      },
+      "fresh_reference_id": "uppercamel_sharp_s"
+    },
+    {
+      "id": "upper_camel_dz",
+      "owner": "apoc.text.upperCamelCase",
+      "origin": "converter_runtime_values",
+      "query": "RETURN apoc.text.upperCamelCase('ǳungla world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "UpperCamelCase",
+        "args": [
+          "ǳungla world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "ǱunglaWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_dz"
+      ],
+      "note": "Runtime-confirmed APOC 5.26.30 value; uppercase of ǳ is Ǳ (not titlecase ǲ).",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "ǲunglaWorld"
+      },
+      "fresh_reference_id": "uppercamel_digraph"
+    },
+    {
+      "id": "camel_deseret",
+      "owner": "apoc.text.camelCase",
+      "origin": "converter_runtime_values",
+      "query": "RETURN apoc.text.camelCase('𐐨abc world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "CamelCase",
+        "args": [
+          "𐐨abc world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_deseret"
+      ],
+      "note": "Runtime-confirmed APOC 5.26.30 value; lowercasing the first UTF-16 unit is a no-op on a lone high surrogate, so the uppercase form remains.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "𐐨abcWorld"
+      },
+      "fresh_reference_id": "camel_deseret"
+    },
+    {
+      "id": "camel_punctuation",
+      "owner": "apoc.text.camelCase",
+      "origin": "converter_runtime_values",
+      "query": "RETURN apoc.text.camelCase('hello foo.bar') AS value",
+      "direct": {
+        "package": "text",
+        "function": "CamelCase",
+        "args": [
+          "hello foo.bar"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "helloFooBar"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_punctuation"
+      ],
+      "note": "Runtime-confirmed APOC 5.26.30 value; punctuation is removed, not kept.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "helloFoo.Bar"
+      },
+      "fresh_reference_id": "camel_punctuation"
+    },
+    {
+      "id": "upper_camel_punctuation",
+      "owner": "apoc.text.upperCamelCase",
+      "origin": "converter_runtime_values",
+      "query": "RETURN apoc.text.upperCamelCase('hello foo.bar') AS value",
+      "direct": {
+        "package": "text",
+        "function": "UpperCamelCase",
+        "args": [
+          "hello foo.bar"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "HelloFooBar"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_punctuation"
+      ],
+      "note": "The fresh APOC reference confirms punctuation removal for upperCamelCase: HelloFooBar.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "HelloFoo.Bar"
+      },
+      "fresh_reference_id": "uppercamel_punctuation"
+    },
+    {
+      "id": "camel_eszett",
+      "owner": "apoc.text.camelCase",
+      "origin": "converter_source_values",
+      "query": "RETURN apoc.text.camelCase('ßeta world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "CamelCase",
+        "args": [
+          "ßeta world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "ßetaWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_eszett"
+      ],
+      "note": "The fresh APOC reference returns ßetaWorld: camelCase lowercases the whole first code point, so ß stays ß instead of the derived 'sSetaWorld'.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "ßetaWorld"
+      },
+      "fresh_reference_id": "camel_eszett"
+    },
+    {
+      "id": "camel_dz",
+      "owner": "apoc.text.camelCase",
+      "origin": "converter_source_values",
+      "query": "RETURN apoc.text.camelCase('ǳungla world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "CamelCase",
+        "args": [
+          "ǳungla world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "ǳunglaWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_dz"
+      ],
+      "note": "The fresh APOC reference returns ǳunglaWorld: lowercasing Ǳ yields ǳ.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "ǳunglaWorld"
+      },
+      "fresh_reference_id": "camel_dz"
+    },
+    {
+      "id": "upper_camel_deseret",
+      "owner": "apoc.text.upperCamelCase",
+      "origin": "converter_source_values",
+      "query": "RETURN apoc.text.upperCamelCase('𐐨abc world') AS value",
+      "direct": {
+        "package": "text",
+        "function": "UpperCamelCase",
+        "args": [
+          "𐐨abc world"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      },
+      "confidence": "fresh_confirmed",
+      "flags": [
+        "test_matrix_converter_deseret"
+      ],
+      "note": "The fresh APOC reference returns 𐐀abcWorld: upperCamelCase uppercases the first code point (U+10428 -> U+10400) instead of the derived lone-surrogate no-op.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      },
+      "fresh_reference_id": "upper_camel_deseret"
+    },
+    {
+      "id": "parent_extra_clean_unicode",
+      "owner": "apoc.text.clean",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.clean('É a λ-42!') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Clean",
+        "args": [
+          "É a λ-42!"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "eaλ42"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_clean_unicode",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "É a λ-42!"
+      }
+    },
+    {
+      "id": "parent_extra_split_empty",
+      "owner": "apoc.text.split",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.split('',',') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "",
+          ","
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          ""
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_split_empty",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          ""
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_split_nomatch",
+      "owner": "apoc.text.split",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.split('abc',',') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "abc",
+          ","
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_split_nomatch",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_split_repeated_trailing",
+      "owner": "apoc.text.split",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.split('a,,b,',',') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "a,,b,",
+          ","
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "",
+          "b"
+        ]
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_split_repeated_trailing",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "a",
+          "",
+          "b",
+          ""
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_replace_groups",
+      "owner": "apoc.text.replace",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.replace('a1b2','([0-9])','$1$1') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "a1b2",
+          "([0-9])",
+          "$1$1"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "a11b22"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_replace_groups",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a1b2"
+      }
+    },
+    {
+      "id": "parent_extra_replace_empty",
+      "owner": "apoc.text.replace",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.replace('','[0-9]','X') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "",
+          "[0-9]",
+          "X"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": ""
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_replace_empty",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": ""
+      }
+    },
+    {
+      "id": "parent_extra_replace_zero_width",
+      "owner": "apoc.text.replace",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.replace('abc','','X') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Replace",
+        "args": [
+          "abc",
+          "",
+          "X"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "XaXbXcX"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_replace_zero_width",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "XaXbXcX"
+      }
+    },
+    {
+      "id": "parent_extra_urlencode_edges",
+      "owner": "apoc.text.urlencode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urlencode('a b+~/é') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urlencode",
+        "args": [
+          "a b+~/é"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "a+b%2B%7E%2F%C3%A9"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urlencode_edges",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a+b+~/é"
+      }
+    },
+    {
+      "id": "parent_extra_urlencode_empty",
+      "owner": "apoc.text.urlencode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urlencode('') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urlencode",
+        "args": [
+          ""
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": ""
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urlencode_empty",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": ""
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_plus",
+      "owner": "apoc.text.urldecode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urldecode('a+b%20c') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "a+b%20c"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "a b c"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urldecode_plus",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "a b%20c"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_supplementary",
+      "owner": "apoc.text.urldecode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urldecode('%F0%9F%98%80') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "%F0%9F%98%80"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "😀"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urldecode_supplementary",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "%F0%9F%98%80"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_bad_utf8",
+      "owner": "apoc.text.urldecode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urldecode('%C3%28') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "%C3%28"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "�("
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urldecode_bad_utf8",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "%C3%28"
+      }
+    },
+    {
+      "id": "parent_extra_index_ascii",
+      "owner": "apoc.text.indexOf",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.indexOf('abc','b') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "abc",
+          "b"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 1
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_index_ascii",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 1
+      }
+    },
+    {
+      "id": "parent_extra_index_supplementary",
+      "owner": "apoc.text.indexOf",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.indexOf('a😀b','b') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "a😀b",
+          "b"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 3
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_index_supplementary",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 5
+      }
+    },
+    {
+      "id": "parent_extra_index_empty",
+      "owner": "apoc.text.indexOf",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.indexOf('abc','') AS value",
+      "direct": {
+        "package": "text",
+        "function": "IndexOf",
+        "args": [
+          "abc",
+          ""
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": 0
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_index_empty",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": 0
+      }
+    },
+    {
+      "id": "parent_extra_base64_unicode",
+      "owner": "apoc.text.base64Encode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.base64Encode('é😀') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Base64Encode",
+        "args": [
+          "é😀"
+        ]
+      },
+      "reference": {
+        "kind": "value",
+        "value": "w6nwn5iA"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_base64_unicode",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "é😀"
+      }
+    },
+    {
+      "id": "parent_extra_split_invalid",
+      "owner": "apoc.text.split",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.split('abc','[') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Split",
+        "args": [
+          "abc",
+          "["
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_split_invalid",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_bad_escape",
+      "owner": "apoc.text.urldecode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urldecode('bad%ZZ') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "bad%ZZ"
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urldecode_bad_escape",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "bad%ZZ"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_incomplete",
+      "owner": "apoc.text.urldecode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.urldecode('x%') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Urldecode",
+        "args": [
+          "x%"
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_urldecode_incomplete",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "x%"
+      }
+    },
+    {
+      "id": "parent_extra_base64_bad",
+      "owner": "apoc.text.base64Decode",
+      "origin": "parent_fresh_boundary_matrix",
+      "query": "RETURN apoc.text.base64Decode('%%%') AS value",
+      "direct": {
+        "package": "text",
+        "function": "Base64Decode",
+        "args": [
+          "%%%"
+        ]
+      },
+      "reference": {
+        "kind": "function_error"
+      },
+      "confidence": "fresh_confirmed",
+      "fresh_reference_id": "parent_extra_base64_bad",
+      "flags": [
+        "parent_extra_fresh"
+      ],
+      "note": "Additional bounded edge confirmed by parent actual APOC5.26.30 reference; not a new function.",
+      "nornicdb_observed": {
+        "kind": "value",
+        "value": "%%%"
+      }
+    }
+  ]
+}
