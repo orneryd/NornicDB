@@ -115,3 +115,48 @@ func TestV152PortRelationshipPairReads(t *testing.T) {
 		})
 	}
 }
+
+// Section 38.19. Reuse the original degree ladder and record the public
+// statement cost with a keyed node-only control.
+func TestV152PortTypedRelationshipDegree(t *testing.T) {
+	for _, degree := range []int{1000, 16000, 64000} {
+		t.Run(fmt.Sprint(degree), func(t *testing.T) {
+			engine, err := storage.NewBadgerEngine(t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			store := storage.NewNamespacedEngine(engine, "port")
+			exec := NewStorageExecutor(store)
+			exec.cache = nil
+			v152PortRelationshipRun(t, exec, "CREATE INDEX typed_s FOR (n:S) ON (n.id)", nil)
+			v152PortRelationshipRun(t, exec, "CREATE INDEX typed_t FOR (n:T) ON (n.id)", nil)
+			v152PortRelationshipRun(t, exec, "CREATE (:S {id:'s'})-[:A]->(:T {id:0})", nil)
+			for lo := 1; lo <= degree; lo += 2000 {
+				params := map[string]any{"lo": lo, "hi": min(lo+1999, degree)}
+				v152PortRelationshipRun(t, exec, "MATCH (s:S {id:'s'}) UNWIND range($lo,$hi) AS i CREATE (s)-[:B]->(:T {id:i})", params)
+			}
+			for _, shape := range []struct {
+				name, query string
+				want        any
+			}{
+				{"unlabeled", "MATCH (n {id:$id})-[:A]->(m) RETURN m.id", int64(0)},
+				{"labeled-indexed", "MATCH (n:S {id:$id})-[:A]->(m) RETURN m.id", int64(0)},
+				{"node-only", "MATCH (n:S {id:$id}) RETURN n.id", "s"},
+			} {
+				for _, explicit := range []bool{false, true} {
+					for call := 1; call <= 6; call++ {
+						start := time.Now()
+						if explicit {
+							v152PortRelationshipRun(t, exec, "BEGIN", nil)
+						}
+						got := v152PortRelationshipRun(t, exec, shape.query, map[string]any{"id": "s"})
+						if explicit {
+							v152PortRelationshipRun(t, exec, "COMMIT", nil)
+						}
+						require.Equal(t, [][]any{{shape.want}}, got.Rows)
+						t.Logf("PORT_TYPED degree=%d shape=%s explicit=%v call=%d elapsed=%s", degree, shape.name, explicit, call, time.Since(start))
+					}
+				}
+			}
+		})
+	}
+}
