@@ -122,8 +122,8 @@ func ei4ctlCommit(t *testing.T, engine *ReplicatedEngine, leader ei4ctlNode, rou
 		return engine.BulkCreateNodes(context.Background(), nodes)
 	}
 	tx, err := leader.native.(interface {
-		BeginTransaction(context.Context) (*storage.BadgerTransaction, error)
-	}).BeginTransaction(context.Background())
+		BeginTransaction(context.Context, storage.BeginRequest) (*storage.BadgerTransaction, error)
+	}).BeginTransaction(context.Background(), storage.OrdinaryBegin)
 	require.NoError(t, err)
 	for _, node := range nodes {
 		_, err := tx.CreateNode(context.Background(), node)
