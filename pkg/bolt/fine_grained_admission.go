@@ -18,7 +18,12 @@ func (s *Server) SetFineGrainedAdmission(resolve func(context.Context, []string)
 }
 
 func (s *Session) fineGrainedPrincipal(ctx context.Context, metadata map[string]any) (*auth.FineGrainedRequest, *auth.User, error) {
+	selected, explicit := metadata["imp_user"]
+	explicit = explicit && selected != nil
 	if s.server == nil || s.server.fineGrainedAdmission == nil {
+		if explicit {
+			return nil, nil, auth.ErrFineGrainedForbidden
+		}
 		return nil, nil, nil
 	}
 	if s.authResult == nil || !s.authResult.Authenticated {
@@ -31,12 +36,11 @@ func (s *Session) fineGrainedPrincipal(ctx context.Context, metadata map[string]
 	ctx = auth.WithRequestIdentity(s.authResult.providerSession.WithContext(ctx), auth.RequestIdentity{ID: identity, Username: s.authResult.Username})
 	request, err := s.server.fineGrainedAdmission(ctx, s.authResult.Roles)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, auth.ErrFineGrainedForbidden
 	}
 	if request == nil {
 		return nil, nil, auth.ErrFineGrainedForbidden
 	}
-	selected, explicit := metadata["imp_user"]
 	if s.inTransaction {
 		pinned, hasPin := s.txMetadata["imp_user"].(string)
 		if proposed, ok := selected.(string); explicit && (!hasPin || !ok || proposed != pinned) {
@@ -54,7 +58,11 @@ func (s *Session) fineGrainedPrincipal(ctx context.Context, metadata map[string]
 	if request.Runtime == nil {
 		return nil, nil, auth.ErrFineGrainedForbidden
 	}
-	return request.Runtime.Impersonate(ctx, request, username)
+	targetRequest, target, err := request.Runtime.Impersonate(ctx, request, username)
+	if err != nil && err != auth.ErrFineGrainedImpersonationTarget {
+		return nil, nil, auth.ErrFineGrainedForbidden
+	}
+	return targetRequest, target, err
 }
 
 func (s *Session) fineGrainedAccess(request *auth.FineGrainedRequest) cypher.PrincipalAccess {
@@ -120,10 +128,7 @@ func (s *Session) resultRowContext(ctx context.Context, scope fineGrainedResultS
 var errFineGrainedRouteMetadata = errors.New("invalid Bolt ROUTE metadata")
 
 func (s *Session) fineGrainedRouteDatabase(data []byte) (string, error) {
-	if s.server == nil || s.server.fineGrainedAdmission == nil {
-		return "", nil
-	}
-	s.refreshAuthResult()
+	fineGrainedEnabled := s.server != nil && s.server.fineGrainedAdmission != nil
 	metadata := map[string]any{}
 	offset := 0
 	for field := 0; offset < len(data) && field < 3; field++ {
@@ -148,8 +153,11 @@ func (s *Session) fineGrainedRouteDatabase(data []byte) (string, error) {
 	if offset != len(data) {
 		return "", errFineGrainedRouteMetadata
 	}
+	if fineGrainedEnabled {
+		s.refreshAuthResult()
+	}
 	principal, target, err := s.fineGrainedPrincipal(s.parentContext(), metadata)
-	if err != nil {
+	if err != nil || principal == nil {
 		return "", err
 	}
 	if principal.PasswordChangeRequired {

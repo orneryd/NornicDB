@@ -33,9 +33,15 @@ type FineGrainedRequest struct {
 	Runtime                *FineGrainedRuntime
 	Fingerprint            string
 	identity               RequestIdentity
+	impersonated           bool
 	roles                  []string
 	providerSession        *FineGrainedProviderSession
 	databaseOwner          func(string) string
+}
+
+// IsImpersonated reports that the request executes as another account.
+func (r *FineGrainedRequest) IsImpersonated() bool {
+	return r != nil && r.impersonated
 }
 
 type fineGrainedRequestKey struct{}

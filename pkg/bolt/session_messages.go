@@ -148,7 +148,10 @@ func (s *Session) handleRun(data []byte) error {
 	}
 
 	principal, impersonated, fgacErr := s.fineGrainedPrincipal(parentCtx, metadata)
-	if fgacErr != nil || (s.txFineGrainedFingerprint != "" && (principal == nil || principal.Fingerprint != s.txFineGrainedFingerprint)) {
+	if fgacErr != nil {
+		return s.sendRunQueryFailure(fgacErr, query)
+	}
+	if s.txFineGrainedFingerprint != "" && (principal == nil || principal.Fingerprint != s.txFineGrainedFingerprint) {
 		return s.sendRunQueryFailure(auth.ErrFineGrainedForbidden, query)
 	}
 

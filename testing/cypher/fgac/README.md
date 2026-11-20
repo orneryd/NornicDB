@@ -47,6 +47,10 @@ labels.
 | `NORNICDB_NEO4J_REFERENCE_PASSWORD` | Reference admin password | required |
 | `NORNICDB_NEO4J_REFERENCE_DATABASE` | Reference target database | `neo4j` |
 | `NORNICDB_FGAC_CANDIDATE_URI` | Candidate Bolt URI | required |
+| `NORNICDB_FGAC_CANDIDATE_HTTP_URI` | Optional candidate HTTP origin for impersonation cases | disabled |
+| `NORNICDB_FGAC_CANDIDATE_ROUTED_URI` | Candidate routing URI using `neo4j://` or `neo4j+s://` | disabled |
+| `NORNICDB_NEO4J_REFERENCE_ROUTED_URI` | Reference routing URI using `neo4j://` or `neo4j+s://` | disabled |
+| `NORNICDB_NEO4J_REFERENCE_HTTP_URI` | Reference HTTP origin for impersonation cases when supplying a reference server | disabled |
 | `NORNICDB_FGAC_CANDIDATE_USER` | Candidate admin user | `admin` |
 | `NORNICDB_FGAC_CANDIDATE_PASSWORD` | Candidate admin password | required |
 | `NORNICDB_FGAC_CANDIDATE_DATABASE` | Candidate target database | `nornic` |
@@ -109,6 +113,9 @@ loopback port, `NEO4J_ACCEPT_LICENSE_AGREEMENT=eval`, and is removed on exit.
 | `new-node-property-is-stored` | A separate session reads the final committed property |
 | `impersonation-uses-target-role-for-read` | Bolt evaluates property visibility using the impersonated account |
 | `impersonation-uses-target-role-for-write` | Bolt applies the impersonated account's read-only role to a write |
+| `impersonation-autocommit-reuses-session` | Driver auto-commit applies the target scope on successive queries |
+| `impersonation-autocommit-default-database` | Omitting the database selects the target account's home database |
+| `impersonation-routed-read` | Driver routing and execution apply the target scope |
 
 The documented behavior is taken from the Neo4j Operations Manual:
 
@@ -142,3 +149,24 @@ sanity checks, not full repository verification.
 - The fixture uses each endpoint's default target database and scoped synthetic
   teardown. Do not point either endpoint at a database whose `FGACDoc` or
   `FGACOther` data must be preserved.
+
+### Impersonation comparison
+
+To include driver routing, configure both routing URIs and ensure both
+servers advertise addresses reachable by the client. The fixture sets the
+synthetic reader's home database to the configured target database. For a
+meaningful omitted-database check, supply a target database that differs
+from the authenticated actor's home database.
+
+To include HTTP Query API cases, supply the candidate HTTP origin.
+With a supplied Enterprise reference, set its HTTP origin as well.
+The managed reference container publishes HTTP when the candidate origin
+is set. The protocol checks compare field presence, result rows and Neo4j
+error codes. Transaction IDs, bookmark token contents and elapsed times
+vary between servers.
+
+Build or start the candidate with `NORNICDB_QUERY_API_COMPATIBILITY=5.26`
+for the LTS reference and `NORNICDB_QUERY_API_COMPATIBILITY=2026.10` for
+the current reference. The HTTP matrix compares status, Neo4j code and
+response fields with the corresponding reference. It also checks that a
+refused request publishes no data, transaction or bookmark.

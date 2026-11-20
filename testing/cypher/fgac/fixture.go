@@ -24,6 +24,25 @@ const (
 	passwordPlaceholder = "${password}"
 )
 
+// Session shapes a case may request. The zero value of SessionSpec keeps the
+// original coverage: one explicit managed transaction on the endpoint's
+// configured target database over the endpoint's direct Bolt URI.
+const (
+	// SessionTransactionExplicit runs a case inside one explicit transaction.
+	SessionTransactionExplicit = "explicit"
+	// SessionTransactionAutocommit runs each statement as an auto-commit
+	// statement on one reused session.
+	SessionTransactionAutocommit = "autocommit"
+	// SessionDatabaseExplicit names the case's database on the session.
+	SessionDatabaseExplicit = "explicit"
+	// SessionDatabaseOmitted leaves database selection to the endpoint.
+	SessionDatabaseOmitted = "omitted"
+	// SessionRoutingDirect connects with the endpoint's direct Bolt URI.
+	SessionRoutingDirect = "direct"
+	// SessionRoutingRouted connects with the endpoint's routing URI.
+	SessionRoutingRouted = "routed"
+)
+
 // RequiredCoverage lists the documented flows every fixture must exercise.
 var RequiredCoverage = []string{
 	"property-rule",
@@ -118,8 +137,59 @@ type Case struct {
 	Database    string      `json:"database"`
 	Principal   string      `json:"principal"`
 	Impersonate string      `json:"impersonate,omitempty"`
+	Session     SessionSpec `json:"session,omitempty"`
 	Statements  []string    `json:"statements"`
 	Expect      Expectation `json:"expect"`
+}
+
+// SessionSpec selects how the official Go driver sends a case to the endpoint.
+// The zero value is one explicit managed transaction that names the case's
+// database and connects over the direct Bolt URI.
+type SessionSpec struct {
+	Transaction string `json:"transaction,omitempty"`
+	Database    string `json:"database,omitempty"`
+	Routing     string `json:"routing,omitempty"`
+}
+
+// Autocommit reports whether the case runs each statement as an auto-commit
+// statement on one session instead of inside an explicit transaction.
+func (s SessionSpec) Autocommit() bool {
+	return s.Transaction == SessionTransactionAutocommit
+}
+
+// OmitDatabase reports whether the session leaves database selection to the
+// endpoint instead of naming the case's database.
+func (s SessionSpec) OmitDatabase() bool {
+	return s.Database == SessionDatabaseOmitted
+}
+
+// Routed reports whether the case connects through the endpoint's routing URI.
+func (s SessionSpec) Routed() bool {
+	return s.Routing == SessionRoutingRouted
+}
+
+// Validate reports an unsupported session shape.
+func (s SessionSpec) Validate() error {
+	var problems []error
+	switch s.Transaction {
+	case "", SessionTransactionExplicit, SessionTransactionAutocommit:
+	default:
+		problems = append(problems, fmt.Errorf("session transaction %q must be %q or %q",
+			s.Transaction, SessionTransactionExplicit, SessionTransactionAutocommit))
+	}
+	switch s.Database {
+	case "", SessionDatabaseExplicit, SessionDatabaseOmitted:
+	default:
+		problems = append(problems, fmt.Errorf("session database %q must be %q or %q",
+			s.Database, SessionDatabaseExplicit, SessionDatabaseOmitted))
+	}
+	switch s.Routing {
+	case "", SessionRoutingDirect, SessionRoutingRouted:
+	default:
+		problems = append(problems, fmt.Errorf("session routing %q must be %q or %q",
+			s.Routing, SessionRoutingDirect, SessionRoutingRouted))
+	}
+	return errors.Join(problems...)
 }
 
 // Expectation is the documented outcome a reference and candidate must both
@@ -288,6 +358,12 @@ func (f *Fixture) Validate() error {
 			if !exists || principal.Admin {
 				problems = append(problems, fmt.Errorf("%s: impersonation requires a synthetic user principal", location))
 			}
+		}
+		if err := testCase.Session.Validate(); err != nil {
+			problems = append(problems, fmt.Errorf("%s: %w", location, err))
+		}
+		if testCase.Session.OmitDatabase() && testCase.Database != DatabaseTarget {
+			problems = append(problems, fmt.Errorf("%s: an omitted database selection requires the %q database", location, DatabaseTarget))
 		}
 		if len(testCase.Statements) == 0 {
 			problems = append(problems, fmt.Errorf("%s: statements are empty", location))

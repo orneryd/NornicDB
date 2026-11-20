@@ -671,12 +671,14 @@ type TransactionInfo struct {
 
 // QueryResult is a single query result.
 type QueryResult struct {
-	QueryType string         `json:"query_type,omitempty"`
-	Columns   []string       `json:"columns"`
-	Data      []ResultRow    `json:"data"`
-	Stats     *QueryStats    `json:"stats,omitempty"`
-	Plan      map[string]any `json:"plan,omitempty"`    // EXPLAIN plan (Neo4j-shaped)
-	Profile   map[string]any `json:"profile,omitempty"` // PROFILE plan with runtime counters
+	QueryType       string         `json:"query_type,omitempty"`
+	Columns         []string       `json:"columns"`
+	Data            []ResultRow    `json:"data"`
+	Stats           *QueryStats    `json:"stats,omitempty"`
+	Plan            map[string]any `json:"plan,omitempty"`    // EXPLAIN plan (Neo4j-shaped)
+	Profile         map[string]any `json:"profile,omitempty"` // PROFILE plan with runtime counters
+	availableMillis int64
+	consumedMillis  int64
 }
 
 // ResultRow is a row of results with metadata.
@@ -798,6 +800,8 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 type QueryError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+
+	queryAPIStatus int
 }
 
 // ServerNotification is a warning/info from the server.
@@ -1502,13 +1506,17 @@ func (s *Server) runRequestStatements(
 
 		queryStart := time.Now()
 		result, executor, err := run(ctx, effectiveDB, queryStatement, stmt.Parameters)
-		s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
+		queryReady := time.Now()
+		s.logSlowQuery(stmt.Statement, stmt.Parameters, queryReady.Sub(queryStart), err)
 		if err != nil {
 			var own *requestStatementError
 			if errors.As(err, &own) {
 				return &own.QueryError
 			}
 			failure := statementError(err, localize)
+			if errors.Is(err, auth.ErrFineGrainedImpersonatedAdministration) {
+				failure.queryAPIStatus = http.StatusBadRequest
+			}
 			// Authorization failures never publish a statement result, even when
 			// the executor supplies column metadata alongside the denial. Keep
 			// runtime partial results for non-security statement failures below.
@@ -1531,9 +1539,16 @@ func (s *Server) runRequestStatements(
 			s.grantAccessToNewDatabase(ctx, result.Administration.CreatedDatabase, claims)
 		}
 
+		resultStart := len(response.Results)
 		if projectionErr := s.appendStatementResult(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents); projectionErr != nil {
 			failure := statementError(projectionErr, localize)
 			return &failure
+		}
+		if current, _ := ctx.Value(queryAPIResultContextKey{}).(bool); current && len(response.Results) > resultStart {
+			summary := &response.Results[resultStart]
+			summary.availableMillis = queryReady.Sub(queryStart).Milliseconds()
+			summary.consumedMillis = time.Since(queryReady).Milliseconds()
+			summary.QueryType = queryAPIStatementType(ctx, queryStatement, result)
 		}
 		return nil
 	}

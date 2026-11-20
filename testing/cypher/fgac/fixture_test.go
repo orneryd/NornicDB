@@ -33,8 +33,8 @@ func TestAuthorizationFixtureLoadsAndCoversDocumentedFlows(t *testing.T) {
 			t.Errorf("fixture does not cover %q", required)
 		}
 	}
-	if len(fixture.Cases) != 16 {
-		t.Errorf("fixture has %d cases, want 16", len(fixture.Cases))
+	if len(fixture.Cases) != 22 {
+		t.Errorf("fixture has %d cases, want 22", len(fixture.Cases))
 	}
 	for _, testCase := range fixture.Cases {
 		if _, exists := fixture.Principals[testCase.Principal]; !exists {
@@ -49,18 +49,56 @@ func TestAuthorizationFixtureExtendsOnlyThePinnedCurrentRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	lts, err := base.ForReference("5.26.30")
-	if err != nil || len(lts.Cases) != 16 {
+	if err != nil || len(lts.Cases) != 22 {
 		t.Fatalf("LTS fixture selected the wrong cases: %v", err)
 	}
 	current, err := base.ForReference("2026.10.2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(current.Cases) != 18 || current.Principals["ruled"].User != "fgac_ruled" {
+	if len(current.Cases) != 24 || current.Principals["ruled"].User != "fgac_ruled" {
 		t.Fatal("current fixture did not include the authorization-rule cases")
 	}
 	if _, exists := base.Principals["ruled"]; exists {
 		t.Fatal("reference selection changed the common fixture")
+	}
+}
+
+func TestAuthorizationFixtureCoversImpersonatedDriverSessions(t *testing.T) {
+	fixture, err := LoadFixture(fixturePath)
+	if err != nil {
+		t.Fatalf("load fixture: %v", err)
+	}
+	observed := make(map[string]Case)
+	for _, testCase := range fixture.Cases {
+		if testCase.Impersonate != "reader" {
+			continue
+		}
+		switch {
+		case testCase.Session.Routed():
+			observed["routed"] = testCase
+		case testCase.Session.OmitDatabase():
+			observed["omitted-database"] = testCase
+		case testCase.Session.Autocommit():
+			observed["autocommit"] = testCase
+		default:
+			observed["explicit"] = testCase
+		}
+	}
+	for _, shape := range []string{"explicit", "autocommit", "omitted-database", "routed"} {
+		if _, exists := observed[shape]; !exists {
+			t.Errorf("fixture does not exercise the %q impersonated session shape", shape)
+		}
+	}
+	reused, ok := observed["autocommit"]
+	if !ok {
+		return
+	}
+	if reused.Expect.Kind != "allow" {
+		t.Errorf("auto-commit case %q must assert a successful authorized outcome, got %q", reused.ID, reused.Expect.Kind)
+	}
+	if len(reused.Statements) < 2 {
+		t.Errorf("auto-commit case %q has %d statements; session reuse needs at least two", reused.ID, len(reused.Statements))
 	}
 }
 
@@ -181,6 +219,35 @@ func TestFixtureValidation(t *testing.T) {
 				fixture.Cases[0].Expect = Expectation{Kind: "deny", Code: "Forbidden"}
 			},
 			want: "not a Neo4j client error",
+		},
+		{
+			name: "unknown session transaction",
+			mutate: func(fixture *Fixture) {
+				fixture.Cases[0].Session.Transaction = "manual"
+			},
+			want: "session transaction",
+		},
+		{
+			name: "unknown session database selection",
+			mutate: func(fixture *Fixture) {
+				fixture.Cases[0].Session.Database = "home"
+			},
+			want: "session database",
+		},
+		{
+			name: "unknown session routing",
+			mutate: func(fixture *Fixture) {
+				fixture.Cases[0].Session.Routing = "proxy"
+			},
+			want: "session routing",
+		},
+		{
+			name: "omitted system database selection",
+			mutate: func(fixture *Fixture) {
+				fixture.Cases[0].Database = DatabaseSystem
+				fixture.Cases[0].Session.Database = SessionDatabaseOmitted
+			},
+			want: "omitted database selection",
 		},
 	}
 	for _, test := range tests {

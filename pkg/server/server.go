@@ -646,14 +646,15 @@ func DefaultConfig() *Config {
 //	defer cancel()
 //	server.Stop(ctx)
 type Server struct {
-	shutdown        serverShutdown
-	pendingListener net.Listener // owned until transferred to http.Server.Serve
-	listenNative    func(string, string) (net.Listener, error)
-	config          *Config
-	db              *nornicdb.DB
-	dbManager       *multidb.DatabaseManager // Manages multiple databases
-	auth            *auth.Authenticator
-	audit           *audit.Logger
+	shutdown               serverShutdown
+	pendingListener        net.Listener // owned until transferred to http.Server.Serve
+	listenNative           func(string, string) (net.Listener, error)
+	config                 *Config
+	queryAPICurrentSummary bool
+	db                     *nornicdb.DB
+	dbManager              *multidb.DatabaseManager // Manages multiple databases
+	auth                   *auth.Authenticator
+	audit                  *audit.Logger
 
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
@@ -1127,6 +1128,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	if globalConfig == nil {
 		globalConfig = nornicConfig.LoadFromEnv()
 	}
+	s.queryAPICurrentSummary = globalConfig.Server.QueryAPICompatibility == nornicConfig.QueryAPICompatibilityCurrent
 
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server

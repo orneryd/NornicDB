@@ -159,6 +159,25 @@ Only the configured fields enter the session. Configure this list before users
 sign in to evaluate rules against those fields. The linked account supplies
 local roles, tags, and account state.
 
+## Impersonation over Bolt and HTTP
+
+For Bolt, use the official driver's impersonated-user session option. For
+the HTTP Query API, send `impersonatedUser` on auto-commit or when opening
+a transaction. The authenticated account must hold `IMPERSONATE` for the
+selected account. Query execution then uses the selected account's graph
+permissions, and the transaction remains owned by the authenticated account.
+Requests to continue the transaction use that same actor's authentication.
+Audit events identify both accounts.
+
+NornicDB defaults to the Neo4j 5.26 Query API response contract. Set
+`server.query_api_compatibility` to `"2026.10"` in YAML, or set
+`NORNICDB_QUERY_API_COMPATIBILITY=2026.10` to use the current response
+contract. On an impersonation denial, the 5.26 profile returns HTTP 400
+and the 2026.10 profile returns HTTP 401 for `Security.Forbidden`. The
+2026.10 profile also returns query type and elapsed result timings for
+successful statements. The profile affects response formatting. Both
+profiles use the same authorization checks.
+
 ## Data paths and compatibility
 
 HTTP, Bolt, GraphQL, MCP, and Qdrant operations bind to the principal's active

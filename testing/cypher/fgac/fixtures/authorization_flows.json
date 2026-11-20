@@ -42,6 +42,7 @@
       "CREATE USER fgac_writer IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
       "GRANT ROLE fgac_access TO fgac_access",
       "GRANT ROLE fgac_reader TO fgac_reader",
+      "ALTER USER fgac_reader SET HOME DATABASE ${database}",
       "GRANT ROLE fgac_reader TO fgac_denied",
       "GRANT ROLE fgac_denier TO fgac_denied",
       "GRANT ROLE fgac_noaccess TO fgac_noaccess",
@@ -378,6 +379,130 @@
         "kind": "deny",
         "code": "Neo.ClientError.Security.Forbidden"
       }
+    },
+    {
+      "id": "impersonation-autocommit-reuses-session",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated auto-commit session returns the target account's visible documents on two successive statements of one reused session.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id",
+        "MATCH (d:FGACDoc) WHERE d.id = 'doc-a' RETURN d.id, d.published"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-autocommit-restricted-session",
+      "covers": ["cross-role-deny"],
+      "description": "A sequential session using a different executing account sees its own denials.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "denied",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": []}
+    },
+    {
+      "id": "ordinary-session-after-impersonation",
+      "covers": ["traverse-property-read"],
+      "description": "A subsequent ordinary session uses the authenticated actor's own graph scope.",
+      "database": "target",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": [["doc-a", true], ["doc-b", false]]}
+    },
+    {
+      "id": "impersonation-autocommit-default-database",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated auto-commit session that omits database selection reads the target account's documents from their assigned home database.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit",
+        "database": "omitted"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-routed-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated read through a routed session obtains a routing table from the endpoint and returns the target account's documents.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit",
+        "routing": "routed"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-routed-home-database",
+      "covers": ["traverse-property-read"],
+      "description": "A routed session with no explicit database reads from the executing account's home database.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {"transaction": "autocommit", "database": "omitted", "routing": "routed"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", null]]}
     },
     {
       "id": "external-provider-inspection",

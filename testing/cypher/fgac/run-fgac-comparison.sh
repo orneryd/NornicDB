@@ -22,10 +22,14 @@ usage: run-fgac-comparison.sh
 Environment:
   FGAC_EE_EVALUATION=1                 Required explicit Enterprise evaluation opt-in.
   NORNICDB_FGAC_CANDIDATE_URI          Candidate Bolt URI.
+  NORNICDB_FGAC_CANDIDATE_HTTP_URI     Optional candidate HTTP origin for Query API cases.
+  NORNICDB_FGAC_CANDIDATE_ROUTED_URI   Optional candidate routing URI.
   NORNICDB_FGAC_CANDIDATE_USER         Candidate admin user (default: admin).
   NORNICDB_FGAC_CANDIDATE_PASSWORD     Candidate admin password (required).
   NORNICDB_FGAC_CANDIDATE_DATABASE     Candidate target database (default: nornic).
   NORNICDB_NEO4J_REFERENCE_URI         Reference Bolt URI when not starting a container.
+  NORNICDB_NEO4J_REFERENCE_HTTP_URI    Reference HTTP origin for Query API cases when supplied externally.
+  NORNICDB_NEO4J_REFERENCE_ROUTED_URI  Optional routing URI for a supplied reference server.
   NORNICDB_NEO4J_REFERENCE_USER        Reference admin user (default: neo4j).
   NORNICDB_NEO4J_REFERENCE_PASSWORD    Reference admin password (required).
   NORNICDB_NEO4J_REFERENCE_DATABASE    Reference target database (default: neo4j).
@@ -113,18 +117,27 @@ if [[ "${FGAC_START_REFERENCE:-0}" == "1" ]]; then
     docker rm --force "${container}" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT INT TERM
+  published_ports=(--publish 127.0.0.1::7687)
+  if [[ -n "${NORNICDB_FGAC_CANDIDATE_HTTP_URI:-}" ]]; then
+    published_ports+=(--publish 127.0.0.1::7474)
+  fi
 
   docker run --detach --rm \
     --name "${container}" \
     --env NEO4J_ACCEPT_LICENSE_AGREEMENT=eval \
     --env NEO4J_AUTH="neo4j/${reference_password}" \
-    --publish 127.0.0.1::7687 \
+    "${published_ports[@]}" \
     "${reference_image}" >/dev/null
 
   published_address="$(docker port "${container}" 7687/tcp | head -n 1)"
   [[ -n "${published_address}" ]] || die "reference container did not publish Bolt port 7687"
 
   export NORNICDB_NEO4J_REFERENCE_URI="bolt://${published_address}"
+  if [[ -n "${NORNICDB_FGAC_CANDIDATE_HTTP_URI:-}" ]]; then
+    reference_http_address="$(docker port "${container}" 7474/tcp | head -n 1)"
+    [[ -n "${reference_http_address}" ]] || die "reference container did not publish HTTP port 7474"
+    export NORNICDB_NEO4J_REFERENCE_HTTP_URI="http://${reference_http_address}"
+  fi
   export NORNICDB_NEO4J_REFERENCE_USER="neo4j"
   export NORNICDB_NEO4J_REFERENCE_PASSWORD="${reference_password}"
   export NORNICDB_NEO4J_REFERENCE_DATABASE="${NORNICDB_NEO4J_REFERENCE_DATABASE:-neo4j}"

@@ -38,13 +38,15 @@ type queryAPITransactionInfo struct {
 }
 
 type queryAPIResponse struct {
-	Transaction   *queryAPITransactionInfo `json:"transaction,omitempty"`
-	Data          *queryAPIResult          `json:"data,omitempty"`
-	Errors        []QueryError             `json:"errors,omitempty"`
-	Bookmarks     []string                 `json:"bookmarks,omitempty"`
-	Notifications []ServerNotification     `json:"notifications,omitempty"`
-	Counters      *QueryStats              `json:"counters,omitempty"`
-	QueryType     string                   `json:"queryType,omitempty"`
+	Transaction          *queryAPITransactionInfo `json:"transaction,omitempty"`
+	Data                 *queryAPIResult          `json:"data,omitempty"`
+	Errors               []QueryError             `json:"errors,omitempty"`
+	Bookmarks            []string                 `json:"bookmarks,omitempty"`
+	Notifications        []ServerNotification     `json:"notifications,omitempty"`
+	Counters             *QueryStats              `json:"counters,omitempty"`
+	QueryType            string                   `json:"queryType,omitempty"`
+	ResultAvailableAfter *int64                   `json:"resultAvailableAfter,omitempty"`
+	ResultConsumedAfter  *int64                   `json:"resultConsumedAfter,omitempty"`
 }
 
 func (s *Server) handleQueryAPI(w http.ResponseWriter, r *http.Request) {
@@ -79,9 +81,7 @@ func (s *Server) handleQueryAPI(w http.ResponseWriter, r *http.Request) {
 			if actor := getClaims(r); actor != nil {
 				s.logAudit(r, actor.Sub, "impersonation", false, "target="+*request.ImpersonatedUser)
 			}
-			httpresponse.WritePropertyJSON(w, http.StatusAccepted, queryAPIResponse{
-				Errors: []QueryError{{Code: "Neo.ClientError.Security.Forbidden", Message: err.Error()}},
-			})
+			s.writeQueryAPIImpersonationError(ctx, w, err)
 			return
 		}
 		s.logAudit(r, getClaims(r).Sub, "impersonation", true, "target="+claims.Username+" target_id="+claims.Sub)
@@ -89,7 +89,7 @@ func (s *Server) handleQueryAPI(w http.ResponseWriter, r *http.Request) {
 		// adapter as though it were the selected account's credential.
 		authToken = ""
 	}
-	ctx = context.WithValue(ctx, queryAPIResultContextKey{}, true)
+	ctx = context.WithValue(ctx, queryAPIResultContextKey{}, s.queryAPICurrentSummary)
 	ctx = cypher.WithTransactionMetadata(ctx, request.TransactionMetadata)
 	ctx = s.withRequestIdentity(ctx, r, claims)
 	transaction := TransactionResponse{}
@@ -103,7 +103,12 @@ func (s *Server) handleQueryAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeQueryAPIResponse(w http.ResponseWriter, transaction TransactionResponse, explicit *queryAPITransactionInfo) {
 	response := queryAPIResponse{Errors: transaction.Errors, Notifications: transaction.Notifications, Transaction: explicit}
-	if len(transaction.Errors) == 0 {
+	status := http.StatusAccepted
+	if len(transaction.Errors) != 0 {
+		if code := transaction.Errors[0].queryAPIStatus; code != 0 {
+			status = code
+		}
+	} else {
 		if explicit == nil {
 			response.Bookmarks = []string{s.generateBookmark()}
 		}
@@ -113,10 +118,46 @@ func (s *Server) writeQueryAPIResponse(w http.ResponseWriter, transaction Transa
 			for i, row := range result.Data {
 				response.Data.Values[i] = row.Row
 			}
-			response.Counters, response.QueryType = result.Stats, result.QueryType
+			response.Counters = result.Stats
+			if s.queryAPICurrentSummary {
+				response.QueryType = result.QueryType
+				response.ResultAvailableAfter = &result.availableMillis
+				response.ResultConsumedAfter = &result.consumedMillis
+			}
 		}
 	}
-	httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
+	if status == http.StatusBadRequest && s.queryAPICurrentSummary && response.Errors[0].Code == "Neo.ClientError.Security.Forbidden" {
+		status = http.StatusUnauthorized
+	}
+	httpresponse.WritePropertyJSON(w, status, response)
+}
+
+func queryAPIStatementType(ctx context.Context, statement string, result *cypher.ExecuteResult) string {
+	if cypher.StatementDatabase("", statement) == "system" {
+		return "s"
+	}
+	if result != nil {
+		if mode, ok := cypher.ResolvedStatementQueryType(result.Metadata); ok {
+			return mode
+		}
+	}
+	permissions := cypher.QueryPermissionRequirements(ctx, statement, cypher.AcceptedSource)
+	switch {
+	case permissions.Schema:
+		return "s"
+	case permissions.Read && permissions.Write:
+		return "rw"
+	case permissions.Write:
+		return "w"
+	default:
+		return "r"
+	}
+}
+
+func (s *Server) writeQueryAPIImpersonationError(ctx context.Context, w http.ResponseWriter, err error) {
+	failure := s.transactionResponseError(ctx, err)
+	failure.queryAPIStatus = http.StatusBadRequest
+	s.writeQueryAPIResponse(w, TransactionResponse{Errors: []QueryError{failure}}, nil)
 }
 
 func (s *Server) queryAPIImpersonatedContext(ctx context.Context, claims *auth.JWTClaims, username string) (context.Context, *auth.JWTClaims, error) {
@@ -126,6 +167,9 @@ func (s *Server) queryAPIImpersonatedContext(ctx context.Context, claims *auth.J
 	}
 	request, target, err := actor.Runtime.Impersonate(ctx, actor, username)
 	if err != nil {
+		if err == auth.ErrFineGrainedImpersonationTarget {
+			return ctx, nil, err
+		}
 		return ctx, nil, auth.ErrFineGrainedForbidden
 	}
 	roles := make([]string, len(target.Roles))
@@ -183,7 +227,10 @@ func (s *Server) handleQueryAPITransaction(w http.ResponseWriter, r *http.Reques
 			var err error
 			ctx, claims, err = s.queryAPIImpersonatedContext(ctx, actor, *request.ImpersonatedUser)
 			if err != nil {
-				s.writeQueryAPIResponse(w, TransactionResponse{Errors: []QueryError{forbidden}}, nil)
+				if actor != nil {
+					s.logAudit(r, actor.Sub, "impersonation", false, "target="+*request.ImpersonatedUser)
+				}
+				s.writeQueryAPIImpersonationError(ctx, w, err)
 				return
 			}
 			binding.Username, binding.Principal = claims.Username, claims.Sub
@@ -267,7 +314,7 @@ func (s *Server) handleQueryAPITransaction(w http.ResponseWriter, r *http.Reques
 	if binding.ReadOnly {
 		ctx = cypher.WithReadOnlyStatements(ctx)
 	}
-	ctx = context.WithValue(ctx, queryAPIResultContextKey{}, true)
+	ctx = context.WithValue(ctx, queryAPIResultContextKey{}, s.queryAPICurrentSummary)
 	if strings.TrimSpace(request.Statement) != "" && s.runRequestStatements(ctx, authToken, claims, database, []StatementRequest{{
 		Statement: request.Statement, Parameters: request.Parameters, IncludeStats: request.IncludeCounters,
 	}}, s.sessionStatementRunner(lease), localize, &response) {

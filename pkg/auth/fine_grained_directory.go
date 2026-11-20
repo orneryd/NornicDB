@@ -403,8 +403,8 @@ func (runtime *FineGrainedRuntime) Impersonate(ctx context.Context, actor *FineG
 		return nil, nil, err
 	}
 	user := runtime.activeNativeUser(username)
-	if user == nil || user.PasswordChangeRequired {
-		return nil, nil, ErrFineGrainedForbidden
+	if user == nil {
+		return nil, nil, ErrFineGrainedImpersonationTarget
 	}
 	roles := make([]string, len(user.Roles))
 	for i, role := range user.Roles {
@@ -413,5 +413,12 @@ func (runtime *FineGrainedRuntime) Impersonate(ctx context.Context, actor *FineG
 	ctx = context.WithValue(ctx, fineGrainedProviderSessionKey{}, (*FineGrainedProviderSession)(nil))
 	ctx = WithRequestIdentity(ctx, RequestIdentity{ID: "sub:" + user.ID, Username: user.Username})
 	request, err := runtime.Admit(ctx, roles)
-	return request, user, err
+	if err != nil {
+		return nil, nil, err
+	}
+	// Credential expiry applies to the actor's login. The selected account
+	// supplies authorization and has no credential exchange in this request.
+	request.PasswordChangeRequired = false
+	request.impersonated = actor.identity.Username != user.Username
+	return request, user, nil
 }

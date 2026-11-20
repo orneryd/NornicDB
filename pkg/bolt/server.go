@@ -2090,7 +2090,7 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 
 		principal, impersonated, fgacErr := s.fineGrainedPrincipal(s.parentContext(), metadata)
 		if fgacErr != nil {
-			err = s.sendTransactionControlError(auth.ErrFineGrainedForbidden)
+			err = s.sendTransactionControlError(fgacErr)
 			break
 		}
 

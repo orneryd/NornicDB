@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +31,13 @@ func TestFGACComparison(t *testing.T) {
 	}
 	if _, err := pins.Resolve(config.ReferenceVersion); err != nil {
 		t.Fatalf("reference pins: %v", err)
+	}
+
+	// Routed cases need an operator-supplied routing URI for both endpoints;
+	// without one the driver cannot ask the endpoint for a routing table.
+	routedGap := routedCoverageGap(config)
+	if routedGap != "" {
+		t.Logf("routed session cases are not evaluated: %s", routedGap)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -93,9 +101,18 @@ func TestFGACComparison(t *testing.T) {
 		t.Fatalf("candidate setup: %v", err)
 	}
 
+	t.Run("http-impersonation", func(t *testing.T) {
+		compareHTTPImpersonation(t, ctx, reference, candidate)
+	})
+
 	for _, testCase := range fixture.Cases {
 		testCase := testCase
 		t.Run(testCase.ID, func(t *testing.T) {
+			if testCase.Session.Routed() {
+				if routedGap != "" {
+					t.Skipf("routed session case: %s", routedGap)
+				}
+			}
 			caseCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
 
@@ -121,6 +138,22 @@ func TestFGACComparison(t *testing.T) {
 			}
 		})
 	}
+}
+
+// routedCoverageGap reports why routed cases cannot run, or the empty string
+// when both endpoints supply a routing URI.
+func routedCoverageGap(config ComparisonConfig) string {
+	var missing []string
+	if config.Reference.RoutedURI == "" {
+		missing = append(missing, config.Reference.Name)
+	}
+	if config.Candidate.RoutedURI == "" {
+		missing = append(missing, config.Candidate.Name)
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("no routed Bolt URI is configured for %s", strings.Join(missing, " and "))
 }
 
 func describeOutcome(outcome Outcome) string {

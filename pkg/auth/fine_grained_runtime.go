@@ -280,6 +280,34 @@ func (*FineGrainedCredentialsExpired) BoltErrorCode() string {
 	return "Neo.ClientError.Security.CredentialsExpired"
 }
 
+// ErrFineGrainedImpersonationTarget reports that an authorized actor selected
+// an account that cannot be impersonated. It carries no directory details.
+var ErrFineGrainedImpersonationTarget = &fineGrainedImpersonationTargetError{}
+
+type fineGrainedImpersonationTargetError struct{}
+
+func (*fineGrainedImpersonationTargetError) Error() string {
+	return "the selected account cannot be impersonated"
+}
+
+func (*fineGrainedImpersonationTargetError) BoltErrorCode() string {
+	return "Neo.ClientError.Statement.ArgumentError"
+}
+
+// ErrFineGrainedImpersonatedAdministration rejects an administration update
+// made while executing as a different account.
+var ErrFineGrainedImpersonatedAdministration = &fineGrainedImpersonatedAdministrationError{}
+
+type fineGrainedImpersonatedAdministrationError struct{}
+
+func (*fineGrainedImpersonatedAdministrationError) Error() string {
+	return "administration updates are forbidden while impersonating another account"
+}
+
+func (*fineGrainedImpersonatedAdministrationError) BoltErrorCode() string {
+	return "Neo.ClientError.Security.Forbidden"
+}
+
 // FineGrainedPermissionError maps operation denials to the normal transport
 // status without including hidden data or the entire policy in the error.
 type FineGrainedPermissionError struct{}

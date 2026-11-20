@@ -13,10 +13,12 @@ var comparisonEnvironment = []string{
 	"NORNICDB_FGAC_REFERENCE_VERSION",
 	"NORNICDB_FGAC_SYNTHETIC_PASSWORD",
 	"NORNICDB_NEO4J_REFERENCE_URI",
+	"NORNICDB_NEO4J_REFERENCE_ROUTED_URI",
 	"NORNICDB_NEO4J_REFERENCE_USER",
 	"NORNICDB_NEO4J_REFERENCE_PASSWORD",
 	"NORNICDB_NEO4J_REFERENCE_DATABASE",
 	"NORNICDB_FGAC_CANDIDATE_URI",
+	"NORNICDB_FGAC_CANDIDATE_ROUTED_URI",
 	"NORNICDB_FGAC_CANDIDATE_USER",
 	"NORNICDB_FGAC_CANDIDATE_PASSWORD",
 	"NORNICDB_FGAC_CANDIDATE_DATABASE",
@@ -86,6 +88,12 @@ func TestComparisonConfigDefaultsAndOverrides(t *testing.T) {
 	if config.FixturePath != "fixtures/authorization_flows.json" || config.ReferencesPath != "references.json" {
 		t.Errorf("paths = %q/%q", config.FixturePath, config.ReferencesPath)
 	}
+	if config.Reference.RoutedURI != "" || config.Candidate.RoutedURI != "" {
+		t.Errorf("routed URIs = %q/%q, want both empty", config.Reference.RoutedURI, config.Candidate.RoutedURI)
+	}
+	if gap := routedCoverageGap(config); gap == "" {
+		t.Error("routedCoverageGap reported routed coverage without a routed URI")
+	}
 }
 
 func TestComparisonConfigRejectsUnsafeSyntheticPassword(t *testing.T) {
@@ -135,5 +143,43 @@ func TestComparisonConfigAcceptsTLSBoltEndpoint(t *testing.T) {
 	t.Setenv("NORNICDB_FGAC_CANDIDATE_URI", "bolt+s://127.0.0.1:17687")
 	if _, err := ComparisonConfigFromEnv(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestComparisonConfigAcceptsRoutedEndpoints(t *testing.T) {
+	clearComparisonEnvironment(t)
+	completeComparisonEnvironment(t)
+	t.Setenv("NORNICDB_NEO4J_REFERENCE_ROUTED_URI", "neo4j://127.0.0.1:7687")
+	t.Setenv("NORNICDB_FGAC_CANDIDATE_ROUTED_URI", "neo4j+s://127.0.0.1:17687")
+	config, err := ComparisonConfigFromEnv()
+	if err != nil {
+		t.Fatalf("ComparisonConfigFromEnv: %v", err)
+	}
+	if config.Reference.RoutedURI != "neo4j://127.0.0.1:7687" || config.Candidate.RoutedURI != "neo4j+s://127.0.0.1:17687" {
+		t.Errorf("routed URIs = %q/%q", config.Reference.RoutedURI, config.Candidate.RoutedURI)
+	}
+	if gap := routedCoverageGap(config); gap != "" {
+		t.Errorf("routedCoverageGap = %q, want routed coverage", gap)
+	}
+}
+
+func TestComparisonConfigRequiresRoutedURIForBothEndpoints(t *testing.T) {
+	clearComparisonEnvironment(t)
+	completeComparisonEnvironment(t)
+	t.Setenv("NORNICDB_FGAC_CANDIDATE_ROUTED_URI", "neo4j://127.0.0.1:17687")
+	_, err := ComparisonConfigFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "routed Bolt URI for both endpoints") {
+		t.Fatalf("ComparisonConfigFromEnv error = %v, want a both-endpoints routed requirement", err)
+	}
+}
+
+func TestComparisonConfigRejectsDirectRoutedURI(t *testing.T) {
+	clearComparisonEnvironment(t)
+	completeComparisonEnvironment(t)
+	t.Setenv("NORNICDB_NEO4J_REFERENCE_ROUTED_URI", "bolt://127.0.0.1:7687")
+	t.Setenv("NORNICDB_FGAC_CANDIDATE_ROUTED_URI", "bolt://127.0.0.1:17687")
+	_, err := ComparisonConfigFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "routed Bolt URI must use neo4j, neo4j+s") {
+		t.Fatalf("ComparisonConfigFromEnv error = %v, want a routing-scheme rejection", err)
 	}
 }
