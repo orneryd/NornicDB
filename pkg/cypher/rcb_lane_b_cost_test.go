@@ -77,6 +77,10 @@ func TestRCBChainedMatchCostSteps(t *testing.T) {
 		{"join-scalars-order-collect", head + "WITH u.id AS uid, v.id AS vid, f.uploaded_at AS at, f.id AS fid, f.batch_id AS fb ORDER BY at, fid WITH uid, vid, collect(fb)[0] AS first_batch_id RETURN count(*) AS n"},
 		{"control", nor118DedupedControl},
 		{"status", nor118Status},
+		// Bypass of the per-row subscript validation (row_subscript_validation.go:58):
+		// the same first element without a trailing subscript.
+		{"status-head-collect", strings.Replace(nor118Status, "collect(f.batch_id)[0]", "head(collect(f.batch_id))", 1)},
+		{"join-head-collect-no-order", head + "WITH u, v, head(collect(f.batch_id)) AS first_batch_id RETURN count(*) AS n"},
 	}
 	for _, variant := range variants {
 		m := nor118Run(e, variant.q)
@@ -89,7 +93,7 @@ func TestRCBChainedMatchCostSteps(t *testing.T) {
 		}
 		t.Logf("RCB118 STEP k=%d logical_rows=%d variant=%s seconds=%.3f alloc_bytes=%d alloc_per_logical_row=%.0f peak_heap_mib=%.1f rows=%d first=%s err=%v",
 			k, logical, variant.name, m.elapsed.Seconds(), m.allocated, float64(m.allocated)/float64(logical), float64(m.peakHeap)/(1<<20), len(m.rows), first, m.err)
-		if variant.name == "status" || variant.name == "control" {
+		if variant.name == "status" || variant.name == "control" || variant.name == "status-head-collect" {
 			nor118Compare(t, variant.name, m.rows, want)
 		}
 	}
