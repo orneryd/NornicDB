@@ -386,21 +386,17 @@ func NewNodeConfigStore() *NodeConfigStore {
 // Get returns the config for a node, or nil if none exists.
 func (s *NodeConfigStore) Get(nodeID string) *NodeConfig {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	snapshot := snapshotNodeConfig(s.configs[nodeID])
+	s.mu.RUnlock()
 
-	cfg, exists := s.configs[nodeID]
-	if !exists {
-		return nil
-	}
-
-	// Return a copy to prevent mutation
-	return copyNodeConfig(cfg)
+	// Return a copy to prevent mutation. Its metadata is detached after the lock
+	// is released, because that copy runs the caller-copy protocol.
+	return detachNodeConfigMetadata(snapshot)
 }
 
 // GetOrCreate returns the config for a node, creating one if it doesn't exist.
 func (s *NodeConfigStore) GetOrCreate(nodeID string) *NodeConfig {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	cfg, exists := s.configs[nodeID]
 	if !exists {
@@ -409,25 +405,34 @@ func (s *NodeConfigStore) GetOrCreate(nodeID string) *NodeConfig {
 		s.totalConfigs++
 	}
 
-	return copyNodeConfig(cfg)
+	snapshot := snapshotNodeConfig(cfg)
+	s.mu.Unlock()
+
+	return detachNodeConfigMetadata(snapshot)
 }
 
 // Set stores a node config.
 func (s *NodeConfigStore) Set(cfg NodeConfig) {
+	// Detach the caller's value before the store lock. The metadata copy runs the
+	// caller-copy protocol (CopyValue), which asks a caller-declared value for its
+	// own copy; that caller code may read this store through its public API, so
+	// it must never run while the store lock is held.
+	stored := copyNodeConfig(&cfg)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cfg.UpdatedAt = time.Now()
-	if cfg.CreatedAt.IsZero() {
-		cfg.CreatedAt = time.Now()
+	stored.UpdatedAt = time.Now()
+	if stored.CreatedAt.IsZero() {
+		stored.CreatedAt = time.Now()
 	}
 
-	_, exists := s.configs[cfg.NodeID]
+	_, exists := s.configs[stored.NodeID]
 	if !exists {
 		s.totalConfigs++
 	}
 
-	s.configs[cfg.NodeID] = &cfg
+	s.configs[stored.NodeID] = stored
 }
 
 // Delete removes a node config.
@@ -766,11 +771,14 @@ func (s *NodeConfigStore) GetDeniedTargets(nodeID string) []string {
 // Export returns all configs for backup/export.
 func (s *NodeConfigStore) Export() []*NodeConfig {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	result := make([]*NodeConfig, 0, len(s.configs))
 	for _, cfg := range s.configs {
-		result = append(result, copyNodeConfig(cfg))
+		result = append(result, snapshotNodeConfig(cfg))
+	}
+	s.mu.RUnlock()
+
+	for _, cfg := range result {
+		detachNodeConfigMetadata(cfg)
 	}
 	return result
 }
@@ -778,33 +786,52 @@ func (s *NodeConfigStore) Export() []*NodeConfig {
 // Import loads configs from backup/import.
 // Existing configs are NOT cleared - use Clear() first if needed.
 func (s *NodeConfigStore) Import(configs []*NodeConfig) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	imported := 0
+	// Detach every imported config before the store lock (see Set).
+	stored := make([]*NodeConfig, 0, len(configs))
 	for _, cfg := range configs {
 		if cfg == nil || cfg.NodeID == "" {
 			continue
 		}
+		stored = append(stored, copyNodeConfig(cfg))
+	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	imported := 0
+	for _, cfg := range stored {
 		_, exists := s.configs[cfg.NodeID]
 		if !exists {
 			s.totalConfigs++
 		}
 
-		s.configs[cfg.NodeID] = copyNodeConfig(cfg)
+		s.configs[cfg.NodeID] = cfg
 		imported++
 	}
 	return imported
 }
 
-// copyNodeConfig creates a deep copy of a NodeConfig.
+// copyNodeConfig returns the store's own copy of a NodeConfig: the fields a
+// store method can still change are snapshotted by value, then Metadata is
+// detached through the package copy owner.
 func copyNodeConfig(cfg *NodeConfig) *NodeConfig {
+	return detachNodeConfigMetadata(snapshotNodeConfig(cfg))
+}
+
+// snapshotNodeConfig copies the config fields a store method can still change —
+// value fields, PinList, DenyList and LabelConfigs — and keeps the config's
+// Metadata map by reference. Retained metadata never changes after the write
+// copy, so a snapshot taken under the store lock can be completed after the lock
+// is released, where the caller-copy protocol runs. As before this change the
+// delivered collections are allocated: a nil input collection is retained and
+// delivered as an empty one, the representation Get and Export have always
+// published.
+func snapshotNodeConfig(cfg *NodeConfig) *NodeConfig {
 	if cfg == nil {
 		return nil
 	}
 
-	copy := &NodeConfig{
+	snapshot := &NodeConfig{
 		NodeID:            cfg.NodeID,
 		CreatedAt:         cfg.CreatedAt,
 		UpdatedAt:         cfg.UpdatedAt,
@@ -818,31 +845,45 @@ func copyNodeConfig(cfg *NodeConfig) *NodeConfig {
 		MinConfidence:     cfg.MinConfidence,
 		Cooldown:          cfg.Cooldown,
 		Disabled:          cfg.Disabled,
+		Metadata:          cfg.Metadata,
 	}
 
 	// Copy slices
-	copy.PinList = make([]string, len(cfg.PinList))
-	for i, v := range cfg.PinList {
-		copy.PinList[i] = v
+	snapshot.PinList = make([]string, len(cfg.PinList))
+	copy(snapshot.PinList, cfg.PinList)
+
+	snapshot.DenyList = make([]string, len(cfg.DenyList))
+	copy(snapshot.DenyList, cfg.DenyList)
+
+	// Copy maps; LabelConfig holds only value fields, so copying is complete.
+	snapshot.LabelConfigs = make(map[string]LabelConfig, len(cfg.LabelConfigs))
+	for label, labelConfig := range cfg.LabelConfigs {
+		snapshot.LabelConfigs[label] = labelConfig
 	}
 
-	copy.DenyList = make([]string, len(cfg.DenyList))
-	for i, v := range cfg.DenyList {
-		copy.DenyList[i] = v
-	}
+	return snapshot
+}
 
-	// Copy maps
-	copy.LabelConfigs = make(map[string]LabelConfig, len(cfg.LabelConfigs))
-	for k, v := range cfg.LabelConfigs {
-		copy.LabelConfigs[k] = v
+// detachNodeConfigMetadata completes a config copy with its own metadata map. It
+// runs the caller-copy protocol, so no store lock may be held.
+func detachNodeConfigMetadata(cfg *NodeConfig) *NodeConfig {
+	if cfg == nil {
+		return nil
 	}
+	cfg.Metadata = copyNodeConfigMetadata(cfg.Metadata)
+	return cfg
+}
 
-	copy.Metadata = make(map[string]interface{}, len(cfg.Metadata))
-	for k, v := range cfg.Metadata {
-		copy.Metadata[k] = v
+// copyNodeConfigMetadata detaches a node config metadata map through the package
+// copy owner. NodeConfig keeps the representation it has always published for an
+// absent map: the store delivers an allocated empty map (`metadata,omitempty`
+// omits either shape from JSON), so a nil input does not become a different
+// public value.
+func copyNodeConfigMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if detached := copyCallerMetadata(metadata); detached != nil {
+		return detached
 	}
-
-	return copy
+	return make(map[string]interface{})
 }
 
 // NodeConfigStoreOption configures a NodeConfigStore.

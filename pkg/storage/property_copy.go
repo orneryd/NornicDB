@@ -47,6 +47,18 @@ func CopyValue(value any, mapCopied func(source, copied map[string]any)) any {
 	return copied
 }
 
+// copyCallerMetadata detaches a metadata map at the retention or delivery
+// boundary of a store that hands out caller-owned values. It delegates to
+// CopyValue, so nested maps, slices, arrays and caller-declared record shapes
+// follow the same caller-copy contract as every other delivered value, while a
+// nil map stays nil and scalars keep their width and type.
+func copyCallerMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		return nil
+	}
+	return CopyValue(metadata, nil).(map[string]interface{})
+}
+
 // Only a cleared overflow index is reused. Large copy graphs are discarded
 // rather than retaining their high-water index in an otherwise small request.
 const callerCopyPooledReferences = 1024
