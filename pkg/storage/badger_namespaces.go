@@ -7,9 +7,12 @@ import "strings"
 //
 // Namespaces are returned without the trailing ':' (e.g., "nornic", "db2").
 func (b *BadgerEngine) ListNamespaces() []string {
-	if err := b.ensureOpen(false); err != nil {
+	if !b.work.Enter() {
 		return nil
 	}
+	// Keep both counter maps alive until discovery finishes. Checking that the
+	// engine is open alone does not stop Close from releasing them mid-read.
+	defer b.work.Leave()
 
 	seen := make(map[string]struct{})
 
