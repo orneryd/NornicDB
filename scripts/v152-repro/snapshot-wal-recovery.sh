@@ -5,11 +5,10 @@
 #   REAL           nornicdb.Open, the start-up path;
 #   REPLICA        the recovery steps with Open's options (write-behind on), printing each failed journal entry;
 #   REPLICA-WBOFF  the same with write-behind off.
-# Writer: v1.5.0 c99e77131 with the upgrade-lane writer, commit 87311bbd2 (scratch/v152-upgrade-writers-v150).
-# The writer is asynchronous and its journal differs from run to run; whether a store triggers the refusal depends
-# on the instance. So the script writes REPRO_STORES independent instances (default 3) and reads each.
+# Writer: the v1.5.0 writer test TestUORBoltWrite at commit 87311bbd2 (v1.5.0 c99e77131 plus that test;
+# branch scratch/v152-upgrade-writers-v150). The writer is asynchronous and its journal differs from run to run, so
+# the script writes REPRO_STORES independent instances (default 3) and reads each.
 # Reader: TestR9RecoverErrorsV150AsyncdocsSnapClean (pkg/nornicdb) of this checkout.
-# PASS: no REAL start refused on any instance. FAIL: any refused (the line names the failed journal entries).
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/snapshot-wal-recovery.sh
 ITEM=snapshot-wal-recovery
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -19,11 +18,13 @@ STORES="${REPRO_STORES-3}"
 
 WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
 about \
-  "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 + upgrade-lane writer) reader=TestR9RecoverErrorsV150AsyncdocsSnapClean instances=REPRO_STORES($STORES) starts_per_instance=REPRO_COUNT($COUNT)" \
+  "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 with the v1.5.0 writer test TestUORBoltWrite) reader=TestR9RecoverErrorsV150AsyncdocsSnapClean instances=REPRO_STORES($STORES) starts_per_instance=REPRO_COUNT($COUNT)" \
   "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
   "iterations, real_failed, replica_failed, replica_wboff_failed: copied from the reader's 'R9REC SUMMARY' line. real_failed = iterations whose REAL nornicdb.Open returned an error; replica_failed / replica_wboff_failed = iterations whose replica recovery reported Failed > 0 (an iteration counts once however many entries failed; a replica can report failed=1 with err=<nil>)." \
-  "entries: <k> REPLICA[-WBOFF]-ERROR seq=<s> op=<o> err=<e>;...: k = the number of the reader's error lines with that sequence, operation and error (one line per failed journal entry per replica recovery), node IDs replaced by <id>." \
-  "refused_starts = the sum of real_failed over the instances. PASS only if refused_starts = 0. HARNESS-ERROR also if an instance has no SUMMARY line, iterations != count, fewer than count iterations reached the REAL step, or fewer instances were read than REPRO_STORES."
+  "paths=[<path> x<k>: <message>; ...]: the failure paths of the REAL start, grouped by path and message: 'upgrade refusal' (the open with upgrade allowed before the damage failed; the reader's 'upgrade-open-failed' line), 'real open error' (the start on the damaged store returned an error; the reader's 'REAL FAILED' line). k counts iterations." \
+  "entries: <k> REPLICA[-WBOFF]-ERROR seq=<s> op=<o> err=<e>;...: k = the number of the reader's error lines with that sequence, operation and error (one line per failed journal entry per replica recovery), node IDs replaced by <id>. Shown for diagnosis; the verdict does not use them." \
+  "reader_exit=<rc>: the reader's exit status for that instance. An instance with a failure path is FAIL whatever its exit status; an instance without one is PASS only with reader_exit=0, else HARNESS-ERROR." \
+  "refused_starts = the number of iterations with a failure path, over all instances. HARNESS-ERROR also if an instance has no SUMMARY line, iterations != count, the REAL lines and upgrade refusals do not add up to count, or fewer instances were read than REPRO_STORES."
 require_count REPRO_STORES "$STORES"
 require_count REPRO_COUNT "$COUNT"
 preflight "$WRITER"
@@ -39,17 +40,28 @@ for k in $(seq 1 "$STORES"); do
   R9_ROOT="$iroot" R9_DIAG_STORE="v150/uor/stores/$SCENARIO" R9_DIAG_AREA=r9diag R9_DIAG_N="$COUNT" \
     run_reader "$log" ./pkg/nornicdb -run '^TestR9RecoverErrorsV150AsyncdocsSnapClean$' -count=1 -timeout=60m -v
   rc=$?
-  grep -a -E 'R9REC (SUMMARY|iter=[0-9]+ (REAL|REPLICA|REPLICA-WBOFF) )' "$log" | grep -a -v ENTRY | cut -c1-400 | sed "s/^/REPRO_READER i$k /"
+  grep -a -E '^R9REC (SUMMARY|iter=[0-9]+ (REAL|REPLICA|REPLICA-WBOFF|upgrade-open-failed) )' "$log" | grep -a -v ENTRY | cut -c1-400 | norm_msg | sed "s/^/REPRO_READER i$k /"
   sum=$(grep -a -o 'R9REC SUMMARY iterations=[0-9]* real_failed=[0-9]* replica_failed=[0-9]* replica_wboff_failed=[0-9]*' "$log" | tail -n1)
-  [[ -n $sum ]] || { tail -n 40 "$log" | cut -c1-400; harness_fail "instance $k: no R9REC SUMMARY line (reader exit $rc)"; }
+  [[ -n $sum ]] || { tail -n 40 "$log" | cut -c1-400 | norm_msg; harness_fail "instance $k: no R9REC SUMMARY line (reader exit $rc)"; }
   iters=$(sed -n 's/.*iterations=\([0-9]*\).*/\1/p' <<<"$sum")
-  real=$(sed -n 's/.*real_failed=\([0-9]*\).*/\1/p' <<<"$sum")
   [[ $iters -eq $COUNT ]] || harness_fail "instance $k: ran $iters of $COUNT iterations"
-  started=$(grep -a -c -E 'R9REC iter=[0-9]+ REAL (ok|FAILED)' "$log")
-  [[ $started -eq $COUNT ]] || harness_fail "instance $k: only $started of $COUNT starts reached the REAL step (upgrade open refused?)"
-  errs=$(grep -a -o -E 'REPLICA(-WBOFF)?-ERROR seq=[0-9]+ op=[a-z_]+ err=[^"\\]*' "$log" | sed -E 's/nornic:[0-9a-f-]+/<id>/g' | sort | uniq -c | sed 's/^ *//' | tr '\n' ';')
-  detail+=" i$k:[${sum#R9REC SUMMARY } entries: ${errs:-none}]"
-  total=$((total + real))
+  real_lines=$(grep -a -c -E '^R9REC iter=[0-9]+ REAL (ok|FAILED)' "$log")
+  upgrade_refused=$(grep -a -c -E '^R9REC iter=[0-9]+ upgrade-open-failed ' "$log")
+  [[ $((real_lines + upgrade_refused)) -eq $COUNT ]] || harness_fail "instance $k: $real_lines REAL results and $upgrade_refused upgrade refusals for $COUNT iterations"
+  paths=$( { grep -a -E '^R9REC iter=[0-9]+ upgrade-open-failed err=' "$log" | sed -E 's/^R9REC iter=[0-9]+ upgrade-open-failed err=/upgrade refusal: /'
+             grep -a -E '^R9REC iter=[0-9]+ REAL FAILED err=' "$log" | sed -E 's/^R9REC iter=[0-9]+ REAL FAILED err=/real open error: /'; } \
+           | norm_msg | LC_ALL=C sort | uniq -c | sed -E 's/^ *([0-9]+) ([^:]+): (.*)$/\2 x\1: \3/' | tr '\n' ';' | sed 's/;$//')
+  refused=$(( $(grep -a -c -E '^R9REC iter=[0-9]+ REAL FAILED ' "$log") + upgrade_refused ))
+  errs=$(grep -a -o -E 'REPLICA(-WBOFF)?-ERROR seq=[0-9]+ op=[a-z_]+ err=[^"\\]*' "$log" | norm_msg | LC_ALL=C sort | uniq -c | sed 's/^ *//' | tr '\n' ';' | sed 's/;$//')
+  part=" i$k:[${sum#R9REC SUMMARY } reader_exit=$rc"
+  if [[ $refused -gt 0 ]]; then
+    part+=" paths=[$paths]"
+  elif [[ $rc -ne 0 ]]; then
+    tail -n 40 "$log" | cut -c1-400 | norm_msg
+    harness_fail "instance $k: the reader exited $rc although no start was refused"
+  fi
+  detail+="$part entries: ${errs:-none}]"
+  total=$((total + refused))
   read_instances=$((read_instances + 1))
 done
 [[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
