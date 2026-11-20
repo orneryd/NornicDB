@@ -10,6 +10,7 @@
 # Environment (all optional):
 #   REPRO_TMP    parent of the temporary root; default /work/tnrun/v152-upg-repro when writable, else $TMPDIR or /tmp
 #   REPRO_KEEP=1 keep the temporary root (its path is printed)
+#   REPRO_STORES number of independent store instances an item writes and reads (item default in its header)
 #   GOFLAGS      default "-p=2 -tags=noui,nolocalllm" (the flags of the lab runs)
 
 set -uo pipefail
@@ -51,27 +52,34 @@ repro_root() {
   say "candidate=$CANDIDATE_LABEL $CANDIDATE_SHA head=$(git -C "$REPO" rev-parse HEAD) go=$(go env GOVERSION)"
 }
 
-# write_store <build> <writer-commit> <scenario>[,<scenario>...]
-# Runs the old build's Bolt writer (TestUORBoltWrite) at <writer-commit> with UOR_ROOT=$ROOT/<build>/uor and
-# UOR_ONLY=<scenarios>; checks that every scenario has expected.json and data/MANIFEST.
-write_store() {
-  local build=$1 sha=$2 scenarios=$3
+# prepare_writer <writer-commit>: extracts the writer commit once into $ROOT/writer-src (sets WRITER_SRC).
+prepare_writer() {
+  local sha=$1
   git -C "$REPO" cat-file -e "${sha}^{commit}" 2>/dev/null || harness_fail "writer commit $sha is not in this repository"
-  local src="$ROOT/writer-$build"
-  mkdir -p "$src" && git -C "$REPO" archive "$sha" | tar -x -C "$src" || harness_fail "git archive $sha failed"
-  say "writer build=$build commit=$sha scenarios=$scenarios"
-  ( cd "$src" && UOR_ROOT="$ROOT/$build/uor" UOR_ONLY="$scenarios" \
-      go test ./pkg/bolt -run '^TestUORBoltWrite$' -count=1 -timeout=60m -v ) > "$ROOT/writer-$build.log" 2>&1
+  WRITER_SRC="$ROOT/writer-src"
+  mkdir -p "$WRITER_SRC" && git -C "$REPO" archive "$sha" | tar -x -C "$WRITER_SRC" || harness_fail "git archive $sha failed"
+  WRITER_SHA=$sha
+}
+
+# write_store <instance-root> <build> <scenario>[,<scenario>...]
+# Runs the old build's Bolt writer (TestUORBoltWrite) from $WRITER_SRC with UOR_ROOT=<instance-root>/<build>/uor and
+# UOR_ONLY=<scenarios>; checks that every scenario has expected.json and data/MANIFEST and prints a fingerprint of
+# its journal files (the journal of an asynchronous writer differs from run to run).
+write_store() {
+  local iroot=$1 build=$2 scenarios=$3
+  say "writer build=$build commit=$WRITER_SHA scenarios=$scenarios root=$iroot"
+  ( cd "$WRITER_SRC" && UOR_ROOT="$iroot/$build/uor" UOR_ONLY="$scenarios"       go test ./pkg/bolt -run '^TestUORBoltWrite$' -count=1 -timeout=60m -v ) > "$iroot.writer.log" 2>&1
   local rc=$?
-  grep -E '^(--- |ok |FAIL|panic)' "$ROOT/writer-$build.log" | sed 's/^/REPRO_WRITER /' | tail -n 20
-  [[ $rc -eq 0 ]] || { tail -n 40 "$ROOT/writer-$build.log"; harness_fail "writer exited $rc"; }
+  grep -a -E '^(--- |ok |FAIL|panic)' "$iroot.writer.log" | sed 's/^/REPRO_WRITER /' | tail -n 20
+  [[ $rc -eq 0 ]] || { tail -n 40 "$iroot.writer.log"; harness_fail "writer exited $rc"; }
   local sc
   for sc in ${scenarios//,/ }; do
-    local d="$ROOT/$build/uor/stores/$sc"
+    local d="$iroot/$build/uor/stores/$sc"
     [[ -s $d/expected.json && -f $d/data/MANIFEST ]] || harness_fail "writer produced no complete store $build/$sc ($d)"
-    say "store $build/$sc written: $(du -sh "$d" | cut -f1)"
+    local fp
+    fp=$(cd "$d/data" && find wal snapshots -type f 2>/dev/null | LC_ALL=C sort | xargs -r sha256sum | sha256sum | cut -c1-16)
+    say "store $build/$sc written: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
   done
-  rm -rf "$src"
 }
 
 # run_reader <log> <go test args...>: runs a reader of this checkout; returns its exit status.
