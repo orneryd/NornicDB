@@ -410,25 +410,15 @@ func (c *CompositeEngine) ConstituentDatabaseForEdge(ctx context.Context, id Edg
 
 // GetNode retrieves a node. Searches all readable constituents.
 func (c *CompositeEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		node, err := engine.GetNode(ctx, id)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if err != ErrNotFound {
-			return nil, err
-		}
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, readConstituents, constituentNotFoundDirect, false,
+		func(engine Engine) (*Node, error) { return engine.GetNode(ctx, localID) },
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 // UpdateNode updates a node. Routes to the constituent that contains it.
@@ -444,7 +434,10 @@ func (c *CompositeEngine) UpdateNode(ctx context.Context, updateRequest NodeUpda
 	if before := updateRequest.Before; before != nil && before.RuntimeMetadata().Database != "" {
 		identity = SourceNodeElementID(before.RuntimeMetadata().Database, node.ID)
 	}
-	readConstituents, local, qualified := c.constituentsForEntity("4", identity)
+	readConstituents, _, local, qualified, err := c.constituentsForEntity("4", identity)
+	if err != nil {
+		return err
+	}
 	copy := *node
 	copy.ID = NodeID(local)
 	node = &copy
@@ -459,58 +452,36 @@ func (c *CompositeEngine) UpdateNode(ctx context.Context, updateRequest NodeUpda
 		}
 		return writer.UpdateNode(ctx, updateRequest)
 	}
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetNode(ctx, node.ID)
-		if err == nil {
-			// Found it, update in this constituent
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.UpdateNode(ctx, updateRequest)
-		}
-		if err != ErrNotFound {
-			return err
-		}
-	}
-
+	missing := ErrNotFound
 	if updateRequest.Before != nil {
-		return ErrConflict
+		missing = ErrConflict
 	}
-	return ErrNotFound
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetNode(ctx, node.ID)
+			return err
+		},
+		func(engine Engine) error { return engine.UpdateNode(ctx, updateRequest) },
+		missing,
+	)
 }
 
 // DeleteNode deletes a node from the constituent that contains it.
 func (c *CompositeEngine) DeleteNode(ctx context.Context, id NodeID) error {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(id))
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return err
+	}
 	id = NodeID(local)
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetNode(ctx, id)
-		if err == nil {
-			// Found it, delete from this constituent
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.DeleteNode(ctx, id)
-		}
-		if err != ErrNotFound {
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetNode(ctx, id)
 			return err
-		}
-	}
-
-	return ErrNotFound
+		},
+		func(engine Engine) error { return engine.DeleteNode(ctx, id) },
+		ErrNotFound,
+	)
 }
 
 // ============================================================================
@@ -620,7 +591,10 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 		}
 
 		engine, err := c.getConstituent(alias)
-		if err != nil || engine == nil {
+		if err != nil {
+			return err
+		}
+		if engine == nil {
 			continue
 		}
 
@@ -668,7 +642,7 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 
 		_, err = engine.GetNode(ctx, edge.StartNode)
@@ -687,25 +661,15 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 
 // GetEdge retrieves an edge. Searches all constituents.
 func (c *CompositeEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
-	readConstituents, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edge, err := engine.GetEdge(ctx, id)
-		if err == nil {
-			return c.sourceEdge(alias, engine, edge), nil
-		}
-		if err != ErrNotFound {
-			return nil, err
-		}
+	readConstituents, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, readConstituents, constituentNotFoundDirect, false,
+		func(engine Engine) (*Edge, error) { return engine.GetEdge(ctx, localID) },
+		func(edge *Edge, alias string, engine Engine) *Edge { return c.sourceEdge(alias, engine, edge) },
+	)
 }
 
 // UpdateEdge updates an edge. Routes to the constituent containing it.
@@ -721,7 +685,10 @@ func (c *CompositeEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpda
 	if before := updateRequest.Before; before != nil && before.Database != "" {
 		identity = SourceRelationshipElementID(before.Database, edge.ID)
 	}
-	readConstituents, local, qualified := c.constituentsForEntity("5", identity)
+	readConstituents, _, local, qualified, err := c.constituentsForEntity("5", identity)
+	if err != nil {
+		return err
+	}
 	copy := *edge
 	copy.ID = EdgeID(local)
 	edge = &copy
@@ -734,56 +701,36 @@ func (c *CompositeEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpda
 		}
 		return writer.UpdateEdge(ctx, updateRequest)
 	}
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetEdge(ctx, edge.ID)
-		if err == nil {
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.UpdateEdge(ctx, updateRequest)
-		}
-		if err != ErrNotFound {
-			return err
-		}
-	}
-
+	missing := ErrNotFound
 	if updateRequest.Before != nil {
-		return ErrConflict
+		missing = ErrConflict
 	}
-	return ErrNotFound
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetEdge(ctx, edge.ID)
+			return err
+		},
+		func(engine Engine) error { return engine.UpdateEdge(ctx, updateRequest) },
+		missing,
+	)
 }
 
 // DeleteEdge deletes an edge from the constituent containing it.
 func (c *CompositeEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
-	readConstituents, local, _ := c.constituentsForEntity("5", string(id))
+	readConstituents, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return err
+	}
 	id = EdgeID(local)
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetEdge(ctx, id)
-		if err == nil {
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.DeleteEdge(ctx, id)
-		}
-		if err != ErrNotFound {
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetEdge(ctx, id)
 			return err
-		}
-	}
-
-	return ErrNotFound
+		},
+		func(engine Engine) error { return engine.DeleteEdge(ctx, id) },
+		ErrNotFound,
+	)
 }
 
 // ============================================================================
@@ -840,8 +787,7 @@ func materializeConstituents[T any](
 		}
 		engine, err := composite.getConstituent(alias)
 		if err != nil {
-			// Constituent not found or offline - skip it.
-			continue
+			return nil, err
 		}
 		values, err := read(engine)
 		if err != nil {
@@ -901,7 +847,7 @@ func streamConstituents[T any](
 		}
 		engine, err := composite.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		database := composite.constituentDatabase(alias, engine)
 		if streamer, ok := ResolveStreamingEngine(engine); ok {
@@ -998,7 +944,7 @@ func (c *CompositeEngine) GetFirstNodeByLabel(ctx context.Context, label string)
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		node, err := engine.GetFirstNodeByLabel(ctx, label)
@@ -1028,7 +974,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if engine, start, end, qualified := c.constituentForNodePair(request.Node, request.Other); qualified {
+		if engine, start, end, qualified, err := c.constituentForNodePair(request.Node, request.Other); qualified {
+			if err != nil {
+				return nil, err
+			}
 			if engine == nil {
 				return nil, nil
 			}
@@ -1047,7 +996,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 			compositeFanOutPublishesLocalizedQuery,
 		)
 	}
-	readConstituents, local, _ := c.constituentsForEntity("4", string(request.Node))
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(request.Node))
+	if err != nil {
+		return nil, err
+	}
 	request.Node = NodeID(local)
 
 	return materializeConstituents(c, ctx, readConstituents,
@@ -1059,7 +1011,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 
 // GetEdgeBetween returns an edge between two nodes from any constituent.
 func (c *CompositeEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
-	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
+	if engine, start, end, qualified, err := c.constituentForNodePair(startID, endID); qualified {
+		if err != nil {
+			return nil, err
+		}
 		if engine == nil {
 			return nil, nil
 		}
@@ -1074,7 +1029,7 @@ func (c *CompositeEngine) GetEdgeBetween(ctx context.Context, startID, endID Nod
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		edge, err := engine.GetEdgeBetween(ctx, startID, endID, edgeType)
@@ -1126,58 +1081,46 @@ func (c *CompositeEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 // Degree Operations
 // ============================================================================
 
-// GetInDegree returns the in-degree of a node across all constituents.
-func (c *CompositeEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
-	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
-		if engine == nil {
+// sumConstituentDegree is the canonical degree router. A qualified node routes
+// to its one source; an unqualified node sums every readable source and keeps
+// the partial total when a source fails.
+func (c *CompositeEngine) sumConstituentDegree(nodeID NodeID, degree func(Engine, NodeID) (int, error)) (int, error) {
+	if _, source, local, qualified, err := c.constituentsForEntity("4", string(nodeID)); qualified {
+		if err != nil {
+			return 0, err
+		}
+		if source == nil {
 			return 0, nil
 		}
-		return engine.GetInDegree(ctx, NodeID(local))
+		return degree(source, NodeID(local))
 	}
-	readConstituents := c.getConstituentsForRead()
 	total := 0
-
-	for _, alias := range readConstituents {
+	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		degree, err := engine.GetInDegree(ctx, nodeID)
 		if err != nil {
 			return total, err
 		}
-		total += degree
+		value, err := degree(engine, nodeID)
+		if err != nil {
+			return total, err
+		}
+		total += value
 	}
-
 	return total, nil
+}
+
+// GetInDegree returns the in-degree of a node across all constituents.
+func (c *CompositeEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	return c.sumConstituentDegree(nodeID, func(engine Engine, id NodeID) (int, error) {
+		return engine.GetInDegree(ctx, id)
+	})
 }
 
 // GetOutDegree returns the out-degree of a node across all constituents.
 func (c *CompositeEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int, error) {
-	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
-		if engine == nil {
-			return 0, nil
-		}
-		return engine.GetOutDegree(ctx, NodeID(local))
-	}
-	readConstituents := c.getConstituentsForRead()
-	total := 0
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		degree, err := engine.GetOutDegree(ctx, nodeID)
-		if err != nil {
-			return total, err
-		}
-		total += degree
-	}
-
-	return total, nil
+	return c.sumConstituentDegree(nodeID, func(engine Engine, id NodeID) (int, error) {
+		return engine.GetOutDegree(ctx, id)
+	})
 }
 
 // ============================================================================
@@ -1428,7 +1371,7 @@ func (c *CompositeEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) er
 		for _, alias := range readConstituents {
 			engine, err := c.getConstituent(alias)
 			if err != nil {
-				continue
+				return err
 			}
 
 			_, err = engine.GetNode(ctx, edge.StartNode)
@@ -1475,36 +1418,22 @@ func (c *CompositeEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) er
 
 // BulkDeleteNodes deletes nodes in bulk from all constituents.
 func (c *CompositeEngine) BulkDeleteNodes(ctx context.Context, ids []NodeID) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		// Try to delete - ignore errors for nodes not in this constituent
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		// Per-source delete failures are discarded: each source deletes the
+		// IDs it holds, and only an unreadable source fails the broadcast.
 		_ = engine.BulkDeleteNodes(ctx, ids)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // BulkDeleteEdges deletes edges in bulk from all constituents.
 func (c *CompositeEngine) BulkDeleteEdges(ctx context.Context, ids []EdgeID) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		// Try to delete - ignore errors for edges not in this constituent
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		// Per-source delete failures are discarded: each source deletes the
+		// IDs it holds, and only an unreadable source fails the broadcast.
 		_ = engine.BulkDeleteEdges(ctx, ids)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // ============================================================================
@@ -1517,7 +1446,7 @@ func (c *CompositeEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		database := c.constituentDatabase(alias, engine)
 		requests := make([]NodeID, 0, len(ids))
@@ -1576,104 +1505,87 @@ func (c *CompositeEngine) Close() error {
 // Stats
 // ============================================================================
 
-// NodeCount returns the total node count across all constituents.
-func (c *CompositeEngine) NodeCount(ctx context.Context) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
+// constituentCountKind selects the localized failure a summed entity count
+// publishes.
+type constituentCountKind int
 
-	for _, alias := range readConstituents {
+const (
+	constituentCountNodes constituentCountKind = iota
+	constituentCountEdges
+)
+
+func (kind constituentCountKind) wrap(alias string, err error) error {
+	if kind == constituentCountNodes {
+		return localizedError(localization.StorageCompositeNodeCountFailed(alias, err), err)
+	}
+	return localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
+}
+
+// sumConstituentCounts is the canonical total and per-type count owner: every
+// readable source contributes one counter value, and a failed source or counter
+// yields zero rather than a partial total.
+func (c *CompositeEngine) sumConstituentCounts(kind constituentCountKind, count func(Engine) (int64, error)) (int64, error) {
+	var total int64
+	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return 0, err
 		}
-
-		count, err := engine.NodeCount(ctx)
+		value, err := count(engine)
 		if err != nil {
-			return 0, localizedError(localization.StorageCompositeNodeCountFailed(alias, err), err)
+			return 0, kind.wrap(alias, err)
 		}
-
-		total += count
+		total += value
 	}
-
 	return total, nil
+}
+
+// NodeCount returns the total node count across all constituents.
+func (c *CompositeEngine) NodeCount(ctx context.Context) (int64, error) {
+	return c.sumConstituentCounts(constituentCountNodes, func(engine Engine) (int64, error) {
+		return engine.NodeCount(ctx)
+	})
 }
 
 // EdgeCount returns the total edge count across all constituents.
 func (c *CompositeEngine) EdgeCount(ctx context.Context) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		count, err := engine.EdgeCount(ctx)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-
-		total += count
-	}
-
-	return total, nil
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return engine.EdgeCount(ctx)
+	})
 }
 
 // EdgeCountByType returns the typed edge count summed across all
 // constituents' per-type counters (issue #638).
 func (c *CompositeEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return engine.EdgeCountByType(ctx, edgeType)
+	})
+}
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		count, err := engine.EdgeCountByType(ctx, edgeType)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-
-		total += count
-	}
-
-	return total, nil
+// edgeCountByPositionalLabel is the single owner of the positional (label,
+// type) edge-count sum (issue #638). The two positional counters differ only in
+// which per-source counter they select, which the caller supplies as the
+// counter itself.
+func (c *CompositeEngine) edgeCountByPositionalLabel(
+	ctx context.Context,
+	label, edgeType string,
+	counter func(Engine, context.Context, string, string) (int64, error),
+) (int64, error) {
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return counter(engine, ctx, label, edgeType)
+	})
 }
 
 // EdgeCountByStartLabel returns the positional (label, type) count summed
 // across all constituents' counters (issue #638).
 func (c *CompositeEngine) EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error) {
-	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
-		return engine.EdgeCountByStartLabel(ctx, label, edgeType)
-	})
+	return c.edgeCountByPositionalLabel(ctx, label, edgeType, Engine.EdgeCountByStartLabel)
 }
 
 // EdgeCountByEndLabel returns the positional (label, type) count summed
 // across all constituents' counters (issue #638).
 func (c *CompositeEngine) EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error) {
-	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
-		return engine.EdgeCountByEndLabel(ctx, label, edgeType)
-	})
-}
-
-func (c *CompositeEngine) sumConstituentPositionalCounts(count func(Engine) (int64, error)) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		value, err := count(engine)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-		total += value
-	}
-	return total, nil
+	return c.edgeCountByPositionalLabel(ctx, label, edgeType, Engine.EdgeCountByEndLabel)
 }
 
 // ============================================================================
@@ -1721,7 +1633,7 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 
 		database := c.constituentDatabase(alias, engine)

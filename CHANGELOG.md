@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Return composite participant access failures from error-returning storage operations instead of reporting incomplete success or missing entities.
 - Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 - Allow remote database factories to reenter the catalog without deadlocking storage selection.

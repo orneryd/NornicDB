@@ -122,14 +122,13 @@ func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 }
 func TestConcurrentCleanShutdownMarkerConsumption(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
-	engine, err := NewBadgerEngine(directory)
+	engine, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	require.NoError(t, engine.MarkCleanShutdown(t.Context()))
 	require.NoError(t, engine.Close())
 
-	restarted, err := NewBadgerEngine(directory)
+	restarted, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 
 	const callers = 32
 	type result struct {
