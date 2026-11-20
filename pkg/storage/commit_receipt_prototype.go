@@ -94,7 +94,28 @@ func NewCommitReceipt(settle func(CommitOutcome)) (*CommitReceipt, CommitReceipt
 	return receipt, CommitReceiptOwner{receipt: receipt}
 }
 
-func (r *CommitReceipt) Done() <-chan struct{}  { return r.done }
+func (r *CommitReceipt) Done() <-chan struct{} { return r.done }
+
+// Decision returns the outcome recorded for this receipt together with the
+// channel that closes at its next recorded state change. Reading both under the
+// receipt's mutex is the snapshot an observer needs, because every recording
+// closes exactly the channel a prior snapshot returned, so an observer that
+// re-reads after waking cannot miss a change. A recovery-pending outcome is an
+// observation, not a decision: an observer leaves only on a terminal state.
+// This is the signal for work the transport's own Shutdown joins, which must
+// leave on the decision and cannot wait for the foreign settlement observer
+// that Done covers. External callers keep waiting on Done.
+// For example, a Raft transport waiting for an accepted command snapshots
+// Decision on each iteration and waits on the returned channel while pending.
+// It retains one timeout across those observations and leaves on a terminal
+// outcome, so a settlement observer can call Shutdown without joining itself.
+// Author: NOR-288 lane (Claude), 2026-10-30.
+func (r *CommitReceipt) Decision() (CommitOutcome, <-chan struct{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.outcome, r.changed
+}
+
 func (r *CommitReceipt) Outcome() CommitOutcome { r.mu.Lock(); defer r.mu.Unlock(); return r.outcome }
 func (r *CommitReceipt) Wait(ctx context.Context) error {
 	select {
@@ -110,37 +131,64 @@ func (r *CommitReceipt) Wait(ctx context.Context) error {
 	}
 }
 
-// resolve is called only by the accepted command owner, never by a waiter.
-func (owner CommitReceiptOwner) Resolve(outcome CommitOutcome) error {
+// claim records this receipt's one outcome. Everything that decides the receipt
+// is synchronous with the caller and under the receipt's mutex: validation, the
+// physical decision, the recorded outcome, the detached settlement callback and
+// the state-change signal. claim returns the settlement callback this call took
+// ownership of and whether it recorded a terminal outcome; a recovery-pending
+// recording decides nothing and reports decided false. A caller that delivers in
+// its own frame must not hold the receipt's mutex or locks that frame's join
+// covers; no receipt mutex is held here when delivery runs. The common path
+// returns values rather than a delivery closure, so an ordinary commit
+// allocates nothing for the decision.
+func (owner CommitReceiptOwner) claim(outcome CommitOutcome) (func(CommitOutcome), bool, error) {
 	r := owner.receipt
 	if outcome.State != CommitApplied && outcome.State != CommitDiscarded && outcome.State != CommitRecoveryPending {
-		return errors.New("invalid commit outcome")
+		return nil, false, errors.New("invalid commit outcome")
 	}
 	r.mu.Lock()
 	if r.outcome.State != CommitRecoveryPending {
 		r.mu.Unlock()
-		return errors.New("commit outcome already terminal")
+		return nil, false, errors.New("commit outcome already terminal")
 	}
 	if outcome.State != CommitRecoveryPending || outcome.Err != nil {
 		r.markPhysicalLocked(outcome)
 	}
 	r.outcome = outcome
+	// The recording is the receipt's one state change. Its signal closes before
+	// any settlement callback runs, so an observer that snapped the state under
+	// this mutex wakes on the decision itself. A terminal recording keeps the
+	// closed channel: no later observation can follow it.
+	close(r.changed)
 	if outcome.State == CommitRecoveryPending {
-		close(r.changed)
+		// A pending observation is not a decision: reopen for the next one.
 		r.changed = make(chan struct{})
 		r.mu.Unlock()
-		return nil
+		return nil, false, nil
 	}
 	settle := r.settle
 	r.settle = nil
-	// Settlement must precede the terminal signal; waiters may immediately read
-	// the accounting published by that callback. No receipt mutex in callback.
 	r.mu.Unlock()
-	defer func() { close(r.done); r.mu.Lock(); close(r.changed); r.mu.Unlock() }()
+	return settle, true, nil
+}
+
+// deliverTerminal is the receipt's one terminal delivery: the caller's
+// settlement callback, then the terminal signal. Settlement must precede that
+// signal; waiters may immediately read the accounting published by the callback.
+func (owner CommitReceiptOwner) deliverTerminal(settle func(CommitOutcome), outcome CommitOutcome) {
 	if settle != nil {
 		settle(outcome)
 	}
-	return nil
+	close(owner.receipt.done)
+}
+
+// resolve is called only by the accepted command owner, never by a waiter.
+func (owner CommitReceiptOwner) Resolve(outcome CommitOutcome) error {
+	settle, decided, err := owner.claim(outcome)
+	if decided {
+		owner.deliverTerminal(settle, outcome)
+	}
+	return err
 }
 
 // WaitOutcome is for an accepted outer owner composing this physical owner.

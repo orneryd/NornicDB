@@ -978,15 +978,21 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, 
 	return nil
 }
 
-// waitForCommit waits for an entry to be committed.
+// waitForCommit waits for an entry to be committed. An accepted entry's waiter
+// is released by the accepted owner's recorded decision, never by its delivered
+// settlement: the settlement observer is foreign code that may re-enter
+// Shutdown, which joins this unit, so the delivered receipt (Done) cannot bound
+// it. The receipt's own state-change channel wakes the waiter, which re-reads
+// the decision and rearms while the outcome is recovery-pending; a pending
+// observation is not a decision. The commit timeout and the shutdown signal
+// still bound the whole wait, and the timeout is never restarted by a pending
+// observation.
 func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture) {
 	timer := time.NewTimer(r.config.Raft.CommitTimeout)
 	defer timer.Stop()
-	var ctxDone, acceptedDone <-chan struct{}
+	var ctxDone <-chan struct{}
 	var tick <-chan time.Time
-	if future.accepted != nil {
-		acceptedDone = future.accepted.receipt.Done()
-	} else {
+	if future.accepted == nil {
 		ctxDone = ctx.Done()
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
@@ -995,9 +1001,18 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 	for {
 		var err error
 		remove := false
+		// A non-accepted entry has no accepted decision to observe.
+		var acceptedDecision <-chan struct{}
+		if future.accepted != nil {
+			outcome, changed := future.accepted.receipt.Decision()
+			if outcome.State != storage.CommitRecoveryPending {
+				return
+			}
+			acceptedDecision = changed
+		}
 		select {
-		case <-acceptedDone:
-			return
+		case <-acceptedDecision:
+			continue
 		case <-ctxDone:
 			err = ctx.Err()
 		case <-r.work.Context().Done():

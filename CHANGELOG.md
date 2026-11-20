@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 - Allow remote database factories to reenter the catalog without deadlocking storage selection.
+- Allow accepted-write settlement callbacks to close the WAL engine without waiting on their own completing join.
+- Report a definite Raft log discard to its settlement observer outside the accepted work and shutdown drain that observer may re-enter, and bound Raft's accepted commit waiter by the recorded decision instead of the delivered settlement.
 
 - Preserve transaction cleanup failures alongside BEGIN setup errors.
 - Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
