@@ -261,14 +261,16 @@ func (s *EdgeMetaStore) snapshotHistory(keyStr string) ([]*EdgeMeta, bool) {
 
 // GetLatest returns the most recent provenance record for an edge.
 func (s *EdgeMetaStore) GetLatest(ctx context.Context, src, dst, label string) (*EdgeMeta, error) {
-	history, err := s.GetHistory(ctx, src, dst, label)
-	if err != nil {
-		return nil, err
+	key := EdgeMetaKey{Src: src, Dst: dst, Label: label}.String()
+	s.mu.RLock()
+	history := s.records[key]
+	var latest *EdgeMeta
+	if len(history) > 0 {
+		latest = snapshotEdgeMeta(history[len(history)-1])
 	}
-	if len(history) == 0 {
-		return nil, nil
-	}
-	return history[len(history)-1], nil
+	s.mu.RUnlock()
+
+	return detachEdgeMeta(latest), nil
 }
 
 // filterMetas scans allMetas newest-first under the read lock, snapshotting the
