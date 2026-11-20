@@ -107,9 +107,9 @@
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
     "sha256": "cce7f07abda19e0f356f34ac95802d73e0e2a861065416ef2a5e17b555cf2d99"
   },
-  "pkg/auth/oauth.go:OAuthManager.GetUserInfo": {
+  "pkg/auth/oauth.go:OAuthManager.getOAuthUserInfo": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "42e2dd59438c58d52f4b795094fb685de99a87c234097dadd66d19aea94123dd"
+    "sha256": "9942e043a0dff80cca4d2413b27caedeb7392a6faac9419224d16f534c5a2fb6"
   },
   "pkg/auth/oauth.go:OAuthManager.RefreshOAuthToken": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",

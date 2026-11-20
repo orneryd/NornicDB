@@ -34,7 +34,7 @@
     "contract": "Decode the typed Enterprise reference matrix and reject unknown pin fields.",
     "calls": {"input.NewDecoder": 1}
   },
-  "pkg/auth/fine_grained_catalog_store.go:readFineGrainedCatalog": {
+  "pkg/auth/fine_grained_catalog_store.go:fineGrainedCatalogAt": {
     "read_domain": "property",
     "contract": "Read the versioned entitlement catalog from the system database.",
     "calls": {"property.Unmarshal": 1}
@@ -42,6 +42,16 @@
   "pkg/auth/fine_grained_catalog_store.go:writeFineGrainedCatalog": {
     "write_domain": "property",
     "contract": "Persist the typed entitlement catalog as one versioned system record.",
+    "calls": {"property.MarshalState": 1}
+  },
+  "pkg/auth/fine_grained_provider_bindings.go:readFineGrainedProviderBindings": {
+    "read_domain": "property",
+    "contract": "Read the typed provider binding list for one user from the system database.",
+    "calls": {"property.Unmarshal": 1}
+  },
+  "pkg/auth/fine_grained_provider_bindings.go:writeFineGrainedProviderBindings": {
+    "write_domain": "property",
+    "contract": "Persist the typed provider binding list for one user on its system record.",
     "calls": {"property.MarshalState": 1}
   },
   "pkg/server/server_fine_grained_catalog.go:Server.handleFineGrainedCatalog": {
