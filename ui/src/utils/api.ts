@@ -410,6 +410,20 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+// copyConvertedEntries rebuilds a plain object from obj's own enumerable
+// entries, converting each value through convert. Object.fromEntries defines
+// own data properties instead of assigning them, so a `__proto__` key stays a
+// key; plain assignment would swap the result's prototype and drop the key.
+function copyConvertedEntries(
+  obj: Record<string, unknown>,
+  convert: (value: unknown) => unknown,
+): Record<string, unknown> {
+  const entries = Object.entries(obj).map(
+    ([key, value]): [string, unknown] => [key, convert(value)],
+  );
+  return Object.fromEntries(entries);
+}
+
 // neo4jValueToPlain unwraps Bolt-typed values into the UI's entity shape.
 // Transaction HTTP rows instead contain properties with separate metadata.
 // The neo4j-driver-lite ships its own
@@ -487,12 +501,10 @@ function neo4jValueToPlain(v: unknown): unknown {
     return v.map(neo4jValueToPlain);
   }
   if (typeof v === "object") {
-    const obj = v as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(obj)) {
-      out[k] = neo4jValueToPlain(val);
-    }
-    return out;
+    return copyConvertedEntries(
+      v as Record<string, unknown>,
+      neo4jValueToPlain,
+    );
   }
   return v;
 }
@@ -636,11 +648,7 @@ function txRowToBoltShape(
           cursor++;
           return toEntity(value as Record<string, unknown>, m);
         }
-        const out: Record<string, unknown> = {};
-        for (const [key, nested] of Object.entries(value)) {
-          out[key] = walk(nested);
-        }
-        return out;
+        return copyConvertedEntries(value as Record<string, unknown>, walk);
       }
       cursor++;
       return value;

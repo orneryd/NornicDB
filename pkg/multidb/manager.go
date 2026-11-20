@@ -650,109 +650,6 @@ func (m *DatabaseManager) GetStorage(name string) (storage.Engine, error) {
 	return m.GetStorageWithAuth(name, "")
 }
 
-// GetStorageWithAuth returns a storage engine for the specified database and forwards
-// authToken to remote constituent factories when composite databases include remotes.
-func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (storage.Engine, error) {
-	m.mu.RLock()
-
-	// Check cache first
-	if engine, exists := m.engines[name]; exists {
-		m.mu.RUnlock()
-		return engine, nil
-	}
-	m.mu.RUnlock()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if engine, exists := m.engines[name]; exists {
-		return engine, nil
-	}
-
-	// Resolve dotted composite constituent references first (e.g. "cmp.tr").
-	// This is required for protocol-level USE routing where the effective database
-	// name is a constituent graph reference, not a top-level database metadata key.
-	if constituent, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
-		if strings.EqualFold(strings.TrimSpace(constituent.ref.Type), "remote") {
-			return m.getRemoteStorageResolvedInternal(constituent, authToken)
-		}
-		engine, _, err := m.databaseViewLocked(resolvedName, true)
-		return engine, err
-	}
-
-	// Validate database exists
-	info, exists := m.databases[name]
-	if !exists {
-		return nil, ErrDatabaseNotFound
-	}
-
-	if m.pendingDrops[name] || info.Status != "online" {
-		return nil, ErrDatabaseOffline
-	}
-
-	// Handle composite databases differently
-	if info.Type == "composite" {
-		// Build constituent engines map
-		constituents := make(map[string]storage.Engine)
-		constituentNames := make(map[string]string)
-		accessModes := make(map[string]string)
-
-		for _, ref := range canonicalConstituents(info.Constituents, "") {
-			var constituentStorage storage.Engine
-			actualName := ref.DatabaseName
-			var err error
-			resolved := info.runtimeConstituentsByAlias[ref.Alias]
-			if resolved == nil {
-				m.rebuildRuntimeConstituentsFor(info)
-				resolved = info.runtimeConstituentsByAlias[ref.Alias]
-			}
-
-			switch ref.Type {
-			case "remote":
-				if resolved == nil {
-					return nil, ErrDatabaseNotFound
-				}
-				constituentStorage, err = m.getRemoteStorageResolvedInternal(resolved, authToken)
-				if err != nil {
-					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
-				}
-			default:
-				if resolved == nil || resolved.err != nil {
-					if resolved != nil {
-						err = resolved.err
-					}
-					return nil, localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
-				}
-				actualName = resolved.resolvedDatabaseName
-
-				// Get storage for constituent
-				constituentStorage, _, err = m.databaseViewLocked(actualName, true)
-				if err != nil {
-					return nil, localizedError(localization.MultidbManagerGetConstituentStorageFailed(ref.DatabaseName, err), err)
-				}
-			}
-
-			constituents[ref.Alias] = constituentStorage
-			constituentNames[ref.Alias] = actualName
-			accessModes[ref.Alias] = ref.AccessMode
-		}
-
-		// Create composite engine with intelligent default routing
-		// Routing will be auto-configured based on constituent aliases and access modes
-		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
-		compositeEngine.SetCompositeName(name)
-		// An explicit transaction on the composite ends at the same configured
-		// transaction timeout as one on any of the manager's databases.
-		compositeEngine.SetServerTransactionTimeout(storage.ServerTransactionTimeoutOf(m.inner))
-		// Note: We don't cache composite engines the same way as they're lightweight wrappers
-		return compositeEngine, nil
-	}
-
-	engine, _, err := m.databaseViewLocked(name, true)
-	return engine, err
-}
-
 // resolveCompositeConstituentInternal resolves dotted graph references in the form
 // "<composite>.<alias>" to their precomputed constituent entry and backing database name.
 // Must be called with lock held.
@@ -827,7 +724,10 @@ func (m *DatabaseManager) databaseViewLocked(name string, includeStorage bool) (
 }
 
 // getRemoteStorageResolvedInternal creates an engine from a precomputed remote identity.
-// Must be called with lock held.
+//
+// The precomputed identity is immutable, so this does not need the metadata lock, and
+// callers must not hold it: the configured factory is foreign code that may reenter the
+// manager's public catalog, which a held m.mu would block forever (NOR-183).
 func (m *DatabaseManager) getRemoteStorageResolvedInternal(ref *runtimeConstituent, authToken string) (storage.Engine, error) {
 	if ref == nil {
 		return nil, ErrDatabaseNotFound
