@@ -22,7 +22,7 @@ func TestZZEI2WALSettlementCanCloseEngine(t *testing.T) {
 	wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = wal.Close() })
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:callback-close", Properties: map[string]any{"v": "stored"}})
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestZZEI2WALSettlementCanCloseEngine(t *testing.T) {
 func TestZZEI2NativeSettlementCanCloseEngine(t *testing.T) {
 	base, err := NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
-	tx, err := base.BeginTransaction(t.Context())
+	tx, err := base.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx.CreateNode(t.Context(), &Node{ID: "test:callback-close", Properties: map[string]any{"v": "stored"}})
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestZZEI2TracedMatcherIdentity(t *testing.T) {
 			edges, err := MatchEdgesBetween(ctx, view, "x", "y", "R", nil, func(candidate *Edge) bool {
 				got = candidate.Identity()
 				return got == want
-			})
+			}, SnapshotEdgeMatch)
 			t.Logf("ZZEI2 L518 %s: adjacent read identity=%+v, matcher candidate identity=%+v, matched=%d err=%v", name, want, got, len(edges), err)
 			if err != nil || len(edges) != 1 {
 				t.Fatalf("source-qualified match: got identity=%+v want=%+v; matched=%v err=%v", got, want, edges, err)

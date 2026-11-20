@@ -1,4 +1,4 @@
-package cypher
+package storage_test
 
 // Untracked probe (earlier-issues batch 1, report row L484) through Cypher:
 // one of two stored relationships has an undecodable body. Shows what the
@@ -8,6 +8,7 @@ package cypher
 import (
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -17,7 +18,7 @@ func TestEI1CorruptRelationshipRowPublic(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	ex := NewStorageExecutor(storage.NewNamespacedEngine(b, "nornic"))
+	ex := cypher.NewStorageExecutor(storage.NewNamespacedEngine(b, "nornic"))
 	ctx := t.Context()
 	run := func(q string) {
 		r, err := ex.Execute(ctx, q, nil)
