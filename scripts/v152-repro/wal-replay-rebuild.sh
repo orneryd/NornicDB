@@ -6,19 +6,19 @@
 #   B  damage the old store, then the first start with storage upgrade allowed.
 # Writer: the v1.5.0 writer test TestUORBoltWrite at commit 87311bbd2 (v1.5.0 c99e77131 plus that test;
 # branch scratch/v152-upgrade-writers-v150). The writer is asynchronous and its journal differs from run to run, so
-# the script writes REPRO_STORES independent instances (default 3) and reads each.
+# the script writes REPRO_STORES independent instances (default 8) and reads each.
 # Reader: TestV152SnapshotRebuild of this checkout, REPRO_COUNT repetitions (default 4) of each order per instance.
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/wal-replay-rebuild.sh
 ITEM=wal-replay-rebuild
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO=asyncdocs-snap-clean
 COUNT="${REPRO_COUNT-4}"
-STORES="${REPRO_STORES-3}"
+STORES="${REPRO_STORES-8}"
 
 WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
 about \
   "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 with the v1.5.0 writer test TestUORBoltWrite) reader=TestV152SnapshotRebuild instances=REPRO_STORES($STORES) repetitions=REPRO_COUNT($COUNT)" \
-  "i<k>: one independently written store instance; each is written and read once." \
+  "instances: REPRO_STORES, default 8. The writer is asynchronous and its journal differs from run to run, so whether an instance shows a failure path varies by instance; observed on 20 Nov 2026 in the lab (Linux), instances with a failure path: pin 14 of 17, v1.5.1 13 of 17 (runs of 3 and 8 instances). The default was raised from 3 to 8 on that basis." \n  "i<k>: one independently written store instance; each is written and read once." \
   "A=intact-<n>-of-<count>, B=intact-<n>-of-<count>: n = the number of the reader's UPR_REBUILD_RESULT lines for that order that read exactly 'rebuilt=true missing=0 changed=0 extra=0 second_missing=0 second_changed=0 second_extra=0'." \
   "paths=[<order> <path> x<k>: <message>; ...]: every other UPR_REBUILD_RESULT line, classified by the failure path it reports and grouped by order, path and message: 'upgrade refusal' (step=upgrade REFUSED, order A's first open with upgrade allowed), 'damaged-start refusal' (step=rebuild FAILED, the start on the damaged store), 'second-open error' (step=second FAILED), 'rebuilt=false' (the start did not rebuild), 'state difference' (rebuilt=true with missing/changed/extra > 0 at the rebuild or the second open). k counts repetitions." \
   "reader_exit=<rc>: the reader's exit status for that instance. An instance with a failure path is FAIL whatever its exit status; an instance without one is PASS only with reader_exit=0, else HARNESS-ERROR." \
