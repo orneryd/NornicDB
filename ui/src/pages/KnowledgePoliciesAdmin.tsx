@@ -1,4 +1,4 @@
-import { hasFgacActionFamily, permitsFgacAction, type FgacEffectiveRules } from "../utils/fgacCatalog";
+import { hasFgacActionFamily, permitsFgacAction, type FgacEffectiveRules } from "../utils/fgacEffectiveRules";
 import {KnowledgePolicyGuide} from "../components/knowledge/KnowledgePolicyGuide";
 import {Disclosure} from "../components/common/Disclosure";
 import {useViewState} from '../utils/useUrlState';
@@ -152,13 +152,13 @@ export function KnowledgePoliciesAdmin() {
       .then((res) => res.json())
       .then(async (data) => {
         const roles = data.roles || [];
-        const authorization = await loadFgacEffectiveRules();
-        if (authorization.enforced ? !hasFgacActionFamily(authorization, "knowledge.") : !roles.includes("admin")) {
+        const authorization = data.fgac_enabled === true ? await loadFgacEffectiveRules() : undefined;
+        if (authorization ? !hasFgacActionFamily(authorization, "knowledge.") : !roles.includes("admin")) {
           navigate("/security");
           return;
         }
         const list = await api.listDatabases();
-        if (authorization.enforced) {
+        if (authorization) {
           const identities = await api.listDatabaseIdentities();
           setDatabaseIds(Object.fromEntries(identities.map(database => [database.name, database.databaseID])));
           setEffective(authorization);

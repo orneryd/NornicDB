@@ -688,8 +688,8 @@ func (a *Authenticator) loadUsers() error {
 	ctx := context.Background()
 	var loadedUsers []*User
 
-	// Stream all nodes and filter for _User nodes
-	err := storage.StreamNodesWithFallback(ctx, a.storage, 1000, func(n *storage.Node) error {
+	// Load user records without projecting unrelated system node properties.
+	err := a.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Label: "_User", QueryNodes: true}, func(n *storage.Node) error {
 		// Check if this is a user node
 		isUserNode := false
 		for _, label := range n.Labels {

@@ -96,7 +96,7 @@ func (s *Store) LoadWithYAMLDefaults(ctx context.Context, yamlOverrides map[stri
 // Load reads all _DbConfig nodes from storage into memory. Call at startup and after PUT.
 func (s *Store) Load(ctx context.Context) error {
 	m := make(map[string]map[string]string)
-	err := storage.StreamNodesWithFallback(ctx, s.storage, 1000, func(n *storage.Node) error {
+	err := s.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: dbConfigPrefix}, func(n *storage.Node) error {
 		hasLabel := false
 		for _, l := range n.Labels {
 			if l == dbConfigLabel {

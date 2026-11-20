@@ -10,7 +10,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 )
 
@@ -22,34 +21,27 @@ type fineGrainedCatalogResponse struct {
 	Roles    []string                 `json:"roles"`
 }
 
-// handleFineGrainedCatalog stages or retrieves an entitlement catalog under
-// the existing authenticated role-administration policy.
+// handleFineGrainedCatalog edits or reads the active entitlement catalog.
 func (s *Server) handleFineGrainedCatalog(w http.ResponseWriter, r *http.Request) {
 	claims := getClaims(r)
 	if claims == nil {
 		s.writeNeo4jNoAuthenticationProvided(w, r)
 		return
 	}
-	if s.roleStore == nil {
-		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable,
-			"Neo.ClientError.General.Unavailable", localization.RolesUnavailableDetailed())
+	runtime := s.fineGrainedRuntime
+	if runtime == nil {
+		http.NotFound(w, r)
 		return
 	}
-
-	actions := fineGrainedCatalogActions()
 	switch r.Method {
 	case http.MethodGet:
-		catalog, revision, err := s.roleStore.ReadFineGrainedCatalog(r.Context())
+		catalog, revision, err := runtime.ReadCatalog(r.Context())
 		if err != nil {
 			s.writeInternalServerError(w, r)
 			return
 		}
-		roles := auth.ReadRoleCatalog(s.roleStore, nil).RoleNames
-		if s.fineGrainedRuntime != nil {
-			roles = s.fineGrainedRuntime.RoleNames()
-		}
 		httpresponse.WritePropertyJSON(w, http.StatusOK, fineGrainedCatalogResponse{
-			Catalog: catalog, Revision: revision, Actions: actions, Enforced: s.fineGrainedRuntime != nil, Roles: roles,
+			Catalog: catalog, Revision: revision, Actions: runtime.Actions(), Enforced: true, Roles: runtime.RoleNames(),
 		})
 	case http.MethodPut:
 		var body struct {
@@ -64,17 +56,17 @@ func (s *Server) handleFineGrainedCatalog(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		current, currentRevision, err := s.roleStore.ReadFineGrainedCatalog(r.Context())
+		current, currentRevision, err := runtime.ReadCatalog(r.Context())
 		if err == nil && *body.Revision != currentRevision {
 			err = auth.ErrFineGrainedCatalogChanged
 		}
 		if err == nil {
 			body.Catalog.Privileges = current.Privileges
-			err = s.roleStore.ReplaceFineGrainedCatalog(r.Context(), *body.Revision, actions, *body.Catalog)
+			err = runtime.ReplaceCatalog(r.Context(), *body.Revision, *body.Catalog)
 		}
 		switch {
 		case err == nil:
-			s.logAudit(r, claims.Sub, "fgac_catalog_replace", true, "staged entitlement catalog replaced")
+			s.logAudit(r, claims.Sub, "fgac_catalog_replace", true, "fine-grained entitlement catalog replaced")
 			w.WriteHeader(http.StatusNoContent)
 		case errors.Is(err, auth.ErrFineGrainedCatalogChanged):
 			s.writeBoundaryNeo4jError(w, r, http.StatusConflict, "Neo.TransientError.Transaction.Conflict", err)

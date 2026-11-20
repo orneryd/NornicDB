@@ -23,12 +23,18 @@ administrator explicit control of the registered operations. The automatic
 access to procedures and functions. Each procedure still enforces the access
 required by its underlying operation. These public privileges can be revoked.
 
-Before enabling FGAC on an existing installation, open **Database Access** to
-review policies and map existing role memberships to the new entitlements.
-The old role privileges are saved independently. A staged replacement must
-preserve an explicit policy-management grant for the installation administrator
-before activation. To recover access through existing RBAC credentials, start
-with FGAC disabled, repair the staged catalog, and reenable it.
+After enabling FGAC on an existing installation, open **Database Access** to
+map existing role memberships to fine-grained entitlements. Catalog edits must
+preserve policy-management access for the built-in administrator.
+
+With FGAC off, RBAC uses its own records and the FGAC catalog stays dormant on
+disk. The FGAC routes and editor are available only while FGAC is on. During
+reactivation, a renamed role keeps its policy and a deleted role loses its
+assignments, even when a new role uses the same name. Custom assignments
+created by the earlier development checkpoint need to be assigned again.
+
+To resume legacy RBAC, restart with FGAC disabled. If a catalog is damaged,
+restore a known-good system backup before enabling FGAC again.
 
 ## Configure graph privileges over Bolt
 
@@ -84,7 +90,7 @@ vector. An interrupted caller attempt is parked after restart and can be
 requeued by an authorized retry. Existing managed generation continues to
 use the database's configured service settings.
 
-Administrators can retrieve the draft and revision through
+Administrators can retrieve the active catalog and revision through
 `GET /auth/fgac/catalog` and replace the reusable definitions and assignments
 through `PUT /auth/fgac/catalog`. The write accepts the returned revision and the
 updated catalog. A stale revision returns `409`; a successful write returns

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,6 +111,38 @@ func (runtime *FineGrainedRuntime) ReadCatalog(ctx context.Context) (FineGrained
 	return runtime.roles.ReadFineGrainedCatalog(ctx)
 }
 
+// Actions returns the operations registered by this FGAC runtime.
+func (runtime *FineGrainedRuntime) Actions() []FineGrainedAction {
+	return slices.Clone(runtime.actions)
+}
+
+// ReplaceCatalog persists an authorized edit while preserving the built-in
+// administrator's ability to manage the policy.
+func (runtime *FineGrainedRuntime) ReplaceCatalog(ctx context.Context, revision string, catalog FineGrainedCatalog) error {
+	if err := runtime.ValidateAdministrator(catalog); err != nil {
+		return err
+	}
+	return runtime.roles.ReplaceFineGrainedCatalog(ctx, revision, runtime.actions, catalog)
+}
+
+// ValidateAdministrator checks the policy-management grant on deployments
+// where the policy-management action is registered.
+func (runtime *FineGrainedRuntime) ValidateAdministrator(catalog FineGrainedCatalog) error {
+	const manage = "dbms.security.policy.manage"
+	if !slices.ContainsFunc(runtime.actions, func(action FineGrainedAction) bool { return action.ID == manage }) {
+		return nil
+	}
+	policy, err := CompileFineGrainedPolicy(runtime.actions, catalog)
+	if err != nil {
+		return err
+	}
+	if !policy.ForRoles([]string{string(RoleAdmin), FineGrainedPublicRole}).Allows(manage,
+		FineGrainedResource{Kind: FineGrainedDBMS}) {
+		return fmt.Errorf("%w: the installation administrator requires an explicit policy-management grant", ErrInvalidFineGrainedPolicy)
+	}
+	return nil
+}
+
 // EditCatalog applies a security administration command to the current
 // catalog. An edit racing a different editor reports a conflict.
 func (runtime *FineGrainedRuntime) EditCatalog(ctx context.Context, edit func(*FineGrainedCatalog) error) error {
@@ -120,12 +153,11 @@ func (runtime *FineGrainedRuntime) EditCatalog(ctx context.Context, edit func(*F
 	if err := edit(&catalog); err != nil {
 		return err
 	}
-	return runtime.roles.ReplaceFineGrainedCatalog(ctx, revision, runtime.actions, catalog)
+	return runtime.ReplaceCatalog(ctx, revision, catalog)
 }
 
 // DefaultFineGrainedCatalog explicitly grants the registered actions to the
-// installation administrator. An operator can stage a custom catalog before
-// activation instead of using these bootstrap privileges.
+// installation administrator on first activation.
 func DefaultFineGrainedCatalog(actions []FineGrainedAction) FineGrainedCatalog {
 	catalog := FineGrainedCatalog{Assignments: map[string][]string{}}
 	for _, action := range actions {

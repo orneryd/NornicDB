@@ -115,7 +115,9 @@ func (runtime *FineGrainedRuntime) RenameRole(ctx context.Context, role, name st
 	if NormalizeRoleName(role) == FineGrainedPublicRole || NormalizeRoleName(name) == FineGrainedPublicRole {
 		return ErrCannotDeleteBuiltinRole
 	}
-	return runtime.roles.RenameRoleWithStores(ctx, role, name, runtime.directory)
+	stores := runtime.directory
+	stores.fineGrained = true
+	return runtime.roles.RenameRoleWithStores(ctx, role, name, stores)
 }
 
 // DropRole removes a role, its privileges and its user memberships.
@@ -123,7 +125,9 @@ func (runtime *FineGrainedRuntime) DropRole(ctx context.Context, role string) er
 	if NormalizeRoleName(role) == FineGrainedPublicRole {
 		return ErrCannotDeleteBuiltinRole
 	}
-	return runtime.roles.DeleteRoleWithStores(ctx, role, runtime.directory)
+	stores := runtime.directory
+	stores.fineGrained = true
+	return runtime.roles.DeleteRoleWithStores(ctx, role, stores)
 }
 
 // FineGrainedAccount is the account state one CREATE USER statement declares.

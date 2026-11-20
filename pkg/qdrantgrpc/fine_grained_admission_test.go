@@ -86,12 +86,13 @@ func TestFineGrainedInventoryCoversEveryRegisteredMethod(t *testing.T) {
 	// Reflection is registered separately from the Qdrant service descriptors and
 	// is still an admitted, classified method.
 	descriptor["ServerReflection/ServerReflectionInfo"] = struct{}{}
-	require.Len(t, fineGrainedRPCActions, len(descriptor))
+	methods := fineGrainedRPCActions()
+	require.Len(t, methods, len(descriptor))
 	for method := range descriptor {
-		_, classified := fineGrainedRPCActions[method]
+		_, classified := methods[method]
 		require.True(t, classified, "unclassified registered gRPC method %s", method)
 	}
-	for method := range fineGrainedRPCActions {
+	for method := range methods {
 		_, registered := descriptor[method]
 		require.True(t, registered, "stale fine-grained inventory method %s", method)
 	}
@@ -100,7 +101,7 @@ func TestFineGrainedInventoryCoversEveryRegisteredMethod(t *testing.T) {
 	for _, action := range fineGrainedActions() {
 		registered[action.ID] = action
 	}
-	for method, rpc := range fineGrainedRPCActions {
+	for method, rpc := range methods {
 		action, known := registered[rpc.action]
 		require.True(t, known, "%s declares unregistered action %q", method, rpc.action)
 		require.Equal(t, rpc.target, action.ResourceKind, "%s declares action %q of another resource kind", method, rpc.action)

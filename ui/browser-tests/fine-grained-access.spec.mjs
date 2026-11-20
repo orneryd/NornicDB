@@ -9,6 +9,7 @@ const roleActions = ['dbms.security.policy.manage', 'dbms.role.create', 'dbms.ro
 async function fgacFixture(page) {
   const state = await fixture(page);
   state.roles = ['policy_operator'];
+  state.fgacEnabled = true;
   const roles = ['admin', 'public', 'policy_operator'];
   let catalog = {
     definitions: [], assignments: {},
@@ -130,7 +131,13 @@ test('revision conflicts preserve the draft and discard restores the saved catal
 
 test('disabled mode uses the existing Database Access layout', async ({ page }) => {
   await fixture(page);
-  await page.goto('/security/database-access');
+  const fgacRequests = [];
+  page.on('request', request => {
+    if (/\/auth\/fgac\/|FineGrainedEntitlements|fgacCatalog/.test(request.url())) fgacRequests.push(request.url());
+  });
+  await page.goto('/security');
+  await page.getByRole('button', { name: 'Database Access', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'User-defined roles', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Entitlement library', exact: true })).toHaveCount(0);
+  expect(fgacRequests).toEqual([]);
 });

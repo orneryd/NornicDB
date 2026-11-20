@@ -14,7 +14,7 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 		return fmt.Errorf("fine-grained access control requires authentication and the system role store")
 	}
 	actions := fineGrainedCatalogActions()
-	catalog, revision, err := s.roleStore.ReadFineGrainedCatalog(ctx)
+	catalog, revision, err := s.roleStore.PrepareFineGrainedCatalog(ctx)
 	if err != nil {
 		return err
 	}
@@ -23,10 +23,6 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 		if err := s.roleStore.ReplaceFineGrainedCatalog(ctx, revision, actions, catalog); err != nil {
 			return err
 		}
-	}
-	policy, err := auth.CompileFineGrainedPolicy(actions, catalog)
-	if err != nil {
-		return err
 	}
 	runtime := auth.NewFineGrainedRuntime(s.roleStore, actions, func(name string) string {
 		resolved, err := s.dbManager.ResolveDatabase(name)
@@ -49,9 +45,8 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 	runtime.SetSecurityDirectory(s.auth, auth.RoleMutationStores{
 		Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth,
 	})
-	if !policy.ForRoles([]string{string(auth.RoleAdmin)}).Allows("dbms.security.policy.manage",
-		auth.FineGrainedResource{Kind: auth.FineGrainedDBMS}) {
-		return fmt.Errorf("fine-grained access control requires an explicit policy-management grant for the installation administrator")
+	if err := runtime.ValidateAdministrator(catalog); err != nil {
+		return err
 	}
 	s.fineGrainedRuntime = runtime
 	return nil
@@ -77,19 +72,31 @@ func (s *Server) canAccessGraphForRequest(r *http.Request, graph string) bool {
 	return s.principalAccessForRequest(r.Context(), getClaims(r)).Allows(graph, "access")
 }
 
-var fineGrainedServerRoutes = map[string]string{
-	"/admin/stats":       "dbms.admin.stats",
-	"/admin/config":      "dbms.admin.config",
-	"/admin/backup":      "dbms.backup.create",
-	"/admin/restore":     "dbms.backup.restore",
-	"/admin/gpu/status":  "dbms.gpu.status",
-	"/admin/gpu/enable":  "dbms.gpu.enable",
-	"/admin/gpu/disable": "dbms.gpu.disable",
-	"/admin/gpu/test":    "dbms.gpu.test",
+func fineGrainedServerAction(route string) string {
+	switch route {
+	case "/admin/stats":
+		return "dbms.admin.stats"
+	case "/admin/config":
+		return "dbms.admin.config"
+	case "/admin/backup":
+		return "dbms.backup.create"
+	case "/admin/restore":
+		return "dbms.backup.restore"
+	case "/admin/gpu/status":
+		return "dbms.gpu.status"
+	case "/admin/gpu/enable":
+		return "dbms.gpu.enable"
+	case "/admin/gpu/disable":
+		return "dbms.gpu.disable"
+	case "/admin/gpu/test":
+		return "dbms.gpu.test"
+	default:
+		return ""
+	}
 }
 
 func fineGrainedHTTPAllowed(r *http.Request, request *auth.FineGrainedRequest) bool {
-	if action := fineGrainedServerRoutes[r.Pattern]; action != "" {
+	if action := fineGrainedServerAction(r.Pattern); action != "" {
 		return request.AllowsDBMS(action, "")
 	}
 	switch r.Pattern {

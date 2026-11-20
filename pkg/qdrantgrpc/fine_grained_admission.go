@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -50,64 +51,72 @@ func fineGrainedDBMSAction(action string) fineGrainedRPCAction {
 //   - Field indexes and named-vector configuration are database schema.
 //   - Snapshots and cluster/shard configuration are server management, and
 //     reflection is server introspection.
-var fineGrainedRPCActions = map[string]fineGrainedRPCAction{
-	"Collections/Create":                       fineGrainedDBMSAction("dbms.database.create"),
-	"Collections/Update":                       fineGrainedDBMSAction("dbms.database.alter"),
-	"Collections/UpdateAliases":                fineGrainedDBMSAction("dbms.alias.alter"),
-	"Collections/Delete":                       fineGrainedDBMSAction("dbms.database.drop"),
-	"Collections/CreateShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
-	"Collections/DeleteShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
-	"Collections/UpdateCollectionClusterSetup": fineGrainedDBMSAction("dbms.server.manage"),
-	"Collections/Get":                          fineGrainedDatabaseAction("database.access"),
-	"Collections/List":                         fineGrainedDatabaseAction("database.access"),
-	"Collections/CollectionExists":             fineGrainedDatabaseAction("database.access"),
-	"Collections/CollectionClusterInfo":        fineGrainedDatabaseAction("database.access"),
-	"Collections/ListShardKeys":                fineGrainedDatabaseAction("database.access"),
-	"Collections/ListAliases":                  fineGrainedDatabaseAction("database.access"),
-	"Collections/ListCollectionAliases":        fineGrainedDatabaseAction("database.access"),
+var fineGrainedRPCActionsOnce sync.Once
+var fineGrainedRPCActionsTable map[string]fineGrainedRPCAction
 
-	"Points/Get":              fineGrainedDatabaseAction("database.access"),
-	"Points/Scroll":           fineGrainedDatabaseAction("database.access"),
-	"Points/Count":            fineGrainedDatabaseAction("database.stats.read"),
-	"Points/Upsert":           fineGrainedDatabaseAction("database.access"),
-	"Points/Delete":           fineGrainedDatabaseAction("database.access"),
-	"Points/UpdateBatch":      fineGrainedDatabaseAction("database.access"),
-	"Points/SetPayload":       fineGrainedDatabaseAction("database.access"),
-	"Points/OverwritePayload": fineGrainedDatabaseAction("database.access"),
-	"Points/DeletePayload":    fineGrainedDatabaseAction("database.access"),
-	"Points/ClearPayload":     fineGrainedDatabaseAction("database.access"),
-	"Points/UpdateVectors":    fineGrainedDatabaseAction("database.access"),
-	"Points/DeleteVectors":    fineGrainedDatabaseAction("database.access"),
-	"Points/CreateFieldIndex": fineGrainedDatabaseAction("database.schema.manage"),
-	"Points/DeleteFieldIndex": fineGrainedDatabaseAction("database.schema.manage"),
-	"Points/CreateVectorName": fineGrainedDatabaseAction("database.schema.manage"),
-	"Points/DeleteVectorName": fineGrainedDatabaseAction("database.schema.manage"),
+func fineGrainedRPCActions() map[string]fineGrainedRPCAction {
+	fineGrainedRPCActionsOnce.Do(func() {
+		fineGrainedRPCActionsTable = map[string]fineGrainedRPCAction{
+			"Collections/Create":                       fineGrainedDBMSAction("dbms.database.create"),
+			"Collections/Update":                       fineGrainedDBMSAction("dbms.database.alter"),
+			"Collections/UpdateAliases":                fineGrainedDBMSAction("dbms.alias.alter"),
+			"Collections/Delete":                       fineGrainedDBMSAction("dbms.database.drop"),
+			"Collections/CreateShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
+			"Collections/DeleteShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
+			"Collections/UpdateCollectionClusterSetup": fineGrainedDBMSAction("dbms.server.manage"),
+			"Collections/Get":                          fineGrainedDatabaseAction("database.access"),
+			"Collections/List":                         fineGrainedDatabaseAction("database.access"),
+			"Collections/CollectionExists":             fineGrainedDatabaseAction("database.access"),
+			"Collections/CollectionClusterInfo":        fineGrainedDatabaseAction("database.access"),
+			"Collections/ListShardKeys":                fineGrainedDatabaseAction("database.access"),
+			"Collections/ListAliases":                  fineGrainedDatabaseAction("database.access"),
+			"Collections/ListCollectionAliases":        fineGrainedDatabaseAction("database.access"),
 
-	"Points/Search":              fineGrainedDatabaseAction("database.search.execute"),
-	"Points/SearchBatch":         fineGrainedDatabaseAction("database.search.execute"),
-	"Points/SearchGroups":        fineGrainedDatabaseAction("database.search.execute"),
-	"Points/Recommend":           fineGrainedDatabaseAction("database.search.execute"),
-	"Points/RecommendBatch":      fineGrainedDatabaseAction("database.search.execute"),
-	"Points/RecommendGroups":     fineGrainedDatabaseAction("database.search.execute"),
-	"Points/Discover":            fineGrainedDatabaseAction("database.search.execute"),
-	"Points/DiscoverBatch":       fineGrainedDatabaseAction("database.search.execute"),
-	"Points/Query":               fineGrainedDatabaseAction("database.search.execute"),
-	"Points/QueryBatch":          fineGrainedDatabaseAction("database.search.execute"),
-	"Points/QueryGroups":         fineGrainedDatabaseAction("database.search.execute"),
-	"Points/Facet":               fineGrainedDatabaseAction("database.search.execute"),
-	"Points/SearchMatrixPairs":   fineGrainedDatabaseAction("database.search.execute"),
-	"Points/SearchMatrixOffsets": fineGrainedDatabaseAction("database.search.execute"),
+			"Points/Get":              fineGrainedDatabaseAction("database.access"),
+			"Points/Scroll":           fineGrainedDatabaseAction("database.access"),
+			"Points/Count":            fineGrainedDatabaseAction("database.stats.read"),
+			"Points/Upsert":           fineGrainedDatabaseAction("database.access"),
+			"Points/Delete":           fineGrainedDatabaseAction("database.access"),
+			"Points/UpdateBatch":      fineGrainedDatabaseAction("database.access"),
+			"Points/SetPayload":       fineGrainedDatabaseAction("database.access"),
+			"Points/OverwritePayload": fineGrainedDatabaseAction("database.access"),
+			"Points/DeletePayload":    fineGrainedDatabaseAction("database.access"),
+			"Points/ClearPayload":     fineGrainedDatabaseAction("database.access"),
+			"Points/UpdateVectors":    fineGrainedDatabaseAction("database.access"),
+			"Points/DeleteVectors":    fineGrainedDatabaseAction("database.access"),
+			"Points/CreateFieldIndex": fineGrainedDatabaseAction("database.schema.manage"),
+			"Points/DeleteFieldIndex": fineGrainedDatabaseAction("database.schema.manage"),
+			"Points/CreateVectorName": fineGrainedDatabaseAction("database.schema.manage"),
+			"Points/DeleteVectorName": fineGrainedDatabaseAction("database.schema.manage"),
 
-	"Snapshots/Create":     fineGrainedDBMSAction("dbms.server.manage"),
-	"Snapshots/CreateFull": fineGrainedDBMSAction("dbms.server.manage"),
-	"Snapshots/List":       fineGrainedDBMSAction("dbms.server.manage"),
-	"Snapshots/ListFull":   fineGrainedDBMSAction("dbms.server.manage"),
-	"Snapshots/Delete":     fineGrainedDBMSAction("dbms.server.manage"),
-	"Snapshots/DeleteFull": fineGrainedDBMSAction("dbms.server.manage"),
+			"Points/Search":              fineGrainedDatabaseAction("database.search.execute"),
+			"Points/SearchBatch":         fineGrainedDatabaseAction("database.search.execute"),
+			"Points/SearchGroups":        fineGrainedDatabaseAction("database.search.execute"),
+			"Points/Recommend":           fineGrainedDatabaseAction("database.search.execute"),
+			"Points/RecommendBatch":      fineGrainedDatabaseAction("database.search.execute"),
+			"Points/RecommendGroups":     fineGrainedDatabaseAction("database.search.execute"),
+			"Points/Discover":            fineGrainedDatabaseAction("database.search.execute"),
+			"Points/DiscoverBatch":       fineGrainedDatabaseAction("database.search.execute"),
+			"Points/Query":               fineGrainedDatabaseAction("database.search.execute"),
+			"Points/QueryBatch":          fineGrainedDatabaseAction("database.search.execute"),
+			"Points/QueryGroups":         fineGrainedDatabaseAction("database.search.execute"),
+			"Points/Facet":               fineGrainedDatabaseAction("database.search.execute"),
+			"Points/SearchMatrixPairs":   fineGrainedDatabaseAction("database.search.execute"),
+			"Points/SearchMatrixOffsets": fineGrainedDatabaseAction("database.search.execute"),
 
-	"NornicSearch/SearchText": fineGrainedDatabaseAction("database.search.execute"),
+			"Snapshots/Create":     fineGrainedDBMSAction("dbms.server.manage"),
+			"Snapshots/CreateFull": fineGrainedDBMSAction("dbms.server.manage"),
+			"Snapshots/List":       fineGrainedDBMSAction("dbms.server.manage"),
+			"Snapshots/ListFull":   fineGrainedDBMSAction("dbms.server.manage"),
+			"Snapshots/Delete":     fineGrainedDBMSAction("dbms.server.manage"),
+			"Snapshots/DeleteFull": fineGrainedDBMSAction("dbms.server.manage"),
 
-	"ServerReflection/ServerReflectionInfo": fineGrainedDBMSAction("dbms.server.show"),
+			"NornicSearch/SearchText": fineGrainedDatabaseAction("database.search.execute"),
+
+			"ServerReflection/ServerReflectionInfo": fineGrainedDBMSAction("dbms.server.show"),
+		}
+	})
+	return fineGrainedRPCActionsTable
 }
 
 // SetFineGrainedAdmission binds the optional fine-grained policy owner before
@@ -156,7 +165,7 @@ func (s *Server) admitFineGrained(ctx context.Context, fullMethod string, claims
 		return ctx, nil
 	}
 	key, registered := methodKey(fullMethod)
-	rpc, classified := fineGrainedRPCActions[key]
+	rpc, classified := fineGrainedRPCActions()[key]
 	if !registered || !classified {
 		return nil, fineGrainedDeniedStatus(ctx, s.config.Localizer)
 	}

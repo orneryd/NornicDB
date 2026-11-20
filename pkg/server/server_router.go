@@ -168,10 +168,14 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 		{"/auth/access/privileges", auth.PermAdmin, s.handleAccessPrivileges},
 		{"/auth/entitlements", auth.PermRead, s.handleEntitlements},
 		{"/auth/role-entitlements", auth.PermAdmin, s.handleRoleEntitlements},
-		{"/auth/fgac/catalog", auth.PermAdmin, s.handleFineGrainedCatalog},
-		{"/auth/fgac/effective", "", s.handleFineGrainedEffective},
-		{"/auth/fgac/entity", auth.PermAdmin, s.handleFineGrainedEntity},
 	})
+	if s.fineGrainedRuntime != nil {
+		s.registerRouteTable(mux, []routeSpec{
+			{"/auth/fgac/catalog", auth.PermAdmin, s.handleFineGrainedCatalog},
+			{"/auth/fgac/effective", "", s.handleFineGrainedEffective},
+			{"/auth/fgac/entity", auth.PermAdmin, s.handleFineGrainedEntity},
+		})
+	}
 }
 
 func (s *Server) registerMCPRoutes(mux *http.ServeMux) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useId, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from '@ornery/ui-grid-core';
@@ -11,9 +11,13 @@ import { Modal } from '../components/common/Modal';
 import { api, loadFgacEffectiveRules } from '../utils/api';
 import { Database, Plus, Save, Trash2, Edit2, Shield } from 'lucide-react';
 import { BASE_PATH, joinBasePath } from '../utils/basePath';
-import { FineGrainedEntitlements } from '../components/security/FineGrainedEntitlements';
-import { permitsFgacAction } from '../utils/fgacCatalog';
+import { permitsFgacAction } from '../utils/fgacEffectiveRules';
 import type { FgacRolePermissions } from '../components/security/FgacRoleWorkspace';
+
+const FineGrainedEntitlements = lazy(async () => {
+  const editor = await import('../components/security/FineGrainedEntitlements');
+  return { default: editor.FineGrainedEntitlements };
+});
 
 const BUILTIN_ROLES = ['admin', 'editor', 'viewer'];
 const SYSTEM_DB = 'system';
@@ -152,8 +156,8 @@ export function DatabaseAccess() {
     fetch(joinBasePath(BASE_PATH, '/auth/me'), { credentials: 'include' })
       .then((res) => res.json())
       .then(async (data) => {
-        const rules = await loadFgacEffectiveRules();
-        if (rules.enforced) {
+        if (data.fgac_enabled === true) {
+          const rules = await loadFgacEffectiveRules();
           if (!permitsFgacAction(rules, 'dbms.security.policy.manage')) {
             navigate('/security');
             return;
@@ -507,7 +511,9 @@ export function DatabaseAccess() {
       <PageLayout>
         <PageHeader title="Database Access" backTo="/security" backLabel="Back to Security" />
         <div className="w-full min-w-0 mx-auto p-6">
-          <FineGrainedEntitlements roles={[]} rolePermissions={fineGrainedPermissions} />
+          <Suspense fallback={<p role="status">Loading fine-grained access…</p>}>
+            <FineGrainedEntitlements rolePermissions={fineGrainedPermissions} />
+          </Suspense>
         </div>
       </PageLayout>
     );
@@ -594,8 +600,6 @@ export function DatabaseAccess() {
           </div>
         )}
 
-        {/* Fine-grained entitlements: definitions and role assignments stored by /auth/fgac/catalog */}
-        <FineGrainedEntitlements roles={roles} />
 
         {/* User-defined roles */}
         <div className="bg-norse-shadow border border-norse-rune rounded-lg overflow-hidden">

@@ -416,6 +416,7 @@ func (state *setEntityState) recordProperty(key string, set bool) {
 }
 
 func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes map[string]*storage.Node, rels map[string]*storage.Edge, isNull func(variable string) bool, states []setEntityState) ([]setEntityState, bool, error) {
+	fineGrained := auth.FineGrainedRequestFromContext(ctx) != nil
 	for _, run := range runs {
 		node, relationship := nodes[run.variable], rels[run.variable]
 		if node == nil && relationship == nil {
@@ -444,7 +445,7 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 			target = len(states) - 1
 		}
 		var observed *setEntityState
-		if auth.FineGrainedRequestFromContext(ctx) != nil {
+		if fineGrained {
 			observed = &states[target]
 		}
 		var written int

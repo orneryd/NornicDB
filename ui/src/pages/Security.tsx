@@ -1,5 +1,5 @@
 import { loadFgacEffectiveRules } from "../utils/api";
-import { hasFgacActionFamily, permitsFgacAction } from "../utils/fgacCatalog";
+import { hasFgacActionFamily, permitsFgacAction } from "../utils/fgacEffectiveRules";
 import { Disclosure } from "../components/common/Disclosure";
 import { useState, useEffect, useId } from "react";
 import { useNavigate } from "react-router-dom";
@@ -72,12 +72,12 @@ export function Security() {
     })
       .then((res) => res.json())
       .then(async (data) => {
-        const effective = await loadFgacEffectiveRules();
+        const effective = data.fgac_enabled === true ? await loadFgacEffectiveRules() : undefined;
         const roles = data.roles || [];
         const legacyAdmin = roles.includes("admin");
-        setIsAdmin(effective.enforced ? permitsFgacAction(effective, "dbms.user.show") : legacyAdmin);
-        setCanEditPolicy(effective.enforced ? permitsFgacAction(effective, "dbms.security.policy.manage") : legacyAdmin);
-        setCanUseKnowledge(effective.enforced ? hasFgacActionFamily(effective, "knowledge.") : legacyAdmin);
+        setIsAdmin(effective ? permitsFgacAction(effective, "dbms.user.show") : legacyAdmin);
+        setCanEditPolicy(effective ? permitsFgacAction(effective, "dbms.security.policy.manage") : legacyAdmin);
+        setCanUseKnowledge(effective ? hasFgacActionFamily(effective, "knowledge.") : legacyAdmin);
         setUserInfo(data);
         setEmail(data.email || "");
         setCheckingAuth(false);

@@ -1,4 +1,4 @@
-import type { FgacEffectiveRules } from "./fgacCatalog";
+import type { FgacEffectiveRules } from "./fgacEffectiveRules";
 import {extractNodeFromResult} from "./nodeUtils";
 import {parseMetrics,type MetricsSnapshot} from './monitoring';
 // NornicDB API Client
@@ -130,7 +130,6 @@ export interface ConstituentInfo {
 /** Read the active mode and grants for the signed-in account. */
 export async function loadFgacEffectiveRules(): Promise<FgacEffectiveRules> {
   const response = await fetch(joinBasePath(BASE_PATH, "/auth/fgac/effective"), { credentials: "include" });
-  if (response.status === 404 || response.status === 501) return { enforced: false, rules: null };
   if (response.status === 403) {
     const denial = await response.json().catch(() => null);
     if (denial?.errors?.[0]?.code === "Neo.ClientError.Security.CredentialsExpired") {

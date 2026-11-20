@@ -131,3 +131,10 @@ func (e *MutationFailureEngine) AllNodes(ctx context.Context) ([]*storage.Node, 
 	}
 	return e.Engine.AllNodes(ctx)
 }
+
+func (e *MutationFailureEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.Fails(MutationList, "") {
+		return e.Failure
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}

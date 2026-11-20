@@ -18,7 +18,10 @@ for configuration and examples.
 - [x] Verify role and member changes against the HTTP server and verify caller-scoped embedding admission and restart handling.
 - [x] Verify catalog restart and recovery into a new Badger engine from a native backup.
 - [x] Compare 15 authenticated Bolt cases against both pinned Enterprise references on Linux with TLS. Compare two additional current-Enterprise native-tag cases.
-- [ ] Complete the staged duplicate review and full repository verification.
+- [x] Keep FGAC maps, catalog routes, and the catalog editor unloaded when FGAC is off.
+- [x] Keep dormant policy out of RBAC role mutations and reconcile role identity upon activation.
+- [x] Verify the RBAC browser flow makes no FGAC requests or editor downloads.
+- [ ] Complete full repository verification. The maintainer waived the duplicate checker for this push.
 - [ ] Complete and qualify the larger compatibility matrix. Remaining areas include current Enterprise authorization-rule and external provider management, collection write containment, and live policy refresh after restore and replicated policy changes.
 
 ## Reuse review

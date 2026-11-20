@@ -49,7 +49,7 @@ func (a *AllowlistStore) Load(ctx context.Context) error {
 	}
 	defer a.writes.unlock()
 	m := make(map[string][]string)
-	err := storage.StreamNodesWithFallback(ctx, a.storage, 1000, func(n *storage.Node) error {
+	err := a.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: roleDbAccessPrefix}, func(n *storage.Node) error {
 		hasLabel := false
 		for _, l := range n.Labels {
 			if l == roleDbAccessLabel {
@@ -166,7 +166,7 @@ func (a *AllowlistStore) SeedIfEmpty(ctx context.Context, databaseNames []string
 // HasAllowlistData returns true if any allowlist entry exists in storage (for seed skip).
 func (a *AllowlistStore) HasAllowlistData(ctx context.Context) (bool, error) {
 	var found bool
-	err := storage.StreamNodesWithFallback(ctx, a.storage, 100, func(n *storage.Node) error {
+	err := a.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: roleDbAccessPrefix}, func(n *storage.Node) error {
 		for _, l := range n.Labels {
 			if l == roleDbAccessLabel {
 				found = true

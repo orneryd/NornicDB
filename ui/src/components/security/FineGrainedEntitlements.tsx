@@ -5,19 +5,11 @@
  * cookie, builds a local draft and replaces the stored catalog with
  * `PUT /auth/fgac/catalog` including the revision that was read. The server
  * remains the policy authority: it rejects structural errors and reports a
- * stale revision, and its `enforced` flag decides whether the catalog is a
- * draft or an enforced policy. The enforced view groups work by role.
+ * stale revision. This editor is loaded only when FGAC is enabled.
  */
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import type {
-  GridCellTemplateContext,
-  GridColumnDef,
-  GridOptions,
-  GridRecord,
-} from "@ornery/ui-grid-core";
-import { Edit2, Lock, Plus, Save, Trash2 } from "lucide-react";
-import { StatefulGrid as UiGrid } from "../common/StatefulGrid";
+import { Lock, Save } from "lucide-react";
 import { Alert } from "../common/Alert";
 import { Button } from "../common/Button";
 import { FormInput } from "../common/FormInput";
@@ -33,7 +25,6 @@ import {
   describeAction,
   describeFgacActionName,
   groupFgacActions,
-  describeScope,
   inputForAction,
   isPredicateAction,
   isEntityKind,
@@ -51,9 +42,8 @@ import {
 } from "../../utils/fgacCatalog";
 
 const CATALOG_PATH = "/auth/fgac/catalog";
-const CATALOG_GRID_ID = "fine-grained-entitlements-grid";
 
-type LoadState = "loading" | "ready" | "unsupported" | "failed";
+type LoadState = "loading" | "ready" | "failed";
 
 async function responseMessage(response: Response, fallback: string): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
@@ -68,7 +58,7 @@ async function responseMessage(response: Response, fallback: string): Promise<st
   return `${fallback} (HTTP ${response.status})`;
 }
 
-export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: string[]; rolePermissions?: FgacRolePermissions }) {
+export function FineGrainedEntitlements({ rolePermissions }: { rolePermissions: FgacRolePermissions }) {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -77,7 +67,6 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
   const [privileges, setPrivileges] = useState<FgacCypherPrivilege[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string[]>>({});
   const [revision, setRevision] = useState("");
-  const [enforced, setEnforced] = useState(false);
   const [savedSignature, setSavedSignature] = useState("");
   const [saving, setSaving] = useState(false);
   const [databases, setDatabases] = useState<DatabaseIdentity[]>([]);
@@ -105,13 +94,12 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
 
   const applyDocument = useCallback((document: FgacCatalogDocument) => {
     const draft = normalizeCatalog(document.catalog);
-    setServerRoles(Array.isArray(document.roles) ? document.roles : undefined);
+    setServerRoles(document.roles);
     setDefinitions(draft.definitions);
     setPrivileges(Array.isArray(document.catalog?.privileges) ? document.catalog.privileges : []);
     setAssignments(draft.assignments);
     setActions(Array.isArray(document.actions) ? document.actions : []);
     setRevision(typeof document.revision === "string" ? document.revision : "");
-    setEnforced(document.enforced === true);
     setSavedSignature(catalogSignature(draft));
   }, []);
 
@@ -119,10 +107,6 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
     const response = await fetch(joinBasePath(BASE_PATH, CATALOG_PATH), {
       credentials: "include",
     });
-    if (response.status === 404 || response.status === 501) {
-      setLoadState("unsupported");
-      return;
-    }
     if (!response.ok) {
       throw new Error(
         await responseMessage(response, "Failed to load the fine-grained entitlement catalog"),
@@ -168,12 +152,12 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
     [databases],
   );
   const roleRows = useMemo(() => {
-    const names = [...(enforced && serverRoles ? serverRoles : roles)];
+    const names = [...(serverRoles ?? [])];
     for (const role of Object.keys(assignments)) {
       if (!names.includes(role)) names.push(role);
     }
     return names;
-  }, [roles, assignments, enforced, serverRoles]);
+  }, [assignments, serverRoles]);
   const dirty =
     loadState === "ready" &&
     catalogSignature({ definitions, assignments }) !== savedSignature;
@@ -181,7 +165,7 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
     ? definitions.find((definition) => definition.id === editor.editingId)
     : undefined;
   const editorChanged = editor && JSON.stringify(editor.input) !== JSON.stringify(definitionInput(originalDefinition));
-  const { warning: navigationWarning } = useUnsavedChanges(enforced && (dirty || Boolean(editorChanged)));
+  const { warning: navigationWarning } = useUnsavedChanges(dirty || Boolean(editorChanged));
 
   const updateEditor = (changes: Partial<FgacDefinitionInput>) =>
     setEditor((current) =>
@@ -192,7 +176,7 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
     setActionSearch("");
     setEditorErrors([]);
     setElementId("");
-    setEditor({ input: definitionInput(), assignTo, scopeChosen: !enforced });
+    setEditor({ input: definitionInput(), assignTo, scopeChosen: false });
   };
 
   const openEdit = (definition: FgacDefinition) => {
@@ -280,7 +264,7 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
   };
 
   const handleSave = async () => {
-    const problems = validateCatalog({ definitions, assignments }, actions, enforced && serverRoles ? serverRoles : roles);
+    const problems = validateCatalog({ definitions, assignments }, actions, serverRoles ?? []);
     if (problems.length > 0) {
       setSuccess("");
       setError(problems.join(" "));
@@ -297,9 +281,7 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
         body: JSON.stringify(catalogPutBody({ definitions, assignments }, revision)),
       });
       if (response.status === 204) {
-        const message = enforced
-          ? "Access changes saved."
-          : "Fine-grained entitlement draft saved. Enforcement is disabled, so access decisions are unchanged.";
+        const message = "Access changes saved.";
         try {
           await load();
           setSuccess(message);
@@ -331,83 +313,10 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
     }
   };
 
-  const assignmentGridData = useMemo<GridRecord[]>(
-    () => roleRows.map((role) => ({ __gridId: role, role })),
-    [roleRows],
-  );
-
-  const assignmentColumnDefs = useMemo<GridColumnDef[]>(
-    () => [
-      { name: "role", displayName: "Role", field: "role", width: "minmax(12rem, 1fr)" },
-      ...definitions.map((definition) => ({
-        name: definition.id,
-        displayName: definition.id,
-        width: "140px",
-        enableSorting: false,
-        enableFiltering: false,
-      })),
-    ],
-    [definitions],
-  );
-
-  const assignmentGridOptions = useMemo<GridOptions>(
-    () => ({
-      id: CATALOG_GRID_ID,
-      data: assignmentGridData,
-      columnDefs: assignmentColumnDefs,
-      rowIdentity: (row) => String(row.__gridId),
-      enableSorting: true,
-      enableFiltering: true,
-      emptyMessage: "No roles found",
-    }),
-    [assignmentColumnDefs, assignmentGridData],
-  );
-
-  const renderAssignmentCell = (ctx: GridCellTemplateContext) => {
-    const role = (ctx.row as GridRecord & { role: string }).role;
-    if (ctx.column.name === "role") {
-      return <div className="font-medium text-white capitalize py-1">{role}</div>;
-    }
-    return (
-      <div className="flex items-center justify-center py-1" onClick={(e) => e.stopPropagation()}>
-        <input
-          type="checkbox"
-          checked={(assignments[role] ?? []).includes(ctx.column.name)}
-          aria-label={`Assign ${ctx.column.displayName ?? ctx.column.name} to ${role}`}
-          onChange={() => handleToggleAssignment(role, ctx.column.name)}
-          className="w-4 h-4 rounded border-norse-rune bg-norse-stone text-nornic-primary"
-        />
-      </div>
-    );
-  };
-
-  const assignmentCellRenderers = useMemo(
-    () => Object.fromEntries(assignmentColumnDefs.map(({ name }) => [name, renderAssignmentCell])),
-    [assignmentColumnDefs, renderAssignmentCell],
-  );
-
   if (loadState === "loading") {
     return (
       <section className="bg-norse-shadow border border-norse-rune rounded-lg p-8 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-nornic-primary border-t-transparent rounded-full animate-spin" />
-      </section>
-    );
-  }
-
-  if (loadState === "unsupported") {
-    return (
-      <section className="bg-norse-shadow border border-norse-rune rounded-lg overflow-hidden">
-        <h2 className="px-4 py-3 bg-norse-stone text-sm font-semibold text-norse-silver flex items-center gap-2">
-          <Lock className="w-4 h-4" />
-          Fine-grained entitlements
-        </h2>
-        <div className="p-4 space-y-3">
-          <Alert
-            type="warning"
-            title="Not supported by this server"
-            message="GET /auth/fgac/catalog is unavailable, so the fine-grained entitlement editor is disabled. The database access, role entitlements and role controls above are unaffected."
-          />
-        </div>
       </section>
     );
   }
@@ -442,22 +351,13 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
       <header className="px-4 py-3 bg-norse-stone text-sm font-semibold text-norse-silver flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2">
           <Lock className="w-4 h-4" aria-hidden />
-          {enforced ? "Fine-grained access" : "Fine-grained entitlements"}
+          Fine-grained access
         </h2>
         <span className="flex flex-wrap items-center gap-2">
           <span role="status" className={`text-xs font-normal ${dirty ? "text-amber-300" : "text-norse-fog"}`}>
-            {saving ? "Saving access changes…" : dirty ? "Unsaved changes" : enforced ? "All changes saved" : ""}
+            {saving ? "Saving access changes…" : dirty ? "Unsaved changes" : "All changes saved"}
           </span>
-          {enforced && dirty && <Button variant="secondary" size="sm" disabled={saving} onClick={() => setDiscardOpen(true)}>Discard</Button>}
-          <span
-            className={`px-2 py-0.5 rounded text-xs font-medium ${
-              enforced
-                ? "bg-emerald-500/20 text-emerald-400"
-                : "bg-amber-500/20 text-amber-400"
-            }`}
-          >
-            {enforced ? "Enforced" : "Draft — not enforced"}
-          </span>
+          {dirty && <Button variant="secondary" size="sm" disabled={saving} onClick={() => setDiscardOpen(true)}>Discard</Button>}
           <Button
             variant="primary"
             size="sm"
@@ -466,16 +366,10 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
             loading={saving}
             icon={Save}
           >
-            {enforced ? "Save changes" : "Save catalog"}
+            Save changes
           </Button>
         </span>
       </header>
-      {!enforced && (
-        <p className="px-4 py-2 text-xs text-norse-fog border-b border-norse-rune">
-          Save reusable entitlements here to prepare for fine-grained enforcement.
-        </p>
-      )}
-
       <div className="p-4 space-y-6">
         {error && (
           <Alert type="error" message={error} dismissible onDismiss={() => setError("")} />
@@ -483,114 +377,27 @@ export function FineGrainedEntitlements({ roles, rolePermissions }: { roles: str
         {success && (
           <Alert type="success" message={success} dismissible onDismiss={() => setSuccess("")} />
         )}
-        {revision === "" && (
-          <p className="text-norse-fog text-xs">
-            No catalog is stored yet; the first save creates it.
-          </p>
-        )}
-
-        {enforced && rolePermissions ? (
-          <FgacRoleWorkspace
-            roles={roleRows}
-            definitions={definitions}
-            privileges={privileges}
-            assignments={assignments}
-            databaseNames={databaseNames}
-            permissions={rolePermissions}
-            dirty={dirty}
-            saving={saving}
-            onRolesChange={async (role) => {
-              if (!dirty || !role) {
-                await load();
-              } else {
-                setServerRoles((names) => names?.includes(role) ? names : [...(names ?? roleRows), role]);
-              }
-            }}
-            onCreateEntitlement={openCreate}
-            onEditEntitlement={openEdit}
-            onRemoveEntitlement={setPendingRemoval}
-            onToggle={handleToggleAssignment}
-          />
-        ) : (
-          <>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-norse-silver">Definitions</h3>
-            <Button variant="secondary" size="sm" icon={Plus} onClick={() => openCreate()}>
-              Add definition
-            </Button>
-          </div>
-          {definitions.length > 0 ? (
-            <ul className="space-y-2">
-              {definitions.map((definition) => (
-                <li
-                  key={definition.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-2 px-3 rounded bg-norse-stone/50"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-white">{definition.id}</span>
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          definition.deny
-                            ? "bg-red-500/20 text-red-400"
-                            : "bg-emerald-500/20 text-emerald-400"
-                        }`}
-                      >
-                        {definition.deny ? "deny" : "grant"}
-                      </span>
-                      <span className="text-xs text-norse-silver">{definition.action}</span>
-                    </div>
-                    <p className="text-xs text-norse-fog break-words">
-                      {describeScope(definition, databaseNames)}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={Edit2}
-                      onClick={() => openEdit(definition)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      icon={Trash2}
-                      onClick={() => handleRemoveDefinition(definition)}
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-norse-fog text-sm">
-              No definitions. Add one to grant or deny an action for a scope.
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-norse-silver">Role assignments</h3>
-          {definitions.length > 0 ? (
-            <div className="nornic-grid">
-              <UiGrid
-                height={360}
-                options={assignmentGridOptions}
-                cellRenderers={assignmentCellRenderers}
-              />
-            </div>
-          ) : (
-            <p className="text-norse-fog text-sm">
-              Add a definition before assigning it to a role.
-            </p>
-          )}
-        </div>
-          </>
-        )}
+        <FgacRoleWorkspace
+          roles={roleRows}
+          definitions={definitions}
+          privileges={privileges}
+          assignments={assignments}
+          databaseNames={databaseNames}
+          permissions={rolePermissions}
+          dirty={dirty}
+          saving={saving}
+          onRolesChange={async (role) => {
+            if (!dirty || !role) {
+              await load();
+            } else {
+              setServerRoles((names) => names?.includes(role) ? names : [...(names ?? roleRows), role]);
+            }
+          }}
+          onCreateEntitlement={openCreate}
+          onEditEntitlement={openEdit}
+          onRemoveEntitlement={setPendingRemoval}
+          onToggle={handleToggleAssignment}
+        />
       </div>
 
       {editor && (

@@ -140,8 +140,9 @@ func TestFineGrainedCatalogFollowsRoleLifecycle(t *testing.T) {
 		Definitions: catalog.Definitions, Assignments: map[string][]string{"missing-role": {"retry"}},
 	}), ErrRoleNotFound)
 
-	stores := RoleMutationStores{Entitlements: legacy}
-	require.NoError(t, roles.RenameRoleWithStores(ctx, "operator", "renamed", stores))
+	runtime := NewFineGrainedRuntime(roles, fgacTestActions, nil, nil)
+	runtime.SetSecurityDirectory(nil, RoleMutationStores{Entitlements: legacy})
+	require.NoError(t, runtime.RenameRole(ctx, "operator", "renamed"))
 	persisted, renamedRevision, err := fresh.ReadFineGrainedCatalog(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, revision, renamedRevision)
@@ -150,7 +151,7 @@ func TestFineGrainedCatalogFollowsRoleLifecycle(t *testing.T) {
 	require.Empty(t, PermissionsForRole("operator", legacy))
 	require.ErrorIs(t, roles.ReplaceFineGrainedCatalog(ctx, revision, fgacTestActions, FineGrainedCatalog{}), ErrFineGrainedCatalogChanged)
 
-	require.NoError(t, roles.DeleteRoleWithStores(ctx, "renamed", stores))
+	require.NoError(t, runtime.DropRole(ctx, "renamed"))
 	require.NoError(t, roles.CreateRole(ctx, "renamed"))
 	persisted, _, err = fresh.ReadFineGrainedCatalog(ctx)
 	require.NoError(t, err)
@@ -179,7 +180,8 @@ func TestFineGrainedCatalogFailureRollsBackRoleMutation(t *testing.T) {
 	require.NoError(t, err)
 
 	fault.Operation, fault.ID = storagefault.MutationUpdate, fineGrainedCatalogID
-	require.ErrorIs(t, roles.RenameRole(ctx, "operator", "renamed"), errRoleMutation)
+	runtime := NewFineGrainedRuntime(roles, fgacTestActions, nil, nil)
+	require.ErrorIs(t, runtime.RenameRole(ctx, "operator", "renamed"), errRoleMutation)
 	require.True(t, roles.Exists("operator"))
 	require.False(t, roles.Exists("renamed"))
 	require.ErrorIs(t, roles.ReplaceFineGrainedCatalog(ctx, before, fgacTestActions, FineGrainedCatalog{}), errRoleMutation)
@@ -244,4 +246,39 @@ func TestFineGrainedCatalogSurvivesRestartAndNativeBackup(t *testing.T) {
 		require.NoError(t, restored.Restore(backup))
 		assertRestoredCatalog(t, reloaded)
 	})
+}
+
+func TestFineGrainedCatalogDormantDuringRBACRoleChanges(t *testing.T) {
+	ctx := t.Context()
+	base := runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	system := storage.NewNamespacedEngine(base, "system")
+	roles := NewRoleStore(system)
+	require.NoError(t, roles.CreateRole(ctx, "operator"))
+	require.NoError(t, roles.CreateRole(ctx, "retained"))
+	catalog := FineGrainedCatalog{
+		Definitions: []FineGrainedEntitlement{{ID: "retry", Action: "embedding.failures.retry",
+			Scope: FineGrainedScope{Kind: FineGrainedDatabase, DatabaseID: "db-1"}}},
+		Assignments: map[string][]string{"operator": {"retry"}, "retained": {"retry"}},
+	}
+	require.NoError(t, roles.ReplaceFineGrainedCatalog(ctx, "", fgacTestActions, catalog))
+	before, err := system.GetNode(ctx, fineGrainedCatalogID)
+	require.NoError(t, err)
+
+	fault := storagefault.NewMutationFailureEngine(system, storagefault.MutationGet, errRoleMutation, 0, WithStoreTransaction)
+	fault.ID = fineGrainedCatalogID
+	rbac := NewRoleStore(fault)
+	require.NoError(t, rbac.Load(ctx))
+	require.NoError(t, rbac.DeleteRole(ctx, "operator"))
+	require.NoError(t, rbac.CreateRole(ctx, "operator"))
+	require.NoError(t, rbac.RenameRole(ctx, "retained", "renamed"))
+	require.True(t, rbac.Exists("operator"))
+	require.True(t, rbac.Exists("renamed"))
+	after, err := system.GetNode(ctx, fineGrainedCatalogID)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+
+	reactivated, _, err := roles.PrepareFineGrainedCatalog(ctx)
+	require.NoError(t, err)
+	require.Equal(t, catalog.Definitions, reactivated.Definitions)
+	require.Equal(t, map[string][]string{"renamed": {"retry"}}, reactivated.Assignments)
 }
