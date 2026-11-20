@@ -76,15 +76,28 @@ func submitAcceptedByApply(ctx context.Context, owner Storage, cmd *Command, set
 	}
 	workCtx := work.Context()
 	go func() {
-		defer work.Leave()
+		// This goroutine's enrolment ends before the accepted owner notifies the
+		// settlement observer: that observer may re-enter Shutdown, which joins
+		// this work while this goroutine is the one running it.
+		// Delivery and deferred cleanup call this only on this goroutine.
+		// Late native observers retain the receipt, never this release guard.
+		released := false
+		release := func() {
+			if !released {
+				released = true
+				work.Leave()
+			}
+		}
+		defer release()
 		err := apply(workCtx, cmd, timeout)
 		// An admission error before the command was recorded is a definite
 		// rejection; the accepted owner still settles a started command.
 		if errors.Is(err, ErrClosed) || errors.Is(err, ErrNotReady) || errors.Is(err, ErrNotLeader) || errors.Is(err, ErrStandbyMode) {
+			release()
 			cmd.accepted.Reject(resolve, err)
 			return
 		}
-		cmd.accepted.JoinContext(workCtx, resolve, err)
+		cmd.accepted.JoinContextWithRelease(workCtx, resolve, err, release)
 	}()
 	return receipt, nil
 }
