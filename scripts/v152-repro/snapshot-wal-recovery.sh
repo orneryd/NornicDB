@@ -10,16 +10,40 @@
 # the script writes REPRO_STORES independent instances (default 8) and reads each.
 # Reader: TestR9RecoverErrorsV150AsyncdocsSnapClean (pkg/nornicdb) of this checkout.
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/snapshot-wal-recovery.sh
+# Forced mode (deterministic trigger of the replay path, not the real start-up):
+#   bash scripts/v152-repro/snapshot-wal-recovery.sh --forced-overlap                    # write-behind on
+#   bash scripts/v152-repro/snapshot-wal-recovery.sh --forced-overlap --write-behind=off  # its control
+FORCED=0
+FORCED_WB=on
+for a in "$@"; do
+  case $a in
+    --forced-overlap) FORCED=1 ;;
+    --write-behind=on) FORCED_WB=on ;;
+    --write-behind=off) FORCED_WB=off ;;
+    *) echo "REPRO snapshot-wal-recovery RESULT=HARNESS-ERROR unknown argument: $a"; exit 2 ;;
+  esac
+done
 ITEM=snapshot-wal-recovery
+if [[ $FORCED == 1 ]]; then
+  ITEM=snapshot-wal-recovery-forced-overlap
+  [[ $FORCED_WB == off ]] && ITEM=snapshot-wal-recovery-forced-overlap-wboff
+elif [[ $FORCED_WB == off ]]; then
+  echo "REPRO snapshot-wal-recovery RESULT=HARNESS-ERROR --write-behind applies only with --forced-overlap"; exit 2
+fi
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO=asyncdocs-snap-clean
+WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
+if [[ $FORCED == 1 ]]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/forced-overlap.sh"
+  exit 2
+fi
 COUNT="${REPRO_COUNT-12}"
 STORES="${REPRO_STORES-8}"
 
-WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
 about \
   "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 with the v1.5.0 writer test TestUORBoltWrite) reader=TestR9RecoverErrorsV150AsyncdocsSnapClean instances=REPRO_STORES($STORES) starts_per_instance=REPRO_COUNT($COUNT)" \
-  "instances: REPRO_STORES, default 8. The writer is asynchronous and its journal differs from run to run, so whether an instance shows a failure path varies by instance; observed on 20 Nov 2026 in the lab (Linux), instances with a failure path: pin 10 of 17, v1.5.1 9 of 17 (runs of 3 and 8 instances). The default was raised from 3 to 8 on that basis." \n  "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
+  "instances: REPRO_STORES, default 8. The writer is asynchronous and its journal differs from run to run, and the failure of the real start-up is intermittent: the same build can show it in one run and not in another. PASS therefore means the failure was not observed in this run, not that it is absent. For a deterministic trigger of the replay path use --forced-overlap." \
+  "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
   "iterations, real_failed, replica_failed, replica_wboff_failed: copied from the reader's 'R9REC SUMMARY' line. real_failed = iterations whose REAL nornicdb.Open returned an error; replica_failed / replica_wboff_failed = iterations whose replica recovery reported Failed > 0 (an iteration counts once however many entries failed; a replica can report failed=1 with err=<nil>)." \
   "paths=[<path> x<k>: <message>; ...]: the failure paths of the REAL start, grouped by path and message: 'upgrade refusal' (the open with upgrade allowed before the damage failed; the reader's 'upgrade-open-failed' line), 'real open error' (the start on the damaged store returned an error; the reader's 'REAL FAILED' line). k counts iterations." \
   "entries: <k> REPLICA[-WBOFF]-ERROR seq=<s> op=<o> err=<e>;...: k = the number of the reader's error lines with that sequence, operation and error (one line per failed journal entry per replica recovery), node IDs replaced by <id>. Shown for diagnosis; the verdict does not use them." \
@@ -65,5 +89,5 @@ for k in $(seq 1 "$STORES"); do
   read_instances=$((read_instances + 1))
 done
 [[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
-[[ $total -eq 0 ]] && repro_result PASS "$detail"
+[[ $total -eq 0 ]] && repro_result PASS "not observed in this run (intermittent) $detail"
 repro_result FAIL "refused_starts=$total $detail"
