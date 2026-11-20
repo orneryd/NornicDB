@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # G-wal-v4-upgrade (ledger E4): a b6d8e762a store of an asynchronous Bolt import with vectors (scenario
-# REPRO_SCENARIO, default asyncbolt-nosnap-clean; the item covers asyncbolt-{nosnap,snap}-{clean,kill}) must be
-# upgraded in place with storage upgrade allowed and read back with every node, property and vector.
+# REPRO_SCENARIO, default asyncbolt-nosnap-clean; the item covers asyncbolt-{nosnap,snap}-{clean,kill}).
+# The steps are printed by the script (REPRO_ABOUT lines).
 # Writer: the b6d8e762a writer test TestUORBoltWrite at commit 068646518 (b6d8e762a plus that test;
 # branch scratch/v152-upgrade-writers-b6).
-# Reader: TestV152UpgradeRead of this checkout (first open without upgrade, then with it, then a second open),
-# on REPRO_STORES independent instances (default 1).
+# Reader: TestV152UpgradeRead of this checkout, on REPRO_STORES instances (default 1).
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/wal-v4-upgrade.sh
 ITEM=wal-v4-upgrade
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -15,11 +14,12 @@ STORES="${REPRO_STORES-1}"
 WRITER=068646518ee813cffc4accfed3b767a01c95fe4e
 about \
   "item=$ITEM store=b6/$SCENARIO writer=$WRITER (b6d8e762a with the b6d8e762a writer test TestUORBoltWrite) reader=TestV152UpgradeRead instances=REPRO_STORES($STORES)" \
-  "i<k>: one independently written store instance, read once: first open without storage upgrade, then with it, then a second open; every node, property and vector compared with the writer's expected.json." \
-  "path=<path>: <message>: the reader's UPR_RESULT line for the instance, classified: 'upgrade refusal' (upgrade=REFUSED; the message is the refusal, and files_unchanged is the reader's UPR_UNCHANGED_AFTER_UPGRADE_REFUSAL value: store files identical before and after the refused open), 'second-open error' (second=FAILED), 'state difference or other reader error' (second=ok failed=true)." \
-  "upgraded=<bool> second=ok failed=false: the instance opened and read back as expected." \
-  "reader_exit=<rc>: the reader's exit status for that instance. An instance with a failure path is FAIL whatever its exit status; an instance without one is PASS only with reader_exit=0, else HARNESS-ERROR." \
-  "HARNESS-ERROR also if an instance has no UPR_RESULT line, or fewer instances were read than REPRO_STORES."
+  "steps, for each of the REPRO_STORES instances: the writer test writes the store into a new instance directory; the reader runs once, on a new copy of the store's data directory." \
+  "reader steps: (1) fingerprint = the sorted list of path, size and the first 16 hex digits of the SHA-256 of every file in the data directory; (2) nornicdb.Open without storage upgrade; (3) only if that open returns an error: UPR_REFUSED_NOFLAG with unchanged = the fingerprint now equals step 1's; then nornicdb.Open with storage upgrade allowed; if that open also returns an error: UPR_UNCHANGED_AFTER_UPGRADE_REFUSAL = the fingerprint now equals step 1's, the result 'upgrade=REFUSED', and the reader ends; (4) the open store's nodes, properties and vectors compared with the writer's expected.json; close; (5) a second nornicdb.Open, with storage upgrade allowed only if the open with upgrade of step 3 succeeded; on an error the result 'second=FAILED' and the reader ends; (6) the same comparison; close; (7) the result 'upgraded=<bool> second=ok failed=<bool>', failed = any check of the reader failed. A close that returns an error prints UPR_CLOSE_ERROR and stops the reader." \
+  "path=<path>: <message>: the reader's UPR_RESULT line, by its form: 'upgrade refusal' (upgrade=REFUSED; files_unchanged = the UPR_UNCHANGED_AFTER_UPGRADE_REFUSAL value), 'second-open error' (second=FAILED), 'state difference or other reader error' (second=ok failed=true)." \
+  "upgraded=<bool> second=ok failed=false: the result line, when it has this form." \
+  "reader_exit=<rc>: the reader's exit status for that instance." \
+  "Verdict: HARNESS-ERROR if an instance prints UPR_CLOSE_ERROR, has no UPR_RESULT line or an unrecognised one, reader_exit != 0 on an instance without a path, or fewer instances were read than REPRO_STORES. Otherwise FAIL if an instance has a path, and PASS if none has."
 require_count REPRO_STORES "$STORES"
 preflight "$WRITER"
 repro_root
@@ -34,6 +34,8 @@ for k in $(seq 1 "$STORES"); do
   UPR_ROOT="$iroot" UPR_READ_DIR=read UPR_ONLY="b6/$SCENARIO" \
     run_reader "$log" ./pkg/bolt -run '^TestV152UpgradeRead$' -count=1 -timeout=45m -v
   rc=$?
+  closes=$(grep -a -E '^UPR_CLOSE_ERROR ' "$log" | cut -c1-400 | norm_msg | tr '\n' ';' | sed 's/;$//')
+  [[ -z $closes ]] || harness_fail "instance $k: close error: $closes"
   grep -a -E '^UPR_(OPEN|RESULT|REFUSED_NOFLAG|UNCHANGED_AFTER_UPGRADE_REFUSAL) ' "$log" | cut -c1-600 | norm_msg | sed "s/^/REPRO_READER i$k /"
   res=$(grep -a -E "^UPR_RESULT b6/$SCENARIO " "$log" | tail -n1)
   [[ -n $res ]] || { tail -n 40 "$log" | cut -c1-400 | norm_msg; harness_fail "instance $k: no UPR_RESULT line for b6/$SCENARIO (reader exit $rc)"; }

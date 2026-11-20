@@ -399,6 +399,16 @@ func uprOpen(t testing.TB, tag, name, data string, upgrade bool) (*nornicdb.DB, 
 
 // uprCheck compares, reads the change feed, counts the hidden relationship;
 // on the last open it also writes (one change event; the client's MERGE).
+// uprClose closes db; a close error prints UPR_CLOSE_ERROR and stops the test (the item scripts report it as a
+// harness error).
+func uprClose(t testing.TB, tag string, db *nornicdb.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		fmt.Printf("UPR_CLOSE_ERROR %s err=%v\n", tag, err)
+		t.Fatalf("%s: close: %v", tag, err)
+	}
+}
+
 func uprCheck(t *testing.T, tag, name string, db *nornicdb.DB, want uprState, writerCDC map[string]string, last bool) {
 	got := uprCapture(t, db.GetBaseStorageForManager())
 	missing, changed, extra := uprCompare(tag, want, got)
@@ -490,7 +500,7 @@ func TestV152UpgradeRead(t *testing.T) {
 					upgraded = true
 				}
 				uprCheck(t, tag+" open1", name, db, want, writerCDC, false)
-				require.NoError(t, db.Close())
+				uprClose(t, tag+" open1", db)
 
 				db, err = uprOpen(t, tag+" second", name, data, upgraded)
 				if err != nil {
@@ -499,7 +509,7 @@ func TestV152UpgradeRead(t *testing.T) {
 					return
 				}
 				uprCheck(t, tag+" open2", name, db, want, writerCDC, true)
-				require.NoError(t, db.Close())
+				uprClose(t, tag+" open2", db)
 				fmt.Printf("UPR_RESULT %s upgraded=%v second=ok failed=%v\n", tag, upgraded, t.Failed())
 			})
 		}

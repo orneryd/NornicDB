@@ -36,7 +36,7 @@ import (
 // r9cause-* directory). Fail-closed: a missing store or snapshot fails; the test fails when V1 or V3 fails.
 var r9CauseSource string
 
-// r9EntryHook, when set, runs in r9RecoverCopy before each journal entry's replay (forced-overlap test only).
+// r9EntryHook, when set, runs in r9RecoverCopy before each journal entry's replay (overlap-inducing test only).
 var r9EntryHook func(WALEntry)
 
 type r9Span struct {
