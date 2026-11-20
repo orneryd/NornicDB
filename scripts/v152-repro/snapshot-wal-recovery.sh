@@ -7,19 +7,19 @@
 #   REPLICA-WBOFF  the same with write-behind off.
 # Writer: the v1.5.0 writer test TestUORBoltWrite at commit 87311bbd2 (v1.5.0 c99e77131 plus that test;
 # branch scratch/v152-upgrade-writers-v150). The writer is asynchronous and its journal differs from run to run, so
-# the script writes REPRO_STORES independent instances (default 3) and reads each.
+# the script writes REPRO_STORES independent instances (default 8) and reads each.
 # Reader: TestR9RecoverErrorsV150AsyncdocsSnapClean (pkg/nornicdb) of this checkout.
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/snapshot-wal-recovery.sh
 ITEM=snapshot-wal-recovery
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO=asyncdocs-snap-clean
 COUNT="${REPRO_COUNT-12}"
-STORES="${REPRO_STORES-3}"
+STORES="${REPRO_STORES-8}"
 
 WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
 about \
   "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 with the v1.5.0 writer test TestUORBoltWrite) reader=TestR9RecoverErrorsV150AsyncdocsSnapClean instances=REPRO_STORES($STORES) starts_per_instance=REPRO_COUNT($COUNT)" \
-  "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
+  "instances: REPRO_STORES, default 8. The writer is asynchronous and its journal differs from run to run, so whether an instance shows a failure path varies by instance; observed on 20 Nov 2026 in the lab (Linux), instances with a failure path: pin 10 of 17, v1.5.1 9 of 17 (runs of 3 and 8 instances). The default was raised from 3 to 8 on that basis." \n  "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
   "iterations, real_failed, replica_failed, replica_wboff_failed: copied from the reader's 'R9REC SUMMARY' line. real_failed = iterations whose REAL nornicdb.Open returned an error; replica_failed / replica_wboff_failed = iterations whose replica recovery reported Failed > 0 (an iteration counts once however many entries failed; a replica can report failed=1 with err=<nil>)." \
   "paths=[<path> x<k>: <message>; ...]: the failure paths of the REAL start, grouped by path and message: 'upgrade refusal' (the open with upgrade allowed before the damage failed; the reader's 'upgrade-open-failed' line), 'real open error' (the start on the damaged store returned an error; the reader's 'REAL FAILED' line). k counts iterations." \
   "entries: <k> REPLICA[-WBOFF]-ERROR seq=<s> op=<o> err=<e>;...: k = the number of the reader's error lines with that sequence, operation and error (one line per failed journal entry per replica recovery), node IDs replaced by <id>. Shown for diagnosis; the verdict does not use them." \
