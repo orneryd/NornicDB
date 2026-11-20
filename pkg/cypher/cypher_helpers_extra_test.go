@@ -152,12 +152,6 @@ func TestCypherHelpers_ProcedureRegistryAndPatternNames(t *testing.T) {
 	require.Len(t, builtins, 1)
 	assert.Equal(t, "db.labels", builtins[0].Name)
 
-	assert.Equal(t, "Generic", PatternGeneric.String())
-	assert.Equal(t, "MutualRelationship", PatternMutualRelationship.String())
-	assert.Equal(t, "IncomingCountAgg", PatternIncomingCountAgg.String())
-	assert.Equal(t, "OutgoingCountAgg", PatternOutgoingCountAgg.String())
-	assert.Equal(t, "EdgePropertyAgg", PatternEdgePropertyAgg.String())
-	assert.Equal(t, "LargeResultSet", PatternLargeResultSet.String())
 }
 
 func TestCypherHelpers_ProcedureRegistryAndArgParsing_Errors(t *testing.T) {
@@ -1513,28 +1507,6 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 }
 
 func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
-	// extractRelationshipType branches.
-	assert.Equal(t, "KNOWS", extractRelationshipType("(a)-[:KNOWS]-(b)"))
-	assert.Equal(t, "RATED", extractRelationshipType("(a)-[r:RATED]-(b)"))
-	assert.Equal(t, "", extractRelationshipType("(a)-->(b)"))
-
-	// isReturnEdgePropertyAggNameShape strictness.
-	assert.True(t, isReturnEdgePropertyAggNameShape(t.Context(),
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(),
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(t.Context(), "RETURN p.name", "r", "rating"))
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {

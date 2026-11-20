@@ -687,13 +687,8 @@
     "setItemKeepsMergeKey"
   ],
   "pkg/cypher/query_patterns.go": [
-    "countRelationshipPatterns",
-    "edgeAggregationProperty",
     "extractNodeVariables",
-    "extractRelationshipType",
-    "extractRelationshipVariable",
-    "functionCallParenAt",
-    "splitEdgeAggregationCall"
+    "functionCallParenAt"
   ],
   "pkg/cypher/query_structure_rewrite.go": [
     "mayUseQueryStructure",

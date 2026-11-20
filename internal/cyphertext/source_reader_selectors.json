@@ -129,18 +129,6 @@
       "reason": "Consumes parseOrderByClause and the existing postfix property-name owner; no independent Fields/Index/Split token extent remains."
     },
     {
-      "path": "pkg/cypher/query_patterns.go",
-      "function": "isReturnNameCountShape",
-      "class": "contextual-grammar",
-      "reason": "Projection shape consumes corrected structural comma splitting."
-    },
-    {
-      "path": "pkg/cypher/query_patterns.go",
-      "function": "isReturnEdgePropertyAggNameShape",
-      "class": "contextual-grammar",
-      "reason": "Edge projection shape consumes corrected structural comma splitting."
-    },
-    {
       "path": "pkg/cypher/expression_validation.go",
       "function": "staticListOperand",
       "class": "lexical-adapter",
