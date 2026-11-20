@@ -28,7 +28,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type rcaContVariant struct {
+	name       string
+	noReranker bool
+	noWhere    bool
+	shortText  bool
+	oneShot    bool
+}
+
 func TestRCARankedContinuationCompletion(t *testing.T) {
+	rcaRankedContinuation(t, rcaContVariant{name: "as-port"})
+}
+
+func TestRCARankedContinuationVariants(t *testing.T) {
+	for _, v := range []rcaContVariant{
+		{name: "no-reranker", noReranker: true},
+		{name: "no-where", noWhere: true},
+		{name: "short-text", shortText: true},
+		{name: "one-shot-limit-200", oneShot: true},
+		{name: "one-shot-limit-200-no-reranker", oneShot: true, noReranker: true},
+	} {
+		t.Run(v.name, func(t *testing.T) { rcaRankedContinuation(t, v) })
+	}
+}
+
+func rcaRankedContinuation(t *testing.T, v rcaContVariant) {
 	const n = 150
 	t.Setenv("NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS", "1800")
 	var mu sync.Mutex
@@ -73,6 +97,9 @@ func TestRCARankedContinuationCompletion(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for i := 1; i <= n; i++ {
 		text := fmt.Sprintf("bandicoot rank=%d ", i) + strings.Repeat("wombat ", i) + strings.Repeat("z ", 4000)
+		if v.shortText {
+			text = fmt.Sprintf("bandicoot rank=%d ", i) + strings.Repeat("wombat ", i)
+		}
 		pdv2Store(t, store, "CreateNode", &storage.Node{ID: storage.NodeID(fmt.Sprintf("synthetic-note-%d", i)), Labels: []string{"PDGraphNode", "PDSearchable"}, Properties: map[string]any{"id": fmt.Sprintf("synthetic-note-%d", i), "kind": "note", "origin": "user", "revision": int64(1), "current": true, "search_text": text}, ChunkEmbeddings: [][]float32{{1, float32(n-i) / float32(n)}}})
 	}
 	fn := reflect.ValueOf(search.NewService)
@@ -83,7 +110,9 @@ func TestRCARankedContinuationCompletion(t *testing.T) {
 	svc := fn.Call(args)[0].Interface().(*search.Service)
 	svc.SetFulltextProperties([]string{"text", "search_text"})
 	require.NoError(t, svc.BuildIndexes(context.Background()))
-	svc.SetReranker(rerank)
+	if !v.noReranker {
+		svc.SetReranker(rerank)
+	}
 	port := serveBoltIntegrationServer(t, New(&Config{Port: 0, MaxConnections: 10, ReadBufferSize: 8192, WriteBufferSize: 8192}, &pdv2Exec{store: store, svc: svc}))
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)
@@ -93,16 +122,32 @@ func TestRCARankedContinuationCompletion(t *testing.T) {
 	ret := " YIELD page RETURN page.qid AS qid, page.has_more AS more, page.returned AS returned, page.discovered AS discovered, page.total AS total, page.completion AS completion, page.mode AS mode, page.ranked_count AS ranked, page.ranked_pool_exhausted AS rpe, page.collection_exhausted AS ce, page.eligible_count AS eligible, page.fallback_reason AS fb, [r IN page.results | r.node.id] AS ids"
 	first := "CALL db.rretrieve({query:$query, types:['PDSearchSource','PDSearchable'], where:$where, n:20, failClosed:true, minRRFScore:0})" + ret
 	next := "CALL db.rretrieve({query:$query, types:['PDSearchSource','PDSearchable'], n:20, qid:$qid, failClosed:true, minRRFScore:0})" + ret
+	if v.oneShot {
+		rows, err := pdv2Run(driver, "CALL db.rretrieve({query:$query, types:['PDSearchSource','PDSearchable'], limit:200, failClosed:true, minRRFScore:0}) YIELD node, bm25_rank, vector_rank RETURN count(DISTINCT node.id) AS c, count(bm25_rank) AS b, count(vector_rank) AS v", map[string]any{"query": "bandicoot"}, false)
+		c := any(nil)
+		if err == nil && len(rows) > 0 {
+			m := rows[0].AsMap()
+			c = fmt.Sprintf("%v (with bm25 rank %v, with vector rank %v)", m["c"], m["b"], m["v"])
+		}
+		mu.Lock()
+		cc := append([]int(nil), calls...)
+		mu.Unlock()
+		t.Logf("RCA_CONT variant=%s one-shot distinct=%v err=%v rerankDocsPerCall=%v", v.name, c, err, cc)
+		return
+	}
 	seen := map[string]bool{}
 	var qid any
 	for page := 0; page < 30; page++ {
 		q, params := first, map[string]any{"query": "bandicoot", "where": where, "history": false}
+		if v.noWhere {
+			q, params = strings.Replace(first, "where:$where, ", "", 1), map[string]any{"query": "bandicoot"}
+		}
 		if qid != nil {
 			q, params = next, map[string]any{"query": "bandicoot", "qid": qid}
 		}
 		rows, err := pdv2Run(driver, q, params, false)
 		if err != nil || len(rows) == 0 {
-			t.Logf("RCA_CONT page=%d err=%v rows=%d", page, err, len(rows))
+			t.Logf("RCA_CONT variant=%s page=%d err=%v rows=%d", v.name, page, err, len(rows))
 			break
 		}
 		m := rows[0].AsMap()
@@ -113,12 +158,12 @@ func TestRCARankedContinuationCompletion(t *testing.T) {
 		mu.Lock()
 		c := append([]int(nil), calls...)
 		mu.Unlock()
-		t.Logf("RCA_CONT page=%d ids=%d distinct=%d more=%v returned=%v discovered=%v total=%v completion=%v mode=%v ranked=%v rankedPoolExhausted=%v collectionExhausted=%v eligible=%v fallback=%v rerankDocsPerCall=%v",
-			page, len(ids), len(seen), m["more"], m["returned"], m["discovered"], m["total"], m["completion"], m["mode"], m["ranked"], m["rpe"], m["ce"], m["eligible"], m["fb"], c)
+		t.Logf("RCA_CONT variant=%s page=%d ids=%d distinct=%d more=%v returned=%v discovered=%v total=%v completion=%v mode=%v ranked=%v rankedPoolExhausted=%v collectionExhausted=%v eligible=%v fallback=%v rerankDocsPerCall=%v",
+			v.name, page, len(ids), len(seen), m["more"], m["returned"], m["discovered"], m["total"], m["completion"], m["mode"], m["ranked"], m["rpe"], m["ce"], m["eligible"], m["fb"], c)
 		qid = m["qid"]
 		if more, _ := m["more"].(bool); !more {
 			break
 		}
 	}
-	t.Logf("RCA_CONT_END distinct=%d of %d", len(seen), n)
+	t.Logf("RCA_CONT_END variant=%s distinct=%d of %d", v.name, len(seen), n)
 }
