@@ -33,8 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nor70OneHopPattern is the exact relationship pattern from NOR-70.
-const nor70OneHopPattern = "MATCH (q:AggOwner)-[r:AGG]->(p:AggValue)"
+// nor70OneHopPattern_r9port is the exact relationship pattern from NOR-70.
+const nor70OneHopPattern_r9port = "MATCH (q:AggOwner)-[r:AGG]->(p:AggValue)"
 
 // nor70SeedPreparedFixture creates the issue's prepared one-hop fixture
 // exactly as written above, in a fresh in-memory store.
@@ -59,13 +59,13 @@ func nor70SeedIndependentFixture(t *testing.T) *StorageExecutor {
 	return exec
 }
 
-// TestNOR70IndependentOneHopAggregatesPublic pins the issue's first prepared
+// TestNOR70IndependentOneHopAggregatesPublic_r9port pins the issue's first prepared
 // query and shows that each aggregate has its own input: sum(r.x) is 3 and
 // avg(p.y) is 1.5, in either projection order, through the one-hop statement
 // shape and through the general pipeline shapes (WHERE, WITH and explicit
 // WITH aggregation). Normal and PROFILE execution agree; EXPLAIN accepts the
 // same projection and reports the same columns without executing it.
-func TestNOR70IndependentOneHopAggregatesPublic(t *testing.T) {
+func TestNOR70IndependentOneHopAggregatesPublic_r9port(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
 		t.Run("prepared fixture", func(t *testing.T) {
 			exec := nor70SeedPreparedFixture(t)
@@ -76,27 +76,27 @@ func TestNOR70IndependentOneHopAggregatesPublic(t *testing.T) {
 			}{
 				{
 					name:  "plain",
-					query: nor70OneHopPattern + " RETURN q.g, sum(r.x), avg(p.y)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, sum(r.x), avg(p.y)",
 					want:  [][]interface{}{{"g", int64(3), float64(1.5)}},
 				},
 				{
 					name:  "reversed aggregate order",
-					query: nor70OneHopPattern + " RETURN q.g, avg(p.y), sum(r.x)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, avg(p.y), sum(r.x)",
 					want:  [][]interface{}{{"g", float64(1.5), int64(3)}},
 				},
 				{
 					name:  "where",
-					query: nor70OneHopPattern + " WHERE true RETURN q.g, sum(r.x), avg(p.y)",
+					query: nor70OneHopPattern_r9port + " WHERE true RETURN q.g, sum(r.x), avg(p.y)",
 					want:  [][]interface{}{{"g", int64(3), float64(1.5)}},
 				},
 				{
 					name:  "with-star",
-					query: nor70OneHopPattern + " WITH * RETURN q.g, sum(r.x), avg(p.y)",
+					query: nor70OneHopPattern_r9port + " WITH * RETURN q.g, sum(r.x), avg(p.y)",
 					want:  [][]interface{}{{"g", int64(3), float64(1.5)}},
 				},
 				{
 					name:  "with-projection",
-					query: nor70OneHopPattern + " WITH q.g AS g, sum(r.x) AS s, avg(p.y) AS a RETURN g, s, a",
+					query: nor70OneHopPattern_r9port + " WITH q.g AS g, sum(r.x) AS s, avg(p.y) AS a RETURN g, s, a",
 					want:  [][]interface{}{{"g", int64(3), float64(1.5)}},
 				},
 			}
@@ -135,12 +135,12 @@ func TestNOR70IndependentOneHopAggregatesPublic(t *testing.T) {
 			}{
 				{
 					name:  "sum then avg",
-					query: nor70OneHopPattern + " RETURN q.g, sum(r.x), avg(p.y)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, sum(r.x), avg(p.y)",
 					want:  [][]interface{}{{"g", int64(3), float64(15)}},
 				},
 				{
 					name:  "avg then sum",
-					query: nor70OneHopPattern + " RETURN q.g, avg(p.y), sum(r.x)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, avg(p.y), sum(r.x)",
 					want:  [][]interface{}{{"g", float64(15), int64(3)}},
 				},
 			}
@@ -164,11 +164,11 @@ func TestNOR70IndependentOneHopAggregatesPublic(t *testing.T) {
 	})
 }
 
-// TestNOR70NullOnlyOneHopGroupRetainedPublic removes both p.y properties and
+// TestNOR70NullOnlyOneHopGroupRetainedPublic_r9port removes both p.y properties and
 // pins the issue's second prepared query: avg(p.y) is null and collect(p.y) is
 // [] while the q.g group is still returned. The group also remains visible
 // when another aggregate over r.x is projected beside it.
-func TestNOR70NullOnlyOneHopGroupRetainedPublic(t *testing.T) {
+func TestNOR70NullOnlyOneHopGroupRetainedPublic_r9port(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
 		t.Run("prepared fixture after removing both p.y", func(t *testing.T) {
 			exec := nor70SeedPreparedFixture(t)
@@ -182,27 +182,27 @@ func TestNOR70NullOnlyOneHopGroupRetainedPublic(t *testing.T) {
 			}{
 				{
 					name:  "plain",
-					query: nor70OneHopPattern + " RETURN q.g, avg(p.y), collect(p.y)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, avg(p.y), collect(p.y)",
 					want:  [][]interface{}{{"g", nil, []interface{}{}}},
 				},
 				{
 					name:  "where",
-					query: nor70OneHopPattern + " WHERE true RETURN q.g, avg(p.y), collect(p.y)",
+					query: nor70OneHopPattern_r9port + " WHERE true RETURN q.g, avg(p.y), collect(p.y)",
 					want:  [][]interface{}{{"g", nil, []interface{}{}}},
 				},
 				{
 					name:  "with-star",
-					query: nor70OneHopPattern + " WITH * RETURN q.g, avg(p.y), collect(p.y)",
+					query: nor70OneHopPattern_r9port + " WITH * RETURN q.g, avg(p.y), collect(p.y)",
 					want:  [][]interface{}{{"g", nil, []interface{}{}}},
 				},
 				{
 					name:  "with-projection",
-					query: nor70OneHopPattern + " WITH q.g AS g, avg(p.y) AS a, collect(p.y) AS c RETURN g, a, c",
+					query: nor70OneHopPattern_r9port + " WITH q.g AS g, avg(p.y) AS a, collect(p.y) AS c RETURN g, a, c",
 					want:  [][]interface{}{{"g", nil, []interface{}{}}},
 				},
 				{
 					name:  "independent aggregate beside null average",
-					query: nor70OneHopPattern + " RETURN q.g, sum(r.x), avg(p.y), collect(p.y)",
+					query: nor70OneHopPattern_r9port + " RETURN q.g, sum(r.x), avg(p.y), collect(p.y)",
 					want:  [][]interface{}{{"g", int64(3), nil, []interface{}{}}},
 				},
 			}
@@ -238,7 +238,7 @@ func TestNOR70NullOnlyOneHopGroupRetainedPublic(t *testing.T) {
 			require.NoError(t, err)
 			for _, mode := range []string{"", "PROFILE "} {
 				t.Run("mode="+mode, func(t *testing.T) {
-					result, err := exec.Execute(t.Context(), mode+nor70OneHopPattern+
+					result, err := exec.Execute(t.Context(), mode+nor70OneHopPattern_r9port+
 						" RETURN q.g, sum(r.x), avg(p.y), count(p.y) ORDER BY q.g", nil)
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{
