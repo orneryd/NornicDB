@@ -527,11 +527,12 @@ type BoltAuthenticator interface {
 
 // BoltAuthResult contains the result of Bolt authentication.
 type BoltAuthResult struct {
-	Authenticated bool     // Whether authentication succeeded
-	Username      string   // Authenticated username
-	PrincipalID   string   // Stable identity derived from validated authentication
-	Roles         []string // User roles (admin, editor, viewer, etc.)
-	Permissions   []string // Effective entitlement IDs (when set, used by HasPermission; else fallback to rolePerms)
+	Authenticated   bool     // Whether authentication succeeded
+	Username        string   // Authenticated username
+	PrincipalID     string   // Stable identity derived from validated authentication
+	Roles           []string // User roles (admin, editor, viewer, etc.)
+	Permissions     []string // Effective entitlement IDs (when set, used by HasPermission; else fallback to rolePerms)
+	providerSession *auth.FineGrainedProviderSession
 }
 
 // HasRole checks if the auth result has a specific role.

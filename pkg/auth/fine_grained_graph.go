@@ -33,6 +33,8 @@ type FineGrainedRequest struct {
 	Runtime                *FineGrainedRuntime
 	Fingerprint            string
 	identity               RequestIdentity
+	roles                  []string
+	providerSession        *FineGrainedProviderSession
 	databaseOwner          func(string) string
 }
 
@@ -55,8 +57,13 @@ func FineGrainedRequestFromContext(ctx context.Context) *FineGrainedRequest {
 
 // AllowsDatabase checks a capability on a canonical database target.
 func (r *FineGrainedRequest) AllowsDatabase(action, database, property string) bool {
+	return r.AllowsDatabaseIdentity(action, r.DatabaseID(database), property)
+}
+
+// AllowsDatabaseIdentity checks a capability against a captured database ID.
+func (r *FineGrainedRequest) AllowsDatabaseIdentity(action, databaseID, property string) bool {
 	return r.Access.Allows(action, FineGrainedResource{
-		Kind: FineGrainedDatabase, DatabaseID: r.DatabaseID(database), Property: property, HomeDatabaseID: r.HomeDatabaseID,
+		Kind: FineGrainedDatabase, DatabaseID: databaseID, Property: property, HomeDatabaseID: r.HomeDatabaseID,
 	})
 }
 

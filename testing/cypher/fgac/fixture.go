@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
@@ -47,12 +49,51 @@ var (
 // Fixture is the synthetic graph, administration plan and documented cases
 // shared by both endpoints.
 type Fixture struct {
-	Name       string               `json:"name"`
-	Purpose    string               `json:"purpose"`
+	Name       string                      `json:"name"`
+	Purpose    string                      `json:"purpose"`
+	Principals map[string]Principal        `json:"principals"`
+	Setup      Phase                       `json:"setup"`
+	Teardown   Phase                       `json:"teardown"`
+	Cases      []Case                      `json:"cases"`
+	References map[string]FixtureExtension `json:"referenceExtensions,omitempty"`
+}
+
+// FixtureExtension adds version-specific cases to the common compatibility contract.
+type FixtureExtension struct {
 	Principals map[string]Principal `json:"principals"`
 	Setup      Phase                `json:"setup"`
 	Teardown   Phase                `json:"teardown"`
 	Cases      []Case               `json:"cases"`
+}
+
+// ForReference returns a validated fixture with the pinned version's cases.
+func (fixture *Fixture) ForReference(version string) (*Fixture, error) {
+	extension, ok := fixture.References[version]
+	if !ok {
+		return fixture, nil
+	}
+	merged := *fixture
+	merged.References = nil
+	merged.Principals = maps.Clone(fixture.Principals)
+	for name, value := range extension.Principals {
+		if _, exists := merged.Principals[name]; exists {
+			return nil, fmt.Errorf("reference %s repeats principal %q", version, name)
+		}
+		merged.Principals[name] = value
+	}
+	merged.Setup = Phase{
+		Graph:          slices.Concat(fixture.Setup.Graph, extension.Setup.Graph),
+		Administration: slices.Concat(fixture.Setup.Administration, extension.Setup.Administration),
+	}
+	merged.Teardown = Phase{
+		Graph:          slices.Concat(extension.Teardown.Graph, fixture.Teardown.Graph),
+		Administration: slices.Concat(extension.Teardown.Administration, fixture.Teardown.Administration),
+	}
+	merged.Cases = slices.Concat(fixture.Cases, extension.Cases)
+	if err := merged.Validate(); err != nil {
+		return nil, err
+	}
+	return &merged, nil
 }
 
 // Principal is a fixture principal. Admin principals use the endpoint's
@@ -126,8 +167,15 @@ func ensureEOF(decoder interface{ Decode(any) error }) error {
 }
 
 func (f *Fixture) normalize() {
-	for caseIndex := range f.Cases {
-		rows := f.Cases[caseIndex].Expect.Rows
+	normalizeFixtureCases(f.Cases)
+	for _, section := range f.References {
+		normalizeFixtureCases(section.Cases)
+	}
+}
+
+func normalizeFixtureCases(cases []Case) {
+	for caseIndex := range cases {
+		rows := cases[caseIndex].Expect.Rows
 		for rowIndex := range rows {
 			for columnIndex := range rows[rowIndex] {
 				rows[rowIndex][columnIndex] = normalizeFixtureValue(rows[rowIndex][columnIndex])
@@ -347,17 +395,14 @@ func validateTeardownSafety(phase Phase) []error {
 		}
 	}
 	for index, statement := range phase.Administration {
-		fields := strings.Fields(statement)
-		if len(fields) < 3 || !strings.EqualFold(fields[0], "DROP") {
-			problems = append(problems, fmt.Errorf("teardown.administration statement %d must be a DROP USER or DROP ROLE", index))
+		verb, name, tail, ok := fixtureAdministrationTarget(statement)
+		if !ok || !strings.EqualFold(verb, "DROP") ||
+			(len(tail) != 0 && (len(tail) != 2 || !strings.EqualFold(tail[0], "IF") || !strings.EqualFold(tail[1], "EXISTS"))) {
+			problems = append(problems, fmt.Errorf("teardown.administration statement %d must be a DROP of a synthetic user, role, or auth rule", index))
 			continue
 		}
-		if !strings.EqualFold(fields[1], "USER") && !strings.EqualFold(fields[1], "ROLE") {
-			problems = append(problems, fmt.Errorf("teardown.administration statement %d may only drop synthetic users or roles", index))
-			continue
-		}
-		if !syntheticUserName.MatchString(fields[2]) {
-			problems = append(problems, fmt.Errorf("teardown.administration statement %d drops non-synthetic name %q", index, fields[2]))
+		if !syntheticUserName.MatchString(name) {
+			problems = append(problems, fmt.Errorf("teardown.administration statement %d drops non-synthetic name %q", index, name))
 		}
 	}
 	return problems
@@ -366,19 +411,37 @@ func validateTeardownSafety(phase Phase) []error {
 func validateSetupNames(phase Phase) []error {
 	var problems []error
 	for index, statement := range phase.Administration {
-		fields := strings.Fields(statement)
-		if len(fields) < 3 || !strings.EqualFold(fields[0], "CREATE") {
+		verb, name, _, ok := fixtureAdministrationTarget(statement)
+		if !strings.EqualFold(verb, "CREATE") {
 			continue
 		}
-		if !strings.EqualFold(fields[1], "USER") && !strings.EqualFold(fields[1], "ROLE") {
-			problems = append(problems, fmt.Errorf("setup.administration statement %d may only create synthetic users or roles", index))
+		if !ok {
+			problems = append(problems, fmt.Errorf("setup.administration statement %d may only create synthetic users, roles or auth rules", index))
 			continue
 		}
-		if !syntheticUserName.MatchString(fields[2]) {
-			problems = append(problems, fmt.Errorf("setup.administration statement %d creates non-synthetic name %q", index, fields[2]))
+		if !syntheticUserName.MatchString(name) {
+			problems = append(problems, fmt.Errorf("setup.administration statement %d creates non-synthetic name %q", index, name))
 		}
 	}
 	return problems
+}
+
+func fixtureAdministrationTarget(statement string) (verb, name string, tail []string, ok bool) {
+	fields := strings.Fields(statement)
+	if len(fields) >= 2 && strings.EqualFold(fields[0], "CYPHER") && (fields[1] == "5" || fields[1] == "25") {
+		fields = fields[2:]
+	}
+	if len(fields) == 0 {
+		return "", "", nil, false
+	}
+	verb = fields[0]
+	if len(fields) >= 3 && (strings.EqualFold(fields[1], "USER") || strings.EqualFold(fields[1], "ROLE")) {
+		return verb, fields[2], fields[3:], true
+	}
+	if len(fields) >= 4 && strings.EqualFold(fields[1], "AUTH") && strings.EqualFold(fields[2], "RULE") {
+		return verb, fields[3], fields[4:], true
+	}
+	return verb, "", nil, false
 }
 
 // Substitute fills the only supported placeholders in a fixture statement.

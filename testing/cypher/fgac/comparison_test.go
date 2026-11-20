@@ -49,6 +49,22 @@ func TestFGACComparison(t *testing.T) {
 	t.Cleanup(closeCancel)
 	t.Cleanup(func() { reference.close(closeContext) })
 	t.Cleanup(func() { candidate.close(closeContext) })
+
+	referenceInfo, err := reference.components(ctx)
+	if err != nil {
+		t.Fatalf("reference identity: %v", err)
+	}
+	referencePin, err := VerifyReferenceIdentity(referenceInfo, pins, config.ReferenceVersion)
+	if err != nil {
+		t.Fatalf("reference identity: %v", err)
+	}
+	t.Logf("reference: %s (%s)", referenceInfo, referencePin.Ref())
+
+	fixture, err = fixture.ForReference(referencePin.Version)
+	if err != nil {
+		t.Fatalf("reference fixture: %v", err)
+	}
+	candidate.fixture, reference.fixture = fixture, fixture
 	// Registered after the driver cleanups so it runs before they close the
 	// drivers, including when a later setup or case fails.
 	t.Cleanup(func() {
@@ -61,16 +77,6 @@ func TestFGACComparison(t *testing.T) {
 			t.Logf("reference teardown: %v", err)
 		}
 	})
-
-	referenceInfo, err := reference.components(ctx)
-	if err != nil {
-		t.Fatalf("reference identity: %v", err)
-	}
-	referencePin, err := VerifyReferenceIdentity(referenceInfo, pins, config.ReferenceVersion)
-	if err != nil {
-		t.Fatalf("reference identity: %v", err)
-	}
-	t.Logf("reference: %s (%s)", referenceInfo, referencePin.Ref())
 
 	// Candidate identity is recorded, not asserted: the comparison itself is
 	// the compatibility check.

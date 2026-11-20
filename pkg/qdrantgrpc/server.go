@@ -727,12 +727,17 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 // transports accept Basic credentials first, then a Bearer token or API key; a
 // rejected Basic credential falls through to the token headers, as before.
 func (s *Server) authenticate(ctx context.Context) (*auth.JWTClaims, error) {
+	claims, _, err := s.authenticatePrincipal(ctx)
+	return claims, err
+}
+
+func (s *Server) authenticatePrincipal(ctx context.Context) (*auth.JWTClaims, *auth.FineGrainedProviderSession, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
 		if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
 			if header := authHeaders[0]; strings.HasPrefix(header, "Basic ") {
 				if claims, err := s.handleBasicAuth(ctx, header); err == nil {
-					return claims, nil
+					return claims, nil, nil
 				}
 			}
 		}
@@ -741,13 +746,13 @@ func (s *Server) authenticate(ctx context.Context) (*auth.JWTClaims, error) {
 	// Try Bearer/JWT token extraction
 	token, err := s.extractTokenFromMetadata(ctx)
 	if err != nil {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
-	claims, err := s.authenticator.ValidateToken(token)
+	claims, provider, err := s.authenticator.ValidateTokenWithFineGrainedProvider(ctx, token)
 	if err != nil {
-		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
+		return nil, nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
-	return claims, nil
+	return claims, provider, nil
 }
 
 // unaryAuthInterceptor authenticates unary gRPC requests, then admits the
@@ -759,7 +764,7 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
 		return handler(ctx, req)
 	}
-	claims, err := s.authenticate(ctx)
+	claims, provider, err := s.authenticatePrincipal(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +773,7 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	}
 	// Add claims to context for use in handlers
 	ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
-	ctx, err = s.admitFineGrained(ctx, info.FullMethod, claims)
+	ctx, err = s.admitFineGrained(provider.WithContext(ctx), info.FullMethod, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -787,7 +792,7 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 		return handler(srv, ss)
 	}
 	ctx := ss.Context()
-	claims, err := s.authenticate(ctx)
+	claims, provider, err := s.authenticatePrincipal(ctx)
 	if err != nil {
 		return err
 	}
@@ -795,7 +800,7 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 		return err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
-	ctx, err = s.admitFineGrained(ctx, info.FullMethod, claims)
+	ctx, err = s.admitFineGrained(provider.WithContext(ctx), info.FullMethod, claims)
 	if err != nil {
 		return err
 	}
@@ -861,11 +866,11 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	username, password := parts[0], parts[1]
 
 	if s.basicAuthCache != nil {
-		if cached, ok := s.basicAuthCache.Get(username, password); ok {
+		if cached, generation, ok := s.basicAuthCache.GetWithGeneration(username, password); ok {
 			// The cache spares the password check only; the roles are the
 			// account's current ones (auth.CurrentClaims), as for HTTP and
 			// Bolt. A cached account that is gone is checked again in full.
-			if current, err := s.authenticator.CurrentClaims(cached); err == nil {
+			if current, err := s.authenticator.CurrentBasicClaims(cached, s.basicAuthCache, generation); err == nil {
 				return current, nil
 			}
 		}

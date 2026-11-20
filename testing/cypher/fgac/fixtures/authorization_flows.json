@@ -29,6 +29,7 @@
       "CREATE (a:FGACDoc {id: 'doc-a', title: 'Alpha', published: true}), (b:FGACDoc {id: 'doc-b', title: 'Beta', published: false}), (c:FGACOther {id: 'other-a', title: 'Other'})"
     ],
     "administration": [
+      "CREATE USER fgac_linked SET AUTH 'oidc-comparison' { SET ID 'fgac-profile' }",
       "CREATE ROLE fgac_reader IF NOT EXISTS",
       "CREATE ROLE fgac_denier IF NOT EXISTS",
       "CREATE ROLE fgac_access IF NOT EXISTS",
@@ -66,6 +67,7 @@
       "MATCH (n) WHERE n:FGACDoc OR n:FGACOther DETACH DELETE n"
     ],
     "administration": [
+      "DROP USER fgac_linked IF EXISTS",
       "DROP USER fgac_access IF EXISTS",
       "DROP USER fgac_denied IF EXISTS",
       "DROP USER fgac_noaccess IF EXISTS",
@@ -376,6 +378,100 @@
         "kind": "deny",
         "code": "Neo.ClientError.Security.Forbidden"
       }
+    },
+    {
+      "id": "external-provider-inspection",
+      "covers": [
+        "introspection"
+      ],
+      "description": "The provider listing reports the configured external ID for the linked account.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "fgac_linked",
+            "oidc-comparison",
+            "fgac-profile"
+          ]
+        ]
+      }
     }
-  ]
+  ],
+  "referenceExtensions": {
+    "2026.10.2": {
+      "principals": {
+        "ruled": {
+          "user": "fgac_ruled"
+        }
+      },
+      "setup": {
+        "administration": [
+          "CREATE ROLE fgac_rule_reader IF NOT EXISTS",
+          "CREATE USER fgac_ruled IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+          "GRANT ACCESS ON DATABASE ${database} TO fgac_rule_reader",
+          "CYPHER 25 ALTER USER fgac_ruled SET TAGS 'fgac-reports'",
+          "CYPHER 25 CREATE AUTH RULE fgac_reports_rule SET CONDITION 'fgac-reports' IN abac.native.user_tags()",
+          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_reports_rule"
+        ]
+      },
+      "teardown": {
+        "administration": [
+          "CYPHER 25 DROP AUTH RULE fgac_reports_rule IF EXISTS",
+          "DROP USER fgac_ruled IF EXISTS",
+          "DROP ROLE fgac_rule_reader IF EXISTS"
+        ]
+      },
+      "cases": [
+        {
+          "id": "current-auth-rule-grants-role",
+          "covers": [
+            "access-grant"
+          ],
+          "description": "An enabled Cypher 25 rule grants database access to the tagged user.",
+          "database": "target",
+          "principal": "ruled",
+          "statements": [
+            "RETURN 1 AS permitted"
+          ],
+          "expect": {
+            "kind": "allow",
+            "rows": [
+              [
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "id": "current-auth-rule-inspection",
+          "covers": [
+            "introspection"
+          ],
+          "description": "The rule listing returns the rule name, state and assigned role.",
+          "database": "system",
+          "principal": "admin",
+          "statements": [
+            "CYPHER 25 SHOW AUTH RULES YIELD name, enabled, roles WHERE name = 'fgac_reports_rule' RETURN name, enabled, roles"
+          ],
+          "expect": {
+            "kind": "allow",
+            "rows": [
+              [
+                "fgac_reports_rule",
+                true,
+                [
+                  "fgac_rule_reader"
+                ]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  }
 }

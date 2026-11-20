@@ -179,6 +179,9 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 		users = []UserListing{{Name: current.Name, Roles: current.Roles}}
 	}
 	request := auth.FineGrainedRequestFromContext(ctx)
+	if request != nil && request.Runtime != nil && isShowUsersWithAuth(ctx, cypher) {
+		return executeShowFineGrainedUserProviders(ctx, request)
+	}
 	showTags := request != nil && request.Runtime != nil && cypherVersionFromContext(ctx) == "25" &&
 		request.AllowsDBMS("dbms.user.metadata.show", "")
 	columns := slices.Clone(showUsersColumns)
@@ -192,8 +195,12 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 		}
 		roles := append(make([]string, 0, len(user.Roles)), user.Roles...)
 		var home any
-		if auth.FineGrainedRequestFromContext(ctx) != nil {
-			roles = append(roles, auth.FineGrainedPublicRole)
+		if request != nil {
+			if currentOnly && request.Runtime != nil {
+				roles = request.EffectiveRoles()
+			} else {
+				roles = append(roles, auth.FineGrainedPublicRole)
+			}
 			if user.HomeDatabase != "" {
 				home = user.HomeDatabase
 			}
@@ -211,6 +218,58 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
 	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, showUsersColumns), nil
+}
+
+func isShowUsersWithAuth(ctx context.Context, text string) bool {
+	return startsWithKeywords(ctx, text, "SHOW", "USERS WITH AUTH") ||
+		startsWithKeywords(ctx, text, "SHOW", "USER WITH AUTH")
+}
+
+func executeShowFineGrainedUserProviders(ctx context.Context, request *auth.FineGrainedRequest) (*ExecuteResult, error) {
+	if !request.AllowsDBMS("dbms.user.show", "") {
+		return nil, auth.ErrFineGrainedForbidden
+	}
+	entries, err := request.Runtime.UserProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defaults := append(slices.Clone(showUsersColumns), "provider", "auth")
+	columns := defaults
+	withTags := cypherVersionFromContext(ctx) == "25"
+	showTags := withTags && request.AllowsDBMS("dbms.user.metadata.show", "")
+	if withTags {
+		columns = append(slices.Clone(defaults), "tags")
+	}
+	result := &ExecuteResult{Columns: columns}
+	for _, entry := range entries {
+		roles := make([]string, 0, len(entry.User.Roles)+1)
+		for _, role := range entry.User.Roles {
+			roles = append(roles, string(role))
+		}
+		roles = append(roles, auth.FineGrainedPublicRole)
+		slices.Sort(roles)
+		var home, changeRequired any
+		if entry.User.HomeDatabase != "" {
+			home = entry.User.HomeDatabase
+		}
+		if entry.HasNative {
+			changeRequired = entry.PasswordChangeRequired
+		}
+		metadata := map[string]any{"id": entry.Subject}
+		if entry.Name == "native" {
+			metadata = map[string]any{"password": "***", "changeRequired": entry.PasswordChangeRequired}
+		}
+		row := []any{entry.User.Username, roles, changeRequired, entry.User.Disabled, home, entry.Name, metadata}
+		if withTags {
+			var tags any
+			if showTags {
+				tags = append([]string{}, request.Runtime.UserTags(entry.User.Username)...)
+			}
+			row = append(row, tags)
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return withShowDefaultColumns(result, defaults), nil
 }
 
 // unsupportedAdministrationCommandError is Neo4j Community's error for an

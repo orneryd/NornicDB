@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
@@ -648,7 +649,7 @@ func fineGrainedScopeName(scope fineGrainedPrivilegeScope) string {
 func fineGrainedPrivilegeActionAt(text string, at int) (fineGrainedPrivilegeAction, int, bool) {
 	var best fineGrainedPrivilegeAction
 	bestEnd := at
-	for _, action := range fineGrainedPrivilegeActions {
+	for _, action := range fineGrainedPrivilegeActions() {
 		end, ok := fineGrainedPrivilegeWordsAt(text, at, action.words)
 		if !ok || end <= bestEnd {
 			continue
@@ -676,7 +677,15 @@ func fineGrainedPrivilegeWordsAt(text string, at int, words []string) (int, bool
 // 5.26 documents, with the scope the manual gives it, its qualifier and its
 // element scope. The Cypher Manual's Read privileges, Write privileges,
 // Database privileges and DBMS privileges sections own this list.
-var fineGrainedPrivilegeActions = newFineGrainedPrivilegeActions()
+var fineGrainedPrivilegeActionsOnce sync.Once
+var fineGrainedPrivilegeActionTable []fineGrainedPrivilegeAction
+
+func fineGrainedPrivilegeActions() []fineGrainedPrivilegeAction {
+	fineGrainedPrivilegeActionsOnce.Do(func() {
+		fineGrainedPrivilegeActionTable = newFineGrainedPrivilegeActions()
+	})
+	return fineGrainedPrivilegeActionTable
+}
 
 func newFineGrainedPrivilegeActions() []fineGrainedPrivilegeAction {
 	actions := make([]fineGrainedPrivilegeAction, 0, 96)
@@ -753,6 +762,9 @@ func newFineGrainedPrivilegeActions() []fineGrainedPrivilegeAction {
 		"TRANSACTION", "TRANSACTION MANAGEMENT")
 
 	// DBMS privileges.
+	for _, name := range []string{"CREATE AUTH RULE", "ALTER AUTH RULE", "RENAME AUTH RULE", "DROP AUTH RULE", "SHOW AUTH RULE", "AUTH RULE MANAGEMENT"} {
+		add(name, fineGrainedDBMSScope, fineGrainedNoOperand, fineGrainedNoEntity, name)
+	}
 	add("CREATE ROLE", fineGrainedDBMSScope, fineGrainedNoOperand, fineGrainedNoEntity,
 		"CREATE ROLE")
 	add("RENAME ROLE", fineGrainedDBMSScope, fineGrainedNoOperand, fineGrainedNoEntity,

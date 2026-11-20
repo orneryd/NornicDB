@@ -32,6 +32,7 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 		id, _ := s.dbManager.DatabaseIdentity(resolved)
 		return id
 	}, s.dbManager.DefaultDatabaseName)
+	runtime.SetAuthRuleCompiler(cypher.CompileFineGrainedAuthRuleCondition)
 	if s.processConfig != nil {
 		runtime.SetNativeTagAuthorization(s.processConfig.Auth.FGACNativeTags)
 	}

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -19,17 +21,20 @@ const FineGrainedPublicRole = "public"
 // FineGrainedRuntime admits authenticated principals against the same committed
 // policy store used by the catalog editor and role administration.
 type FineGrainedRuntime struct {
-	roles         *RoleStore
-	directory     RoleMutationStores
-	actions       []FineGrainedAction
-	databaseID    FineGrainedDatabaseIdentity
-	home          func() string
-	databaseOwner func(string) string
-	nativeABAC    bool
+	roles            *RoleStore
+	directory        RoleMutationStores
+	actions          []FineGrainedAction
+	databaseID       FineGrainedDatabaseIdentity
+	home             func() string
+	databaseOwner    func(string) string
+	nativeABAC       bool
+	authRuleCompiler FineGrainedAuthRuleCompiler
 
-	mu       sync.Mutex
-	revision string
-	policy   *FineGrainedPolicy
+	mu           sync.Mutex
+	revision     string
+	policy       *FineGrainedPolicy
+	rolesVersion atomic.Uint64
+	authRules    []compiledFineGrainedAuthRule
 }
 
 // NewFineGrainedRuntime binds the policy store to the set of operations
@@ -52,6 +57,26 @@ func (runtime *FineGrainedRuntime) SetNativeTagAuthorization(enabled bool) {
 // Admit reads the committed revision and captures its immutable policy for
 // the authenticated roles. Unknown or unreadable policy prevents admission.
 func (runtime *FineGrainedRuntime) Admit(ctx context.Context, roles []string) (*FineGrainedRequest, error) {
+	version, err := runtime.refreshFineGrainedRoles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	directory := runtime.directory.Users
+	identity := RequestIdentityFromContext(ctx)
+	provider, _ := ctx.Value(fineGrainedProviderSessionKey{}).(*FineGrainedProviderSession)
+	if provider != nil {
+		if directory == nil || identity.ID != "sub:"+provider.userID {
+			return nil, ErrFineGrainedForbidden
+		}
+		if err := provider.validate(ctx, directory); err != nil {
+			return nil, err
+		}
+	}
+	if directory != nil {
+		if err := directory.refreshFineGrainedUsers(ctx); err != nil {
+			return nil, err
+		}
+	}
 	catalog, revision, err := runtime.roles.ReadFineGrainedCatalog(ctx)
 	if err != nil {
 		return nil, err
@@ -63,33 +88,61 @@ func (runtime *FineGrainedRuntime) Admit(ctx context.Context, roles []string) (*
 			runtime.mu.Unlock()
 			return nil, err
 		}
-		runtime.policy, runtime.revision = compiled, revision
+		authRules, err := runtime.compileAuthRules(catalog.AuthRules)
+		if err != nil {
+			runtime.mu.Unlock()
+			return nil, err
+		}
+		runtime.policy, runtime.revision, runtime.authRules = compiled, revision, authRules
 	}
-	policy := runtime.policy
+	policy, authRules := runtime.policy, runtime.authRules
 	runtime.mu.Unlock()
 
-	normalized := append(slices.Clone(roles), FineGrainedPublicRole)
-	for i, role := range normalized {
-		normalized[i] = NormalizeRoleName(role)
-	}
-	slices.Sort(normalized)
-	identity := RequestIdentityFromContext(ctx)
 	home := runtime.home()
 	homeID := runtime.databaseID(home)
 	passwordChangeRequired := false
 	var tags []string
-	if runtime.directory.Users != nil && identity.Username != "" {
+	if directory != nil && identity.Username != "" && !strings.HasPrefix(identity.ID, "sub:"+clusterSubjectPrefix) {
 		user := runtime.activeNativeUser(identity.Username)
-		if user != nil && (identity.ID == "" || identity.ID == "sub:"+user.ID || identity.ID == UsernamePrincipalID(user.Username)) {
-			passwordChangeRequired = user.PasswordChangeRequired
-			tags = user.SecurityTags
-			if user.HomeDatabase != "" {
-				if id := runtime.databaseID(user.HomeDatabase); id != "" {
-					home, homeID = user.HomeDatabase, id
-				}
+		if user == nil || (identity.ID != "" && identity.ID != "sub:"+user.ID &&
+			identity.ID != UsernamePrincipalID(user.Username)) {
+			return nil, ErrFineGrainedForbidden
+		}
+		roles = make([]string, len(user.Roles))
+		for i, role := range user.Roles {
+			roles[i] = string(role)
+		}
+		passwordChangeRequired = provider == nil && user.PasswordChangeRequired
+		tags = user.SecurityTags
+		if user.HomeDatabase != "" {
+			if id := runtime.databaseID(user.HomeDatabase); id != "" {
+				home, homeID = user.HomeDatabase, id
 			}
 		}
 	}
+	if provider, ok := runtime.roles.storage.(storage.GraphMutationVersionProvider); ok {
+		current, valid := provider.GraphMutationVersion()
+		if !valid || current != version {
+			// Do not combine roles and policy from different system revisions.
+			return nil, ErrFineGrainedForbidden
+		}
+	}
+	normalized := append(slices.Clone(roles), FineGrainedPublicRole)
+	for i, role := range normalized {
+		normalized[i] = NormalizeRoleName(role)
+	}
+	if len(authRules) > 0 && identity.Username != "" && !strings.HasPrefix(identity.ID, "sub:"+clusterSubjectPrefix) {
+		input := FineGrainedAuthRuleInput{Context: ctx, Now: time.Now()}
+		if provider != nil {
+			input.Claims = provider.attributes
+		}
+		if runtime.nativeABAC {
+			input.NativeTags = tags
+		}
+		normalized = matchingFineGrainedAuthRuleRoles(authRules, normalized, input)
+	}
+	slices.Sort(normalized)
+	normalized = slices.Compact(normalized)
 	material := revision + "\x00" + homeID + "\x00" + identity.ID + "\x00" + strconv.FormatBool(passwordChangeRequired) + "\x00" + strings.Join(normalized, "\x00")
 	if runtime.nativeABAC {
 		for _, tag := range tags {
@@ -102,8 +155,13 @@ func (runtime *FineGrainedRuntime) Admit(ctx context.Context, roles []string) (*
 	return &FineGrainedRequest{
 		Access: access, DatabaseID: runtime.databaseID,
 		HomeDatabaseID: homeID, HomeDatabaseName: home, PasswordChangeRequired: passwordChangeRequired, Runtime: runtime, Fingerprint: hex.EncodeToString(digest[:]),
-		identity: identity, databaseOwner: runtime.databaseOwner,
+		identity: identity, databaseOwner: runtime.databaseOwner, providerSession: provider, roles: normalized,
 	}, nil
+}
+
+// EffectiveRoles returns the direct and rule-assigned roles in this admission.
+func (r *FineGrainedRequest) EffectiveRoles() []string {
+	return slices.Clone(r.roles)
 }
 
 // ReadCatalog returns the committed catalog and the revision used to edit it.
@@ -128,6 +186,9 @@ func (runtime *FineGrainedRuntime) ReplaceCatalog(ctx context.Context, revision 
 // ValidateAdministrator checks the policy-management grant on deployments
 // where the policy-management action is registered.
 func (runtime *FineGrainedRuntime) ValidateAdministrator(catalog FineGrainedCatalog) error {
+	if _, err := runtime.compileAuthRules(catalog.AuthRules); err != nil {
+		return err
+	}
 	const manage = "dbms.security.policy.manage"
 	if !slices.ContainsFunc(runtime.actions, func(action FineGrainedAction) bool { return action.ID == manage }) {
 		return nil
@@ -279,6 +340,9 @@ func (r *FineGrainedRequest) Revalidate(ctx context.Context, identity RequestIde
 	if r.Runtime == nil || r.Fingerprint == "" || r.Runtime.directory.Users == nil || identity.Username == "" {
 		return ErrFineGrainedForbidden
 	}
+	if err := r.Runtime.directory.Users.refreshFineGrainedUsers(ctx); err != nil {
+		return err
+	}
 	user := r.Runtime.activeNativeUser(identity.Username)
 	if user == nil ||
 		(strings.HasPrefix(identity.ID, "sub:") && identity.ID != "sub:"+user.ID) {
@@ -288,7 +352,7 @@ func (r *FineGrainedRequest) Revalidate(ctx context.Context, identity RequestIde
 	for i, role := range user.Roles {
 		roles[i] = string(role)
 	}
-	current, err := r.Runtime.Admit(WithRequestIdentity(ctx, identity), roles)
+	current, err := r.Runtime.Admit(WithRequestIdentity(r.providerSession.WithContext(ctx), identity), roles)
 	if err != nil {
 		return err
 	}

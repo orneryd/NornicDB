@@ -47,7 +47,7 @@ func (r *RoleStore) ReplaceFineGrainedCatalog(ctx context.Context, expectedRevis
 		return err
 	}
 	defer r.writes.unlock()
-	return WithRoleRecords(ctx, r.storage, fineGrainedCustomRoles(catalog), func(view storage.Engine) error {
+	return withFineGrainedRoleRecords(ctx, r.storage, fineGrainedCustomRoles(catalog), func(view storage.Engine) error {
 		_, revision, err := readFineGrainedCatalog(ctx, view)
 		if err != nil {
 			return err
@@ -68,7 +68,7 @@ func (r *RoleStore) PrepareFineGrainedCatalog(ctx context.Context) (FineGrainedC
 	defer r.writes.unlock()
 	var record fineGrainedCatalogRecord
 	var revision string
-	err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+	err := withFineGrainedStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
 		var err error
 		record, revision, err = fineGrainedCatalogAt(ctx, view)
 		if err != nil || revision == "" {
@@ -142,6 +142,16 @@ func reconcileFineGrainedRoles(ctx context.Context, view storage.Engine, record 
 		}
 	}
 	catalog.Privileges = privileges
+	for i := range catalog.AuthRules {
+		rule := &catalog.AuthRules[i]
+		var roles []string
+		for _, role := range rule.Roles {
+			if name := currentName(role); name != "" {
+				roles = append(roles, name)
+			}
+		}
+		rule.Roles = roles
+	}
 	return changed, nil
 }
 
@@ -158,6 +168,11 @@ func fineGrainedCustomRoles(catalog FineGrainedCatalog) []string {
 	}
 	for _, privilege := range catalog.Privileges {
 		add(privilege.Role)
+	}
+	for _, rule := range catalog.AuthRules {
+		for _, role := range rule.Roles {
+			add(role)
+		}
 	}
 	roles := make([]string, 0, len(unique))
 	for role := range unique {
@@ -258,6 +273,21 @@ func changeFineGrainedRole(ctx context.Context, view storage.Engine, oldName, ne
 		filtered = append(filtered, privilege)
 	}
 	catalog.Privileges = filtered
+	for i := range catalog.AuthRules {
+		rule := &catalog.AuthRules[i]
+		roles := rule.Roles[:0]
+		for _, role := range rule.Roles {
+			if NormalizeRoleName(role) == oldName {
+				changed = true
+				if remove {
+					continue
+				}
+				role = newName
+			}
+			roles = append(roles, role)
+		}
+		rule.Roles = roles
+	}
 	if changed {
 		return writeFineGrainedCatalog(ctx, view, catalog)
 	}

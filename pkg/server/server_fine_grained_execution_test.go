@@ -184,3 +184,93 @@ func TestFineGrainedRoleWorkspaceOperations(t *testing.T) {
 	require.Empty(t, run(admin, "DROP ROLE $name").Errors)
 	require.NotContains(t, readCatalog().Roles, "report_reader")
 }
+
+func TestFineGrainedAuthRuleHTTPFlow(t *testing.T) {
+	server, users := setupTestServer(t)
+	require.NoError(t, server.initializeFineGrainedRuntime(t.Context()))
+	server.fineGrainedRuntime.SetNativeTagAuthorization(true)
+	admin := "Bearer " + getAuthToken(t, users, "admin")
+	reader := "Bearer " + getAuthToken(t, users, "reader")
+	checkRule := func(expected int) {
+		t.Helper()
+		response := makeRequest(t, server, http.MethodGet, "/auth/users", nil, reader)
+		require.Equal(t, expected, response.Code, response.Body.String())
+	}
+	run := func(statement string) TransactionResponse {
+		t.Helper()
+		response := makeRequest(t, server, http.MethodPost, "/db/system/tx/commit", TransactionRequest{
+			Statements: []StatementRequest{{Statement: "CYPHER 25 " + statement}},
+		}, admin)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var result TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		require.Empty(t, result.Errors, statement)
+		return result
+	}
+	checkRule(http.StatusForbidden)
+	run("CREATE ROLE auditors")
+	run("GRANT SHOW USER ON DBMS TO auditors")
+	run("CREATE AUTH RULE audit_access SET CONDITION 'auditor' IN abac.native.user_tags()")
+	run("GRANT ROLE auditors TO AUTH RULE audit_access")
+	run("ALTER USER reader SET TAGS 'auditor'")
+	checkRule(http.StatusOK)
+
+	result := run("SHOW AUTH RULES YIELD name, roles WHERE name = 'audit_access'")
+	require.Len(t, result.Results, 1)
+	require.Equal(t, []string{"name", "roles"}, result.Results[0].Columns)
+	require.Equal(t, []any{"audit_access", []any{"auditors"}}, result.Results[0].Data[0].Row)
+	asCommands := run("SHOW AUTH RULES AS COMMANDS")
+	require.Equal(t, []string{"command"}, asCommands.Results[0].Columns)
+	require.Contains(t, asCommands.Results[0].Data[0].Row[0], "CREATE AUTH RULE")
+	roleRules := run("SHOW ROLES WITH AUTH RULES YIELD role, authRule WHERE role = 'auditors'")
+	require.Equal(t, []any{"auditors", "audit_access"}, roleRules.Results[0].Data[0].Row)
+
+	run("ALTER AUTH RULE audit_access SET ENABLED false")
+	checkRule(http.StatusForbidden)
+	run("RENAME AUTH RULE audit_access TO audit_team")
+	run("ALTER AUTH RULE audit_team SET ENABLED true")
+	checkRule(http.StatusOK)
+	run("RENAME ROLE auditors TO review_team")
+	checkRule(http.StatusOK)
+	run("REVOKE ROLE review_team FROM AUTH RULE audit_team")
+	checkRule(http.StatusForbidden)
+	run("DROP AUTH RULE audit_team")
+	require.Empty(t, run("SHOW AUTH RULES").Results[0].Data)
+}
+
+func TestFineGrainedUserProviderHTTPFlow(t *testing.T) {
+	server, users := setupTestServer(t)
+	require.NoError(t, server.initializeFineGrainedRuntime(t.Context()))
+	admin := "Bearer " + getAuthToken(t, users, "admin")
+	run := func(statement string, success bool) TransactionResponse {
+		t.Helper()
+		response := makeRequest(t, server, http.MethodPost, "/db/system/tx/commit", TransactionRequest{
+			Statements: []StatementRequest{{Statement: statement}},
+		}, admin)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var result TransactionResponse
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+		if success {
+			require.Empty(t, result.Errors, statement)
+		} else {
+			require.NotEmpty(t, result.Errors, statement)
+		}
+		return result
+	}
+	run("CREATE USER analyst SET AUTH 'oidc-work' { SET ID 'employee-12' }", true)
+	query := "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'analyst'"
+	rows := run(query, true).Results[0].Data
+	require.Len(t, rows, 1)
+	require.Equal(t, []any{"analyst", "oidc-work", map[string]any{"id": "employee-12"}}, rows[0].Row)
+	run("ALTER USER analyst REMOVE ALL AUTH", false)
+	run("ALTER USER analyst REMOVE AUTH 'oidc-work' SET AUTH 'oidc-next' { SET ID 'profile-3' }", true)
+	rows = run(query, true).Results[0].Data
+	require.Len(t, rows, 1)
+	require.Equal(t, []any{"analyst", "oidc-next", map[string]any{"id": "profile-3"}}, rows[0].Row)
+	run("RENAME USER analyst TO analyst_new", true)
+	rows = run("SHOW USER WITH AUTH YIELD user, provider WHERE user = 'analyst_new'", true).Results[0].Data
+	require.Len(t, rows, 1)
+	require.Equal(t, []any{"analyst_new", "oidc-next"}, rows[0].Row)
+	run("DROP USER analyst_new", true)
+	run("CREATE USER analyst SET AUTH 'oidc-next' { SET ID 'profile-3' }", true)
+}

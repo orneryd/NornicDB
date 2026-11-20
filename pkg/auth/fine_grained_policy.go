@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -73,15 +72,24 @@ type FineGrainedCatalog struct {
 	Definitions []FineGrainedEntitlement `json:"definitions"`
 	Assignments map[string][]string      `json:"assignments"`
 	Privileges  []FineGrainedPrivilege   `json:"privileges,omitempty"`
+	AuthRules   []FineGrainedAuthRule    `json:"authRules,omitempty"`
 }
 
 // ErrInvalidFineGrainedPolicy is returned for invalid or unresolved policy.
 var ErrInvalidFineGrainedPolicy = errors.New("invalid fine-grained policy")
 
-var (
-	entitlementIdentifier = regexp.MustCompile(`^[a-z][a-z0-9_.-]*$`)
-	operationIdentifier   = regexp.MustCompile(`^[a-z][A-Za-z0-9_.-]*$`)
-)
+func validFineGrainedIdentifier(identifier string, upper bool) bool {
+	if identifier == "" || identifier[0] < 'a' || identifier[0] > 'z' {
+		return false
+	}
+	for _, ch := range identifier[1:] {
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') &&
+			(!upper || ch < 'A' || ch > 'Z') && ch != '_' && ch != '.' && ch != '-' {
+			return false
+		}
+	}
+	return true
+}
 
 // FineGrainedPolicy is an immutable, compiled catalog. Bind it to the
 // previously resolved roles of the executing principal before evaluation.
@@ -96,13 +104,16 @@ type FineGrainedPolicy struct {
 // For example, register graph.node.property.read as a node property action
 // and give the reviewers role a definition scoped to the title property.
 func CompileFineGrainedPolicy(actions []FineGrainedAction, catalog FineGrainedCatalog) (*FineGrainedPolicy, error) {
+	if err := validateFineGrainedAuthRules(catalog.AuthRules); err != nil {
+		return nil, err
+	}
 	policy := &FineGrainedPolicy{
 		actions: make(map[string]FineGrainedAction, len(actions)),
 		roles:   make(map[string]map[string][]FineGrainedEntitlement, len(catalog.Assignments)),
 	}
 	for _, action := range actions {
 		_, duplicate := policy.actions[action.ID]
-		if duplicate || !operationIdentifier.MatchString(action.ID) || !action.valid() {
+		if duplicate || !validFineGrainedIdentifier(action.ID, true) || !action.valid() {
 			return nil, fmt.Errorf("%w: invalid or duplicate action %q", ErrInvalidFineGrainedPolicy, action.ID)
 		}
 		policy.actions[action.ID] = action
@@ -111,7 +122,7 @@ func CompileFineGrainedPolicy(actions []FineGrainedAction, catalog FineGrainedCa
 	for _, definition := range catalog.Definitions {
 		action, known := policy.actions[definition.Action]
 		_, duplicate := definitions[definition.ID]
-		if !known || duplicate || !entitlementIdentifier.MatchString(definition.ID) || (!definition.Scope.validFor(action) || definition.Deny && definition.Scope.Predicate != nil && definition.Scope.Predicate.Operator == "NATIVE TAG") {
+		if !known || duplicate || !validFineGrainedIdentifier(definition.ID, false) || (!definition.Scope.validFor(action) || definition.Deny && definition.Scope.Predicate != nil && definition.Scope.Predicate.Operator == "NATIVE TAG") {
 			return nil, fmt.Errorf("%w: invalid or duplicate entitlement %q for action %q", ErrInvalidFineGrainedPolicy, definition.ID, definition.Action)
 		}
 		definition.Scope = definition.Scope.clone()

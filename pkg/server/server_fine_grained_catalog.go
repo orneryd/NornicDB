@@ -62,6 +62,7 @@ func (s *Server) handleFineGrainedCatalog(w http.ResponseWriter, r *http.Request
 		}
 		if err == nil {
 			body.Catalog.Privileges = current.Privileges
+			body.Catalog.AuthRules = current.AuthRules
 			err = runtime.ReplaceCatalog(r.Context(), *body.Revision, *body.Catalog)
 		}
 		switch {

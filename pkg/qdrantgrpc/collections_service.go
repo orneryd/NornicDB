@@ -7,8 +7,8 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
-
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
@@ -216,6 +216,13 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 		return nil, err
 	}
 
+	if principal := auth.FineGrainedRequestFromContext(ctx); principal != nil {
+		id := principal.DatabaseID(req.CollectionName)
+		if id == "" || !principal.AllowsDatabaseIdentity("database.access", id, "") {
+			return nil, fineGrainedDeniedStatus(ctx, s.localizer)
+		}
+		ctx = multidb.WithDropDatabaseIdentity(ctx, id)
+	}
 	if err := s.collections.Drop(ctx, req.CollectionName); err != nil {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err), grpcresponse.QdrantSourceFallback)
 	}

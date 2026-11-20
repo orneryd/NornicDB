@@ -36,7 +36,7 @@ func isMetadataCommand(ctx context.Context, cypher string, purpose metadataComma
 		startsWithKeywords(ctx, cypher, "SHOW", "DATABASES") ||
 		startsWithKeywords(ctx, cypher, "ALTER", "COMPOSITE DATABASE") ||
 		startsWithKeywords(ctx, cypher, "ALTER", "DATABASE") ||
-		isPrivilegeAdministrationCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) {
+		isPrivilegeAdministrationCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher) {
 		return true
 	}
 	if purpose != metadataCreateAdmission {
@@ -97,6 +97,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		}
 		if isFineGrainedTagStatement(ctx, cypher) {
 			return executeFineGrainedUserTags(ctx, request, cypher)
+		}
+		if isFineGrainedAuthRuleStatement(ctx, cypher) {
+			return e.executeFineGrainedAuthRuleStatement(ctx, request, cypher)
 		}
 		if isFineGrainedDirectoryStatement(ctx, cypher) {
 			return e.executeSecurityDirectoryStatement(ctx, request, cypher)
@@ -716,7 +719,7 @@ func isNornicExtensionStatement(ctx context.Context, cypher string) bool {
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(ctx, cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(ctx, cypher) || isDropRoleCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) ||
+		isPrivilegeAdministrationCommand(ctx, cypher) || isDropRoleCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher) ||
 		startsWithKeywords(ctx, cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(ctx, cypher, "ALTER", "DATABASE") && (findKeywordIndex(ctx, cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(ctx, cypher, "SET OPTION") >= 0 || findKeywordIndex(ctx, cypher, "REMOVE OPTION") >= 0)) ||
@@ -949,7 +952,7 @@ func hasValidStartKeyword(ctx context.Context, cypher string) bool {
 			return true
 		}
 	}
-	return isPrivilegeCommandShaped(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher)
+	return isPrivilegeCommandShaped(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher)
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -1137,7 +1140,8 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
 		return result, true, err
 	case startsWithKeywords(ctx, cypher, "SHOW", "USERS"),
-		startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER"):
+		startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER"),
+		auth.FineGrainedRequestFromContext(ctx) != nil && isShowUsersWithAuth(ctx, cypher):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
 		return result, true, err
 	case startsWithKeywords(ctx, cypher, "SHOW", "TRANSACTIONS"),

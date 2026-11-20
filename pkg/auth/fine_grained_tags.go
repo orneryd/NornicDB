@@ -55,7 +55,7 @@ func (runtime *FineGrainedRuntime) ChangeUserTags(ctx context.Context, names []s
 		}
 		return userRecordChange{
 			persist: func(ctx context.Context) error {
-				return WithStoreTransaction(ctx, directory.storage, func(view storage.Engine) error {
+				return withFineGrainedStoreTransaction(ctx, directory.storage, func(view storage.Engine) error {
 					for _, user := range staged {
 						if err := directory.saveUser(ctx, user, view); err != nil {
 							return err

@@ -28,7 +28,7 @@ func (s *Session) fineGrainedPrincipal(ctx context.Context, metadata map[string]
 	if identity == "" {
 		identity = auth.UsernamePrincipalID(s.authResult.Username)
 	}
-	ctx = auth.WithRequestIdentity(ctx, auth.RequestIdentity{ID: identity, Username: s.authResult.Username})
+	ctx = auth.WithRequestIdentity(s.authResult.providerSession.WithContext(ctx), auth.RequestIdentity{ID: identity, Username: s.authResult.Username})
 	request, err := s.server.fineGrainedAdmission(ctx, s.authResult.Roles)
 	if err != nil {
 		return nil, nil, err

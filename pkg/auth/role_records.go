@@ -24,6 +24,16 @@ func (e *RoleNotFoundError) Unwrap() error { return ErrRoleNotFound }
 // doesn't exist is refused with a RoleNotFoundError, and nothing is
 // written. Callers publish their caches only after it returns nil.
 func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string, mutate func(view storage.Engine) error) error {
+	return withRoleRecords(ctx, system, roles, mutate, WithStoreTransaction)
+}
+
+func withFineGrainedRoleRecords(ctx context.Context, system storage.Engine, roles []string, mutate func(storage.Engine) error) error {
+	return withRoleRecords(ctx, system, roles, mutate, withFineGrainedStoreTransaction)
+}
+
+func withRoleRecords(ctx context.Context, system storage.Engine, roles []string, mutate func(storage.Engine) error,
+	transaction func(context.Context, storage.Engine, func(storage.Engine) error) error,
+) error {
 	names := make([]string, 0, len(roles))
 	given := make(map[string]string, len(roles))
 	for _, role := range roles {
@@ -37,7 +47,7 @@ func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string,
 		}
 	}
 	sort.Strings(names)
-	return WithStoreTransaction(ctx, system, func(view storage.Engine) error {
+	return transaction(ctx, system, func(view storage.Engine) error {
 		locks := NewRoleStore(view)
 		for _, name := range names {
 			exists, err := locks.LockRoleForGrant(ctx, name)

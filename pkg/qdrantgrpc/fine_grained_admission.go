@@ -26,8 +26,9 @@ import (
 // a fine-grained principal, exactly as an unclassified method is refused by
 // authorizeMethod for RBAC.
 type fineGrainedRPCAction struct {
-	target auth.FineGrainedResourceKind
-	action string
+	target            auth.FineGrainedResourceKind
+	action            string
+	requireCollection bool
 }
 
 func fineGrainedDatabaseAction(action string) fineGrainedRPCAction {
@@ -58,9 +59,9 @@ func fineGrainedRPCActions() map[string]fineGrainedRPCAction {
 	fineGrainedRPCActionsOnce.Do(func() {
 		fineGrainedRPCActionsTable = map[string]fineGrainedRPCAction{
 			"Collections/Create":                       fineGrainedDBMSAction("dbms.database.create"),
-			"Collections/Update":                       fineGrainedDBMSAction("dbms.database.alter"),
+			"Collections/Update":                       {target: auth.FineGrainedDBMS, action: "dbms.database.alter", requireCollection: true},
 			"Collections/UpdateAliases":                fineGrainedDBMSAction("dbms.alias.alter"),
-			"Collections/Delete":                       fineGrainedDBMSAction("dbms.database.drop"),
+			"Collections/Delete":                       {target: auth.FineGrainedDBMS, action: "dbms.database.drop", requireCollection: true},
 			"Collections/CreateShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
 			"Collections/DeleteShardKey":               fineGrainedDBMSAction("dbms.server.manage"),
 			"Collections/UpdateCollectionClusterSetup": fineGrainedDBMSAction("dbms.server.manage"),
@@ -143,11 +144,13 @@ func fineGrainedAdmissionFromContext(ctx context.Context) *fineGrainedAdmission 
 }
 
 // allowsDatabase reports whether the admitted method may act on database. A
-// server-wide method was already admitted against its DBMS action before
-// dispatch, so it does not additionally need a grant on each database it
-// addresses.
+// DBMS method affecting an existing collection also needs access to that
+// collection. Other DBMS methods are admitted once before dispatch.
 func (a *fineGrainedAdmission) allowsDatabase(database string) bool {
-	return a.rpc.target == auth.FineGrainedDBMS || a.request.AllowsDatabase(a.rpc.action, database, "")
+	if a.rpc.target == auth.FineGrainedDBMS {
+		return !a.rpc.requireCollection || a.request.CanAccessDatabase(database)
+	}
+	return a.request.AllowsDatabase(a.rpc.action, database, "")
 }
 
 // fineGrainedDeniedStatus is the single denial status of this owner. It names no

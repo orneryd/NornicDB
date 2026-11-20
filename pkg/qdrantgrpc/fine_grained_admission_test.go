@@ -437,3 +437,62 @@ func TestQdrantGRPCFineGrainedPointOperationsAreScoped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, indexed, 4, "the shared index population is not narrowed to one principal")
 }
+
+func TestQdrantGRPCFineGrainedCollectionMutationsUseDatabaseIdentity(t *testing.T) {
+	ctx := t.Context()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	dbm, err := multidb.NewDatabaseManager(ctx, base, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dbm.Close() })
+	store, err := NewDatabaseCollectionStore(dbm, nil)
+	require.NoError(t, err)
+	for _, collection := range []string{"reports", "other"} {
+		require.NoError(t, store.Create(ctx, collection, 4, qpb.Distance_Cosine))
+	}
+	reportsID, _ := dbm.DatabaseIdentity("reports")
+	principal := fineGrainedPrincipal(t, "",
+		fineGrainedOnDatabase("database.access", reportsID),
+		auth.FineGrainedEntitlement{Action: "dbms.database.alter", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDBMS}},
+		auth.FineGrainedEntitlement{Action: "dbms.database.drop", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDBMS}},
+	)
+	principal.DatabaseID = func(name string) string {
+		id, _ := dbm.DatabaseIdentity(name)
+		return id
+	}
+
+	authenticator, token := fineGrainedAuthenticator(t)
+	cfg := DefaultConfig()
+	cfg.ListenAddr = "127.0.0.1:0"
+	cfg.EnableReflection = false
+	server, err := NewServer(cfg, store, base, nil, authenticator)
+	require.NoError(t, err)
+	server.SetFineGrainedAdmission(func(context.Context, []string) (*auth.FineGrainedRequest, error) {
+		return principal, nil
+	})
+	require.NoError(t, server.Start())
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(server.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := qpb.NewCollectionsClient(conn)
+	authorized := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
+
+	_, err = client.Update(authorized, &qpb.UpdateCollection{CollectionName: "reports"})
+	require.NoError(t, err)
+	_, err = client.Update(authorized, &qpb.UpdateCollection{CollectionName: "other"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = client.Delete(authorized, &qpb.DeleteCollection{CollectionName: "other"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = client.Delete(authorized, &qpb.DeleteCollection{CollectionName: "reports"})
+	require.NoError(t, err)
+
+	require.NoError(t, store.Create(ctx, "reports", 4, qpb.Distance_Cosine))
+	replacement, _ := dbm.DatabaseIdentity("reports")
+	require.NotEqual(t, reportsID, replacement)
+	_, err = client.Delete(authorized, &qpb.DeleteCollection{CollectionName: "reports"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.ErrorIs(t, dbm.DropDatabase(multidb.WithDropDatabaseIdentity(ctx, reportsID), "reports"), multidb.ErrDatabaseNotFound)
+	list, err := store.List(ctx)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"reports", "other"}, list)
+}

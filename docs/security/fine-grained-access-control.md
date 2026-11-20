@@ -123,6 +123,42 @@ editor. Use the returned database ID and entity handle in a definition. An
 ordinary property update preserves the handle. Deleting and recreating the
 database or entity creates a new identity.
 
+## Manage authorization rules in Cypher 25
+
+An authorization rule grants its assigned roles when its condition evaluates
+to true. For example, run the following on the `system` database:
+
+```cypher
+CYPHER 25 CREATE AUTH RULE reports_team
+  SET CONDITION 'reports' IN abac.native.user_tags();
+CYPHER 25 GRANT ROLE report_reader TO AUTH RULE reports_team;
+CYPHER 25 SHOW AUTH RULES YIELD name, enabled, roles;
+```
+
+Enable `NORNICDB_FGAC_NATIVE_TAGS=true` when using native tags in conditions.
+Use `ALTER AUTH RULE ... SET ENABLED false` to suspend a rule and
+`REVOKE ROLE ... FROM AUTH RULE ...` to remove one of its assignments.
+The built-in administrator can delegate rule-management privileges individually.
+
+## Link users to the configured OAuth provider
+
+Set `NORNICDB_FGAC_REQUIRE_LOCAL_USER=true` together with the existing OAuth
+settings to require a local account linked to the verified provider subject.
+Set `NORNICDB_FGAC_OIDC_PROVIDER` to the provider name used in Cypher. The
+default name is `oidc`. For example:
+
+```cypher
+CREATE USER analyst
+  SET AUTH 'oidc-work' { SET ID 'employee-12' };
+SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'analyst';
+```
+
+Set `NORNICDB_FGAC_OIDC_ATTRIBUTES` to a comma-separated list of verified
+profile fields to make those fields available to `abac.oidc.user_attribute()`.
+Only the configured fields enter the session. Configure this list before users
+sign in to evaluate rules against those fields. The linked account supplies
+local roles, tags, and account state.
+
 ## Data paths and compatibility
 
 HTTP, Bolt, GraphQL, MCP, and Qdrant operations bind to the principal's active

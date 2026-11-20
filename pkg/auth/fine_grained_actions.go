@@ -27,6 +27,7 @@ func FineGrainedAdministrationActions() []FineGrainedAction {
 		"dbms.server.manage", "dbms.server.show", "dbms.settings.show",
 		"dbms.security.privilege.show", "dbms.security.privilege.assign", "dbms.security.privilege.remove",
 		"dbms.security.policy.manage", "dbms.user.metadata.show", "dbms.user.metadata.set",
+		"dbms.auth_rule.create", "dbms.auth_rule.alter", "dbms.auth_rule.rename", "dbms.auth_rule.drop", "dbms.auth_rule.show",
 	} {
 		actions = append(actions, FineGrainedAction{ID: id, ResourceKind: FineGrainedDBMS})
 	}

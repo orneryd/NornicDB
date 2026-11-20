@@ -91,6 +91,12 @@ var fineGrainedDBMSPrivilegesTable map[string][]string
 func fineGrainedDBMSPrivileges() map[string][]string {
 	fineGrainedDBMSPrivilegesOnce.Do(func() {
 		fineGrainedDBMSPrivilegesTable = map[string][]string{
+			"CREATE AUTH RULE":              {"dbms.auth_rule.create"},
+			"ALTER AUTH RULE":               {"dbms.auth_rule.alter"},
+			"RENAME AUTH RULE":              {"dbms.auth_rule.rename"},
+			"DROP AUTH RULE":                {"dbms.auth_rule.drop"},
+			"SHOW AUTH RULE":                {"dbms.auth_rule.show"},
+			"AUTH RULE MANAGEMENT":          {"dbms.auth_rule.create", "dbms.auth_rule.alter", "dbms.auth_rule.rename", "dbms.auth_rule.drop", "dbms.auth_rule.show"},
 			"SHOW USER METADATA":            {"dbms.user.metadata.show"},
 			"SET USER METADATA":             {"dbms.user.metadata.set"},
 			"USER METADATA MANAGEMENT":      {"dbms.user.metadata.show", "dbms.user.metadata.set"},

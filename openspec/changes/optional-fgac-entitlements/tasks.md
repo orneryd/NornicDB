@@ -22,7 +22,12 @@ for configuration and examples.
 - [x] Keep dormant policy out of RBAC role mutations and reconcile role identity upon activation.
 - [x] Verify the RBAC browser flow makes no FGAC requests or editor downloads.
 - [ ] Complete full repository verification. The maintainer waived the duplicate checker for this push.
-- [ ] Complete and qualify the larger compatibility matrix. Remaining areas include current Enterprise authorization-rule and external provider management, collection write containment, and live policy refresh after restore and replicated policy changes.
+- [x] Refresh active users, roles and policy after live restore or replicated system commits, including retained requests.
+- [x] Constrain Qdrant updates and drops to the authorized collection, including recreation under the same name.
+- [x] Implement Cypher 25 authorization-rule administration and validate rule-derived roles and listings against current Enterprise.
+- [x] Implement named provider bindings, validate provider administration against both references, and exercise the configured OAuth provider end to end against a test issuer.
+- [x] Expand the pinned Bolt fixtures to 16 cases on 5.26.30 and 18 on 2026.10.2.
+- [ ] Qualify the remaining provider and expression compatibility beyond the pinned fixture.
 
 ## Reuse review
 

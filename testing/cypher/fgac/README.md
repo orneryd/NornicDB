@@ -9,6 +9,10 @@ normal documented outcome and the candidate must match the reference outcome.
 The fixture covers the flows listed below. Enable FGAC on the candidate
 before running the comparison.
 
+The common fixture includes user-provider inspection. The 2026.10.2 section
+also checks rule-derived database access and authorization-rule inspection.
+The harness selects that section after verifying the reference version.
+
 ## Pinned references and opt-in
 
 `references.json` is the only owner of the reference pins:
@@ -31,7 +35,7 @@ during ordinary tests.
 ## Endpoint configuration
 
 Use a disposable test endpoint for each side. Use `bolt+s://` or `neo4j+s://` with a trusted certificate for TLS. The harness creates and removes
-only synthetic `fgac_*` users and roles plus the `FGACDoc` / `FGACOther`
+synthetic `fgac_*` users, roles, and rules plus the `FGACDoc` / `FGACOther`
 labels.
 
 | Variable | Meaning | Default |

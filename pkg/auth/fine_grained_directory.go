@@ -13,6 +13,10 @@ import (
 // stores before the runtime is published to request handlers.
 func (runtime *FineGrainedRuntime) SetSecurityDirectory(users *Authenticator, stores RoleMutationStores) {
 	stores.Users = users
+	if users != nil && users.storage != nil && users.fgacUsers == nil {
+		provider, _ := users.storage.(storage.GraphMutationVersionProvider)
+		users.fgacUsers = &fineGrainedUsers{provider: provider}
+	}
 	runtime.directory = stores
 }
 
@@ -66,7 +70,7 @@ func (runtime *FineGrainedRuntime) CreateRoleCopy(ctx context.Context, role, sou
 		// PUBLIC has no stored role record and is never renamed or dropped.
 		locked = nil
 	}
-	if err := WithRoleRecords(ctx, store.storage, locked, func(view storage.Engine) error {
+	if err := withFineGrainedRoleRecords(ctx, store.storage, locked, func(view storage.Engine) error {
 		if _, err := view.GetNode(ctx, storage.NodeID(rolePrefix+name)); err == nil {
 			return ErrRoleExists
 		} else if !errors.Is(err, storage.ErrNotFound) {
@@ -137,6 +141,7 @@ type FineGrainedAccount struct {
 	PasswordChangeRequired bool
 	Suspended              bool
 	HomeDatabase           string
+	Providers              map[string]string
 }
 
 // CreateUser creates a native user in the directory used by authentication.
@@ -156,6 +161,7 @@ func (runtime *FineGrainedRuntime) CreateUserAccount(ctx context.Context, accoun
 		passwordChangeRequired: account.PasswordChangeRequired,
 		disabled:               account.Suspended,
 		homeDatabase:           account.HomeDatabase,
+		providers:              account.Providers,
 	})
 	return err
 }
@@ -187,7 +193,7 @@ func (runtime *FineGrainedRuntime) RenameUser(ctx context.Context, username, nex
 		user.Username, user.UpdatedAt = next, time.Now()
 		return userRecordChange{
 			persist: func(ctx context.Context) error {
-				return WithStoreTransaction(ctx, directory.storage, func(view storage.Engine) error {
+				return withFineGrainedStoreTransaction(ctx, directory.storage, func(view storage.Engine) error {
 					if err := directory.saveUser(ctx, user, view); err != nil {
 						return err
 					}
@@ -212,6 +218,7 @@ type FineGrainedUserAlteration struct {
 	PasswordChangeRequired *bool
 	Suspended              *bool
 	HomeDatabase           *string
+	Providers              *FineGrainedProviderChange
 }
 
 // AlterUser applies every declared ALTER USER clause in one user-record
@@ -223,10 +230,14 @@ func (runtime *FineGrainedRuntime) AlterUser(ctx context.Context, username strin
 	}
 	operation, eventType := change.audit()
 	var complete func()
-	if change.Password != nil {
+	if change.Password != nil || change.Providers.removesNative() {
 		complete = func() { directory.notifyPasswordChange(username) }
 	}
-	return directory.mutateStoredUser(ctx, username, operation, func(user *User) (AuditEvent, error) {
+	return directory.mutateStoredUserWithProviders(ctx, username, operation, func(user *User) (AuditEvent, error) {
+		if change.Providers.removesNative() {
+			user.PasswordHash = ""
+			user.PasswordChangeRequired = false
+		}
 		if change.Password != nil {
 			// A statement that omits CHANGE [NOT] REQUIRED keeps the stored
 			// requirement instead of clearing it.
@@ -248,7 +259,7 @@ func (runtime *FineGrainedRuntime) AlterUser(ctx context.Context, username strin
 			user.HomeDatabase = *change.HomeDatabase
 		}
 		return AuditEvent{EventType: eventType}, nil
-	}, complete)
+	}, complete, change.Providers)
 }
 
 // audit is the operation name and audit event of an alteration: a single
@@ -256,7 +267,7 @@ func (runtime *FineGrainedRuntime) AlterUser(ctx context.Context, username strin
 // of clauses shares one user_alter event.
 func (change FineGrainedUserAlteration) audit() (string, string) {
 	written := 0
-	for _, declared := range []bool{change.Password != nil, change.PasswordChangeRequired != nil, change.Suspended != nil, change.HomeDatabase != nil} {
+	for _, declared := range []bool{change.Password != nil, change.PasswordChangeRequired != nil, change.Suspended != nil, change.HomeDatabase != nil, change.Providers != nil} {
 		if declared {
 			written++
 		}
@@ -363,7 +374,7 @@ func (runtime *FineGrainedRuntime) SetRoleMembership(ctx context.Context, users,
 		}
 		return userRecordChange{
 			persist: func(ctx context.Context) error {
-				return WithRoleRecords(ctx, runtime.roles.storage, roles, func(view storage.Engine) error {
+				return withFineGrainedRoleRecords(ctx, runtime.roles.storage, roles, func(view storage.Engine) error {
 					for _, user := range staged {
 						if err := directory.saveUser(ctx, user, view); err != nil {
 							return err
@@ -388,6 +399,9 @@ func (runtime *FineGrainedRuntime) Impersonate(ctx context.Context, actor *FineG
 	if runtime.directory.Users == nil || actor.PasswordChangeRequired || !actor.AllowsDBMS("dbms.user.impersonate", username) {
 		return nil, nil, ErrFineGrainedForbidden
 	}
+	if err := runtime.directory.Users.refreshFineGrainedUsers(ctx); err != nil {
+		return nil, nil, err
+	}
 	user := runtime.activeNativeUser(username)
 	if user == nil || user.PasswordChangeRequired {
 		return nil, nil, ErrFineGrainedForbidden
@@ -396,6 +410,7 @@ func (runtime *FineGrainedRuntime) Impersonate(ctx context.Context, actor *FineG
 	for i, role := range user.Roles {
 		roles[i] = string(role)
 	}
+	ctx = context.WithValue(ctx, fineGrainedProviderSessionKey{}, (*FineGrainedProviderSession)(nil))
 	ctx = WithRequestIdentity(ctx, RequestIdentity{ID: "sub:" + user.ID, Username: user.Username})
 	request, err := runtime.Admit(ctx, roles)
 	return request, user, err

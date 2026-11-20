@@ -77,8 +77,12 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 	var stagedPrivileges *PrivilegesStore
 	var stagedEntitlements *RoleEntitlementsStore
 	var stagedUsers map[string]*User
+	runStoreTransaction := WithStoreTransaction
+	if stores.fineGrained {
+		runStoreTransaction = withFineGrainedStoreTransaction
+	}
 	transaction := func(ctx context.Context) error {
-		return WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+		return runStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
 			stagedRoles = NewRoleStore(view)
 			if err := stagedRoles.Load(ctx); err != nil {
 				return err

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"slices"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -141,6 +142,13 @@ func showCommandResult(ctx context.Context, show cypherantlr.SyntaxNode, cypher2
 	}
 	if showIndexesCommand(ctx, code) {
 		return showIndexesResult, true, nil
+	}
+	if auth.FineGrainedRequestFromContext(ctx) != nil && isShowUsersWithAuth(ctx, code) {
+		defaults := append(slices.Clone(showUsersColumns), "provider", "auth")
+		if cypher25 {
+			return declareShowResult(defaults, "tags"), true, nil
+		}
+		return showResult{columns: defaults}, true, nil
 	}
 	if startsWithKeywords(ctx, code, "SHOW", "USERS") || startsWithKeywords(ctx, code, "SHOW", "CURRENT USER") {
 		return showUsersResult, true, nil

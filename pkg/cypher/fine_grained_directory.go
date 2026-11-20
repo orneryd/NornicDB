@@ -11,13 +11,24 @@ import (
 )
 
 // securityUserMutation is the clause set one CREATE USER or ALTER USER
-// statement declares. A nil field is a clause the statement did not write; a
-// statement the clauses leave out never changes that part of the account.
+// statement declares. A nil or empty field is a clause the statement did not
+// write; a statement the clauses leave out never changes that part of the
+// account.
+//
+// The native provider's account fields and the external providers' account
+// keys are separate owners: password and passwordChangeRequired hold the
+// account's native password clauses, and externalProviders holds one subject
+// identifier per named external provider. A native clause never writes an
+// external provider and an external provider never writes a native field.
 type securityUserMutation struct {
 	password               *string
 	passwordChangeRequired *bool
 	suspended              *bool
 	homeDatabase           *string
+	externalProviders      map[string]string
+	removeAuthProviders    []string
+	removeAllAuthProviders bool
+	nativeAuthProvider     bool
 }
 
 type securityDirectoryStatement struct {
@@ -162,8 +173,8 @@ func parseSecurityDirectoryStatement(ctx context.Context, text string) (security
 		if err := cursor.readSecurityUserClauses(&command.account, true); err != nil {
 			return command, err
 		}
-		if command.account.password == nil {
-			return command, fineGrainedPrivilegeSyntaxError("expected SET PASSWORD followed by a string")
+		if command.account.password == nil && len(command.account.externalProviders) == 0 {
+			return command, fineGrainedPrivilegeSyntaxError("expected SET PASSWORD followed by a string, or SET AUTH followed by an auth provider")
 		}
 	}
 	if cursor.at != len(text) {
@@ -173,8 +184,9 @@ func parseSecurityDirectoryStatement(ctx context.Context, text string) (security
 }
 
 // readSecurityUserClauses reads one CREATE USER or ALTER USER statement's SET
-// and REMOVE clauses in any order. CREATE USER must declare its native
-// password, because every NornicDB account authenticates with one.
+// and REMOVE clauses in any order. CREATE USER must declare a native password
+// or at least one external auth provider, because every NornicDB account
+// needs an auth provider.
 func (cursor *fineGrainedPrivilegeCursor) readSecurityUserClauses(mutation *securityUserMutation, creating bool) error {
 	written := 0
 	for {
@@ -189,7 +201,7 @@ func (cursor *fineGrainedPrivilegeCursor) readSecurityUserClauses(mutation *secu
 	}
 	if written == 0 {
 		if creating {
-			return fineGrainedPrivilegeSyntaxError("expected SET PASSWORD followed by a string")
+			return fineGrainedPrivilegeSyntaxError("expected SET PASSWORD followed by a string, or SET AUTH followed by an auth provider")
 		}
 		return fineGrainedPrivilegeSyntaxError("expected SET or REMOVE followed by a user clause")
 	}
@@ -198,12 +210,15 @@ func (cursor *fineGrainedPrivilegeCursor) readSecurityUserClauses(mutation *secu
 
 func (cursor *fineGrainedPrivilegeCursor) readSecurityUserClause(mutation *securityUserMutation, creating bool) error {
 	if !creating && cursor.takeKeyword("REMOVE") {
-		if !cursor.takeKeyword("HOME") || !cursor.takeKeyword("DATABASE") {
-			return fineGrainedPrivilegeSyntaxError("expected REMOVE HOME DATABASE")
+		if cursor.takeKeyword("HOME") {
+			if !cursor.takeKeyword("DATABASE") {
+				return fineGrainedPrivilegeSyntaxError("expected REMOVE HOME DATABASE")
+			}
+			home := ""
+			mutation.homeDatabase = &home
+			return nil
 		}
-		home := ""
-		mutation.homeDatabase = &home
-		return nil
+		return cursor.readSecurityRemoveAuthClause(mutation)
 	}
 	if !cursor.takeKeyword("SET") {
 		if creating {
@@ -248,6 +263,8 @@ func (cursor *fineGrainedPrivilegeCursor) readSecurityUserClause(mutation *secur
 		cursor.skipGap()
 		mutation.homeDatabase = &database
 		return nil
+	case cursor.takeKeyword("AUTH"):
+		return cursor.readSecuritySetAuthClause(mutation)
 	}
 	return fineGrainedPrivilegeSyntaxError("expected a supported user clause")
 }
@@ -271,6 +288,208 @@ func (cursor *fineGrainedPrivilegeCursor) readSecurityChangeRequirement(mutation
 	}
 	mutation.passwordChangeRequired = &required
 	return nil
+}
+
+// fineGrainedNativeAuthProvider is the auth provider name Neo4j reserves for
+// the account's own native password.
+const fineGrainedNativeAuthProvider = "native"
+
+// readSecuritySetAuthClause reads SET AUTH [PROVIDER] 'provider' { keys }: one
+// named auth provider's account keys for the user. The native provider owns
+// the account's native password clauses; every other name is an external
+// provider that owns one subject identifier. Each provider a statement sets is
+// distinct, because the statement declares that provider's account keys once.
+func (cursor *fineGrainedPrivilegeCursor) readSecuritySetAuthClause(mutation *securityUserMutation) error {
+	cursor.takeKeyword("PROVIDER")
+	provider, err := cursor.readSecurityString("expected an auth provider name string")
+	if err != nil {
+		return err
+	}
+	if provider == "" {
+		return fineGrainedPrivilegeSyntaxError("an auth provider name cannot be empty")
+	}
+	if !cursor.openSecurityAuthKeys() {
+		return fineGrainedPrivilegeSyntaxError("expected { followed by the auth provider keys")
+	}
+	if provider == fineGrainedNativeAuthProvider {
+		if mutation.nativeAuthProvider {
+			return fineGrainedPrivilegeSyntaxError("the native provider is set more than once")
+		}
+		mutation.nativeAuthProvider = true
+		return cursor.readSecurityNativeAuthKeys(mutation)
+	}
+	if _, written := mutation.externalProviders[provider]; written {
+		return fineGrainedPrivilegeSyntaxError("auth provider " + provider + " is set more than once")
+	}
+	subject, err := cursor.readSecurityExternalAuthKeys(provider)
+	if err != nil {
+		return err
+	}
+	if mutation.externalProviders == nil {
+		mutation.externalProviders = map[string]string{}
+	}
+	mutation.externalProviders[provider] = subject
+	return nil
+}
+
+// openSecurityAuthKeys consumes the { that opens an auth provider's account
+// keys and reports whether it stood there.
+func (cursor *fineGrainedPrivilegeCursor) openSecurityAuthKeys() bool {
+	cursor.skipGap()
+	if cursor.at >= len(cursor.text) || cursor.text[cursor.at] != '{' {
+		return false
+	}
+	cursor.at++
+	cursor.skipGap()
+	return true
+}
+
+// takeSecurityAuthKeysEnd consumes the } that closes an auth provider's
+// account keys and reports whether it stood there.
+func (cursor *fineGrainedPrivilegeCursor) takeSecurityAuthKeysEnd() bool {
+	cursor.skipGap()
+	if cursor.at >= len(cursor.text) || cursor.text[cursor.at] != '}' {
+		return false
+	}
+	cursor.at++
+	cursor.skipGap()
+	return true
+}
+
+// readSecurityNativeAuthKeys reads the native provider's account keys with the
+// account's existing native password clause parsers: SET [PLAINTEXT] PASSWORD
+// 'password' and SET PASSWORD CHANGE [NOT] REQUIRED.
+func (cursor *fineGrainedPrivilegeCursor) readSecurityNativeAuthKeys(mutation *securityUserMutation) error {
+	written := 0
+	for !cursor.takeSecurityAuthKeysEnd() {
+		if cursor.at == len(cursor.text) {
+			return fineGrainedPrivilegeSyntaxError("expected } after the native auth provider keys")
+		}
+		if !cursor.takeKeyword("SET") {
+			return fineGrainedPrivilegeSyntaxError("expected SET followed by a native auth provider key")
+		}
+		if err := cursor.readSecurityNativeAuthKey(mutation); err != nil {
+			return err
+		}
+		written++
+	}
+	if written == 0 {
+		return fineGrainedPrivilegeSyntaxError("expected SET PASSWORD or SET PASSWORD CHANGE in the native auth provider keys")
+	}
+	return nil
+}
+
+// readSecurityNativeAuthKey reads one SET key of the native provider's account
+// keys. The native provider's keys are the account's native password clauses.
+func (cursor *fineGrainedPrivilegeCursor) readSecurityNativeAuthKey(mutation *securityUserMutation) error {
+	switch {
+	case cursor.takeKeyword("PLAINTEXT"):
+		if !cursor.takeKeyword("PASSWORD") {
+			return fineGrainedPrivilegeSyntaxError("expected PLAINTEXT PASSWORD followed by a string")
+		}
+		return cursor.readSecurityPasswordClause(mutation)
+	case cursor.takeKeyword("PASSWORD"):
+		if cursor.wordAt("CHANGE") {
+			cursor.takeKeyword("CHANGE")
+			return cursor.readSecurityChangeRequirement(mutation)
+		}
+		return cursor.readSecurityPasswordClause(mutation)
+	case cursor.takeKeyword("CHANGE"):
+		return cursor.readSecurityChangeRequirement(mutation)
+	}
+	return fineGrainedPrivilegeSyntaxError("expected SET PASSWORD, SET PLAINTEXT PASSWORD or SET PASSWORD CHANGE [NOT] REQUIRED in the native auth provider keys")
+}
+
+// readSecurityExternalAuthKeys reads the account keys of the external provider
+// named provider: exactly one SET ID 'subject'. The subject is the provider's
+// identifier for the account, so the block declares it once and it cannot be
+// empty.
+func (cursor *fineGrainedPrivilegeCursor) readSecurityExternalAuthKeys(provider string) (string, error) {
+	subject := ""
+	written := 0
+	for !cursor.takeSecurityAuthKeysEnd() {
+		if cursor.at == len(cursor.text) {
+			return "", fineGrainedPrivilegeSyntaxError("expected } after the auth provider keys of " + provider)
+		}
+		if !cursor.takeKeyword("SET") || !cursor.takeKeyword("ID") {
+			return "", fineGrainedPrivilegeSyntaxError("expected SET ID followed by a string in the auth provider keys of " + provider)
+		}
+		if written > 0 {
+			return "", fineGrainedPrivilegeSyntaxError("the subject of auth provider " + provider + " is set more than once")
+		}
+		id, err := cursor.readSecurityString("expected an auth provider ID string")
+		if err != nil {
+			return "", err
+		}
+		if id == "" {
+			return "", fineGrainedPrivilegeSyntaxError("the subject of auth provider " + provider + " cannot be empty")
+		}
+		subject = id
+		written++
+	}
+	if written == 0 {
+		return "", fineGrainedPrivilegeSyntaxError("expected SET ID followed by a string in the auth provider keys of " + provider)
+	}
+	return subject, nil
+}
+
+// readSecurityRemoveAuthClause reads REMOVE AUTH [PROVIDER[S]] providers or
+// REMOVE ALL AUTH [PROVIDER[S]] after REMOVE has been consumed.
+func (cursor *fineGrainedPrivilegeCursor) readSecurityRemoveAuthClause(mutation *securityUserMutation) error {
+	all := cursor.takeKeyword("ALL")
+	if !cursor.takeKeyword("AUTH") {
+		return fineGrainedPrivilegeSyntaxError("expected REMOVE HOME DATABASE, REMOVE AUTH or REMOVE ALL AUTH")
+	}
+	if !cursor.takeKeyword("PROVIDERS") {
+		cursor.takeKeyword("PROVIDER")
+	}
+	if all {
+		mutation.removeAllAuthProviders = true
+		return nil
+	}
+	providers, err := cursor.readSecurityAuthProviderList()
+	if err != nil {
+		return err
+	}
+	mutation.removeAuthProviders = append(mutation.removeAuthProviders, providers...)
+	return nil
+}
+
+// readSecurityAuthProviderList reads the provider names of REMOVE AUTH: one
+// quoted name, a comma-separated list of names, or a bracketed list of names.
+// Each name is a string literal or a string parameter bound to one.
+func (cursor *fineGrainedPrivilegeCursor) readSecurityAuthProviderList() ([]string, error) {
+	cursor.skipGap()
+	bracketed := cursor.at < len(cursor.text) && cursor.text[cursor.at] == '['
+	if bracketed {
+		cursor.at++
+	}
+	var providers []string
+	for {
+		cursor.skipGap()
+		provider, err := cursor.readSecurityString("expected an auth provider name string")
+		if err != nil {
+			return nil, err
+		}
+		if provider == "" {
+			return nil, fineGrainedPrivilegeSyntaxError("an auth provider name cannot be empty")
+		}
+		providers = append(providers, provider)
+		if cursor.at < len(cursor.text) && cursor.text[cursor.at] == ',' {
+			cursor.at++
+			continue
+		}
+		break
+	}
+	if bracketed {
+		cursor.skipGap()
+		if cursor.at >= len(cursor.text) || cursor.text[cursor.at] != ']' {
+			return nil, fineGrainedPrivilegeSyntaxError("expected ] after the auth provider names")
+		}
+		cursor.at++
+		cursor.skipGap()
+	}
+	return providers, nil
 }
 
 func isFineGrainedOwnPasswordChange(ctx context.Context, query string) bool {
@@ -364,7 +583,11 @@ func securityDirectoryActions(command securityDirectoryStatement) []string {
 		return []string{command.action}
 	}
 	var actions []string
-	if command.account.password != nil || command.account.passwordChangeRequired != nil {
+	account := command.account
+	if account.nativeAuthProvider || account.providerChange() != nil {
+		actions = append(actions, "dbms.user.auth.set")
+	}
+	if !account.nativeAuthProvider && (account.password != nil || account.passwordChangeRequired != nil) {
 		actions = append(actions, "dbms.user.password.set")
 	}
 	if command.account.suspended != nil {
@@ -374,6 +597,15 @@ func securityDirectoryActions(command securityDirectoryStatement) []string {
 		actions = append(actions, "dbms.user.home.set")
 	}
 	return actions
+}
+
+func (account securityUserMutation) providerChange() *auth.FineGrainedProviderChange {
+	if len(account.externalProviders) == 0 && len(account.removeAuthProviders) == 0 && !account.removeAllAuthProviders {
+		return nil
+	}
+	return &auth.FineGrainedProviderChange{
+		Set: account.externalProviders, Remove: account.removeAuthProviders, RemoveAll: account.removeAllAuthProviders,
+	}
 }
 
 // securityDirectoryHomeDatabase resolves a declared home database through the
@@ -447,12 +679,19 @@ func (e *StorageExecutor) executeSecurityDirectoryStatement(ctx context.Context,
 			PasswordChangeRequired: command.account.passwordChangeRequired,
 			Suspended:              command.account.suspended,
 			HomeDatabase:           home,
+			Providers:              command.account.providerChange(),
 		})
 	case "dbms.user.create":
+		account := command.account
+		var password string
+		if account.password != nil {
+			password = *account.password
+		}
 		err = runtime.CreateUserAccount(ctx, auth.FineGrainedAccount{
 			Name:                   command.name,
-			Password:               *command.account.password,
-			PasswordChangeRequired: command.account.passwordChangeRequired == nil || *command.account.passwordChangeRequired,
+			Password:               password,
+			PasswordChangeRequired: account.password != nil && (account.passwordChangeRequired == nil || *account.passwordChangeRequired),
+			Providers:              account.externalProviders,
 			Suspended:              command.account.suspended != nil && *command.account.suspended,
 			HomeDatabase:           securityDirectoryHomeValue(home),
 		})
