@@ -33,8 +33,8 @@ func TestAuthorizationFixtureLoadsAndCoversDocumentedFlows(t *testing.T) {
 			t.Errorf("fixture does not cover %q", required)
 		}
 	}
-	if len(fixture.Cases) != 22 {
-		t.Errorf("fixture has %d cases, want 22", len(fixture.Cases))
+	if len(fixture.Cases) != 27 {
+		t.Errorf("fixture has %d cases, want 27", len(fixture.Cases))
 	}
 	for _, testCase := range fixture.Cases {
 		if _, exists := fixture.Principals[testCase.Principal]; !exists {
@@ -49,14 +49,14 @@ func TestAuthorizationFixtureExtendsOnlyThePinnedCurrentRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	lts, err := base.ForReference("5.26.30")
-	if err != nil || len(lts.Cases) != 22 {
+	if err != nil || len(lts.Cases) != 27 {
 		t.Fatalf("LTS fixture selected the wrong cases: %v", err)
 	}
 	current, err := base.ForReference("2026.10.2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(current.Cases) != 24 || current.Principals["ruled"].User != "fgac_ruled" {
+	if len(current.Cases) != 29 || current.Principals["ruled"].User != "fgac_ruled" {
 		t.Fatal("current fixture did not include the authorization-rule cases")
 	}
 	if _, exists := base.Principals["ruled"]; exists {

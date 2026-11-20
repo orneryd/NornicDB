@@ -203,4 +203,43 @@ func TestFineGrainedLinkedOAuthHTTPWorkflow(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(status.Body.Bytes(), &report))
 	require.Equal(t, "running", report.Status)
+
+	require.NoError(t, directory.EditCatalog(t.Context(), func(catalog *auth.FineGrainedCatalog) error {
+		catalog.AuthRules[0].Enabled = false
+		return nil
+	}))
+	deniedStatus := request("/status", session.Value)
+	require.Equal(t, http.StatusForbidden, deniedStatus.Code, deniedStatus.Body.String())
+	require.NotContains(t, deniedStatus.Body.String(), `"running"`)
+	require.NoError(t, directory.EditCatalog(t.Context(), func(catalog *auth.FineGrainedCatalog) error {
+		catalog.AuthRules[0].Enabled = true
+		return nil
+	}))
+	require.Equal(t, http.StatusOK, request("/status", session.Value).Code)
+
+	assertRejectedSignIn := func() {
+		t.Helper()
+		redirect := request("/auth/oauth/redirect", "")
+		require.Equal(t, http.StatusFound, redirect.Code)
+		location, err := url.Parse(redirect.Header().Get("Location"))
+		require.NoError(t, err)
+		state := location.Query().Get("state")
+		require.NotEmpty(t, state)
+		callback := request("/auth/oauth/callback?code="+url.QueryEscape(authorizationCode)+"&state="+url.QueryEscape(state), "")
+		require.Equal(t, http.StatusBadRequest, callback.Code, callback.Body.String())
+		require.Empty(t, callback.Result().Cookies())
+	}
+
+	require.NoError(t, directory.SetUserSuspended(t.Context(), localUsername, true))
+	suspended := request("/auth/me", session.Value)
+	require.Equal(t, http.StatusUnauthorized, suspended.Code, suspended.Body.String())
+	assertRejectedSignIn()
+	require.NoError(t, directory.SetUserSuspended(t.Context(), localUsername, false))
+
+	require.NoError(t, directory.AlterUser(t.Context(), localUsername, auth.FineGrainedUserAlteration{
+		Providers: &auth.FineGrainedProviderChange{Set: map[string]string{providerName: "employee-replacement"}},
+	}))
+	rebound := request("/auth/me", session.Value)
+	require.Equal(t, http.StatusUnauthorized, rebound.Code, rebound.Body.String())
+	assertRejectedSignIn()
 }

@@ -17,6 +17,12 @@
     "denied": {
       "user": "fgac_denied"
     },
+    "property-denied": {
+      "user": "fgac_property_denied"
+    },
+    "predicate-denied": {
+      "user": "fgac_predicate_denied"
+    },
     "writer": {
       "user": "fgac_writer"
     },
@@ -26,7 +32,7 @@
   },
   "setup": {
     "graph": [
-      "CREATE (a:FGACDoc {id: 'doc-a', title: 'Alpha', published: true}), (b:FGACDoc {id: 'doc-b', title: 'Beta', published: false}), (c:FGACOther {id: 'other-a', title: 'Other'})"
+      "CREATE (a:FGACDoc {id: 'doc-a', title: 'Alpha', published: true}), (b:FGACDoc {id: 'doc-b', title: 'Beta', published: false}), (c:FGACOther {id: 'other-a', title: 'Other'}), (a)-[:FGACLink {id: 'link-a', title: 'Link'}]->(b)"
     ],
     "administration": [
       "CREATE USER fgac_linked SET AUTH 'oidc-comparison' { SET ID 'fgac-profile' }",
@@ -50,6 +56,17 @@
       "GRANT ACCESS ON DATABASE ${database} TO fgac_reader",
       "GRANT TRAVERSE ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
       "GRANT READ { id, title } ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
+      "GRANT TRAVERSE ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_reader",
+      "GRANT READ { id, title } ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_reader",
+      "CREATE ROLE fgac_property_denied IF NOT EXISTS",
+      "CREATE USER fgac_property_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_reader, fgac_property_denied TO fgac_property_denied",
+      "DENY READ { title } ON GRAPH ${database} NODES FGACDoc TO fgac_property_denied",
+      "DENY READ { title } ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_property_denied",
+      "CREATE ROLE fgac_predicate_denied IF NOT EXISTS",
+      "CREATE USER fgac_predicate_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_reader, fgac_predicate_denied TO fgac_predicate_denied",
+      "DENY READ { title } ON GRAPH ${database} FOR (d:FGACDoc) WHERE d.published = true TO fgac_predicate_denied",
       "GRANT ACCESS ON DATABASE ${database} TO fgac_access",
       "DENY ACCESS ON DATABASE ${database} TO fgac_noaccess",
       "DENY MATCH { * } ON GRAPH ${database} NODES FGACDoc TO fgac_denier",
@@ -71,6 +88,10 @@
       "DROP USER fgac_linked IF EXISTS",
       "DROP USER fgac_access IF EXISTS",
       "DROP USER fgac_denied IF EXISTS",
+      "DROP USER fgac_property_denied IF EXISTS",
+      "DROP USER fgac_predicate_denied IF EXISTS",
+      "DROP ROLE fgac_property_denied IF EXISTS",
+      "DROP ROLE fgac_predicate_denied IF EXISTS",
       "DROP USER fgac_noaccess IF EXISTS",
       "DROP USER fgac_reader IF EXISTS",
       "DROP USER fgac_writer IF EXISTS",
@@ -164,6 +185,33 @@
           ]
         ]
       }
+    },
+    {
+      "id": "deny-named-node-property-preserves-node",
+      "covers": ["cross-role-deny", "traverse-property-read"],
+      "description": "A denied node property is null while traversal and the granted id remain available.",
+      "database": "target",
+      "principal": "property-denied",
+      "statements": ["MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", null]]}
+    },
+    {
+      "id": "deny-named-relationship-property-preserves-relationship",
+      "covers": ["cross-role-deny", "traverse-property-read"],
+      "description": "A denied relationship property is null while traversal and the granted id remain available.",
+      "database": "target",
+      "principal": "property-denied",
+      "statements": ["MATCH (:FGACDoc)-[r:FGACLink]->(:FGACDoc) RETURN r.id AS id, r.title AS title"],
+      "expect": {"kind": "allow", "rows": [["link-a", null]]}
+    },
+    {
+      "id": "deny-named-property-when-predicate-matches",
+      "covers": ["property-rule", "cross-role-deny"],
+      "description": "A conditional deny masks the named property on the matching node and retains the approved result on the other node.",
+      "database": "target",
+      "principal": "predicate-denied",
+      "statements": ["MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", "Beta"]]}
     },
     {
       "id": "cross-role-deny-hides-documents",
@@ -525,6 +573,33 @@
           ]
         ]
       }
+    },
+    {
+      "id": "external-provider-binding-replacement",
+      "covers": ["introspection"],
+      "description": "Replacing a named provider ID updates the published provider listing.",
+      "database": "system",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "ALTER USER fgac_linked SET AUTH 'oidc-comparison' { SET ID 'fgac-profile-replacement' }",
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {"kind": "allow", "rows": [["fgac_linked", "oidc-comparison", "fgac-profile-replacement"]]}
+    },
+    {
+      "id": "external-provider-binding-removal",
+      "covers": ["introspection"],
+      "description": "Removing one named binding keeps the other configured provider and lists only the remaining ID.",
+      "database": "system",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "ALTER USER fgac_linked SET AUTH 'oidc-secondary' { SET ID 'fgac-profile-secondary' }",
+        "ALTER USER fgac_linked REMOVE AUTH 'oidc-comparison'",
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {"kind": "allow", "rows": [["fgac_linked", "oidc-secondary", "fgac-profile-secondary"]]}
     }
   ],
   "referenceExtensions": {

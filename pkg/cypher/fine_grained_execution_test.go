@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -76,4 +77,67 @@ func TestFineGrainedCypherVisibilityAndWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, stored.Properties["draft"])
 	require.Equal(t, "new", stored.Properties["title"])
+}
+
+func TestFineGrainedCypherExactPropertyDenial(t *testing.T) {
+	ctx := t.Context()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "work")
+	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 50})
+	for _, id := range []storage.NodeID{"a", "b"} {
+		_, err := store.CreateNode(ctx, &storage.Node{ID: id, Labels: []string{"Article"},
+			Properties: map[string]any{"key": string(id), "title": "Original", "note": "Unchanged"}})
+		require.NoError(t, err)
+	}
+	protected, err := store.GetNode(ctx, "a")
+	require.NoError(t, err)
+	protectedHandle := auth.FineGrainedEntityID(protected.Identity().LocalID, protected.CreatedAt)
+	policy, err := auth.CompileFineGrainedPolicy(auth.GraphFineGrainedActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "traverse", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "read", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "set", Action: "graph.node.property.set", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "deny-read-title", Action: "graph.node.property.read", Deny: true, Scope: auth.FineGrainedScope{
+				Kind: auth.FineGrainedNode, DatabaseID: "work-id", EntityIDs: []string{protectedHandle}, Properties: []string{"title"},
+			}},
+			{ID: "deny-set-title", Action: "graph.node.property.set", Deny: true, Scope: auth.FineGrainedScope{
+				Kind: auth.FineGrainedNode, DatabaseID: "work-id", EntityIDs: []string{protectedHandle}, Properties: []string{"title"},
+			}},
+		},
+		Assignments: map[string][]string{
+			"reader":     {"access", "traverse", "read", "set"},
+			"restricted": {"deny-read-title", "deny-set-title"},
+		},
+	})
+	require.NoError(t, err)
+	scope := func(roles ...string) context.Context {
+		return auth.WithFineGrainedRequest(ctx, &auth.FineGrainedRequest{
+			Access: policy.ForRoles(roles), DatabaseID: func(string) string { return "work-id" },
+		})
+	}
+	const project = "MATCH (n:Article) RETURN n.key AS key, n.title AS title, n.note AS note ORDER BY key"
+	visible := [][]any{{"a", "Original", "Unchanged"}, {"b", "Original", "Unchanged"}}
+	masked := [][]any{{"a", nil, "Unchanged"}, {"b", "Original", "Unchanged"}}
+	unrestricted := scope("reader")
+	restricted := scope("reader", "restricted")
+	for _, testCase := range []struct {
+		ctx  context.Context
+		want [][]any
+	}{{unrestricted, visible}, {restricted, masked}, {unrestricted, visible}} {
+		result, err := executor.Execute(testCase.ctx, project, nil)
+		require.NoError(t, err)
+		require.Equal(t, testCase.want, result.Rows)
+	}
+
+	_, err = executor.Execute(restricted, "MATCH (n:Article {key: 'a'}) SET n.note = 'Updated', n.title = 'Updated'", nil)
+	require.Error(t, err)
+	stored, err := store.GetNode(ctx, "a")
+	require.NoError(t, err)
+	require.Equal(t, "Original", stored.Properties["title"])
+	require.Equal(t, "Unchanged", stored.Properties["note"])
+	_, err = executor.Execute(restricted, "MATCH (n:Article {key: 'b'}) SET n.title = 'Updated'", nil)
+	require.NoError(t, err)
+	other, err := store.GetNode(ctx, "b")
+	require.NoError(t, err)
+	require.Equal(t, "Updated", other.Properties["title"])
 }
