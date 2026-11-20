@@ -26,6 +26,7 @@ func TestNOR280PublicCSVLabelRoundTrip(t *testing.T) {
 		{name: "comma", labels: []string{"A,B"}},
 		{name: "quote", labels: []string{"A\"B"}},
 		{name: "newline", labels: []string{"A\nB"}},
+		{name: "CRLF preserves existing package", labels: []string{"A\r\nB"}, ordinaryFirst: true, protectExisting: true},
 		{name: "unicode", labels: []string{"Χαρά", "图"}},
 		{name: "ambiguous after ordinary", labels: []string{"A;B"}, ordinaryFirst: true},
 		{name: "leading delimiter", labels: []string{";A"}},
@@ -69,7 +70,7 @@ func TestNOR280PublicCSVLabelRoundTrip(t *testing.T) {
 			normalized := false
 			for _, label := range written.Labels {
 				ambiguous = ambiguous || strings.ContainsRune(label, delimiter)
-				normalized = normalized || label == "" || strings.TrimSpace(label) != label
+				normalized = normalized || label == "" || strings.TrimSpace(label) != label || strings.Contains(label, "\r\n")
 			}
 			err = ExportNeo4jCSV(source, Neo4jCSVExportOptions{OutputDir: out, ArrayDelimiter: subject.delimiter})
 			if (ambiguous || normalized) && err != nil {

@@ -185,10 +185,10 @@ func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptio
 	// destination. The :LABEL field splits on the array delimiter and cannot
 	// escape an embedded delimiter under the Neo4j CSV contract, while this
 	// importer trims and drops surrounding-whitespace or empty label elements.
-	// Those are one representability contract, so one diagnostic states it.
+	// The CSV reader also normalizes CRLF within quoted fields to LF.
 	for _, node := range nodes {
 		for _, label := range node.Labels {
-			if label == "" || strings.TrimSpace(label) != label || strings.ContainsRune(label, opts.ArrayDelimiter) {
+			if label == "" || strings.TrimSpace(label) != label || strings.ContainsRune(label, opts.ArrayDelimiter) || strings.Contains(label, "\r\n") {
 				return unsupported(localization.AdminExportLabelUnsupported(label, opts.ArrayDelimiter))
 			}
 		}

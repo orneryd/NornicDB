@@ -109,7 +109,7 @@ func AdminExportCustomQuoteUnsupported() Message {
 // whitespace.
 func AdminExportLabelUnsupported(label string, delimiter rune) Message {
 	quotedLabel, quotedDelimiter := strconv.Quote(label), strconv.QuoteRune(delimiter)
-	return Message{ID: MessageAdminExportLabelUnsupported, Fallback: "label " + quotedLabel + " cannot be written to Neo4j CSV with array delimiter " + quotedDelimiter + ": labels must be nonempty, must not have leading or trailing whitespace, and must not contain the array delimiter; choose a suitable --array-delimiter for a delimiter conflict, or use a nonempty label without leading or trailing whitespace, or another export format, for a normalization conflict", Data: map[string]any{"Label": quotedLabel, "Delimiter": quotedDelimiter}}
+	return Message{ID: MessageAdminExportLabelUnsupported, Fallback: "label " + quotedLabel + " cannot be written to Neo4j CSV with array delimiter " + quotedDelimiter + ": labels must be nonempty, must not have leading or trailing whitespace, must not contain the array delimiter, and must not contain CRLF line breaks; choose a suitable --array-delimiter for a delimiter conflict, or use a nonempty label without surrounding whitespace or CRLF line breaks, or another export format, for a normalization conflict", Data: map[string]any{"Label": quotedLabel, "Delimiter": quotedDelimiter}}
 }
 
 func AdminImportUnsupportedCSVHeader(path string) Message {
