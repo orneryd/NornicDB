@@ -28,7 +28,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type rcaCountingReranker struct {
+	inner search.Reranker
+	t     *testing.T
+}
+
+func (r rcaCountingReranker) Name() string                        { return r.inner.Name() }
+func (r rcaCountingReranker) Enabled() bool                       { return r.inner.Enabled() }
+func (r rcaCountingReranker) IsAvailable(ctx context.Context) bool { return r.inner.IsAvailable(ctx) }
+func (r rcaCountingReranker) Rerank(ctx context.Context, query string, candidates []search.RerankCandidate) ([]search.RerankResult, error) {
+	out, err := r.inner.Rerank(ctx, query, candidates)
+	empty := 0
+	for _, c := range candidates {
+		if c.Content == "" {
+			empty++
+		}
+	}
+	r.t.Logf("RCA_CONT_RERANK candidates_in=%d (empty content %d) results_out=%d err=%v", len(candidates), empty, len(out), err)
+	return out, err
+}
+
 type rcaContVariant struct {
+	counting   bool
 	name       string
 	noReranker bool
 	noWhere    bool
@@ -42,6 +63,7 @@ func TestRCARankedContinuationCompletion(t *testing.T) {
 
 func TestRCARankedContinuationVariants(t *testing.T) {
 	for _, v := range []rcaContVariant{
+		{name: "counting-reranker", counting: true},
 		{name: "no-reranker", noReranker: true},
 		{name: "no-where", noWhere: true},
 		{name: "short-text", shortText: true},
@@ -110,7 +132,9 @@ func rcaRankedContinuation(t *testing.T, v rcaContVariant) {
 	svc := fn.Call(args)[0].Interface().(*search.Service)
 	svc.SetFulltextProperties([]string{"text", "search_text"})
 	require.NoError(t, svc.BuildIndexes(context.Background()))
-	if !v.noReranker {
+	if v.counting {
+		svc.SetReranker(rcaCountingReranker{inner: rerank, t: t})
+	} else if !v.noReranker {
 		svc.SetReranker(rerank)
 	}
 	port := serveBoltIntegrationServer(t, New(&Config{Port: 0, MaxConnections: 10, ReadBufferSize: 8192, WriteBufferSize: 8192}, &pdv2Exec{store: store, svc: svc}))
