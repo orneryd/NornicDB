@@ -26,104 +26,104 @@ import (
 // isolated child process: a regression blocks the calling goroutine
 // permanently, so an in-process test would hang the package run instead of
 // failing. The child watchdog prints a goroutine dump and exits with
-// nor183DeadlockExit, which the parent reports as the reproduction.
+// nor183DeadlockExit_r9port, which the parent reports as the reproduction.
 const (
-	nor183ScenarioEnv      = "NOR183_DATABASE_MANAGER_SCENARIO"
-	nor183ChildTestPattern = "^TestNOR183DatabaseManagerCallbackChild$"
+	nor183ScenarioEnv_r9port      = "NOR183_DATABASE_MANAGER_SCENARIO"
+	nor183ChildTestPattern_r9port = "^TestNOR183DatabaseManagerCallbackChild_r9port$"
 
-	nor183ScenarioFactorySuccess    = "remote-factory-success"
-	nor183ScenarioFactoryFailure    = "remote-factory-failure"
-	nor183ScenarioInnerClose        = "inner-engine-close"
-	nor183ScenarioInnerCloseFailure = "inner-engine-close-failure"
-	nor183ScenarioRootSuccess       = "composite-root-success"
-	nor183ScenarioRootFailure       = "composite-root-failure"
+	nor183ScenarioFactorySuccess_r9port    = "remote-factory-success"
+	nor183ScenarioFactoryFailure_r9port    = "remote-factory-failure"
+	nor183ScenarioInnerClose_r9port        = "inner-engine-close"
+	nor183ScenarioInnerCloseFailure_r9port = "inner-engine-close-failure"
+	nor183ScenarioRootSuccess_r9port       = "composite-root-success"
+	nor183ScenarioRootFailure_r9port       = "composite-root-failure"
 
-	nor183CompletedMarker = "NOR183_SCENARIO_COMPLETED"
-	nor183DeadlockMarker  = "NOR183_SCENARIO_DEADLOCKED"
+	nor183CompletedMarker_r9port = "NOR183_SCENARIO_COMPLETED"
+	nor183DeadlockMarker_r9port  = "NOR183_SCENARIO_DEADLOCKED"
 
-	nor183DeadlockExit  = 86
-	nor183CallBudget    = 10 * time.Second
-	nor183ProcessBudget = 90 * time.Second
+	nor183DeadlockExit_r9port  = 86
+	nor183CallBudget_r9port    = 10 * time.Second
+	nor183ProcessBudget_r9port = 90 * time.Second
 )
 
-// TestNOR183RemoteEngineFactoryCatalogCallback covers a remote-engine factory
+// TestNOR183RemoteEngineFactoryCatalogCallback_r9port covers a remote-engine factory
 // that reads the manager catalog while the manager creates the constituent
 // engine. A factory that succeeds and one that rejects its constituent must
 // both return, and cleanup afterwards must complete.
-func TestNOR183RemoteEngineFactoryCatalogCallback(t *testing.T) {
-	for _, scenario := range []string{nor183ScenarioFactorySuccess, nor183ScenarioFactoryFailure, nor183ScenarioRootSuccess, nor183ScenarioRootFailure} {
+func TestNOR183RemoteEngineFactoryCatalogCallback_r9port(t *testing.T) {
+	for _, scenario := range []string{nor183ScenarioFactorySuccess_r9port, nor183ScenarioFactoryFailure_r9port, nor183ScenarioRootSuccess_r9port, nor183ScenarioRootFailure_r9port} {
 		t.Run(scenario, func(t *testing.T) {
-			output := nor183RunCallbackScenario(t, scenario)
-			require.Contains(t, output, nor183CompletedMarker+" scenario="+scenario,
+			output := nor183RunCallbackScenario_r9port(t, scenario)
+			require.Contains(t, output, nor183CompletedMarker_r9port+" scenario="+scenario,
 				"NOR-183 child must reach the scenario completion marker: %s", output)
 		})
 	}
 }
 
-// TestNOR183InnerEngineCloseCatalogCallback covers an inner engine whose Close
+// TestNOR183InnerEngineCloseCatalogCallback_r9port covers an inner engine whose Close
 // reads the manager catalog and then finishes closing.
-func TestNOR183InnerEngineCloseCatalogCallback(t *testing.T) {
-	for _, scenario := range []string{nor183ScenarioInnerClose, nor183ScenarioInnerCloseFailure} {
+func TestNOR183InnerEngineCloseCatalogCallback_r9port(t *testing.T) {
+	for _, scenario := range []string{nor183ScenarioInnerClose_r9port, nor183ScenarioInnerCloseFailure_r9port} {
 		t.Run(scenario, func(t *testing.T) {
-			output := nor183RunCallbackScenario(t, scenario)
-			require.Contains(t, output, nor183CompletedMarker+" scenario="+scenario)
+			output := nor183RunCallbackScenario_r9port(t, scenario)
+			require.Contains(t, output, nor183CompletedMarker_r9port+" scenario="+scenario)
 		})
 	}
 }
 
-func nor183RunCallbackScenario(t *testing.T, scenario string) string {
+func nor183RunCallbackScenario_r9port(t *testing.T, scenario string) string {
 	t.Helper()
 	binaryPath, err := os.Executable()
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), nor183ProcessBudget)
+	ctx, cancel := context.WithTimeout(t.Context(), nor183ProcessBudget_r9port)
 	defer cancel()
 	child := exec.CommandContext(ctx, binaryPath,
-		"-test.run="+nor183ChildTestPattern, "-test.count=1", "-test.timeout=60s")
-	child.Env = append(os.Environ(), nor183ScenarioEnv+"="+scenario)
+		"-test.run="+nor183ChildTestPattern_r9port, "-test.count=1", "-test.timeout=60s")
+	child.Env = append(os.Environ(), nor183ScenarioEnv_r9port+"="+scenario)
 	output, runErr := child.CombinedOutput()
 	require.NoError(t, ctx.Err(), "NOR-183 child %q did not exit within %s; output:\n%s",
-		scenario, nor183ProcessBudget, output)
+		scenario, nor183ProcessBudget_r9port, output)
 	var exit *exec.ExitError
-	if errors.As(runErr, &exit) && exit.ExitCode() == nor183DeadlockExit {
+	if errors.As(runErr, &exit) && exit.ExitCode() == nor183DeadlockExit_r9port {
 		t.Fatalf("NOR-183 reproduced: %q blocked while DatabaseManager held its metadata lock across a callback into ListDatabaseNames\n%s",
 			scenario, output)
 	}
 	require.NoError(t, runErr, "NOR-183 child %q failed: %s", scenario, output)
-	require.NotContains(t, string(output), nor183DeadlockMarker,
+	require.NotContains(t, string(output), nor183DeadlockMarker_r9port,
 		"NOR-183 child %q reported a deadlock: %s", scenario, output)
 	return string(output)
 }
 
-// TestNOR183DatabaseManagerCallbackChild runs exactly one NOR-183 scenario in
-// the isolated process started by nor183RunCallbackScenario. It skips during
+// TestNOR183DatabaseManagerCallbackChild_r9port runs exactly one NOR-183 scenario in
+// the isolated process started by nor183RunCallbackScenario_r9port. It skips during
 // ordinary package runs because the parent supplies the scenario.
-func TestNOR183DatabaseManagerCallbackChild(t *testing.T) {
-	scenario := os.Getenv(nor183ScenarioEnv)
+func TestNOR183DatabaseManagerCallbackChild_r9port(t *testing.T) {
+	scenario := os.Getenv(nor183ScenarioEnv_r9port)
 	if scenario == "" {
-		t.Skip("NOR-183 child scenario requires " + nor183ScenarioEnv)
+		t.Skip("NOR-183 child scenario requires " + nor183ScenarioEnv_r9port)
 	}
-	prepared, err := nor183PrepareScenario(t, scenario)
+	prepared, err := nor183PrepareScenario_r9port(t, scenario)
 	require.NoError(t, err)
 
-	outcome := make(chan nor183Outcome, 1)
+	outcome := make(chan nor183Outcome_r9port, 1)
 	go func() { outcome <- prepared.trigger() }()
 
 	select {
 	case got := <-outcome:
 		prepared.verify(t, got)
-		fmt.Printf("%s scenario=%s names=%s\n", nor183CompletedMarker, scenario, strings.Join(got.names, ","))
-	case <-time.After(nor183CallBudget):
+		fmt.Printf("%s scenario=%s names=%s\n", nor183CompletedMarker_r9port, scenario, strings.Join(got.names, ","))
+	case <-time.After(nor183CallBudget_r9port):
 		// The scenario goroutine is blocked inside the manager's own lock, so no
 		// progress is possible in this process. Terminate with the dump the parent
 		// reports rather than abandoning a goroutine in a half-run test.
-		fmt.Printf("%s scenario=%s\n%s", nor183DeadlockMarker, scenario, nor183GoroutineDump())
-		os.Exit(nor183DeadlockExit)
+		fmt.Printf("%s scenario=%s\n%s", nor183DeadlockMarker_r9port, scenario, nor183GoroutineDump_r9port())
+		os.Exit(nor183DeadlockExit_r9port)
 	}
 }
 
-// nor183Outcome records the scenario's public results. Callback-provided values
+// nor183Outcome_r9port records the scenario's public results. Callback-provided values
 // are copied out of the scenario goroutine before it sends.
-type nor183Outcome struct {
+type nor183Outcome_r9port struct {
 	names          []string
 	callErr        error
 	engineReadErr  error
@@ -131,38 +131,38 @@ type nor183Outcome struct {
 	closeErr       error
 }
 
-type nor183Scenario struct {
-	trigger func() nor183Outcome
-	verify  func(*testing.T, nor183Outcome)
+type nor183Scenario_r9port struct {
+	trigger func() nor183Outcome_r9port
+	verify  func(*testing.T, nor183Outcome_r9port)
 }
 
-func nor183PrepareScenario(t *testing.T, scenario string) (*nor183Scenario, error) {
+func nor183PrepareScenario_r9port(t *testing.T, scenario string) (*nor183Scenario_r9port, error) {
 	t.Helper()
 	switch scenario {
 	case "concurrent-open", "close-open-read":
-		return nor183PrepareConcurrent(t, scenario)
-	case nor183ScenarioFactorySuccess:
-		return nor183PrepareRemoteFactory(t, false, false)
-	case nor183ScenarioFactoryFailure:
-		return nor183PrepareRemoteFactory(t, true, false)
-	case nor183ScenarioInnerClose:
-		return nor183PrepareInnerClose(t, false)
-	case nor183ScenarioInnerCloseFailure:
-		return nor183PrepareInnerClose(t, true)
-	case nor183ScenarioRootSuccess:
-		return nor183PrepareRemoteFactory(t, false, true)
-	case nor183ScenarioRootFailure:
-		return nor183PrepareRemoteFactory(t, true, true)
+		return nor183PrepareConcurrent_r9port(t, scenario)
+	case nor183ScenarioFactorySuccess_r9port:
+		return nor183PrepareRemoteFactory_r9port(t, false, false)
+	case nor183ScenarioFactoryFailure_r9port:
+		return nor183PrepareRemoteFactory_r9port(t, true, false)
+	case nor183ScenarioInnerClose_r9port:
+		return nor183PrepareInnerClose_r9port(t, false)
+	case nor183ScenarioInnerCloseFailure_r9port:
+		return nor183PrepareInnerClose_r9port(t, true)
+	case nor183ScenarioRootSuccess_r9port:
+		return nor183PrepareRemoteFactory_r9port(t, false, true)
+	case nor183ScenarioRootFailure_r9port:
+		return nor183PrepareRemoteFactory_r9port(t, true, true)
 	case nor183ScenarioCompositeTwoRemoteSuccess:
 		return nor183PrepareCompositeTwoRemote(t)
 	}
 	return nil, fmt.Errorf("unknown NOR-183 scenario %q", scenario)
 }
 
-// nor183PrepareRemoteFactory wires a composite with one remote constituent. The
+// nor183PrepareRemoteFactory_r9port wires a composite with one remote constituent. The
 // factory callback reads the public catalog while the manager resolves the
 // constituent engine, which is the reported callback shape.
-func nor183PrepareRemoteFactory(t *testing.T, reject, root bool) (*nor183Scenario, error) {
+func nor183PrepareRemoteFactory_r9port(t *testing.T, reject, root bool) (*nor183Scenario_r9port, error) {
 	t.Helper()
 	ctx := t.Context()
 	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
@@ -200,9 +200,9 @@ func nor183PrepareRemoteFactory(t *testing.T, reject, root bool) (*nor183Scenari
 		return nil, err
 	}
 
-	return &nor183Scenario{
-		trigger: func() nor183Outcome {
-			outcome := nor183Outcome{}
+	return &nor183Scenario_r9port{
+		trigger: func() nor183Outcome_r9port {
+			outcome := nor183Outcome_r9port{}
 			selection := "nor183_cmp.r"
 			if root {
 				selection = "nor183_cmp"
@@ -217,7 +217,7 @@ func nor183PrepareRemoteFactory(t *testing.T, reject, root bool) (*nor183Scenari
 			outcome.closeErr = manager.Close()
 			return outcome
 		},
-		verify: func(t *testing.T, got nor183Outcome) {
+		verify: func(t *testing.T, got nor183Outcome_r9port) {
 			require.EqualValues(t, 1, callbackCalls.Load(), "the remote factory must run exactly once")
 			require.ElementsMatch(t, []string{"system", "nornic", "nor183_cmp"}, got.names,
 				"the factory's catalog read must complete inside the manager call")
@@ -234,9 +234,9 @@ func nor183PrepareRemoteFactory(t *testing.T, reject, root bool) (*nor183Scenari
 	}, nil
 }
 
-// nor183CatalogReadingEngine is an inner engine whose Close reads the manager
+// nor183CatalogReadingEngine_r9port is an inner engine whose Close reads the manager
 // catalog before delegating, the callback shape NOR-183 reports for cleanup.
-type nor183CatalogReadingEngine struct {
+type nor183CatalogReadingEngine_r9port struct {
 	storage.Engine
 	notify           func()
 	callbackCalls    atomic.Int32
@@ -246,9 +246,9 @@ type nor183CatalogReadingEngine struct {
 	injectedCloseErr error
 }
 
-func (e *nor183CatalogReadingEngine) GetInnerEngine() storage.Engine { return e.Engine }
+func (e *nor183CatalogReadingEngine_r9port) GetInnerEngine() storage.Engine { return e.Engine }
 
-func (e *nor183CatalogReadingEngine) Close() error {
+func (e *nor183CatalogReadingEngine_r9port) Close() error {
 	e.closeOnce.Do(func() {
 		e.callbackCalls.Add(1)
 		if e.notify != nil {
@@ -260,9 +260,9 @@ func (e *nor183CatalogReadingEngine) Close() error {
 	return e.closeErr
 }
 
-func nor183PrepareInnerClose(t *testing.T, reject bool) (*nor183Scenario, error) {
+func nor183PrepareInnerClose_r9port(t *testing.T, reject bool) (*nor183Scenario_r9port, error) {
 	t.Helper()
-	inner := fixtureowner.Track(t, &nor183CatalogReadingEngine{Engine: storage.NewMemoryEngine()}, storage.ErrStorageClosed)
+	inner := fixtureowner.Track(t, &nor183CatalogReadingEngine_r9port{Engine: storage.NewMemoryEngine()}, storage.ErrStorageClosed)
 	var manager *DatabaseManager
 	var callbackNames []string
 	rejected := errors.New("nor183 inner close failed")
@@ -280,12 +280,12 @@ func nor183PrepareInnerClose(t *testing.T, reject bool) (*nor183Scenario, error)
 		}
 	})
 
-	return &nor183Scenario{
-		trigger: func() nor183Outcome {
+	return &nor183Scenario_r9port{
+		trigger: func() nor183Outcome_r9port {
 			closeErr := manager.Close()
-			return nor183Outcome{names: slices.Clone(callbackNames), closeErr: closeErr}
+			return nor183Outcome_r9port{names: slices.Clone(callbackNames), closeErr: closeErr}
 		},
-		verify: func(t *testing.T, got nor183Outcome) {
+		verify: func(t *testing.T, got nor183Outcome_r9port) {
 			if reject {
 				require.ErrorIs(t, got.closeErr, rejected)
 			} else {
@@ -299,18 +299,18 @@ func nor183PrepareInnerClose(t *testing.T, reject bool) (*nor183Scenario, error)
 	}, nil
 }
 
-// nor183GoroutineDump captures every stack in the deadlocked child so the
+// nor183GoroutineDump_r9port captures every stack in the deadlocked child so the
 // parent's failure names the lock the callback was waiting on.
-func nor183GoroutineDump() string {
+func nor183GoroutineDump_r9port() string {
 	buffer := make([]byte, 1<<20)
 	return string(buffer[:runtime.Stack(buffer, true)])
 }
 
-func TestNOR183ConcurrentLifecycleControls(t *testing.T) {
+func TestNOR183ConcurrentLifecycleControls_r9port(t *testing.T) {
 	for _, scenario := range []string{"concurrent-open", "close-open-read"} {
 		t.Run(scenario, func(t *testing.T) {
-			output := nor183RunCallbackScenario(t, scenario)
-			require.Contains(t, output, nor183CompletedMarker+" scenario="+scenario)
+			output := nor183RunCallbackScenario_r9port(t, scenario)
+			require.Contains(t, output, nor183CompletedMarker_r9port+" scenario="+scenario)
 		})
 	}
 }
@@ -318,7 +318,7 @@ func TestNOR183ConcurrentLifecycleControls(t *testing.T) {
 // These controls record the current per-request remote factory contract.
 // Remote constituent/composite views are deliberately not cached by the manager;
 // a single shared remote instance is not assumed across authorization contexts.
-func nor183PrepareConcurrent(t *testing.T, scenario string) (*nor183Scenario, error) {
+func nor183PrepareConcurrent_r9port(t *testing.T, scenario string) (*nor183Scenario_r9port, error) {
 	manager, _ := setupTestManager(t)
 	remote := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	err := manager.CreateCompositeDatabase(t.Context(), "nor183_cmp", []ConstituentRef{{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: "http://nor183.invalid"}})
@@ -335,9 +335,9 @@ func nor183PrepareConcurrent(t *testing.T, scenario string) (*nor183Scenario, er
 		}
 		return remote, nil
 	}
-	return &nor183Scenario{
-		trigger: func() nor183Outcome {
-			var outcome nor183Outcome
+	return &nor183Scenario_r9port{
+		trigger: func() nor183Outcome_r9port {
+			var outcome nor183Outcome_r9port
 			if scenario == "concurrent-open" {
 				const requests = 8
 				start := make(chan struct{})
@@ -378,7 +378,7 @@ func nor183PrepareConcurrent(t *testing.T, scenario string) (*nor183Scenario, er
 			}
 			return outcome
 		},
-		verify: func(t *testing.T, got nor183Outcome) {
+		verify: func(t *testing.T, got nor183Outcome_r9port) {
 			require.NoError(t, got.callErr)
 			require.NoError(t, got.closeErr)
 			if scenario == "close-open-read" {

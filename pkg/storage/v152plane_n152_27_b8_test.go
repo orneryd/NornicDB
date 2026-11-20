@@ -17,40 +17,40 @@ import (
 	"testing"
 )
 
-// constituentAccessMethods are the selector names that resolve a constituent
+// constituentAccessMethods_r9port are the selector names that resolve a constituent
 // engine, including the write-mode wrapper and the exported alias resolver.
-var constituentAccessMethods = map[string]bool{
+var constituentAccessMethods_r9port = map[string]bool{
 	"getConstituent":         true,
 	"getConstituentForWrite": true,
 	"GetConstituentByAlias":  true,
 }
 
-// constituentAccessClass is how a call site handles the access error.
-type constituentAccessClass string
+// constituentAccessClass_r9port is how a call site handles the access error.
+type constituentAccessClass_r9port string
 
 const (
-	// accessPropagates returns the error to the caller.
-	accessPropagates constituentAccessClass = "propagate"
-	// accessSkips drops the failed constituent and keeps going.
-	accessSkips constituentAccessClass = "skip"
-	// accessDiscards drops the error result entirely.
-	accessDiscards constituentAccessClass = "discard"
-	// accessUnclassified is a call site the extractor could not classify; it
+	// accessPropagates_r9port returns the error to the caller.
+	accessPropagates_r9port constituentAccessClass_r9port = "propagate"
+	// accessSkips_r9port drops the failed constituent and keeps going.
+	accessSkips_r9port constituentAccessClass_r9port = "skip"
+	// accessDiscards_r9port drops the error result entirely.
+	accessDiscards_r9port constituentAccessClass_r9port = "discard"
+	// accessUnclassified_r9port is a call site the extractor could not classify; it
 	// must never appear in a recorded inventory.
-	accessUnclassified constituentAccessClass = "unclassified"
+	accessUnclassified_r9port constituentAccessClass_r9port = "unclassified"
 )
 
-// constituentAccessSite is one call site, keyed by file and enclosing function
+// constituentAccessSite_r9port is one call site, keyed by file and enclosing function
 // so the inventory survives line movement.
-type constituentAccessSite struct {
+type constituentAccessSite_r9port struct {
 	file, function string
 	line           int
-	class          constituentAccessClass
+	class          constituentAccessClass_r9port
 }
 
-func (s constituentAccessSite) key() string { return s.file + "#" + s.function }
+func (s constituentAccessSite_r9port) key() string { return s.file + "#" + s.function }
 
-func constituentAccessSourceFiles(directory string) ([]string, error) {
+func constituentAccessSourceFiles_r9port(directory string) ([]string, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return nil, err
@@ -66,16 +66,16 @@ func constituentAccessSourceFiles(directory string) ([]string, error) {
 	return names, nil
 }
 
-// constituentAccessCalls returns every access call site and the number of
+// constituentAccessCalls_r9port returns every access call site and the number of
 // calls the AST contains, so an unclassified site cannot go unnoticed.
-func constituentAccessCalls(t *testing.T, directory string, methods map[string]bool) ([]constituentAccessSite, int) {
+func constituentAccessCalls_r9port(t *testing.T, directory string, methods map[string]bool) ([]constituentAccessSite_r9port, int) {
 	t.Helper()
-	paths, err := constituentAccessSourceFiles(directory)
+	paths, err := constituentAccessSourceFiles_r9port(directory)
 	if err != nil {
 		t.Fatalf("read %s: %v", directory, err)
 	}
 	fset := token.NewFileSet()
-	var sites []constituentAccessSite
+	var sites []constituentAccessSite_r9port
 	classified := 0
 	total := 0
 	for _, path := range paths {
@@ -89,7 +89,7 @@ func constituentAccessCalls(t *testing.T, directory string, methods map[string]b
 			if !ok || decl.Body == nil {
 				return true
 			}
-			found, seen := scanConstituentAccessBlock(fset, decl.Body.List, name, decl.Name.Name, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, decl.Body.List, name, decl.Name.Name, methods)
 			sites = append(sites, found...)
 			classified += seen
 			return false
@@ -117,24 +117,24 @@ func constituentAccessCalls(t *testing.T, directory string, methods map[string]b
 	return sites, total
 }
 
-func scanConstituentAccessBlock(fset *token.FileSet, statements []ast.Stmt, file, function string, methods map[string]bool) ([]constituentAccessSite, int) {
-	var sites []constituentAccessSite
+func scanConstituentAccessBlock_r9port(fset *token.FileSet, statements []ast.Stmt, file, function string, methods map[string]bool) ([]constituentAccessSite_r9port, int) {
+	var sites []constituentAccessSite_r9port
 	total := 0
-	record := func(node ast.Node, class constituentAccessClass) {
+	record := func(node ast.Node, class constituentAccessClass_r9port) {
 		total++
-		sites = append(sites, constituentAccessSite{file: file, function: function, line: fset.Position(node.Pos()).Line, class: class})
+		sites = append(sites, constituentAccessSite_r9port{file: file, function: function, line: fset.Position(node.Pos()).Line, class: class})
 	}
 	for index, statement := range statements {
 		switch current := statement.(type) {
 		case *ast.AssignStmt:
 			for position, value := range current.Rhs {
-				if !isConstituentAccessCall(value, methods) || len(current.Lhs) <= position {
+				if !isConstituentAccessCall_r9port(value, methods) || len(current.Lhs) <= position {
 					continue
 				}
-				class := accessUnclassified
+				class := accessUnclassified_r9port
 				switch {
 				case discardsError(current):
-					class = accessDiscards
+					class = accessDiscards_r9port
 				case index+1 < len(statements):
 					class = classFromNextStatement(statements[index+1])
 				}
@@ -142,41 +142,41 @@ func scanConstituentAccessBlock(fset *token.FileSet, statements []ast.Stmt, file
 			}
 		case *ast.ReturnStmt:
 			for _, result := range current.Results {
-				if isConstituentAccessCall(result, methods) {
-					record(current, accessPropagates)
+				if isConstituentAccessCall_r9port(result, methods) {
+					record(current, accessPropagates_r9port)
 				}
 			}
 		case *ast.IfStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.Body.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 			if block, ok := current.Else.(*ast.BlockStmt); ok {
-				found, seen = scanConstituentAccessBlock(fset, block.List, file, function, methods)
+				found, seen = scanConstituentAccessBlock_r9port(fset, block.List, file, function, methods)
 				sites, total = append(sites, found...), total+seen
 			}
 		case *ast.ForStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.Body.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		case *ast.RangeStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.Body.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		case *ast.BlockStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		case *ast.SwitchStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.Body.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		case *ast.TypeSwitchStmt:
-			found, seen := scanConstituentAccessBlock(fset, current.Body.List, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body.List, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		case *ast.CaseClause:
-			found, seen := scanConstituentAccessBlock(fset, current.Body, file, function, methods)
+			found, seen := scanConstituentAccessBlock_r9port(fset, current.Body, file, function, methods)
 			sites, total = append(sites, found...), total+seen
 		}
 	}
 	return sites, total
 }
 
-func isConstituentAccessCall(expression ast.Expr, methods map[string]bool) bool {
+func isConstituentAccessCall_r9port(expression ast.Expr, methods map[string]bool) bool {
 	call, ok := expression.(*ast.CallExpr)
 	if !ok {
 		return false
@@ -197,30 +197,30 @@ func discardsError(assignment *ast.AssignStmt) bool {
 
 // classFromNextStatement classifies the access error by the statement that
 // consumes it: continue keeps the partial result, return reports the failure.
-func classFromNextStatement(statement ast.Stmt) constituentAccessClass {
+func classFromNextStatement(statement ast.Stmt) constituentAccessClass_r9port {
 	examine, ok := statement.(*ast.IfStmt)
 	if !ok || !mentionsErr(examine.Cond) {
-		return accessUnclassified
+		return accessUnclassified_r9port
 	}
 	return blockClass(examine.Body.List)
 }
 
-func blockClass(statements []ast.Stmt) constituentAccessClass {
+func blockClass(statements []ast.Stmt) constituentAccessClass_r9port {
 	for _, statement := range statements {
 		switch current := statement.(type) {
 		case *ast.BranchStmt:
 			if current.Tok == token.CONTINUE {
-				return accessSkips
+				return accessSkips_r9port
 			}
 		case *ast.ReturnStmt:
-			return accessPropagates
+			return accessPropagates_r9port
 		case *ast.IfStmt:
-			if class := blockClass(current.Body.List); class != accessUnclassified {
+			if class := blockClass(current.Body.List); class != accessUnclassified_r9port {
 				return class
 			}
 		}
 	}
-	return accessUnclassified
+	return accessUnclassified_r9port
 }
 
 func mentionsErr(expression ast.Expr) bool {
@@ -234,112 +234,112 @@ func mentionsErr(expression ast.Expr) bool {
 	return found
 }
 
-// recordedStorageAccessInventory is the audited classification of
+// recordedStorageAccessInventory_r9port is the audited classification of
 // pkg/storage. Key is "<file>#<function>"; the value lists the classes of that
 // function's call sites in source order. "skip" drops the failed constituent
 // (the NOR-312 defect where the method already returns an error, and a
 // contract decision where it cannot), "propagate" reports it.
-var recordedStorageAccessInventory = map[string][]constituentAccessClass{
-	"composite_capabilities.go#StreamNodesWithOptions":        {accessPropagates},
-	"composite_capabilities.go#GetNodeLatestEffective":        {accessPropagates},
-	"composite_capabilities.go#GetEdgeLatestEffective":        {accessPropagates},
-	"composite_capabilities.go#GetNodeLatestVisible":          {accessPropagates},
-	"composite_capabilities.go#GetNodeVisibleAt":              {accessPropagates},
-	"composite_capabilities.go#GetEdgeLatestVisible":          {accessPropagates},
-	"composite_capabilities.go#GetEdgeVisibleAt":              {accessPropagates},
-	"composite_capabilities.go#GetNodeCurrentHead":            {accessPropagates},
-	"composite_capabilities.go#GetEdgeCurrentHead":            {accessPropagates},
-	"composite_capabilities.go#ForEachNodeIDByLabel":          {accessPropagates},
-	"composite_capabilities.go#GetNodeProjected":              {accessPropagates},
-	"composite_capabilities.go#IterateNodes":                  {accessPropagates},
-	"composite_capabilities.go#UpdateNodeEmbeddingSidecar":    {accessPropagates},
-	"composite_capabilities.go#StreamParkedEmbeddingFailures": {accessPropagates},
-	"composite_capabilities.go#PendingEmbeddingsCount":        {accessSkips},
-	"composite_capabilities.go#ListNamespaces":                {accessSkips},
-	"composite_capabilities.go#GetSchemaForNamespace":         {accessSkips},
-	"composite_capabilities.go#GraphMutationVersion":          {accessSkips},
-	"composite_capabilities.go#ConsumeCleanShutdownMarker":    {accessPropagates},
-	"composite_capabilities.go#MarkCleanShutdown":             {accessPropagates},
-	"composite_capabilities.go#PruneMVCCVersions":             {accessPropagates},
-	"composite_capabilities.go#RebuildMVCCHeads":              {accessPropagates},
-	"composite_capabilities.go#PruneTemporalHistory":          {accessPropagates},
-	"composite_capabilities.go#RebuildTemporalIndexes":        {accessPropagates},
-	"composite_capabilities.go#RegisterSnapshotReader":        {accessSkips},
-	"composite_capabilities.go#LifecycleStatus":               {accessSkips},
-	"composite_capabilities.go#TriggerPruneNow":               {accessPropagates},
-	"composite_capabilities.go#PauseLifecycle":                {accessSkips},
-	"composite_capabilities.go#ResumeLifecycle":               {accessSkips},
-	"composite_capabilities.go#SetLifecycleSchedule":          {accessPropagates},
-	"composite_capabilities.go#eventTargets":                  {accessSkips},
+var recordedStorageAccessInventory_r9port = map[string][]constituentAccessClass_r9port{
+	"composite_capabilities.go#StreamNodesWithOptions":        {accessPropagates_r9port},
+	"composite_capabilities.go#GetNodeLatestEffective":        {accessPropagates_r9port},
+	"composite_capabilities.go#GetEdgeLatestEffective":        {accessPropagates_r9port},
+	"composite_capabilities.go#GetNodeLatestVisible":          {accessPropagates_r9port},
+	"composite_capabilities.go#GetNodeVisibleAt":              {accessPropagates_r9port},
+	"composite_capabilities.go#GetEdgeLatestVisible":          {accessPropagates_r9port},
+	"composite_capabilities.go#GetEdgeVisibleAt":              {accessPropagates_r9port},
+	"composite_capabilities.go#GetNodeCurrentHead":            {accessPropagates_r9port},
+	"composite_capabilities.go#GetEdgeCurrentHead":            {accessPropagates_r9port},
+	"composite_capabilities.go#ForEachNodeIDByLabel":          {accessPropagates_r9port},
+	"composite_capabilities.go#GetNodeProjected":              {accessPropagates_r9port},
+	"composite_capabilities.go#IterateNodes":                  {accessPropagates_r9port},
+	"composite_capabilities.go#UpdateNodeEmbeddingSidecar":    {accessPropagates_r9port},
+	"composite_capabilities.go#StreamParkedEmbeddingFailures": {accessPropagates_r9port},
+	"composite_capabilities.go#PendingEmbeddingsCount":        {accessSkips_r9port},
+	"composite_capabilities.go#ListNamespaces":                {accessSkips_r9port},
+	"composite_capabilities.go#GetSchemaForNamespace":         {accessSkips_r9port},
+	"composite_capabilities.go#GraphMutationVersion":          {accessSkips_r9port},
+	"composite_capabilities.go#ConsumeCleanShutdownMarker":    {accessPropagates_r9port},
+	"composite_capabilities.go#MarkCleanShutdown":             {accessPropagates_r9port},
+	"composite_capabilities.go#PruneMVCCVersions":             {accessPropagates_r9port},
+	"composite_capabilities.go#RebuildMVCCHeads":              {accessPropagates_r9port},
+	"composite_capabilities.go#PruneTemporalHistory":          {accessPropagates_r9port},
+	"composite_capabilities.go#RebuildTemporalIndexes":        {accessPropagates_r9port},
+	"composite_capabilities.go#RegisterSnapshotReader":        {accessSkips_r9port},
+	"composite_capabilities.go#LifecycleStatus":               {accessSkips_r9port},
+	"composite_capabilities.go#TriggerPruneNow":               {accessPropagates_r9port},
+	"composite_capabilities.go#PauseLifecycle":                {accessSkips_r9port},
+	"composite_capabilities.go#ResumeLifecycle":               {accessSkips_r9port},
+	"composite_capabilities.go#SetLifecycleSchedule":          {accessPropagates_r9port},
+	"composite_capabilities.go#eventTargets":                  {accessSkips_r9port},
 
-	"composite_engine.go#getConstituentForWrite":         {accessPropagates},
-	"composite_engine.go#GetConstituentByAlias":          {accessPropagates},
-	"composite_engine.go#CreateNode":                     {accessPropagates},
-	"composite_engine.go#GetNode":                        {accessPropagates},
-	"composite_engine.go#UpdateNode":                     {accessPropagates, accessPropagates, accessPropagates},
-	"composite_engine.go#DeleteNode":                     {accessPropagates, accessPropagates},
-	"composite_engine.go#CreateEdge":                     {accessPropagates, accessPropagates, accessPropagates, accessPropagates, accessPropagates, accessPropagates},
-	"composite_engine.go#GetEdge":                        {accessPropagates},
-	"composite_engine.go#UpdateEdge":                     {accessPropagates, accessPropagates, accessPropagates},
-	"composite_engine.go#DeleteEdge":                     {accessPropagates, accessPropagates},
-	"composite_engine.go#materializeConstituents":        {accessPropagates},
-	"composite_engine.go#streamConstituents":             {accessPropagates},
-	"composite_engine.go#StreamNodesByLabelProjected":    {accessPropagates},
-	"composite_engine.go#GetFirstNodeByLabel":            {accessPropagates},
-	"composite_engine.go#GetEdgeBetween":                 {accessPropagates},
-	"composite_engine.go#GetInDegree":                    {accessPropagates},
-	"composite_engine.go#GetOutDegree":                   {accessPropagates},
-	"composite_engine.go#GetSchema":                      {accessSkips},
-	"composite_engine.go#BulkCreateNodes":                {accessPropagates},
-	"composite_engine.go#BulkCreateEdges":                {accessPropagates, accessPropagates, accessPropagates},
-	"composite_engine.go#BulkDeleteNodes":                {accessPropagates},
-	"composite_engine.go#BulkDeleteEdges":                {accessPropagates},
-	"composite_engine.go#BatchGetNodes":                  {accessPropagates},
-	"composite_engine.go#NodeCount":                      {accessPropagates},
-	"composite_engine.go#EdgeCount":                      {accessPropagates},
-	"composite_engine.go#EdgeCountByType":                {accessPropagates},
-	"composite_engine.go#sumConstituentPositionalCounts": {accessPropagates},
-	"composite_engine.go#StreamNodeChunks":               {accessPropagates},
+	"composite_engine.go#getConstituentForWrite":         {accessPropagates_r9port},
+	"composite_engine.go#GetConstituentByAlias":          {accessPropagates_r9port},
+	"composite_engine.go#CreateNode":                     {accessPropagates_r9port},
+	"composite_engine.go#GetNode":                        {accessPropagates_r9port},
+	"composite_engine.go#UpdateNode":                     {accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#DeleteNode":                     {accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#CreateEdge":                     {accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#GetEdge":                        {accessPropagates_r9port},
+	"composite_engine.go#UpdateEdge":                     {accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#DeleteEdge":                     {accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#materializeConstituents":        {accessPropagates_r9port},
+	"composite_engine.go#streamConstituents":             {accessPropagates_r9port},
+	"composite_engine.go#StreamNodesByLabelProjected":    {accessPropagates_r9port},
+	"composite_engine.go#GetFirstNodeByLabel":            {accessPropagates_r9port},
+	"composite_engine.go#GetEdgeBetween":                 {accessPropagates_r9port},
+	"composite_engine.go#GetInDegree":                    {accessPropagates_r9port},
+	"composite_engine.go#GetOutDegree":                   {accessPropagates_r9port},
+	"composite_engine.go#GetSchema":                      {accessSkips_r9port},
+	"composite_engine.go#BulkCreateNodes":                {accessPropagates_r9port},
+	"composite_engine.go#BulkCreateEdges":                {accessPropagates_r9port, accessPropagates_r9port, accessPropagates_r9port},
+	"composite_engine.go#BulkDeleteNodes":                {accessPropagates_r9port},
+	"composite_engine.go#BulkDeleteEdges":                {accessPropagates_r9port},
+	"composite_engine.go#BatchGetNodes":                  {accessPropagates_r9port},
+	"composite_engine.go#NodeCount":                      {accessPropagates_r9port},
+	"composite_engine.go#EdgeCount":                      {accessPropagates_r9port},
+	"composite_engine.go#EdgeCountByType":                {accessPropagates_r9port},
+	"composite_engine.go#sumConstituentPositionalCounts": {accessPropagates_r9port},
+	"composite_engine.go#StreamNodeChunks":               {accessPropagates_r9port},
 
-	"composite_entity_lookup.go#constituentForElementID": {accessPropagates},
-	"composite_entity_lookup.go#constituentsForEntity":   {accessPropagates},
-	"composite_entity_lookup.go#ConstituentStorage":      {accessPropagates},
+	"composite_entity_lookup.go#constituentForElementID": {accessPropagates_r9port},
+	"composite_entity_lookup.go#constituentsForEntity":   {accessPropagates_r9port},
+	"composite_entity_lookup.go#ConstituentStorage":      {accessPropagates_r9port},
 
-	"edge_type_stream.go#StreamEdgesByType":         {accessPropagates},
-	"edges_between_stream.go#MatchEdgesBetween":     {accessPropagates},
-	"embedding_pending.go#CountPendingEmbeddingIDs": {accessSkips},
+	"edge_type_stream.go#StreamEdgesByType":         {accessPropagates_r9port},
+	"edges_between_stream.go#MatchEdgesBetween":     {accessPropagates_r9port},
+	"embedding_pending.go#CountPendingEmbeddingIDs": {accessSkips_r9port},
 }
 
-// recordedCypherAccessInventory is the classification of the pkg/cypher
+// recordedCypherAccessInventory_r9port is the classification of the pkg/cypher
 // consumer that resolves USE composite.constituent.
-var recordedCypherAccessInventory = map[string][]constituentAccessClass{
-	"executor_use.go#resolveCompositeConstituent": {accessPropagates},
+var recordedCypherAccessInventory_r9port = map[string][]constituentAccessClass_r9port{
+	"executor_use.go#resolveCompositeConstituent": {accessPropagates_r9port},
 }
 
-func TestCompositeConstituentAccessCallSiteInventory(t *testing.T) {
+func TestCompositeConstituentAccessCallSiteInventory_r9port(t *testing.T) {
 	for _, scope := range []struct {
 		name      string
 		directory string
-		recorded  map[string][]constituentAccessClass
+		recorded  map[string][]constituentAccessClass_r9port
 	}{
-		{"storage", ".", recordedStorageAccessInventory},
-		{"cypher", filepath.Join("..", "cypher"), recordedCypherAccessInventory},
+		{"storage", ".", recordedStorageAccessInventory_r9port},
+		{"cypher", filepath.Join("..", "cypher"), recordedCypherAccessInventory_r9port},
 	} {
 		t.Run(scope.name, func(t *testing.T) {
-			sites, total := constituentAccessCalls(t, scope.directory, constituentAccessMethods)
-			actual := map[string][]constituentAccessClass{}
+			sites, total := constituentAccessCalls_r9port(t, scope.directory, constituentAccessMethods_r9port)
+			actual := map[string][]constituentAccessClass_r9port{}
 			for _, site := range sites {
 				actual[site.key()] = append(actual[site.key()], site.class)
 				t.Logf("%s:%d %s %s", site.file, site.line, site.function, site.class)
 			}
-			classes := map[constituentAccessClass]int{}
+			classes := map[constituentAccessClass_r9port]int{}
 			for _, site := range sites {
 				classes[site.class]++
 			}
 			t.Logf("total=%d propagate=%d skip=%d discard=%d unclassified=%d",
-				total, classes[accessPropagates], classes[accessSkips], classes[accessDiscards], classes[accessUnclassified])
-			if classes[accessUnclassified] != 0 {
-				t.Fatalf("%d call sites could not be classified", classes[accessUnclassified])
+				total, classes[accessPropagates_r9port], classes[accessSkips_r9port], classes[accessDiscards_r9port], classes[accessUnclassified_r9port])
+			if classes[accessUnclassified_r9port] != 0 {
+				t.Fatalf("%d call sites could not be classified", classes[accessUnclassified_r9port])
 			}
 			keys := make([]string, 0, len(actual))
 			for key := range actual {
