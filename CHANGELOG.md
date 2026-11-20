@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Return composite participant access failures from error-returning storage operations instead of reporting incomplete success or missing entities.
 - Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
+- Detach caller-owned nested evidence and configuration in the in-memory inference stores: `EdgeMetaStore` append/import/read/export and `NodeConfigStore` set/import/get/export no longer share mutable maps or slices with callers or retained state.
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 - Allow remote database factories to reenter the catalog without deadlocking storage selection.
 
