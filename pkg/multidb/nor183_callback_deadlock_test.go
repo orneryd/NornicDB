@@ -262,7 +262,7 @@ func (e *nor183CatalogReadingEngine) Close() error {
 
 func nor183PrepareInnerClose(t *testing.T, reject bool) (*nor183Scenario, error) {
 	t.Helper()
-	inner := fixtureowner.Track(t, &nor183CatalogReadingEngine{Engine: storage.NewMemoryEngine()}, storage.ErrStorageClosed)
+	inner := fixtureowner.Track(t, &nor183CatalogReadingEngine{Engine: fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)}, storage.ErrStorageClosed)
 	var manager *DatabaseManager
 	var callbackNames []string
 	rejected := errors.New("nor183 inner close failed")

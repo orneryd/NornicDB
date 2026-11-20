@@ -1,5 +1,14 @@
 # TODO
 
+## CI repair on the current release base
+
+- [x] Integrate release/v1.5.2 at decbd9d972a3eb8095b98c75c1b3d712b7fc4ab7 with a normal merge, retaining both changelog entries.
+- [x] Reproduce PR-only URL inventory failure (release baseline passes). Review the exact configuredConstituentDatabase return with DeepSeek; classify its database-identity comparison in the existing exact-hash non-egress manifest without changing the checker.
+- [x] Reproduce the release census staleness on the combined source. Refresh both artifacts from the generator output: 57 spaces, 281 writes and 428 field writes retained; source locations and the existing clean-shutdown write owner's name change.
+- [x] Preserve release differential failure evidence: Neo4j returned IndexNotFound while a recreated lookup index was populating. Both deterministic HTTP reset regressions fail before the fix; add db.awaitIndexes(10) to HTTP and Bolt reset owners (within the 15-second HTTP request budget) and preserve readiness failures.
+- [x] Reproduce the completed release run's fixture-ownership guard failure on combined source: three release constructors plus two PR constructors were unregistered. Reuse the Cypher fixture helper and register the concrete callback/reopened-store constructors with the existing lifetime owners, preserving lifecycle assertions and the guard.
+- [ ] Finish focused combined-source checks and pinned-reference verification, review the changes, push to #1869 and obtain green current-head CI. Leave the umbrella's unresolved product scope open.
+
 ## PR review correction
 
 - [x] Preserve fail-first evidence for the access-inventory classifier: 14 of 25 extractor cases fail on PR head c3bfc42f2 (including success guards, unrelated returned errors, renamed bindings and conditional return/continue).

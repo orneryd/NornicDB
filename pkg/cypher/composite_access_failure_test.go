@@ -15,9 +15,8 @@ func TestCompositeRootReadRejectsImplicitFanout(t *testing.T) {
 		"MATCH (n) RETURN n.value",
 	} {
 		t.Run(query, func(t *testing.T) {
-			first := storage.NewMemoryEngine()
-			second := storage.NewMemoryEngine()
-			t.Cleanup(func() { require.NoError(t, first.Close()); require.NoError(t, second.Close()) })
+			first := newTestMemoryEngine(t)
+			second := newTestMemoryEngine(t)
 			_, err := first.CreateNode(t.Context(), &storage.Node{ID: "first:one", Labels: []string{"Evidence"}, Properties: map[string]interface{}{"value": "first"}})
 			require.NoError(t, err)
 			_, err = second.CreateNode(t.Context(), &storage.Node{ID: "second:two", Labels: []string{"Evidence"}, Properties: map[string]interface{}{"value": "second"}})
