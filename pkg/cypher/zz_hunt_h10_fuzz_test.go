@@ -1,0 +1,112 @@
+package cypher
+
+// Hunt ground H10 (decoders and parsers), targets 1-3 of 8:
+//
+//	FuzzHuntH10NornicParse  the default parser (Parser.Parse)
+//	FuzzHuntH10ANTLRParse   the ANTLR parser (antlr.Parse)
+//	FuzzHuntH10Execute      a whole statement through StorageExecutor.Execute on an
+//	                        empty in-memory database (run under --parser both)
+//
+// Oracle: no panic; no hang (each input finishes within 10 s; Execute runs with
+// a 2 s deadline and must return within 10 s). Errors are expected and fine.
+// Seeds: every runnable statement of the H1 corpus (pkg/server/testdata/hunt).
+//
+// Run (one target per job, 30 CPU-minutes each):
+//   go test ./pkg/cypher -run '^$' -fuzz '^FuzzHuntH10NornicParse$' -fuzztime 30m -parallel 1
+
+import (
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func huntH10Seeds(f *testing.F) {
+	f.Helper()
+	file, err := os.Open(filepath.Join("..", "server", "testdata", "hunt", "h1-corpus.json.gz"))
+	if err != nil {
+		f.Logf("no H1 corpus seeds: %v", err)
+		f.Add("RETURN 1")
+		return
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		f.Fatal(err)
+	}
+	var corpus struct {
+		Groups []struct {
+			Setup      []string `json:"setup"`
+			Statements []struct {
+				Query string   `json:"query"`
+				Flags []string `json:"flags"`
+			} `json:"statements"`
+		} `json:"groups"`
+	}
+	if err := json.NewDecoder(reader).Decode(&corpus); err != nil {
+		f.Fatal(err)
+	}
+	for _, g := range corpus.Groups {
+		for _, s := range g.Setup {
+			f.Add(s)
+		}
+		for _, s := range g.Statements {
+			f.Add(s.Query)
+		}
+	}
+}
+
+func huntH10Bounded(t *testing.T, limit time.Duration, input string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		t.Fatalf("hang: no answer within %s for input %q", limit, input)
+	}
+}
+
+func FuzzHuntH10NornicParse(f *testing.F) {
+	huntH10Seeds(f)
+	parser := NewParser()
+	f.Fuzz(func(t *testing.T, query string) {
+		huntH10Bounded(t, 10*time.Second, query, func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, _ = parser.Parse(ctx, query)
+		})
+	})
+}
+
+func FuzzHuntH10ANTLRParse(f *testing.F) {
+	huntH10Seeds(f)
+	f.Fuzz(func(t *testing.T, query string) {
+		huntH10Bounded(t, 10*time.Second, query, func() {
+			_, _ = antlr.Parse(query)
+		})
+	})
+}
+
+func FuzzHuntH10Execute(f *testing.F) {
+	huntH10Seeds(f)
+	f.Fuzz(func(t *testing.T, query string) {
+		engine := storage.NewMemoryEngine()
+		defer engine.Close()
+		executor := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
+		huntH10Bounded(t, 10*time.Second, query, func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, _ = executor.Execute(ctx, query, nil)
+		})
+	})
+}
