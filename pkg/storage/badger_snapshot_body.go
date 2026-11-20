@@ -211,21 +211,19 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 			}
 		}
 		err := item.Value(func(value []byte) error {
-			decoded, err := b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+			if node == nil {
+				var err error
+				node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+				return err
+			}
+			// The version-matched cache supplied the metadata. Only the
+			// missing properties need decoding from this physical image.
+			envelope, err := SplitNodeEnvelope(value)
 			if err != nil {
 				return err
 			}
-			if node == nil {
-				node = decoded
-			} else if decoded != nil {
-				if node.Properties == nil {
-					node.Properties = make(map[string]any, len(decoded.Properties))
-				}
-				for name, value := range decoded.Properties {
-					node.Properties[name] = value
-				}
-			}
-			return nil
+			_, err = b.decodeTokenizedPropertiesInto(txn, namespaceForNodeID(id), envelope.properties, decodeInclude, node.Properties)
+			return err
 		})
 		if err != nil {
 			return node, err

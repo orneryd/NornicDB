@@ -142,8 +142,15 @@ func propertyProjectionSet(properties []string) map[string]struct{} {
 // position tracking explicit because we need to alternate between the
 // two encodings without re-creating the decoder per pair.
 func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
+	return b.decodeTokenizedPropertiesInto(txn, namespace, data, include, nil)
+}
+
+func (b *BadgerEngine) decodeTokenizedPropertiesInto(txn *badger.Txn, namespace string, data []byte, include map[string]struct{}, out map[string]any) (map[string]any, error) {
 	if len(data) == 0 {
-		return map[string]any{}, nil
+		if out == nil {
+			out = make(map[string]any)
+		}
+		return out, nil
 	}
 	count, consumed, err := readUvarint(data)
 	if err != nil {
@@ -167,7 +174,9 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, names
 	if include != nil && len(include) < outSize {
 		outSize = len(include)
 	}
-	out := make(map[string]any, outSize)
+	if out == nil {
+		out = make(map[string]any, outSize)
+	}
 	for i := uint64(0); i < count; i++ {
 		// reader.Len() tells us how many bytes the msgpack decoder has
 		// not yet consumed. We slice rest from the head by the same
