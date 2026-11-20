@@ -42,7 +42,7 @@ func zzEI1bRefusalsB6() []zzEI1bRefusalB6 {
 		}},
 		{name: "batch_frame_size", refuse: func(w *WAL) error {
 			b := w.NewBatch()
-			if err := b.append(OpCheckpoint, over()); err != nil {
+			if err := b.append(OpCheckpoint, over(), ""); err != nil {
 				return fmt.Errorf("append: %w", err)
 			}
 			_, _, err := b.CommitWithSeq()
@@ -50,10 +50,10 @@ func zzEI1bRefusalsB6() []zzEI1bRefusalB6 {
 		}},
 		{name: "batch_second_entry_frame_size", written: 1, refuse: func(w *WAL) error {
 			b := w.NewBatch()
-			if err := b.append(OpCheckpoint, map[string]any{"value": "batch entry before the refused one"}); err != nil {
+			if err := b.append(OpCheckpoint, map[string]any{"value": "batch entry before the refused one"}, ""); err != nil {
 				return err
 			}
-			if err := b.append(OpCheckpoint, over()); err != nil {
+			if err := b.append(OpCheckpoint, over(), ""); err != nil {
 				return fmt.Errorf("append: %w", err)
 			}
 			_, _, err := b.CommitWithSeq()
@@ -63,7 +63,7 @@ func zzEI1bRefusalsB6() []zzEI1bRefusalB6 {
 			raw := make([]byte, 17<<20)
 			rand.New(rand.NewSource(1801)).Read(raw)
 			c := bufferedCommit{txID: "refused", namespace: "test", writes: map[string][]byte{"k": raw}}
-			return w.AppendBufferedCommit(&c)
+			return w.AppendBufferedCommit(&c, newPropertyKeyDictionary())
 		}},
 	}
 }
@@ -100,7 +100,7 @@ func TestZZEI1bRefusedNumberB6(t *testing.T) {
 			_, _ = w.AppendReturningSeq(OpCheckpoint, map[string]any{"value": "accepted"})
 			rerr := r.refuse(w)
 			sealSeq := w.Sequence()
-			terr := w.TruncateAfterSnapshot(sealSeq)
+			terr := w.ManageSnapshot(context.Background(), sealSeq, WALSnapshotTruncate)
 			_ = w.Close()
 			segs, _ := os.ReadDir(filepath.Join(dir, "segments"))
 			var names []string
@@ -138,23 +138,23 @@ func TestZZEI1bRefusedNumberB6(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, cerr := NewWALEngine(store, w).CreateNode(&Node{ID: "test:before", Properties: map[string]any{"v": int64(1)}})
+			_, cerr := NewWALEngine(store, w).CreateNode(context.Background(), &Node{ID: "test:before", Properties: map[string]any{"v": int64(1)}})
 			rerr := r.refuse(w)
 			snap := filepath.Join(t.TempDir(), "snapshot")
 			serr := SaveStreamingSnapshot(context.Background(), store, snap, SnapshotOptions{Sequence: w.Sequence()})
-			terr := w.TruncateAfterSnapshot(w.Sequence())
+			terr := w.ManageSnapshot(context.Background(), w.Sequence(), WALSnapshotTruncate)
 			_ = w.Close()
 			re, err := NewWAL(dir, cfg)
 			if err != nil {
 				t.Logf("ZZEI1B-B6 recovery %s: reopen error %v", r.name, err)
 				return
 			}
-			_, aerr := NewWALEngine(store, re).CreateNode(&Node{ID: "test:after", Properties: map[string]any{"v": int64(2)}})
+			_, aerr := NewWALEngine(store, re).CreateNode(context.Background(), &Node{ID: "test:after", Properties: map[string]any{"v": int64(2)}})
 			_ = re.Close()
 			fresh := newTestEngine(t)
-			result, _, recErr := RecoverIntoEngine(fresh, dir, snap)
-			before, berr := fresh.GetNode("test:before")
-			afterNode, afErr := fresh.GetNode("test:after")
+			result, _, recErr := RecoverIntoEngine(context.Background(), fresh, dir, snap)
+			before, berr := fresh.GetNode(context.Background(), "test:before")
+			afterNode, afErr := fresh.GetNode(context.Background(), "test:after")
 			t.Logf("ZZEI1B-B6 recovery %s: create before err=%v; refusal err=%v; snapshot err=%v; seal err=%v; create after err=%v; recovery err=%v applied=%d failed=%d; test:before found=%v (%v); test:after found=%v (%v)",
 				r.name, cerr, rerr, serr, terr, aerr, recErr, result.Applied, result.Failed, before != nil, berr, afterNode != nil, afErr)
 		}()
