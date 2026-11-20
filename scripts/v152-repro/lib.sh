@@ -4,7 +4,7 @@
 #   2. writes its scenario with the old build's writer, at the writer commit, into REPRO_STORES fresh instances;
 #   3. runs the reader tests of THIS checkout (the candidate build) against each instance;
 #   4. prints one line:  REPRO <item> candidate=<label> <sha> RESULT=PASS|FAIL|HARNESS-ERROR <detail>
-# Exit status: 0 PASS (the claimed defect does not occur), 1 FAIL (it occurs), 2 HARNESS-ERROR (could not run).
+# Exit status: 0 PASS (the claimed defect was not observed in this run), 1 FAIL (it was observed), 2 HARNESS-ERROR (could not run).
 #
 # Environment (all optional):
 #   REPRO_TMP    parent of the temporary root; default /work/tnrun/v152-upg-repro when writable, else $TMPDIR or /tmp

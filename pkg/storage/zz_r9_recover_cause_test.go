@@ -16,7 +16,6 @@ package storage
 // Env: R9_CAUSE_AREA (scratch dir under /work/tnrun/v152-upg), R9_CAUSE_N (iterations, default 10).
 
 import (
-	"strings"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,6 +35,9 @@ import (
 // v150/uor/stores/asyncdocs-snap-clean) + data. R9_CAUSE_AREA: scratch below R9_ROOT (default a fresh
 // r9cause-* directory). Fail-closed: a missing store or snapshot fails; the test fails when V1 or V3 fails.
 var r9CauseSource string
+
+// r9EntryHook, when set, runs in r9RecoverCopy before each journal entry's replay (forced-overlap test only).
+var r9EntryHook func(WALEntry)
 
 type r9Span struct {
 	start, end time.Time
@@ -175,6 +178,9 @@ func r9RecoverCopy(ctx context.Context, destination Engine, walDir, snapshotPath
 		if entry.Operation == OpCheckpoint {
 			result.Skipped++
 			return nil
+		}
+		if r9EntryHook != nil {
+			r9EntryHook(entry)
 		}
 		if quiesce && entry.Operation == OpBufferedCommit && b != nil && b.writeBehind != nil {
 			if err := b.FlushWriteBehind(ctx); err != nil {
