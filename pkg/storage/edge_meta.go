@@ -128,30 +128,34 @@ func (s *EdgeMetaStore) Append(ctx context.Context, meta EdgeMeta) error {
 		return nil
 	}
 
+	// Detach the caller's record before the store lock. The metadata copy runs
+	// the caller-copy protocol (CopyValue), which asks a caller-declared value
+	// for its own copy; that caller code may read this store through its public
+	// API, so it must never run while the store lock is held.
+	stored := copyEdgeMeta(&meta)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Set timestamp if not provided
-	if meta.Timestamp.IsZero() {
-		meta.Timestamp = time.Now()
+	if stored.Timestamp.IsZero() {
+		stored.Timestamp = time.Now()
 	}
 
 	// Generate edge ID if not provided
-	if meta.EdgeID == "" {
-		meta.EdgeID = "edge-" + uuid.NewString()
+	if stored.EdgeID == "" {
+		stored.EdgeID = "edge-" + uuid.NewString()
 	}
 
 	// Create key
-	key := EdgeMetaKey{Src: meta.Src, Dst: meta.Dst, Label: meta.Label}
+	key := EdgeMetaKey{Src: stored.Src, Dst: stored.Dst, Label: stored.Label}
 	keyStr := key.String()
 
-	// Append to history
-	metaCopy := meta // Create copy to prevent mutation
-	s.records[keyStr] = append(s.records[keyStr], &metaCopy)
-	s.allMetas = append(s.allMetas, &metaCopy)
+	s.records[keyStr] = append(s.records[keyStr], stored)
+	s.allMetas = append(s.allMetas, stored)
 
 	s.totalAppended++
-	if meta.Materialized {
+	if stored.Materialized {
 		s.totalMaterialized++
 	}
 
@@ -183,48 +187,105 @@ func (s *EdgeMetaStore) AppendFromSuggestion(
 	return s.Append(ctx, meta)
 }
 
+// copyEdgeMeta returns the store's own copy of a record. Value fields are
+// copied by value and Metadata is detached through the package copy owner, so
+// neither the caller's input nor a delivered record can change retained
+// evidence. A nil Metadata stays nil.
+func copyEdgeMeta(meta *EdgeMeta) *EdgeMeta {
+	return detachEdgeMeta(snapshotEdgeMeta(meta))
+}
+
+// snapshotEdgeMeta copies a record's value fields and keeps its Metadata map by
+// reference. Retained metadata never changes after the write copy, so a
+// snapshot taken under the store lock can be completed after the lock is
+// released, where the caller-copy protocol runs.
+func snapshotEdgeMeta(meta *EdgeMeta) *EdgeMeta {
+	if meta == nil {
+		return nil
+	}
+	snapshot := *meta
+	return &snapshot
+}
+
+// snapshotEdgeMetas snapshots retained records; the caller holds the store lock.
+func snapshotEdgeMetas(metas []*EdgeMeta) []*EdgeMeta {
+	snapshots := make([]*EdgeMeta, len(metas))
+	for i, meta := range metas {
+		snapshots[i] = snapshotEdgeMeta(meta)
+	}
+	return snapshots
+}
+
+// detachEdgeMetas completes snapshots with their own metadata copies. It runs
+// the caller-copy protocol, so no store lock may be held.
+func detachEdgeMetas(snapshots []*EdgeMeta) []*EdgeMeta {
+	for _, snapshot := range snapshots {
+		detachEdgeMeta(snapshot)
+	}
+	return snapshots
+}
+
+// detachEdgeMeta replaces a copy's Metadata with the store's own detached map.
+func detachEdgeMeta(meta *EdgeMeta) *EdgeMeta {
+	if meta == nil {
+		return nil
+	}
+	meta.Metadata = copyCallerMetadata(meta.Metadata)
+	return meta
+}
+
 // GetHistory returns all evidence for an edge.
 func (s *EdgeMetaStore) GetHistory(ctx context.Context, src, dst, label string) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	key := EdgeMetaKey{Src: src, Dst: dst, Label: label}
-	history, exists := s.records[key.String()]
+	snapshots, exists := s.snapshotHistory(EdgeMetaKey{Src: src, Dst: dst, Label: label}.String())
 	if !exists {
 		return []*EdgeMeta{}, nil
 	}
 
-	// Return copies to prevent mutation
-	result := make([]*EdgeMeta, len(history))
-	for i, meta := range history {
-		metaCopy := *meta
-		result[i] = &metaCopy
+	// Return detached copies to prevent mutation of retained evidence.
+	return detachEdgeMetas(snapshots), nil
+}
+
+// snapshotHistory copies the value fields of one edge's retained records under
+// the read lock. The snapshots still reference retained metadata, which
+// detachEdgeMetas completes after the lock is released.
+func (s *EdgeMetaStore) snapshotHistory(keyStr string) ([]*EdgeMeta, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	history, exists := s.records[keyStr]
+	if !exists {
+		return nil, false
 	}
-	return result, nil
+	return snapshotEdgeMetas(history), true
 }
 
 // GetLatest returns the most recent provenance record for an edge.
 func (s *EdgeMetaStore) GetLatest(ctx context.Context, src, dst, label string) (*EdgeMeta, error) {
-	history, err := s.GetHistory(ctx, src, dst, label)
-	if err != nil {
-		return nil, err
+	key := EdgeMetaKey{Src: src, Dst: dst, Label: label}.String()
+	s.mu.RLock()
+	history := s.records[key]
+	var latest *EdgeMeta
+	if len(history) > 0 {
+		latest = snapshotEdgeMeta(history[len(history)-1])
 	}
-	if len(history) == 0 {
-		return nil, nil
-	}
-	return history[len(history)-1], nil
+	s.mu.RUnlock()
+
+	return detachEdgeMeta(latest), nil
 }
 
-// filterMetasLocked scans allMetas newest-first, collecting copies of every
-// record matching keep until limit records are collected (limit <= 0 means
-// unlimited). The caller holds the read lock.
-func (s *EdgeMetaStore) filterMetasLocked(limit int, keep func(*EdgeMeta) bool) []*EdgeMeta {
+// filterMetas scans allMetas newest-first under the read lock, snapshotting the
+// value fields of every record matching keep until limit records are collected
+// (limit <= 0 means unlimited). The snapshots still reference retained metadata,
+// which the calling getter detaches after the lock is released.
+func (s *EdgeMetaStore) filterMetas(limit int, keep func(*EdgeMeta) bool) []*EdgeMeta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make([]*EdgeMeta, 0)
 	for i := len(s.allMetas) - 1; i >= 0 && (limit <= 0 || len(result) < limit); i-- {
 		meta := s.allMetas[i]
 		if keep(meta) {
-			metaCopy := *meta
-			result = append(result, &metaCopy)
+			result = append(result, snapshotEdgeMeta(meta))
 		}
 	}
 	return result
@@ -232,45 +293,30 @@ func (s *EdgeMetaStore) filterMetasLocked(limit int, keep func(*EdgeMeta) bool) 
 
 // GetBySignalType filters by how edges were created.
 func (s *EdgeMetaStore) GetBySignalType(ctx context.Context, signalType string, limit int) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.filterMetasLocked(limit, func(meta *EdgeMeta) bool { return meta.SignalType == signalType }), nil
+	return detachEdgeMetas(s.filterMetas(limit, func(meta *EdgeMeta) bool { return meta.SignalType == signalType })), nil
 }
 
 // GetMaterialized returns all materialized edges.
 func (s *EdgeMetaStore) GetMaterialized(ctx context.Context, limit int) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.filterMetasLocked(limit, func(meta *EdgeMeta) bool { return meta.Materialized }), nil
+	return detachEdgeMetas(s.filterMetas(limit, func(meta *EdgeMeta) bool { return meta.Materialized })), nil
 }
 
 // GetByTimeRange returns provenance records within a time range.
 func (s *EdgeMetaStore) GetByTimeRange(ctx context.Context, start, end time.Time, limit int) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.filterMetasLocked(limit, func(meta *EdgeMeta) bool {
+	return detachEdgeMetas(s.filterMetas(limit, func(meta *EdgeMeta) bool {
 		return (meta.Timestamp.After(start) || meta.Timestamp.Equal(start)) &&
 			(meta.Timestamp.Before(end) || meta.Timestamp.Equal(end))
-	}), nil
+	})), nil
 }
 
 // GetByOrigin returns provenance records by origin (agent/commit ID).
 func (s *EdgeMetaStore) GetByOrigin(ctx context.Context, origin string, limit int) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.filterMetasLocked(limit, func(meta *EdgeMeta) bool { return meta.Origin == origin }), nil
+	return detachEdgeMetas(s.filterMetas(limit, func(meta *EdgeMeta) bool { return meta.Origin == origin })), nil
 }
 
 // GetBySession returns provenance records by session.
 func (s *EdgeMetaStore) GetBySession(ctx context.Context, sessionID string, limit int) ([]*EdgeMeta, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.filterMetasLocked(limit, func(meta *EdgeMeta) bool { return meta.SessionID == sessionID }), nil
+	return detachEdgeMetas(s.filterMetas(limit, func(meta *EdgeMeta) bool { return meta.SessionID == sessionID })), nil
 }
 
 // HasHistory returns true if any provenance records exist for this edge.
@@ -390,36 +436,37 @@ func (s *EdgeMetaStore) Cleanup(maxAge time.Duration) int {
 // Export returns all provenance records for backup/export.
 func (s *EdgeMetaStore) Export() []*EdgeMeta {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	snapshots := snapshotEdgeMetas(s.allMetas)
+	s.mu.RUnlock()
 
-	result := make([]*EdgeMeta, len(s.allMetas))
-	for i, meta := range s.allMetas {
-		metaCopy := *meta
-		result[i] = &metaCopy
-	}
-	return result
+	return detachEdgeMetas(snapshots)
 }
 
 // Import loads provenance records from backup/import.
 // Existing records are NOT cleared - use Clear() first if needed.
 func (s *EdgeMetaStore) Import(records []*EdgeMeta) int {
+	// Detach every imported record before the store lock (see Append).
+	stored := make([]*EdgeMeta, len(records))
+	for i, meta := range records {
+		stored[i] = copyEdgeMeta(meta)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	imported := 0
-	for _, meta := range records {
+	for _, meta := range stored {
 		if meta == nil {
 			continue
 		}
 
-		metaCopy := *meta
-		key := EdgeMetaKey{Src: metaCopy.Src, Dst: metaCopy.Dst, Label: metaCopy.Label}
+		key := EdgeMetaKey{Src: meta.Src, Dst: meta.Dst, Label: meta.Label}
 		keyStr := key.String()
 
-		s.records[keyStr] = append(s.records[keyStr], &metaCopy)
-		s.allMetas = append(s.allMetas, &metaCopy)
+		s.records[keyStr] = append(s.records[keyStr], meta)
+		s.allMetas = append(s.allMetas, meta)
 		s.totalAppended++
-		if metaCopy.Materialized {
+		if meta.Materialized {
 			s.totalMaterialized++
 		}
 		imported++
