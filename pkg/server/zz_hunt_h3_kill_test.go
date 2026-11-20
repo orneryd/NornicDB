@@ -151,6 +151,8 @@ type huntH3Log struct {
 	acked   map[int]int64
 	failed  map[int]bool
 	maxSeen int
+	// errors: the first few distinct error texts the child reported
+	errors  []string
 }
 
 func readHuntH3Log(t *testing.T, path string) huntH3Log {
@@ -182,6 +184,9 @@ func readHuntH3Log(t *testing.T, path string) huntH3Log {
 			l.acked[id] = at
 		case "E":
 			l.failed[id] = true
+			if text := strings.Join(fields[2:], " "); len(l.errors) < 5 && !huntContains(l.errors, text) {
+				l.errors = append(l.errors, text)
+			}
 		}
 	}
 	return l
@@ -224,6 +229,8 @@ func TestHuntH3KillReopen(t *testing.T) {
 		huntLead(t, entry)
 	}
 	next := 0
+	lastBegun, lastAcked, lastFailed := 0, 0, 0
+	var lastErrors []string
 	for cycle := 1; cycle <= cycles; cycle++ {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestHuntH3Child$", "-test.count=1", "-test.timeout=30m")
 		cmd.Env = append(os.Environ(), "HUNT_H3_CHILD_DIR="+base, "HUNT_H3_WORKLOAD="+workload,
@@ -241,7 +248,8 @@ func TestHuntH3KillReopen(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(time.Duration(random.Intn(2000)) * time.Millisecond)
+		killDelay := time.Duration(random.Intn(2000)) * time.Millisecond
+		time.Sleep(killDelay)
 		killedAt := time.Now()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -249,25 +257,43 @@ func TestHuntH3KillReopen(t *testing.T) {
 
 		state := readHuntH3Log(t, logPath)
 		next = state.maxSeen + 1
+		lastBegun, lastAcked, lastFailed, lastErrors = len(state.begun), len(state.acked), len(state.failed), state.errors
 		h, err := huntOpenErr(t, filepath.Join(base, "store"), huntH3Options(workload))
 		if err != nil {
 			out, _ := os.ReadFile(filepath.Join(base, "child.out"))
 			lead(cycle, "store does not open after kill", map[string]any{"error": err.Error(), "childTail": huntTail(string(out), 2000)})
 			break
 		}
-		check := func(query string) differential.Outcome { return h.Run(routeBoltAuto, query, nil, 5*time.Minute) }
+		// A check statement that fails is reported as such (and not as every
+		// acknowledged write missing); the cycle's other checks still run.
+		checkFailed := false
+		check := func(query string) differential.Outcome {
+			outcome := h.Run(routeBoltAuto, query, nil, 5*time.Minute)
+			if outcome.Code != "" {
+				checkFailed = true
+				lead(cycle, "check statement failed after reopen", map[string]any{"query": query, "code": outcome.Code, "message": outcome.Message})
+			}
+			return outcome
+		}
 		var present map[int]int
 		switch workload {
 		case "W1":
 			present = huntInts(check("MATCH (n:H3W1) RETURN n.id"))
 		case "W2":
 			present = huntInts(check("MATCH (n:H3W2) RETURN n.id"))
-			counter := check("MATCH (c:H3W2Counter) RETURN c.n")
+			// The counter node is created (MERGE) when the child starts and has no
+			// value until the first W2 transaction commits; a kill before either is
+			// counter = 0, not a disagreement.
+			counter := check("OPTIONAL MATCH (c:H3W2Counter) RETURN count(c) AS nodes, coalesce(max(c.n), 0) AS n")
 			total := 0
 			for _, c := range present {
 				total += c
 			}
-			if len(counter.Rows) != 1 || fmt.Sprint(counter.Rows[0][0]) != fmt.Sprint(map[string]string{"Integer": strconv.Itoa(total)}) {
+			counterOK := len(counter.Rows) == 1 && len(counter.Rows[0]) == 2 &&
+				fmt.Sprint(counter.Rows[0][1]) == fmt.Sprint(map[string]string{"Integer": strconv.Itoa(total)}) &&
+				(fmt.Sprint(counter.Rows[0][0]) == fmt.Sprint(map[string]string{"Integer": "1"}) ||
+					(total == 0 && fmt.Sprint(counter.Rows[0][0]) == fmt.Sprint(map[string]string{"Integer": "0"})))
+			if counter.Code == "" && !counterOK {
 				lead(cycle, "W2 counter differs from transactions present", map[string]any{"counter": huntTrim(counter), "present": total})
 			}
 			orphan := check("MATCH ()-[r:NEXT]->(n:H3W2) WHERE r.id <> n.id RETURN count(r)")
@@ -322,6 +348,15 @@ func TestHuntH3KillReopen(t *testing.T) {
 			}
 			missing = append(missing, id)
 		}
+		totalPresent := 0
+		for _, c := range present {
+			totalPresent += c
+		}
+		t.Logf("HUNT_H3_CYCLE workload=%s cycle=%d begun=%d acked=%d failed=%d present=%d missing=%d checkFailed=%v killAfterOpenMs=%d",
+			workload, cycle, lastBegun, lastAcked, lastFailed, totalPresent, len(missing), checkFailed, killDelay.Milliseconds())
+		if checkFailed {
+			missing = nil // already reported as a failed check
+		}
 		if len(missing) > 0 {
 			if len(missing) > 20 {
 				missing = missing[:20]
@@ -335,7 +370,8 @@ func TestHuntH3KillReopen(t *testing.T) {
 		}
 	}
 	huntCoverage(t, map[string]any{"ground": "H3", "part": "kill", "workload": workload, "seed": seed, "cyclesPlanned": cycles,
-		"cyclesCompleted": completed, "leads": leads, "seconds": int(time.Since(started).Seconds())})
+		"cyclesCompleted": completed, "leads": leads, "seconds": int(time.Since(started).Seconds()),
+		"begun": lastBegun, "acknowledged": lastAcked, "failed": lastFailed, "childErrorsFirst5": lastErrors})
 }
 
 func huntTail(text string, n int) string {
