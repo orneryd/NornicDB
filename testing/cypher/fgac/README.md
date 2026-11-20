@@ -90,6 +90,10 @@ bash testing/cypher/fgac/run-fgac-comparison.sh
 
 Run the script once per reference version. The container uses an ephemeral
 loopback port, `NEO4J_ACCEPT_LICENSE_AGREEMENT=eval`, and is removed on exit.
+The 2026.10.2 reference container enables the native ABAC provider for the
+auth-rule cases. When supplying that reference yourself, set
+`dbms.security.abac.authorization_providers=native` in Neo4j and enable
+`NORNICDB_FGAC_NATIVE_TAGS=true` in the candidate.
 
 ## Asserted flows
 

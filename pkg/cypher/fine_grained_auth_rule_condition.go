@@ -19,17 +19,28 @@ type authRuleBindings struct {
 
 type authRuleValue func(auth.FineGrainedAuthRuleInput, *authRuleBindings) any
 
+type authRuleProvidersKey struct{}
+
+type authRuleProviders struct {
+	native bool
+	oidc   bool
+}
+
 // CompileFineGrainedAuthRuleCondition compiles a Cypher 25 authorization
 // expression using the same scalar equality, membership and boolean rules as
 // graph queries. The input exposes identity attributes and time, with no graph
 // or procedure execution capabilities.
 func CompileFineGrainedAuthRuleCondition(condition string) (auth.FineGrainedAuthRuleCondition, error) {
-	ctx := context.Background()
+	providers := authRuleProviders{}
+	ctx := context.WithValue(context.Background(), authRuleProvidersKey{}, &providers)
 	value, err := compileAuthRuleValue(ctx, StripComments(condition), nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	return func(input auth.FineGrainedAuthRuleInput) bool {
+		if providers.native && input.NativeTags == nil || providers.oidc && input.Claims == nil {
+			return false
+		}
 		result, _ := value(input, nil).(bool)
 		return result
 	}, nil
@@ -235,18 +246,20 @@ func compileAuthRuleFunction(ctx context.Context, expression string, variables [
 	switch function {
 	case "abac.native.user_tags":
 		if arg == "" && tail == "" {
+			ctx.Value(authRuleProvidersKey{}).(*authRuleProviders).native = true
 			return func(input auth.FineGrainedAuthRuleInput, _ *authRuleBindings) any {
 				return input.NativeTags
 			}, nil
 		}
 	case "abac.oidc.user_attribute":
 		if key, ok := cyphertext.DecodeString(arg, cyphertext.AcceptedSource); ok && tail == "" {
+			ctx.Value(authRuleProvidersKey{}).(*authRuleProviders).oidc = true
 			return func(input auth.FineGrainedAuthRuleInput, _ *authRuleBindings) any {
 				return input.Claims[key]
 			}, nil
 		}
-	case "datetime.transaction", "time.transaction":
-		return compileAuthRuleTimeField(arg, tail)
+	case "date.transaction", "datetime.transaction", "localdatetime.transaction", "localtime.transaction", "time.transaction":
+		return compileAuthRuleClock(strings.TrimSuffix(function, ".transaction"), arg, tail)
 	case "all", "any", "none", "single":
 		if tail == "" {
 			return compileAuthRuleQuantifier(ctx, function, arg, variables, depth)
@@ -291,6 +304,7 @@ func compileAuthRuleScalar(ctx context.Context, function, rawArgs, field string,
 		}
 	}
 	call := function + "(" + strings.Join(names, ", ") + ")" + field
+	usesClock := containsStatementClockCall(call)
 	executor := &StorageExecutor{}
 	return func(input auth.FineGrainedAuthRuleInput, scope *authRuleBindings) any {
 		values := make(map[string]any, len(args))
@@ -301,6 +315,9 @@ func compileAuthRuleScalar(ctx context.Context, function, rawArgs, field string,
 		if evalContext == nil {
 			evalContext = ctx
 		}
+		if usesClock {
+			evalContext = context.WithValue(evalContext, temporalStatementTimeKey{}, &input.Now)
+		}
 		value, resolved, err := executor.evaluateExpressionFromValuesResult(evalContext, call, values)
 		if !resolved || err != nil {
 			return nil
@@ -309,35 +326,43 @@ func compileAuthRuleScalar(ctx context.Context, function, rawArgs, field string,
 	}, nil
 }
 
-func compileAuthRuleTimeField(argument, field string) (authRuleValue, error) {
-	var zone *time.Location
+// compileAuthRuleClock uses the captured admission time and the same
+// temporal type and property owners as ordinary Cypher expressions.
+func compileAuthRuleClock(kind, argument, field string) (authRuleValue, error) {
+	var location *time.Location
+	var zoneID string
 	if argument != "" {
-		name, ok := cyphertext.DecodeString(argument, cyphertext.AcceptedSource)
+		var ok bool
+		zoneID, ok = cyphertext.DecodeString(argument, cyphertext.AcceptedSource)
 		if !ok {
 			return nil, fineGrainedPrivilegeSyntaxError("expected a literal time zone")
 		}
 		var err error
-		if zone, err = time.LoadLocation(name); err != nil {
+		location, err = time.LoadLocation(zoneID)
+		if err != nil {
 			return nil, fineGrainedPrivilegeSyntaxError("unknown time zone")
 		}
 	}
-	getField := map[string]func(time.Time) int{
-		".hour": time.Time.Hour, ".minute": time.Time.Minute, ".second": time.Time.Second,
-		".day": time.Time.Day, ".year": time.Time.Year,
-		".month": func(value time.Time) int { return int(value.Month()) },
-		".dayOfWeek": func(value time.Time) int {
-			return (int(value.Weekday())+6)%7 + 1
-		},
-	}[field]
-	if getField == nil {
-		return nil, fineGrainedPrivilegeSyntaxError("unsupported transaction time field")
+	property := strings.TrimPrefix(field, ".")
+	if field != "" {
+		if !strings.HasPrefix(field, ".") {
+			return nil, fineGrainedPrivilegeSyntaxError("invalid transaction time field")
+		}
+		value, _ := temporalClockValue(kind, time.Unix(0, 0).UTC(), zoneID)
+		if _, _, supported := evaluateTemporalProperty(value, property); !supported {
+			return nil, fineGrainedPrivilegeSyntaxError("unsupported transaction time field")
+		}
 	}
 	return func(input auth.FineGrainedAuthRuleInput, _ *authRuleBindings) any {
-		value := input.Now
-		if zone != nil {
-			value = value.In(zone)
+		instant := input.Now
+		if location != nil {
+			instant = instant.In(location)
 		}
-		return int64(getField(value))
+		value, _ := temporalClockValue(kind, instant, zoneID)
+		if field != "" {
+			value, _, _ = evaluateTemporalProperty(value, property)
+		}
+		return value
 	}, nil
 }
 

@@ -27,13 +27,15 @@ for configuration and examples.
 - [x] Keep FGAC maps, catalog routes, and the catalog editor unloaded when FGAC is off.
 - [x] Keep dormant policy out of RBAC role mutations and reconcile role identity upon activation.
 - [x] Verify the RBAC browser flow makes no FGAC requests or editor downloads.
-- [ ] Complete full repository verification. The maintainer waived the duplicate checker for this push.
+- [ ] Complete administrator-approved broad CI on the final release PR head. Local verification is focused or package-level.
 - [x] Refresh active users, roles and policy after live restore or replicated system commits, including retained requests.
 - [x] Constrain Qdrant updates and drops to the authorized collection, including recreation under the same name.
 - [x] Implement Cypher 25 authorization-rule administration and validate rule-derived roles and listings against current Enterprise.
 - [x] Implement named provider bindings, validate provider administration against both references, and exercise the configured OAuth provider end to end against a test issuer.
 - [x] Expand the pinned Bolt fixtures to 16 cases on 5.26.30 and 18 on 2026.10.2.
-- [ ] Qualify the remaining provider and expression compatibility beyond the pinned fixture.
+- [x] Verify forced HNSW selection excludes decay-suppressed entities, entities outside traversal scope, and embeddings outside the managed-vector read scope.
+- [x] Qualify named provider binding replacement and removal on both pinned Enterprise versions. Compare native-tag, list, and transaction-time rules on 2026.10.2 with native ABAC configured.
+- [x] Verify same-statement Cypher vector scoring with reveal enabled and graph masking still enforced. Compare ordinary results before and after the reveal statement and verify refusal without the reveal entitlement.
 
 ## Reuse review
 

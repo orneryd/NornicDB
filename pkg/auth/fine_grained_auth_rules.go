@@ -18,7 +18,9 @@ type FineGrainedAuthRule struct {
 }
 
 // FineGrainedAuthRuleInput is the identity information visible to a rule
-// condition. Claims come from a verified identity provider at admission.
+// condition. Claims come from a verified identity provider at admission. Nil
+// collections denote unavailable providers; empty collections denote available
+// providers that supplied no tags or claims.
 type FineGrainedAuthRuleInput struct {
 	Context    context.Context
 	NativeTags []string

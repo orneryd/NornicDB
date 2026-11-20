@@ -131,13 +131,20 @@ func (runtime *FineGrainedRuntime) Admit(ctx context.Context, roles []string) (*
 	for i, role := range normalized {
 		normalized[i] = NormalizeRoleName(role)
 	}
-	if len(authRules) > 0 && identity.Username != "" && !strings.HasPrefix(identity.ID, "sub:"+clusterSubjectPrefix) {
+	if len(authRules) > 0 && (runtime.nativeABAC || provider != nil) && identity.Username != "" &&
+		!strings.HasPrefix(identity.ID, "sub:"+clusterSubjectPrefix) {
 		input := FineGrainedAuthRuleInput{Context: ctx, Now: time.Now()}
 		if provider != nil {
 			input.Claims = provider.attributes
+			if input.Claims == nil {
+				input.Claims = map[string]any{}
+			}
 		}
 		if runtime.nativeABAC {
 			input.NativeTags = tags
+			if input.NativeTags == nil {
+				input.NativeTags = []string{}
+			}
 		}
 		normalized = matchingFineGrainedAuthRuleRoles(authRules, normalized, input)
 	}

@@ -607,6 +607,9 @@
       "principals": {
         "ruled": {
           "user": "fgac_ruled"
+        },
+        "unruled": {
+          "user": "fgac_unruled"
         }
       },
       "setup": {
@@ -614,15 +617,24 @@
           "CREATE ROLE fgac_rule_reader IF NOT EXISTS",
           "CREATE USER fgac_ruled IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
           "GRANT ACCESS ON DATABASE ${database} TO fgac_rule_reader",
+          "GRANT TRAVERSE ON GRAPH ${database} NODES FGACDoc TO fgac_rule_reader",
+          "GRANT READ {id} ON GRAPH ${database} NODES FGACDoc TO fgac_rule_reader",
           "CYPHER 25 ALTER USER fgac_ruled SET TAGS 'fgac-reports'",
-          "CYPHER 25 CREATE AUTH RULE fgac_reports_rule SET CONDITION 'fgac-reports' IN abac.native.user_tags()",
-          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_reports_rule"
+          "CREATE USER fgac_unruled IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+          "GRANT ROLE fgac_access TO fgac_unruled",
+          "CYPHER 25 ALTER USER fgac_unruled SET TAGS 'fgac-paused'",
+          "CYPHER 25 CREATE AUTH RULE fgac_reports_rule SET CONDITION all(tag IN ['fgac-reports'] WHERE tag IN abac.native.user_tags()) AND size(abac.native.user_tags()) = 1 AND date.transaction('UTC').year >= 2020 AND localtime.transaction('UTC').hour < 24",
+          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_reports_rule",
+          "CYPHER 25 CREATE AUTH RULE fgac_paused_rule SET CONDITION 'fgac-paused' IN abac.native.user_tags() SET ENABLED false",
+          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_paused_rule"
         ]
       },
       "teardown": {
         "administration": [
           "CYPHER 25 DROP AUTH RULE fgac_reports_rule IF EXISTS",
+          "CYPHER 25 DROP AUTH RULE fgac_paused_rule IF EXISTS",
           "DROP USER fgac_ruled IF EXISTS",
+          "DROP USER fgac_unruled IF EXISTS",
           "DROP ROLE fgac_rule_reader IF EXISTS"
         ]
       },
@@ -646,6 +658,24 @@
               ]
             ]
           }
+        },
+        {
+          "id": "current-auth-rule-expression-projects-authorized-rows",
+          "covers": ["property-rule"],
+          "description": "The native tag, list, scalar and transaction-clock predicates jointly grant the scoped graph role.",
+          "database": "target",
+          "principal": "ruled",
+          "statements": ["MATCH (n:FGACDoc) WHERE n.id IN ['doc-a', 'doc-b'] RETURN n.id AS id ORDER BY id"],
+          "expect": {"kind": "allow", "rows": [["doc-a"], ["doc-b"]]}
+        },
+        {
+          "id": "current-auth-rule-false-or-disabled-grants-no-rows",
+          "covers": ["property-rule"],
+          "description": "A nonmatching enabled rule and a matching but disabled rule supply no graph access.",
+          "database": "target",
+          "principal": "unruled",
+          "statements": ["MATCH (n:FGACDoc) RETURN n.id AS id ORDER BY id"],
+          "expect": {"kind": "allow", "rows": []}
         },
         {
           "id": "current-auth-rule-inspection",

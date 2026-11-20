@@ -126,7 +126,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		ctx = storage.InheritQueryRevealScopes(ctx, scope.scopes)
 		reveal = reveal || scope.reveal
 	}
-	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, reveal)
+	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.revealScopeStorage(), reveal)
 	defer cleanupReveal()
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)

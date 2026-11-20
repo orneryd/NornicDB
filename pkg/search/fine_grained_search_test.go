@@ -1,10 +1,13 @@
 package search
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -137,5 +140,72 @@ func newFineGrainedSearchFixture(t *testing.T) (*Service, auth.FineGrainedReques
 	require.NoError(t, err)
 	return service, auth.FineGrainedRequest{
 		Access: policy.ForRoles([]string{"reader"}), DatabaseID: func(string) string { return "work-id" }, Fingerprint: "policy-one",
+	}
+}
+
+func TestFineGrainedHNSWUsesOnlyVisibleVectors(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+	t.Setenv("NORNICDB_VECTOR_GPU_ENABLED", "false")
+	ctx := t.Context()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, base.Close()) })
+	store := storage.NewNamespacedEngine(base, "work")
+	schema := base.GetSchemaForNamespace("work")
+	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name: "article-decay", Scope: knowledgepolicy.ScopeNode,
+		Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 3600,
+		VisibilityThreshold: .10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
+		Enabled: true, DecayEnabled: true,
+	}))
+	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+		Name: "articles", ProfileRef: "article-decay", TargetLabels: []string{"Article"},
+	}))
+	base.SetDecayEnabled(true)
+	for _, node := range []*storage.Node{
+		{ID: "internal", Labels: []string{"Internal"}, ChunkEmbeddings: [][]float32{{1, 0}}},
+		{ID: "no-vector-grant", Labels: []string{"Article"}, ChunkEmbeddings: [][]float32{{1, .1}}},
+		{ID: "suppressed", Labels: []string{"Article", "PublicVector"}, ChunkEmbeddings: [][]float32{{1, .05}}, CreatedAt: time.Now().Add(-720 * time.Hour)},
+		{ID: "visible", Labels: []string{"Article", "PublicVector"}, ChunkEmbeddings: [][]float32{{1, .5}}},
+	} {
+		_, err := store.CreateNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	service := NewService(store, 2, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	service.SetIndexFlags(false, true)
+	require.NoError(t, service.BuildIndexes(ctx))
+
+	policy, err := auth.CompileFineGrainedPolicy(auth.GraphFineGrainedActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "article", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"Article"}}},
+			{ID: "vectors", Action: "graph.node.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"PublicVector"}}},
+		},
+		Assignments: map[string][]string{"reader": {"access", "article", "vectors"}},
+	})
+	require.NoError(t, err)
+	request := &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"reader"}), DatabaseID: func(string) string { return "work-id" },
+	}
+	scoped := auth.WithFineGrainedRequest(ctx, request)
+	view, err := service.fineGrainedView(scoped, request)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, view.Close()) })
+	require.Equal(t, strategyModeHNSW.String(), view.CurrentStrategy())
+	require.Equal(t, 1, view.EmbeddingCount())
+
+	spec := VectorQuerySpec{Limit: 1}
+	vector := []float32{1, 0}
+	for _, tc := range []struct {
+		ctx context.Context
+		id  storage.NodeID
+	}{{ctx, "internal"}, {scoped, "visible"}, {ctx, "internal"}} {
+		hits, err := service.VectorQueryNodesWithOptions(tc.ctx, vector, spec, &SearchOptions{HNSWEf: 8})
+		require.NoError(t, err)
+		require.Len(t, hits, 1)
+		require.Equal(t, string(tc.id), hits[0].ID)
 	}
 }

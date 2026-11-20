@@ -56,7 +56,7 @@ func TestAuthorizationFixtureExtendsOnlyThePinnedCurrentRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(current.Cases) != 29 || current.Principals["ruled"].User != "fgac_ruled" {
+	if len(current.Cases) != 31 || current.Principals["ruled"].User != "fgac_ruled" {
 		t.Fatal("current fixture did not include the authorization-rule cases")
 	}
 	if _, exists := base.Principals["ruled"]; exists {

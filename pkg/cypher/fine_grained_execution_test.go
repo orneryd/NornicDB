@@ -3,8 +3,11 @@ package cypher
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -140,4 +143,100 @@ func TestFineGrainedCypherExactPropertyDenial(t *testing.T) {
 	other, err := store.GetNode(ctx, "b")
 	require.NoError(t, err)
 	require.Equal(t, "Updated", other.Properties["title"])
+}
+
+func TestFineGrainedRevealPreservesGraphProjection(t *testing.T) {
+	ctx := t.Context()
+	store := newTestBadgerNamespacedStore(t)
+	engine := unwrapBadgerEngine(store)
+	require.NotNil(t, engine)
+	database := storage.DatabaseOf(store)
+	schema := engine.GetSchemaForNamespace(database)
+	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name: "incident-decay", Scope: knowledgepolicy.ScopeNode,
+		Function: knowledgepolicy.DecayFunctionExponential, HalfLifeSeconds: 3600,
+		VisibilityThreshold: .10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
+		Enabled: true, DecayEnabled: true,
+	}))
+	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+		Name: "incidents", ProfileRef: "incident-decay", TargetLabels: []string{"Incident"},
+	}))
+	engine.SetDecayEnabled(true)
+
+	now := time.Now()
+	old := now.Add(-720 * time.Hour)
+	for _, item := range []struct {
+		node   *storage.Node
+		vector []any
+	}{
+		{&storage.Node{ID: "visible", Labels: []string{"Incident"}, CreatedAt: now}, []any{1.0, .5, 0.0}},
+		{&storage.Node{ID: "suppressed", Labels: []string{"Incident"}, CreatedAt: old}, []any{1.0, .1, 0.0}},
+		{&storage.Node{ID: "restricted", Labels: []string{"Incident", "Confidential"}, CreatedAt: old}, []any{1.0, 0.0, 0.0}},
+	} {
+		node := item.node
+		node.UpdatedAt = node.CreatedAt
+		node.Properties = map[string]any{"summary": string(node.ID), "details": "reviewer only", "embedding": item.vector}
+		_, err := store.CreateNode(ctx, node)
+		require.NoError(t, err)
+	}
+
+	policy, err := auth.CompileFineGrainedPolicy(auth.GraphFineGrainedActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: "work-id"}},
+			{ID: "reveal", Action: "database.reveal", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: "work-id"}},
+			{ID: "incidents", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"Incident"}}},
+			{ID: "confidential", Action: "graph.node.traverse", Deny: true, Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"Confidential"}}},
+			{ID: "read", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "vector-procedure", Action: "database.procedure.execute", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, Properties: []string{"db.index.vector.queryNodes"}}},
+			{ID: "details", Action: "graph.node.property.read", Deny: true, Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Properties: []string{"details"}}},
+		},
+		Assignments: map[string][]string{
+			"reader":       {"access", "incidents", "confidential", "read", "details", "vector-procedure"},
+			"investigator": {"reveal"},
+		},
+	})
+	require.NoError(t, err)
+	scoped := func(roles ...string) context.Context {
+		return auth.WithFineGrainedRequest(ctx, &auth.FineGrainedRequest{
+			Access: policy.ForRoles(roles), DatabaseID: func(string) string { return "work-id" },
+		})
+	}
+
+	executor := NewStorageExecutor(store)
+	_, err = executor.Execute(ctx, "CALL db.index.vector.createNodeIndex('incidents', 'Incident', 'embedding', 3, 'cosine')", nil)
+	require.NoError(t, err)
+	service := search.NewService(store, 3, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	require.NoError(t, service.BuildIndexes(ctx))
+	executor.SetSearchService(service)
+	const normal = "MATCH (n:Incident) RETURN n.summary, n.details ORDER BY n.summary"
+	const vector = "CALL db.index.vector.queryNodes('incidents', 1, [1.0, 0.0, 0.0]) YIELD node"
+	const vectorNormal = vector + " RETURN node.summary, node.details"
+	const vectorReveal = vector + " RETURN reveal(node).summary AS summary, node.details"
+	const reveal = "MATCH (n:Incident) RETURN reveal(n).summary AS summary, n.details ORDER BY summary"
+	reader := scoped("reader")
+	investigator := scoped("reader", "investigator")
+	for _, query := range []string{reveal, vectorReveal} {
+		_, err = executor.Execute(reader, query, nil)
+		var denied *PermissionDeniedError
+		require.ErrorAs(t, err, &denied)
+		require.Equal(t, "database.reveal", denied.Permission)
+	}
+
+	for _, tc := range []struct {
+		ctx   context.Context
+		query string
+		rows  [][]any
+	}{
+		{investigator, normal, [][]any{{"visible", nil}}},
+		{investigator, reveal, [][]any{{"suppressed", nil}, {"visible", nil}}},
+		{reader, normal, [][]any{{"visible", nil}}},
+		{investigator, vectorNormal, [][]any{{"visible", nil}}},
+		{investigator, vectorReveal, [][]any{{"suppressed", nil}}},
+		{reader, vectorNormal, [][]any{{"visible", nil}}},
+	} {
+		result, err := executor.Execute(tc.ctx, tc.query, nil)
+		require.NoError(t, err)
+		require.Equal(t, tc.rows, result.Rows)
+	}
 }

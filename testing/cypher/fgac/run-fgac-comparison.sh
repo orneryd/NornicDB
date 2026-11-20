@@ -122,6 +122,11 @@ if [[ "${FGAC_START_REFERENCE:-0}" == "1" ]]; then
     published_ports+=(--publish 127.0.0.1::7474)
   fi
 
+  # Current-Enterprise native-tag rules require an explicit ABAC provider.
+  if [[ "${reference_version}" == "2026.10.2" ]]; then
+    published_ports+=(--env NEO4J_dbms_security_abac_authorization__providers=native)
+  fi
+
   docker run --detach --rm \
     --name "${container}" \
     --env NEO4J_ACCEPT_LICENSE_AGREEMENT=eval \
