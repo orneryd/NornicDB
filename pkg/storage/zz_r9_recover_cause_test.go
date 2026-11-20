@@ -16,6 +16,7 @@ package storage
 // Env: R9_CAUSE_AREA (scratch dir under /work/tnrun/v152-upg), R9_CAUSE_N (iterations, default 10).
 
 import (
+	"strings"
 	"context"
 	"errors"
 	"fmt"
@@ -245,8 +246,8 @@ func TestR9RecoverCauseV150AsyncdocsSnapClean(t *testing.T) {
 				t.Fatal(err)
 			}
 			data := filepath.Join(work, "data")
-			if out, err := exec.Command("cp", "-a", "--sparse=always", r9CauseSource, data).CombinedOutput(); err != nil {
-				t.Fatalf("copy: %v %s", err, out)
+			if err := r9CauseCopyDir(r9CauseSource, data); err != nil {
+				t.Fatalf("copy: %v", err)
 			}
 			snap := r9CauseLatestSnapshot(t, data)
 			fresh, err := NewBadgerEngineWithOptions(r9CauseOptions(filepath.Join(work, "fresh"), variant != "V2-wb-off"))
@@ -299,4 +300,37 @@ func TestR9RecoverCauseV150AsyncdocsSnapClean(t *testing.T) {
 	if fails["V1-wb-on"]+fails["V3-wb-on-timed"] > 0 {
 		t.Errorf("recovery with write-behind refused journal entries (V1 %d, V3 %d of %d each)", fails["V1-wb-on"], fails["V3-wb-on-timed"], n)
 	}
+}
+
+// r9CauseCopyDir copies the directory src to dst (dst must not exist). Method: UPR_COPY=gnu (cp -a --sparse=always),
+// gcp (gcp -a --sparse=always, GNU cp as installed on macOS/BSD), or plain (cp -R -p, no sparse files: the copy
+// takes the store's apparent size on disk). Unset, the first method present that succeeds is used.
+func r9CauseCopyDir(src, dst string) error {
+	methods := map[string][]string{
+		"gnu":   {"cp", "-a", "--sparse=always", src, dst},
+		"gcp":   {"gcp", "-a", "--sparse=always", src, dst},
+		"plain": {"cp", "-R", "-p", src, dst},
+	}
+	order := []string{"gnu", "gcp", "plain"}
+	if m := os.Getenv("UPR_COPY"); m != "" {
+		if _, ok := methods[m]; !ok {
+			return fmt.Errorf("UPR_COPY=%q: want gnu, gcp or plain", m)
+		}
+		order = []string{m}
+	}
+	var last error
+	for _, m := range order {
+		args := methods[m]
+		if _, err := exec.LookPath(args[0]); err != nil {
+			last = fmt.Errorf("copy method %s: %v", m, err)
+			continue
+		}
+		_ = os.RemoveAll(dst)
+		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		last = fmt.Errorf("copy method %s (%s): %v: %s", m, strings.Join(args[:len(args)-2], " "), err, out)
+	}
+	return last
 }

@@ -11,10 +11,20 @@
 ITEM=wal-v4-upgrade
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO="${REPRO_SCENARIO:-asyncbolt-nosnap-clean}"
-STORES="${REPRO_STORES:-1}"
+STORES="${REPRO_STORES-1}"
 
+WRITER=068646518ee813cffc4accfed3b767a01c95fe4e
+about \
+  "item=$ITEM store=b6/$SCENARIO writer=$WRITER (b6d8e762a + upgrade-lane writer) reader=TestV152UpgradeRead instances=REPRO_STORES($STORES)" \
+  "i<k>: one independently written store instance, read once: first open without storage upgrade, then with it, then a second open; every node, property and vector compared with the writer's expected.json." \
+  "i<k>:[in-place upgrade refused, files unchanged=<true|false>: <error>]: the reader's UPR_RESULT line says upgrade=REFUSED; <error> is the refusal it quotes; unchanged is the reader's UPR_UNCHANGED_AFTER_UPGRADE_REFUSAL value (store files identical before and after the refused open)." \
+  "i<k>:[upgraded=<bool> second=ok failed=<bool>]: the reader's UPR_RESULT line for an instance it opened; failed=true means a state difference or another reader error." \
+  "PASS only if every instance ends 'second=ok failed=false' and its reader exited 0. HARNESS-ERROR also if an instance has no UPR_RESULT line, or fewer instances were read than REPRO_STORES."
+require_count REPRO_STORES "$STORES"
+preflight "$WRITER"
 repro_root
-prepare_writer 068646518ee813cffc4accfed3b767a01c95fe4e
+prepare_writer "$WRITER"
+read_instances=0
 detail="store=b6/$SCENARIO instances=$STORES"
 bad=0
 for k in $(seq 1 "$STORES"); do
@@ -37,6 +47,8 @@ for k in $(seq 1 "$STORES"); do
     bad=1
     detail+=" i$k:[$(sed 's/.*UPR_RESULT [^ ]* //' <<<"$res" | cut -c1-300) reader exit $rc]"
   fi
+  read_instances=$((read_instances + 1))
 done
+[[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
 [[ $bad -eq 0 ]] && repro_result PASS "$detail"
 repro_result FAIL "$detail"
