@@ -31,7 +31,7 @@ func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 
 	id := NodeID("test:fresh-1")
 	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		v, err := be.allocateMVCCVersion(txn, "test", time.Now().UTC())
+		v, err := be.allocateMVCCVersion(t.Context(), txn, "test", time.Now().UTC())
 		require.NoError(t, err)
 		// Allocate a numID via the public head-key resolver so the head
 		// write below has a numeric mapping to point at.
@@ -63,7 +63,7 @@ func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t
 	var version MVCCVersion
 	err = be.db.Update(func(txn *badger.Txn) error {
 		var allocErr error
-		version, allocErr = be.allocateMVCCVersion(txn, "test", base.Add(-time.Hour))
+		version, allocErr = be.allocateMVCCVersion(t.Context(), txn, "test", base.Add(-time.Hour))
 		return allocErr
 	})
 	require.NoError(t, err)
@@ -72,11 +72,11 @@ func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t
 		"saturated allocator should fall back to a strictly increasing high-water timestamp")
 	require.Equal(t, maxMVCCCommitSequence, state.seq.Load(), "allocator must not wrap back to zero on exhaustion")
 
-	// Per-namespace fallback must not rewrite the namespace's persisted
-	// sequence key (the saturation branch only bumps the high-water mark).
+	// Per-namespace fallback must reserve the maximum sequence before
+	// using the timestamp-only fallback.
 	persistedSeq, loadErr := be.loadPersistedNamespaceSequence("test")
 	require.NoError(t, loadErr)
-	require.Equal(t, uint64(0), persistedSeq, "timestamp-only fallback must not rewrite the persisted sequence key")
+	require.Equal(t, maxMVCCCommitSequence, persistedSeq)
 }
 
 func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
@@ -84,7 +84,7 @@ func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 
 	id := EdgeID("test:fresh-edge-1")
 	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		v, err := be.allocateMVCCVersion(txn, "test", time.Now().UTC())
+		v, err := be.allocateMVCCVersion(t.Context(), txn, "test", time.Now().UTC())
 		require.NoError(t, err)
 		if _, err := be.mvccEdgeHeadKeyString(txn, id); err != nil {
 			return err

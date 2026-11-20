@@ -6,6 +6,7 @@ package storage
 
 import (
 	"container/list"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -54,7 +55,7 @@ const (
 const (
 	prefixMVCCMetaSchemaVersion         = byte(0x02)
 	prefixMVCCMetaEdgeBetweenIndexReady = byte(0x03)
-	// prefixMVCCMetaNamespaceSeq stores the last committed MVCC sequence
+	// prefixMVCCMetaNamespaceSeq stores the durable MVCC sequence ceiling
 	// for one namespace. Encoded as
 	//   [prefixMVCCMeta, prefixMVCCMetaNamespaceSeq, namespace bytes…]
 	// (the namespace is the trailing variable-length field; its bytes are
@@ -1373,81 +1374,15 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 	return seq, nil
 }
 
-// allocateMVCCVersion mints the next (CommitTimestamp, CommitSequence)
-// pair for namespace. namespace must be non-empty; the transaction layer
-// enforces this via pinNamespaceFromIDLocked.
-//
-// CRITICAL: the per-namespace sequence is NOT written to the user's
-// badger.Txn. Doing so would make every commit in the same namespace
-// touch the same hot key, causing Badger to surface a write-write
-// conflict ("Transaction Conflict") on the second concurrent commit
-// before our constraint-validation lock can catch the actual user-data
-// conflict. The contract pinned by
-// docs/plans/consumer-pinned-error-contract-plan.md §2.1 requires
-// commit-time UNIQUE violations to surface as
-// "constraint violation: ... already exists", not Badger conflicts.
-//
-// Durability: the counter is in-memory authoritative for the lifetime of
-// the engine; on restart, namespaceMVCC seeds the counter from
-// (a) the persisted per-namespace key, last written by persistMVCCSequence,
-// and (b) the legacy global counter as a backward-compat seed. A crash
-// between commit and persistence loses at most the unflushed window of
-// allocated-but-unpersisted sequences, which is reconciled by the
-// startup max-of-persisted-and-legacy floor.
-func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
-	state, err := b.namespaceMVCC(namespace)
-	if err != nil {
-		return MVCCVersion{}, err
-	}
-	// The version is reserved, not published: the sequence advances, the
-	// timestamp is fixed and the ledger enters the version in one step, and
-	// the ledger holds it under the writer's transaction until the write
-	// publishes or is abandoned.
-	return b.mvccReservations.reserve(txn, namespace, state, commitTime, false)
+// allocateMVCCVersion reserves a version for a write that has yet to publish.
+func (b *BadgerEngine) allocateMVCCVersion(ctx context.Context, txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+	return b.allocateNamespaceMVCCVersion(ctx, txn, namespace, commitTime, false)
 }
 
-// allocateHistoricalMVCCVersion is allocateMVCCVersion for a bootstrap head:
-// the version keeps the entity's own time instead of being floored at the
-// latest transaction cut, because it describes state that existed before.
-func (b *BadgerEngine) allocateHistoricalMVCCVersion(txn *badger.Txn, namespace string, entityTime time.Time) (MVCCVersion, error) {
-	state, err := b.namespaceMVCC(namespace)
-	if err != nil {
-		return MVCCVersion{}, err
-	}
-	return b.mvccReservations.reserve(txn, namespace, state, entityTime, true)
+// allocateHistoricalMVCCVersion keeps the source time of a bootstrap head.
+func (b *BadgerEngine) allocateHistoricalMVCCVersion(ctx context.Context, txn *badger.Txn, namespace string, entityTime time.Time) (MVCCVersion, error) {
+	return b.allocateNamespaceMVCCVersion(ctx, txn, namespace, entityTime, true)
 }
-
-// persistMVCCSequence writes the namespace's current sequence to disk in
-// a separate Badger transaction so the persistence write does not
-// participate in the user transaction's conflict-detection set. Best
-// effort: a failure is logged at debug level rather than failing the
-// commit, since the in-memory counter is authoritative and any lost
-// persistence window is reconciled at next engine open.
-func (b *BadgerEngine) persistMVCCSequence(namespace string) {
-	if namespace == "" {
-		return
-	}
-	state, err := b.namespaceMVCC(namespace)
-	if err != nil {
-		return
-	}
-	seq := state.seq.Load()
-	if seq == 0 {
-		return
-	}
-	encodedSeq := make([]byte, 8)
-	binary.BigEndian.PutUint64(encodedSeq, seq)
-	persistKey := state.persistKey
-	db, err := b.beginHelperTxn()
-	if err != nil {
-		return
-	}
-	defer b.work.Leave()
-	_ = db.updateMetadataContext(b.work.Context(), func(txn *badger.Txn) error {
-		return txn.Set(persistKey, encodedSeq)
-	})
-}
-
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
 	var version int
 	err := b.db.View(func(txn *badger.Txn) error {

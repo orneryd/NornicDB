@@ -45,7 +45,7 @@ func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
 
 	commitAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		_, err := e.allocateMVCCVersion(txn, "test", commitAt)
+		_, err := e.allocateMVCCVersion(t.Context(), txn, "test", commitAt)
 		return err
 	}))
 	state, err := e.namespaceMVCC("test")
@@ -57,7 +57,7 @@ func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
 	// high-water mark — monotonicity is the whole point.
 	earlier := commitAt.Add(-time.Hour)
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		_, err := e.allocateMVCCVersion(txn, "test", earlier)
+		_, err := e.allocateMVCCVersion(t.Context(), txn, "test", earlier)
 		return err
 	}))
 	require.Equal(t, commitAt.UnixNano(), state.highWaterNanos.Load(),

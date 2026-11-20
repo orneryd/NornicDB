@@ -47,8 +47,8 @@ import (
 // The methods below shadow the *badger.DB methods that panic or read
 // unpublished data in managed mode (View, Update, NewTransaction,
 // NewWriteBatch, NewStream, Backup, Load, GetSequence), and DropPrefix, which
-// fails concurrent writes. Everything else (Size, Flatten, RunValueLogGC,
-// Sync, Close, ...) is Badger's.
+// fails concurrent writes. RunValueLogGC participates in the commit gate.
+// Everything else (Size, Flatten, Sync, Close, ...) is Badger's.
 type managedBadgerDB struct {
 	*badger.DB
 	cacheOwner *BadgerEngine
@@ -225,11 +225,29 @@ func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, publicati
 	return m.oracle.waitPublished(context.Background(), ts)
 }
 
-func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, publish *commitPublication) (uint64, error) {
-	if err := m.commitGate.RLockContext(ctx); err != nil {
-		return 0, err
-	}
+// RunValueLogGC can submit native writes while relocating values. It shares
+// the commit gate so it cannot rotate the memtable while a reservation is
+// being written and synced under the exclusive gate.
+func (m *managedBadgerDB) RunValueLogGC(discardRatio float64) error {
+	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
+	return m.DB.RunValueLogGC(discardRatio)
+}
+
+func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, publish *commitPublication) (uint64, error) {
+	syncMetadata := publish != nil && publish.syncMetadata
+	if syncMetadata {
+		// Keep this memtable active until its metadata WAL is synced.
+		if err := m.commitGate.LockContext(ctx); err != nil {
+			return 0, err
+		}
+		defer m.commitGate.Unlock()
+	} else {
+		if err := m.commitGate.RLockContext(ctx); err != nil {
+			return 0, err
+		}
+		defer m.commitGate.RUnlock()
+	}
 	m.advanceDiscardTs()
 	if publish != nil && publish.owner != nil {
 		if err := publish.owner.prepareStoredEntityPublication(ctx); err != nil {
@@ -265,6 +283,11 @@ func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, pub
 	}
 	if err := m.commitDurableWrite(txn, ts, scope, actionCtx, journal); err != nil {
 		return ts, err
+	}
+	if syncMetadata {
+		if err := m.syncIfPersistent(); err != nil {
+			return ts, err
+		}
 	}
 	if publish != nil && publish.owner != nil {
 		publish.owner.durableVersion = ts

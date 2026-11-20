@@ -21,9 +21,11 @@ func takeReservationCut(t *testing.T, ledger *mvccReservations, cut uint64) *mvc
 func TestReservationCutCopiesWhatItsSnapshotMayNotHold(t *testing.T) {
 	ledger := &mvccReservations{}
 	state := &namespaceMVCCState{}
+	state.reservedThrough.Store(mvccSequenceBlockSize)
 	var before, during, inflight badger.Txn
 	reserve := func(txn *badger.Txn) MVCCVersion {
-		version, err := ledger.reserve(txn, "test", state, time.Now(), false)
+		version, issued, err := ledger.reserve(txn, "test", state, time.Now(), false)
+		require.True(t, issued)
 		require.NoError(t, err)
 		return version
 	}
@@ -60,10 +62,12 @@ func TestReservationCutCopiesWhatItsSnapshotMayNotHold(t *testing.T) {
 func TestOverlappingReservationCutsDoNotRetainThePublishedVersions(t *testing.T) {
 	ledger := &mvccReservations{}
 	state := &namespaceMVCCState{}
+	state.reservedThrough.Store(mvccSequenceBlockSize)
 	previous := ledger.cutStarted()
 	for round := 0; round < 1000; round++ {
 		var txn badger.Txn
-		_, err := ledger.reserve(&txn, "test", state, time.Now(), false)
+		_, issued, err := ledger.reserve(&txn, "test", state, time.Now(), false)
+		require.True(t, issued)
 		require.NoError(t, err)
 		ledger.publishTxn(&txn)
 		next := ledger.cutStarted()
@@ -81,9 +85,11 @@ func TestOverlappingReservationCutsDoNotRetainThePublishedVersions(t *testing.T)
 func TestReservationCutsRetainPublicationsUntilOldestFinishes(t *testing.T) {
 	ledger := &mvccReservations{}
 	state := &namespaceMVCCState{}
+	state.reservedThrough.Store(mvccSequenceBlockSize)
 	older, newer := ledger.cutStarted(), ledger.cutStarted()
 	var txn badger.Txn
-	version, err := ledger.reserve(&txn, "test", state, time.Now(), false)
+	version, issued, err := ledger.reserve(&txn, "test", state, time.Now(), false)
+	require.True(t, issued)
 	require.NoError(t, err)
 	ledger.publishTxn(&txn)
 	ledger.cutAbandoned(newer)
