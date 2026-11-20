@@ -23,6 +23,30 @@ func TestV152TextRelationshipMoveAgainstOldEndpointDelete(t *testing.T) {
 			}
 			defer b.Close()
 			ctx := context.Background()
+			// Control: the same move with no concurrent delete must succeed.
+			for _, id := range []NodeID{"test:c-old", "test:c-end", "test:c-new"} {
+				if _, err := b.CreateNode(ctx, &Node{ID: id, Labels: []string{"P"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := b.CreateEdge(ctx, &Edge{ID: "test:c-e", StartNode: "test:c-old", EndNode: "test:c-end", Type: "LINK"}); err != nil {
+				t.Fatal(err)
+			}
+			ctl, err := b.BeginTransaction(ctx, OrdinaryBegin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctlErr := ctl.UpdateEdge(ctx, EdgeUpdateRequest{After: &Edge{ID: "test:c-e", StartNode: "test:c-new", EndNode: "test:c-end", Type: "LINK"}})
+			if ctlErr == nil {
+				ctlErr = ctl.Commit()
+			} else {
+				_ = ctl.Rollback()
+			}
+			moved, _ := b.GetEdge(ctx, "test:c-e")
+			t.Logf("V152TEXT control move without delete: err=%v edge=%+v", ctlErr, moved)
+			if ctlErr != nil {
+				t.Fatalf("control: a relationship move without a concurrent delete failed: %v", ctlErr)
+			}
 			moveErrs, deleteErrs, dangling, staleAdjacency := 0, 0, 0, 0
 			const rounds = 200
 			for round := 0; round < rounds; round++ {
@@ -66,6 +90,9 @@ func TestV152TextRelationshipMoveAgainstOldEndpointDelete(t *testing.T) {
 				wg.Wait()
 				if moveErr != nil {
 					moveErrs++
+					if moveErrs <= 3 {
+						t.Logf("V152TEXT round=%d move error: %v (delete err=%v)", round, moveErr, deleteErr)
+					}
 				}
 				if deleteErr != nil {
 					deleteErrs++

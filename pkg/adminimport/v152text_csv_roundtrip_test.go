@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"testing"
 
@@ -77,13 +78,22 @@ func TestV152TextCSVExportImportRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Schema file as cmd/nornicdb-admin runImportFull chooses it for --from-path:
+	// the NornicDB schema file when it exists, otherwise schema.cypher, otherwise none.
+	schemaFile := ""
+	for _, candidate := range []string{adminimport.DefaultNeo4jCSVNornicSchemaPath(csvDir), adminimport.DefaultNeo4jCSVSchemaPath(csvDir)} {
+		if _, err := os.Stat(candidate); err == nil {
+			schemaFile = candidate
+			break
+		}
+	}
 	dst, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dstDir, HighPerformance: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dst.Close()
 	if _, err := adminimport.ImportFull(ctx, dst, adminimport.Options{DatabaseName: "nornic", NodeSources: nodes, RelSources: rels, DataDir: dstDir,
-		Delimiter: ',', ArrayDelimiter: ';', VectorDelimiter: ';', Quote: '"', SchemaFile: adminimport.DefaultNeo4jCSVNornicSchemaPath(csvDir)}); err != nil {
+		Delimiter: ',', ArrayDelimiter: ';', VectorDelimiter: ';', Quote: '"', SchemaFile: schemaFile}); err != nil {
 		t.Fatal(err)
 	}
 	got := v152Props(t, storage.NewNamespacedEngine(dst, "nornic"))
