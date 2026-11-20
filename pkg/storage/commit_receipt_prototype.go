@@ -176,10 +176,10 @@ func (owner CommitReceiptOwner) claim(outcome CommitOutcome) (func(CommitOutcome
 // settlement callback, then the terminal signal. Settlement must precede that
 // signal; waiters may immediately read the accounting published by the callback.
 func (owner CommitReceiptOwner) deliverTerminal(settle func(CommitOutcome), outcome CommitOutcome) {
+	defer close(owner.receipt.done)
 	if settle != nil {
 		settle(outcome)
 	}
-	close(owner.receipt.done)
 }
 
 // resolve is called only by the accepted command owner, never by a waiter.
