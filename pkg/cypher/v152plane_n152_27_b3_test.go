@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompositeRootReadRejectsImplicitFanout(t *testing.T) {
+func TestCompositeRootReadRejectsImplicitFanout_r9port(t *testing.T) {
 	for _, query := range []string{
 		"MATCH (n) RETURN count(n)",
 		"MATCH (n:Evidence) RETURN n.value",
@@ -38,18 +38,18 @@ func TestCompositeRootReadRejectsImplicitFanout(t *testing.T) {
 }
 
 // Inject the participant lookup failure at the public database-manager boundary.
-type failingCompositeAccessManager struct {
+type failingCompositeAccessManager_r9port struct {
 	*testDatabaseManagerAdapter
 	failure error
 }
 
-func (m *failingCompositeAccessManager) GetStorageForUse(name, token string) (interface{}, error) {
+func (m *failingCompositeAccessManager_r9port) GetStorageForUse(name, token string) (interface{}, error) {
 	if name == "two" || name == "comp.two" {
 		return nil, m.failure
 	}
 	return m.testDatabaseManagerAdapter.GetStorageForUse(name, token)
 }
-func TestCompositeExplicitReadReportsAccessFailure(t *testing.T) {
+func TestCompositeExplicitReadReportsAccessFailure_r9port(t *testing.T) {
 	f := newFabricAtomicityFixture(t)
 	for _, name := range []string{"one", "two"} {
 		engine, err := f.mgr.GetStorage(name)
@@ -67,7 +67,7 @@ func TestCompositeExplicitReadReportsAccessFailure(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, result.Rows)
 			accessErr := errors.New("second participant could not open")
-			adapter := &failingCompositeAccessManager{testDatabaseManagerAdapter: &testDatabaseManagerAdapter{manager: f.mgr}, failure: accessErr}
+			adapter := &failingCompositeAccessManager_r9port{testDatabaseManagerAdapter: &testDatabaseManagerAdapter{manager: f.mgr}, failure: accessErr}
 			exec := newCompositeTestExecutor(t, f.mgr, "comp", adapter)
 			result, err = exec.Execute(t.Context(), query, nil)
 			require.ErrorContains(t, err, accessErr.Error())

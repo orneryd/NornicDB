@@ -43,9 +43,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAcceptedRegistryRetiredBeforeTerminalSettlement records ordering at
+// TestAcceptedRegistryRetiredBeforeTerminalSettlement_r9port records ordering at
 // terminal delivery; it does not exercise a concurrent retained registry lookup.
-func TestAcceptedRegistryRetiredBeforeTerminalSettlement(t *testing.T) {
+func TestAcceptedRegistryRetiredBeforeTerminalSettlement_r9port(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
 	base, err := NewBadgerEngine(dir)
