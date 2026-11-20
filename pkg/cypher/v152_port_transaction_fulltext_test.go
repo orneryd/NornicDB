@@ -108,7 +108,8 @@ CALL () {
 CALL db.index.fulltext.queryNodes('pd_source_text', $query) YIELD node, score
 WHERE (node:PDSearchSource OR false OR coalesce(node.current, true)) AND (NOT node:PDSummary OR coalesce(node.current, false)) AND NOT node.id IN hidden_ids
 RETURN node, score ORDER BY score DESC, node.id LIMIT $limit
-`n var expected [32]byte
+`
+ var expected [32]byte
  for attempt := 1; attempt <= 10; attempt++ {
   brExec(t, e, "BEGIN", nil)
   var before, after runtime.MemStats
