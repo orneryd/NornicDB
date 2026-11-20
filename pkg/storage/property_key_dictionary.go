@@ -663,3 +663,20 @@ func (d *propertyKeyDictionary) replaceWith(fresh *propertyKeyDictionary) {
 	d.txnPendingForward = make(map[*badger.Txn]map[propKeyName]uint64)
 	d.txnMu.Unlock()
 }
+
+// KnowsPropertyName reports whether the native namespace has used a property
+// name. The name remains known after the last entity holding it is deleted.
+func KnowsPropertyName(engine Engine, property string) bool {
+	namespace := DatabaseOf(engine)
+	for depth := 0; engine != nil && depth < 16; depth++ {
+		if native, ok := engine.(*BadgerEngine); ok && native.propKeyDict != nil {
+			return native.propKeyDict.known(namespace, property)
+		}
+		wrapper, ok := engine.(EngineUnwrapper)
+		if !ok {
+			break
+		}
+		engine = wrapper.GetInnerEngine()
+	}
+	return false
+}

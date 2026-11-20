@@ -105,9 +105,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	if indexFound {
 		gate = indexName
 	}
-	useService, err := e.vectorIndexServiceAnswers(ctx, svc, gate, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadWarm)
-	if err != nil {
-		return nil, err
+	useService := false
+	if e.fineGrainedGraph == nil {
+		var err error
+		useService, err = e.vectorIndexServiceAnswers(ctx, svc, gate, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadWarm)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !useService {
 		nodeScores, ok := e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, k, queryVector, true, wantDims)

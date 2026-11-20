@@ -290,6 +290,12 @@ func (a *databaseManagerAdapter) DropCompositeDatabase(ctx context.Context, name
 //   - For large databases, this may take a few milliseconds
 //   - Consider caching if this endpoint is called frequently
 func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbName string) {
+	if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+		if !s.canAccessGraphForRequest(r, dbName) || !principal.AllowsDatabase("database.stats.read", dbName, "") {
+			s.writeNeo4jInsufficientPermissions(w, r)
+			return
+		}
+	}
 	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
@@ -522,7 +528,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 // handleClusterStatus returns cluster status (standalone mode)
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1023,6 +1029,14 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(id, 10), ElementID: elementID, Labels: labels, Properties: properties})
 		}
 		meta := map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}
+		if ctx.Value(queryAPIResultContextKey{}) != nil {
+			entity := make(map[string]any, len(typed))
+			for key, value := range typed {
+				entity[key] = value
+			}
+			entity["properties"] = properties
+			return entity, []interface{}{meta}, nil
+		}
 		if transactionHTTPWantsREST(graph) {
 			return transactionHTTPRESTEntity(kind, dbName, meta, properties, typed), []interface{}{meta}, nil
 		}
@@ -1062,6 +1076,9 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "node")
+		if ctx.Value(queryAPIResultContextKey{}) != nil {
+			return map[string]any{"elementId": elementID, "labels": typed.Labels, "properties": properties}, meta, nil
+		}
 		if transactionHTTPWantsREST(graph) {
 			return transactionHTTPRESTEntity("node", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"labels": typed.Labels}), meta, nil
 		}
@@ -1081,7 +1098,7 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 		}
 		elementID := typed.ElementID(database)
 		var startElementID, endElementID string
-		if (len(graph) > 0 && graph[0].graph != nil) || transactionHTTPWantsREST(graph) {
+		if (len(graph) > 0 && graph[0].graph != nil) || transactionHTTPWantsREST(graph) || ctx.Value(queryAPIResultContextKey{}) != nil {
 			startDatabase, err := s.entityDatabase(ctx, dbName, typed.StartNode, "")
 			if err != nil {
 				return nil, nil, err
@@ -1097,6 +1114,10 @@ func (s *Server) transactionHTTPValue(ctx context.Context, value interface{}, db
 			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: startElementID, EndNode: endElementID, Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "relationship")
+		if ctx.Value(queryAPIResultContextKey{}) != nil {
+			return map[string]any{"elementId": elementID, "type": typed.Type, "startNodeElementId": startElementID,
+				"endNodeElementId": endElementID, "properties": properties}, meta, nil
+		}
 		if transactionHTTPWantsREST(graph) {
 			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": startElementID, "endNodeElementId": endElementID}), meta, nil
 		}
@@ -1447,13 +1468,13 @@ func (s *Server) runRequestStatements(
 	// composite constituent needs its composite and its database), and
 	// read / write are the privileges of the database its data is in: the
 	// principal's one resolver (principalAccess).
-	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
+	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccessForRequest(ctx, claims).Allows)
 	// The request owns the entire statement sequence and its per-statement
 	// handling, including localized failure and partial-result publication.
 	runOne := func(stmt StatementRequest) *QueryError {
 		effectiveDB, queryStatement := defaultDB, stmt.Statement
 
-		if !s.canAccessGraph(claims, effectiveDB) {
+		if !s.principalAccessForRequest(ctx, claims).Allows(effectiveDB, "access") {
 			return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(localization.DatabaseAccessDenied(effectiveDB))}
 		}
 
@@ -1506,7 +1527,7 @@ func (s *Server) runRequestStatements(
 
 		// The administration owner supplies the resolved identity only after
 		// successful creation. Source spelling and ordinary rows are not authority.
-		if result != nil && result.Administration != nil && result.Administration.CreatedDatabase != "" {
+		if auth.FineGrainedRequestFromContext(ctx) == nil && result != nil && result.Administration != nil && result.Administration.CreatedDatabase != "" {
 			s.grantAccessToNewDatabase(ctx, result.Administration.CreatedDatabase, claims)
 		}
 
@@ -1537,7 +1558,7 @@ func (s *Server) runOneShotTransaction(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) {
-	if !s.canAccessGraph(claims, dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		response.Errors = append(response.Errors, QueryError{
 			Code:    "Neo.ClientError.Security.Forbidden",
 			Message: localize(localization.DatabaseAccessDenied(dbName)),
@@ -1707,7 +1728,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(claims, dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1756,7 +1777,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	claims := getClaims(r)
-	if !s.canAccessGraph(claims, dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1811,7 +1832,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(claims, dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1858,7 +1879,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
+	if !s.canAccessGraphForRequest(r, dbName) {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}

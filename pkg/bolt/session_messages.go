@@ -147,6 +147,11 @@ func (s *Session) handleRun(data []byte) error {
 			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), logParams))
 	}
 
+	principal, impersonated, fgacErr := s.fineGrainedPrincipal(parentCtx, metadata)
+	if fgacErr != nil || (s.txFineGrainedFingerprint != "" && (principal == nil || principal.Fingerprint != s.txFineGrainedFingerprint)) {
+		return s.sendRunQueryFailure(auth.ErrFineGrainedForbidden, query)
+	}
+
 	// Resolve effective database name (Neo4j-compatible precedence):
 	// 1) RUN metadata db/database
 	// 2) active transaction metadata db/database (BEGIN)
@@ -156,12 +161,13 @@ func (s *Session) handleRun(data []byte) error {
 	if runDB, ok := databaseFromMetadata(metadata); ok {
 		dbName = runDB
 	} else if s.inTransaction {
-		if txDB, ok := databaseFromMetadata(s.txMetadata); ok {
-			dbName = txDB
-		}
+		dbName = s.txDatabase
 	}
 	if dbName == "" {
 		dbName = s.database
+	}
+	if dbName == "" && principal != nil {
+		dbName = principal.HomeDatabaseName
 	}
 	if dbName == "" {
 		if s.server != nil && s.server.dbManager != nil {
@@ -177,13 +183,18 @@ func (s *Session) handleRun(data []byte) error {
 	if err := s.bindDatabaseConnection(dbName); err != nil {
 		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
-	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
 	mode := s.accessMode()
-	if mode != nil {
+	if principal != nil {
+		if !s.fineGrainedAccess(principal).Allows(dbName, "access") {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+		}
+	} else if mode != nil {
 		if _, allowed := s.graphAccess(mode, dbName); !allowed {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
 		}
 	}
+
+	s.auditFineGrainedImpersonation(parentCtx, impersonated, "RUN")
 
 	// A READ request refuses a statement that updates data or schema before it
 	// reaches an executor or a transaction, so a refused statement changes
@@ -261,7 +272,10 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}()
 	ctx = cypher.WithClientStatement(ctx)
-	if mode != nil || s.authResult != nil {
+	if principal != nil {
+		ctx = s.withFineGrainedIdentity(ctx, principal, impersonated)
+		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.fineGrainedAccess(principal).Allows)
+	} else if mode != nil || s.authResult != nil {
 		// The principal's one permission resolver (principalAccess), which the
 		// executor authorizes the statement, the databases it selects and the
 		// procedures it calls with: a name is checked like the session's
@@ -273,7 +287,7 @@ func (s *Session) handleRun(data []byte) error {
 
 	runStart := time.Now()
 	var result *QueryResult
-	if !s.inTransaction && !isWrite && s.messageQueue != nil {
+	if principal == nil && !s.inTransaction && !isWrite && s.messageQueue != nil {
 		// An auto-commit read produces its rows as PULL asks for them
 		// once it has more than lazyResultThreshold (#939); RUN and those
 		// PULLs are then already answered.
@@ -371,6 +385,12 @@ func (s *Session) handleRun(data []byte) error {
 
 	// Store result for PULL
 	s.lastResult = result
+	s.lastResultFGAC = newFineGrainedResultScope(principal, impersonated)
+	if principal != nil && principal.PasswordChangeRequired && result != nil && len(result.Rows) == 0 {
+		// The expired account's only executable statement is its own
+		// password change. It returns no rows and changes the credential state.
+		s.lastResultFGAC = fineGrainedResultScope{}
+	}
 	s.lastResultMemoryLease = resultMemoryLease
 	s.resultIndex = 0
 	published = true
@@ -389,6 +409,7 @@ func (s *Session) handleRun(data []byte) error {
 			delivery: delivery,
 			isWrite:  isWrite,
 			database: resultDatabase,
+			fgac:     s.lastResultFGAC,
 		}
 		if resultMemoryLease != nil {
 			if s.resultMemoryLeases == nil {
@@ -727,6 +748,7 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 		isWrite:  s.lastQueryIsWrite,
 		database: s.lastQueryDatabase,
 		lazy:     s.lastLazy,
+		fgac:     s.lastResultFGAC,
 	}, -1, true
 }
 
@@ -743,10 +765,12 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 	}
 	if hasMore {
 		s.lastResult = stream.result
+		s.lastResultFGAC = stream.fgac
 		s.resultIndex = stream.index
 		s.lastLazy = stream.lazy
 	} else {
 		s.lastResult = nil
+		s.lastResultFGAC = fineGrainedResultScope{}
 		s.lastResultMemoryLease = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
@@ -792,6 +816,23 @@ func (s *Session) handlePull(data []byte) error {
 		return s.flushIfPending()
 	}
 
+	rowContext := s.parentContext()
+	if stream.fgac.fingerprint != "" && stream.result != nil && len(stream.result.Rows) != 0 {
+		s.refreshAuthResult()
+		var current *auth.FineGrainedRequest
+		var target *auth.User
+		current, target, err = s.validateFineGrainedResult(rowContext, stream.fgac)
+		if err != nil {
+			if stream.delivery != nil {
+				stream.delivery.Fail()
+			}
+			s.finishResultStream(statementID, stream)
+			s.failedUntilReset = true
+			return s.sendFailure("Neo.ClientError.Security.Forbidden", auth.ErrFineGrainedForbidden.Error())
+		}
+		rowContext = s.withFineGrainedIdentity(s.withSessionIdentity(rowContext), current, target)
+	}
+
 	// A lazy result produces the rows this PULL takes (#939). An error the
 	// statement meets fails this PULL after the rows before it.
 	var lazyFailure *lazyStatementError
@@ -807,16 +848,15 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(s.withSessionIdentity(s.parentContext()), stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
+		if err := s.sendRecordsBatched(s.resultRowContext(rowContext, stream.fgac), stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
 			return err
 		}
 		stream.index += remaining
 	} else {
 		// Small batches: send individually (avoids buffer allocation overhead)
 		pullN := options.limit
-		rowContext := s.parentContext()
 		if pullN != 0 && stream.index < len(stream.result.Rows) {
-			rowContext = s.withSessionIdentity(rowContext)
+			rowContext = s.resultRowContext(rowContext, stream.fgac)
 		}
 		for stream.index < len(stream.result.Rows) {
 			if pullN == 0 {
@@ -1060,6 +1100,13 @@ func (s *Session) handleDiscard(data []byte) error {
 
 // handleRoute handles the ROUTE message (for cluster routing).
 func (s *Session) handleRoute(data []byte) error {
+	database, err := s.fineGrainedRouteDatabase(data)
+	if err != nil {
+		if errors.Is(err, errFineGrainedRouteMetadata) {
+			err = nornicerrors.WithStatus(err, "Neo.ClientError.Request.Invalid", localization.ExternalDiagnostic(err))
+		}
+		return s.sendTransactionControlError(err)
+	}
 	address := "localhost:7687"
 	if s.conn != nil {
 		if tcp, ok := s.conn.LocalAddr().(*net.TCPAddr); ok {
@@ -1071,16 +1118,18 @@ func (s *Session) handleRoute(data []byte) error {
 		}
 	}
 
-	if err := s.sendSuccessNoFlush(map[string]any{
-		"rt": map[string]any{
-			"ttl": 300,
-			"servers": []map[string]any{
-				{"role": "ROUTE", "addresses": []string{address}},
-				{"role": "READ", "addresses": []string{address}},
-				{"role": "WRITE", "addresses": []string{address}},
-			},
+	table := map[string]any{
+		"ttl": 300,
+		"servers": []map[string]any{
+			{"role": "ROUTE", "addresses": []string{address}},
+			{"role": "READ", "addresses": []string{address}},
+			{"role": "WRITE", "addresses": []string{address}},
 		},
-	}); err != nil {
+	}
+	if database != "" {
+		table["db"] = database
+	}
+	if err := s.sendSuccessNoFlush(map[string]any{"rt": table}); err != nil {
 		return err
 	}
 	return s.flushIfPending()
@@ -1128,6 +1177,15 @@ func (s *Session) handleCommit(data []byte) error {
 	if !s.inTransaction {
 		return s.sendTransactionControlError(nornicerrors.WithStatus(nil, "Neo.ClientError.Transaction.TransactionNotFound", localization.BoltNoTransactionToCommit()))
 	}
+	if s.txFineGrainedFingerprint != "" {
+		s.refreshAuthResult()
+		principal, _, err := s.fineGrainedPrincipal(s.parentContext(), nil)
+		if err != nil || principal == nil || principal.Fingerprint != s.txFineGrainedFingerprint {
+			rollbackErr := s.rollbackExplicitTransaction(transactionTerminalRollback)
+			return s.sendTransactionControlError(nornicerrors.CombineTerminalOutcomes(auth.ErrFineGrainedForbidden, rollbackErr))
+		}
+	}
+
 	txExec, claimErr := s.txLifecycle.claimCommit()
 	if errors.Is(claimErr, errTransactionTimedOut) {
 		return s.sendTransactionTimeoutAfterJoin()

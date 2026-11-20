@@ -50,6 +50,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -283,7 +284,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		}
 		if node := state.node; node != nil {
 			labelsAdded := addedLabelCount(state.labels, node.Labels)
-			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
+			if labelsAdded == 0 && len(state.propertyWrites.Keys) == 0 && !state.propertyWrites.Replace && changedPropertyCount(state.properties, node.Properties) == 0 {
 				continue
 			}
 			if deleted.contains(node) {
@@ -314,7 +315,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := mutateNodeWithObservation(ctx, store, state.before, node); err != nil {
+			if err := mutateNodeWithObservation(ctx, store, state.before, node, state.propertyWrites); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -322,7 +323,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 			continue
 		}
 		relationship := state.relationship
-		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
+		if len(state.propertyWrites.Keys) == 0 && !state.propertyWrites.Replace && changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
 		if deleted.contains(relationship) {
@@ -334,7 +335,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		}
 		state.beforeEdge = observeEdge(relationship)
 		state.beforeEdge.Properties = state.properties
-		if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, relationship); err != nil {
+		if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, relationship, state.propertyWrites); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
@@ -391,14 +392,15 @@ func appendSetClauseRuns(ctx context.Context, runs []setRun, body string, assign
 // setEntityState retains the fields a SET clause may change. Its immutable
 // observation reuses the existing rollback copies rather than copying embeddings.
 type setEntityState struct {
-	variable     string
-	node         *storage.Node
-	relationship *storage.Edge
-	properties   map[string]interface{}
-	labels       []string
-	before       *storage.Node
-	beforeEdge   *storage.Edge
-	written      int
+	variable       string
+	node           *storage.Node
+	relationship   *storage.Edge
+	properties     map[string]interface{}
+	labels         []string
+	before         *storage.Node
+	beforeEdge     *storage.Edge
+	written        int
+	propertyWrites storage.PropertyWriteIntent
 }
 
 // applySetRuns applies a SET clause's runs (appendSetClauseRuns) in order to the
@@ -406,6 +408,13 @@ type setEntityState struct {
 // first written first, appended to states (a caller's buffer). A run on a variable bound to null does nothing; a
 // run on a variable that names no entity reports ok false. On an error,
 // every entity is restored to its state before the clause.
+func (state *setEntityState) recordProperty(key string, set bool) {
+	if state.propertyWrites.Keys == nil {
+		state.propertyWrites.Keys = make(map[string]bool)
+	}
+	state.propertyWrites.Keys[key] = state.propertyWrites.Keys[key] || set
+}
+
 func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes map[string]*storage.Node, rels map[string]*storage.Edge, isNull func(variable string) bool, states []setEntityState) ([]setEntityState, bool, error) {
 	for _, run := range runs {
 		node, relationship := nodes[run.variable], rels[run.variable]
@@ -434,12 +443,16 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 			states = append(states, state)
 			target = len(states) - 1
 		}
+		var observed *setEntityState
+		if auth.FineGrainedRequestFromContext(ctx) != nil {
+			observed = &states[target]
+		}
 		var written int
 		var err error
 		if node != nil {
-			written, err = e.applySetToNodeWithContext(ctx, node, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToNodeWithContext(ctx, node, run.variable, run.text, nodes, rels, observed)
 		} else {
-			written, err = e.applySetToRelationshipWithContext(ctx, relationship, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToRelationshipWithContext(ctx, relationship, run.variable, run.text, nodes, rels, observed)
 		}
 		states[target].written += written
 		if err != nil {

@@ -1,4 +1,54 @@
 {
+  "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
+    "write_domain": "property",
+    "contract": "Serialize scoped OpenAI-compatible streaming chunks without changing result number widths.",
+    "calls": {"property.Marshal": 8}
+  },
+  "pkg/server/server_query_api.go:Server.handleQueryAPITransaction": {
+    "read_domain": "input",
+    "contract": "Preserve Cypher parameter and metadata number types in explicit Query API transactions.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "pkg/server/server_query_api.go:Server.handleQueryAPI": {
+    "read_domain": "input",
+    "contract": "Read Cypher statement parameters and transaction metadata for a Query API request.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "pkg/server/server_dbconfig.go:Server.handleDbLifecyclePrefix": {
+    "read_domain": "input",
+    "contract": "Decode the typed lifecycle scheduler interval submitted by a database operator.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
+    "read_domain": "input",
+    "contract": "Decode the node IDs submitted to retry embedding failures.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "testing/cypher/fgac/fixture.go:LoadFixture": {
+    "read_domain": "input",
+    "contract": "Decode authored comparison cases and preserve Cypher parameter number types.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "testing/cypher/fgac/references.go:LoadReferencePins": {
+    "read_domain": "input",
+    "contract": "Decode the typed Enterprise reference matrix and reject unknown pin fields.",
+    "calls": {"input.NewDecoder": 1}
+  },
+  "pkg/auth/fine_grained_catalog_store.go:readFineGrainedCatalog": {
+    "read_domain": "property",
+    "contract": "Read the versioned entitlement catalog from the system database.",
+    "calls": {"property.Unmarshal": 1}
+  },
+  "pkg/auth/fine_grained_catalog_store.go:writeFineGrainedCatalog": {
+    "write_domain": "property",
+    "contract": "Persist the typed entitlement catalog as one versioned system record.",
+    "calls": {"property.MarshalState": 1}
+  },
+  "pkg/server/server_fine_grained_catalog.go:Server.handleFineGrainedCatalog": {
+    "read_domain": "input",
+    "contract": "Read one strict typed entitlement catalog replacement from the administrator HTTP API.",
+    "calls": {"input.NewDecoder": 1}
+  },
   "apoc/convert/convert.go:FromJsonList": {
     "read_domain": "input",
     "contract": "Explicit Cypher conversion reads external JSON; serialization writes an existing value document.",

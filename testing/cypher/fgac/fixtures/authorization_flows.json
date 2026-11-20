@@ -1,0 +1,381 @@
+{
+  "name": "nor12-fgac-authorization-flows",
+  "purpose": "Normative compatibility assertions for documented Neo4j Enterprise FGAC authorization flows on synthetic data. This fixture contains no exploit, bypass, escalation or vulnerability-reproduction probe.",
+  "principals": {
+    "admin": {
+      "admin": true
+    },
+    "access": {
+      "user": "fgac_access"
+    },
+    "noaccess": {
+      "user": "fgac_noaccess"
+    },
+    "reader": {
+      "user": "fgac_reader"
+    },
+    "denied": {
+      "user": "fgac_denied"
+    },
+    "writer": {
+      "user": "fgac_writer"
+    },
+    "policy": {
+      "user": "fgac_policy"
+    }
+  },
+  "setup": {
+    "graph": [
+      "CREATE (a:FGACDoc {id: 'doc-a', title: 'Alpha', published: true}), (b:FGACDoc {id: 'doc-b', title: 'Beta', published: false}), (c:FGACOther {id: 'other-a', title: 'Other'})"
+    ],
+    "administration": [
+      "CREATE ROLE fgac_reader IF NOT EXISTS",
+      "CREATE ROLE fgac_denier IF NOT EXISTS",
+      "CREATE ROLE fgac_access IF NOT EXISTS",
+      "CREATE ROLE fgac_noaccess IF NOT EXISTS",
+      "CREATE ROLE fgac_writer IF NOT EXISTS",
+      "CREATE USER fgac_access IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_noaccess IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_reader IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_writer IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_access TO fgac_access",
+      "GRANT ROLE fgac_reader TO fgac_reader",
+      "GRANT ROLE fgac_reader TO fgac_denied",
+      "GRANT ROLE fgac_denier TO fgac_denied",
+      "GRANT ROLE fgac_noaccess TO fgac_noaccess",
+      "GRANT ROLE fgac_writer TO fgac_writer",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_reader",
+      "GRANT TRAVERSE ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
+      "GRANT READ { id, title } ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_access",
+      "DENY ACCESS ON DATABASE ${database} TO fgac_noaccess",
+      "DENY MATCH { * } ON GRAPH ${database} NODES FGACDoc TO fgac_denier",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_writer",
+      "GRANT CREATE ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "GRANT SET PROPERTY { * } ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "CREATE ROLE fgac_policy IF NOT EXISTS",
+      "CREATE USER fgac_policy IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_policy TO fgac_policy",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_policy",
+      "GRANT MATCH {id} ON GRAPH ${database} FOR (d:FGACDoc) WHERE d.published = true TO fgac_policy"
+    ]
+  },
+  "teardown": {
+    "graph": [
+      "MATCH (n) WHERE n:FGACDoc OR n:FGACOther DETACH DELETE n"
+    ],
+    "administration": [
+      "DROP USER fgac_access IF EXISTS",
+      "DROP USER fgac_denied IF EXISTS",
+      "DROP USER fgac_noaccess IF EXISTS",
+      "DROP USER fgac_reader IF EXISTS",
+      "DROP USER fgac_writer IF EXISTS",
+      "DROP ROLE fgac_access IF EXISTS",
+      "DROP ROLE fgac_denier IF EXISTS",
+      "DROP ROLE fgac_noaccess IF EXISTS",
+      "DROP ROLE fgac_reader IF EXISTS",
+      "DROP ROLE fgac_writer IF EXISTS",
+      "DROP USER fgac_policy IF EXISTS",
+      "DROP ROLE fgac_policy IF EXISTS"
+    ]
+  },
+  "cases": [
+    {
+      "id": "role-grant-visible",
+      "covers": [
+        "role-grant"
+      ],
+      "description": "GRANT ROLE assigns the native role to the synthetic principal.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW USERS YIELD user, roles WHERE user = 'fgac_reader' AND 'fgac_reader' IN roles RETURN user AS user"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "fgac_reader"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "access-grant-returns-scalar",
+      "covers": [
+        "access-grant"
+      ],
+      "description": "A granted database ACCESS privilege permits a scalar calculation.",
+      "database": "target",
+      "principal": "access",
+      "statements": [
+        "RETURN 1 AS ok"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "access-deny-refuses-session-work",
+      "covers": [
+        "access-deny"
+      ],
+      "description": "A DENIED database ACCESS privilege refuses work that otherwise needs no graph privilege.",
+      "database": "target",
+      "principal": "noaccess",
+      "statements": [
+        "RETURN 1 AS ok"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security."
+      }
+    },
+    {
+      "id": "traverse-and-property-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "TRAVERSE on the label plus READ on the projected properties returns the synthetic documents.",
+      "database": "target",
+      "principal": "reader",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            "Alpha"
+          ],
+          [
+            "doc-b",
+            "Beta"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "cross-role-deny-hides-documents",
+      "covers": [
+        "cross-role-deny"
+      ],
+      "description": "A DENY held by one of the principal's roles takes precedence over another role's GRANT.",
+      "database": "target",
+      "principal": "denied",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": []
+      }
+    },
+    {
+      "id": "role-privileges-introspection",
+      "covers": [
+        "introspection"
+      ],
+      "description": "SHOW ROLE ... PRIVILEGES reports the granted access, read and traverse actions for the reader role.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW ROLE fgac_reader PRIVILEGES YIELD access, action WHERE access = 'GRANTED' RETURN DISTINCT action AS action ORDER BY action"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "access"
+          ],
+          [
+            "read"
+          ],
+          [
+            "traverse"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "read-only-role-write-denied",
+      "covers": [
+        "scoped-write-deny"
+      ],
+      "description": "A principal holding read privileges but no scoped write privilege is refused an ordinary CREATE.",
+      "database": "target",
+      "principal": "reader",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'forbidden-write', title: 'Forbidden'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    },
+    {
+      "id": "read-only-role-write-side-effect-absent",
+      "covers": [
+        "scoped-write-deny-side-effect"
+      ],
+      "description": "The refused CREATE left no synthetic node behind, observed through a fresh session.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (d:FGACDoc {id: 'forbidden-write'}) RETURN count(d) AS c"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "transaction-rollback-on-scoped-write-denial",
+      "covers": [
+        "transaction-rollback"
+      ],
+      "description": "A permitted write followed by a scoped write denial fails the transaction and rolls back the permitted write.",
+      "database": "target",
+      "principal": "writer",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'tx-partial', title: 'Partial'})",
+        "CREATE (:FGACOther {id: 'tx-denied', title: 'Denied'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    },
+    {
+      "id": "transaction-rollback-side-effect-absent",
+      "covers": [
+        "transaction-rollback-side-effect"
+      ],
+      "description": "Neither the permitted nor the denied transaction write is observable through a fresh session.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (n) WHERE (n:FGACDoc OR n:FGACOther) AND n.id IN ['tx-partial', 'tx-denied'] RETURN count(n) AS c"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "property-rule-filters-before-projection",
+      "covers": [
+        "property-rule"
+      ],
+      "description": "A row condition is evaluated on the stored property without granting read access to it.",
+      "database": "target",
+      "principal": "policy",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.published AS published"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "writer-assigns-property-to-new-node",
+      "covers": [
+        "create-then-set"
+      ],
+      "description": "A creator applies its property privilege to a node it bound in the same statement.",
+      "database": "target",
+      "principal": "writer",
+      "statements": [
+        "CREATE (d:FGACDoc {id: 'writer-created', title: 'Draft'}) SET d.title = 'Approved'"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": []
+      }
+    },
+    {
+      "id": "new-node-property-is-stored",
+      "covers": [
+        "create-then-set-side-effect"
+      ],
+      "description": "The approved value is observable through an independent read after commit.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (d:FGACDoc {id: 'writer-created'}) RETURN d.title AS title"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "Approved"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-uses-target-role-for-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "A supported impersonated session reads the graph with the target account's property grants.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-uses-target-role-for-write",
+      "covers": [
+        "scoped-write-deny"
+      ],
+      "description": "An impersonated reader receives the ordinary read-only response to a write.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'should-not-exist'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    }
+  ]
+}

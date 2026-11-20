@@ -1,3 +1,4 @@
+import type { FgacEffectiveRules } from "./fgacCatalog";
 import {extractNodeFromResult} from "./nodeUtils";
 import {parseMetrics,type MetricsSnapshot} from './monitoring';
 // NornicDB API Client
@@ -126,6 +127,20 @@ export interface ConstituentInfo {
   uri?: string; // only for remote constituents
 }
 
+/** Read the active mode and grants for the signed-in account. */
+export async function loadFgacEffectiveRules(): Promise<FgacEffectiveRules> {
+  const response = await fetch(joinBasePath(BASE_PATH, "/auth/fgac/effective"), { credentials: "include" });
+  if (response.status === 404 || response.status === 501) return { enforced: false, rules: null };
+  if (response.status === 403) {
+    const denial = await response.json().catch(() => null);
+    if (denial?.errors?.[0]?.code === "Neo.ClientError.Security.CredentialsExpired") {
+      return { enforced: true, rules: null };
+    }
+  }
+  if (!response.ok) throw new Error("Failed to load effective access");
+  return await response.json() as FgacEffectiveRules;
+}
+
 export interface DatabaseInfo {
   name: string;
   status: string;
@@ -145,6 +160,12 @@ export interface DatabaseInfo {
   searchTotal?: number;
   searchRate?: number;
   searchEtaSeconds?: number;
+}
+
+/** Stable database identity reported by SHOW DATABASES. */
+export interface DatabaseIdentity {
+  name: string;
+  databaseID: string;
 }
 
 export interface DatabaseRow {
@@ -1422,13 +1443,18 @@ class NornicDBClient {
     }
   }
 
-  async listDatabases(): Promise<DatabaseInfo[]> {
-    const resp = await this.executeSystemCypher("SHOW DATABASES");
+  /** Reads the database catalog with the columns required by the caller. */
+  private async showDatabaseRows(includeIdentity = false): Promise<DatabaseRow[]> {
+    const statement = includeIdentity ? "SHOW DATABASES YIELD name, databaseID" : "SHOW DATABASES";
+    const resp = await this.executeSystemCypher(statement);
     if (resp.errors && resp.errors.length > 0) {
       throw new Error(resp.errors.map((e) => e.message).join("; "));
     }
+    return this.parseCypherRows<DatabaseRow>(resp);
+  }
 
-    const rows = this.parseCypherRows<DatabaseRow>(resp);
+  async listDatabases(): Promise<DatabaseInfo[]> {
+    const rows = await this.showDatabaseRows();
     const names = rows
       .map((r) => (typeof r.name === "string" ? r.name : ""))
       .filter((n) => n && n !== "system");
@@ -1444,6 +1470,21 @@ class NornicDBClient {
     );
 
     return infos.filter((x): x is DatabaseInfo => Boolean(x));
+  }
+
+  /**
+   * Returns each database's name with the persisted ID SHOW DATABASES reports,
+   * including the system database. Fine-grained entitlement scopes must
+   * reference these stable IDs instead of names or list positions.
+   */
+  async listDatabaseIdentities(): Promise<DatabaseIdentity[]> {
+    const rows = await this.showDatabaseRows(true);
+    return rows
+      .map((row) => ({
+        name: typeof row.name === "string" ? row.name : "",
+        databaseID: typeof row.databaseID === "string" ? row.databaseID : "",
+      }))
+      .filter((database) => database.name !== "" && database.databaseID !== "");
   }
 
   /** Returns database names for the query dropdown (user-visible DBs, excludes system). */

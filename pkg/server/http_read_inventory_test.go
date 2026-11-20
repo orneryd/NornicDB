@@ -26,6 +26,7 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 /auth/oauth/redirect /auth/oauth/callback /auth/users /auth/users/
 /auth/roles /auth/roles/ /auth/access/databases /auth/access/privileges
 /auth/entitlements /auth/role-entitlements
+/auth/fgac/catalog /auth/fgac/effective
 /admin/config /admin/gpu/status /admin/gpu/enable /admin/gpu/disable /admin/gpu/test
 /admin/databases/config/keys
 `)
@@ -43,6 +44,15 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 	}
 	for _, path := range protocols {
 		disposition[path] = "delegated public MCP / GraphQL / Heimdall inventories"
+	}
+	// TestFineGrainedQueryAPIImpersonation exercises the Query API sessions
+	// and the graph entity lookup through their public registrations.
+	for _, path := range strings.Fields(`
+/db/{database}/query/v2 /db/{database}/query/v2/tx
+/db/{database}/query/v2/tx/{transaction} /db/{database}/query/v2/tx/{transaction}/commit
+/auth/fgac/entity
+`) {
+		disposition[path] = "public Query API and FGAC entity-read coverage"
 	}
 	// Private workspace and conversation routes are exercised by the public
 	// assistant workspace, attachment and compaction transport tests. They are

@@ -1,3 +1,4 @@
+import { hasFgacActionFamily, permitsFgacAction, type FgacEffectiveRules } from "../utils/fgacCatalog";
 import {KnowledgePolicyGuide} from "../components/knowledge/KnowledgePolicyGuide";
 import {Disclosure} from "../components/common/Disclosure";
 import {useViewState} from '../utils/useUrlState';
@@ -20,6 +21,7 @@ import { PageLayout } from "../components/common/PageLayout";
 import { KnowledgePolicyEditorGrids } from "../components/knowledge/KnowledgePolicyEditorGrids";
 import {
   api,
+  loadFgacEffectiveRules,
   type DatabaseInfo,
   type DeindexWorkItem,
   type KPDeindexStatusResponse,
@@ -108,6 +110,8 @@ function TargetCell({
 }
 
 export function KnowledgePoliciesAdmin() {
+  const [effective, setEffective] = useState<FgacEffectiveRules>();
+  const [databaseIds, setDatabaseIds] = useState<Record<string, string>>({});
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -148,11 +152,17 @@ export function KnowledgePoliciesAdmin() {
       .then((res) => res.json())
       .then(async (data) => {
         const roles = data.roles || [];
-        if (!roles.includes("admin")) {
+        const authorization = await loadFgacEffectiveRules();
+        if (authorization.enforced ? !hasFgacActionFamily(authorization, "knowledge.") : !roles.includes("admin")) {
           navigate("/security");
           return;
         }
         const list = await api.listDatabases();
+        if (authorization.enforced) {
+          const identities = await api.listDatabaseIdentities();
+          setDatabaseIds(Object.fromEntries(identities.map(database => [database.name, database.databaseID])));
+          setEffective(authorization);
+        }
         setDatabases(
           list.filter((db) => db.name !== "system" && db.type !== "composite"),
         );
@@ -176,15 +186,18 @@ export function KnowledgePoliciesAdmin() {
   const loadData = useCallback(async (dbName: string) => {
     const db = dbName || undefined;
     const [profilesData, policiesData, deindexData] = await Promise.all([
-      api.getKnowledgePolicyProfiles(db),
-      api.getKnowledgePolicyPolicies(db),
-      api.getDeindexStatus(db),
+      !effective?.enforced || permitsFgacAction(effective, "knowledge.profiles.list", databaseIds[dbName])
+        ? api.getKnowledgePolicyProfiles(db) : null,
+      !effective?.enforced || permitsFgacAction(effective, "knowledge.promotion_policy.list", databaseIds[dbName])
+        ? api.getKnowledgePolicyPolicies(db) : null,
+      !effective?.enforced || permitsFgacAction(effective, "knowledge.deindex.status", databaseIds[dbName])
+        ? api.getDeindexStatus(db) : null,
     ]);
     if(currentDb.current!==dbName)return;
     setProfiles(profilesData);
     setPolicies(policiesData);
     setDeindexStatus(deindexData);
-  }, []);
+  }, [effective, databaseIds]);
 
   useEffect(() => {
     if (!selectedDb) {
@@ -677,6 +690,7 @@ export function KnowledgePoliciesAdmin() {
                       onClick={handleResolve}
                       disabled={
                         resolving ||
+                        (effective?.enforced === true && !permitsFgacAction(effective, "knowledge.resolve", databaseIds[selectedDb])) ||
                         (!resolveEntityId && !resolveLabels && !resolveEdgeType)
                       }
                       icon={Search}

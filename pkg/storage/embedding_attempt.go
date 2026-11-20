@@ -39,6 +39,10 @@ func (node *Node) CopyEmbeddingIdentityFrom(source *Node) {
 	node.setRuntimeState(state)
 }
 
+// EmbeddingCallerPendingKey marks an authorized worker requeue while its
+// original caller's live authority is needed for dispatch.
+const EmbeddingCallerPendingKey = "embedding_caller_retry"
+
 // EmbeddingAttempt is the immutable identity of one selected provider's work.
 // It is carried through decorators, never encoded in a node body. begin leases
 // the queue identity through the storage commit; body/source acceptance belongs
@@ -47,6 +51,7 @@ type EmbeddingAttempt struct {
 	ProviderGeneration uint64
 	ClaimEpoch         uint64
 	BodyRevision       EmbeddingBodyRevision
+	RequireExactBody   bool // A caller policy can depend on otherwise unused fields.
 	begin              func() (func(), bool)
 	publish            func(*Node)
 	committed          atomic.Bool

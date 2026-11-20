@@ -221,18 +221,21 @@ var RolePermissions = map[Role][]Permission{
 //		fmt.Println("User can write data")
 //	}
 type User struct {
-	ID           string            `json:"id"`
-	Username     string            `json:"username"`
-	Email        string            `json:"email,omitempty"`
-	PasswordHash string            `json:"-"` // Never serialize
-	Roles        []Role            `json:"roles"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
-	LastLogin    time.Time         `json:"last_login,omitempty"`
-	FailedLogins int               `json:"-"` // Internal tracking
-	LockedUntil  time.Time         `json:"-"` // Internal tracking
-	Disabled     bool              `json:"disabled,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	ID                     string            `json:"id"`
+	Username               string            `json:"username"`
+	Email                  string            `json:"email,omitempty"`
+	PasswordHash           string            `json:"-"` // Never serialize
+	Roles                  []Role            `json:"roles"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at"`
+	LastLogin              time.Time         `json:"last_login,omitempty"`
+	FailedLogins           int               `json:"-"` // Internal tracking
+	LockedUntil            time.Time         `json:"-"` // Internal tracking
+	Disabled               bool              `json:"disabled,omitempty"`
+	HomeDatabase           string            `json:"home_database,omitempty"`
+	PasswordChangeRequired bool              `json:"password_change_required,omitempty"`
+	SecurityTags           []string          `json:"-"`
+	Metadata               map[string]string `json:"metadata,omitempty"`
 }
 
 // HasRole checks if the user has a specific role.
@@ -812,6 +815,29 @@ func (a *Authenticator) deleteUserNode(ctx context.Context, username string) err
 // error: nothing is persisted, no live user is published and no audit event is
 // recorded.
 func (a *Authenticator) CreateUser(ctx context.Context, username, password string, roles []Role) (*User, error) {
+	if len(roles) == 0 {
+		roles = []Role{RoleViewer}
+	}
+	return a.createUser(ctx, username, password, roles, false)
+}
+
+// userCreateRecord is the account state one CREATE USER statement declares
+// besides the native password and roles.
+type userCreateRecord struct {
+	passwordChangeRequired bool
+	disabled               bool
+	homeDatabase           string
+}
+
+// createUser creates a native account with the directory's default
+// attributes.
+func (a *Authenticator) createUser(ctx context.Context, username, password string, roles []Role, passwordChangeRequired bool) (*User, error) {
+	return a.createUserRecord(ctx, username, password, roles, userCreateRecord{passwordChangeRequired: passwordChangeRequired})
+}
+
+// createUserRecord is the one native account creation: the password hash and
+// the statement's declared attributes are persisted and published together.
+func (a *Authenticator) createUserRecord(ctx context.Context, username, password string, roles []Role, record userCreateRecord) (*User, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -828,33 +854,25 @@ func (a *Authenticator) CreateUser(ctx context.Context, username, password strin
 			return userRecordChange{}, ErrUserExists
 		}
 
-		// Validate password
-		if len(password) < a.config.MinPasswordLength {
-			return userRecordChange{}, fmt.Errorf("%w: minimum %d characters required", ErrPasswordTooShort, a.config.MinPasswordLength)
-		}
-
-		// Hash password
-		hash, err := bcrypt.GenerateFromPassword([]byte(password), a.config.BcryptCost)
+		hash, err := a.hashNativePassword(password)
 		if err != nil {
-			return userRecordChange{}, fmt.Errorf("failed to hash password: %w", err)
-		}
-
-		// Default to viewer role if none specified
-		if len(roles) == 0 {
-			roles = []Role{RoleViewer}
+			return userRecordChange{}, err
 		}
 
 		// Create user
 		now := time.Now()
 		user := &User{
-			ID:           generateID(),
-			Username:     username,
-			Email:        username + "@localhost", // Default pattern for dev users
-			PasswordHash: string(hash),
-			Roles:        roles,
-			CreatedAt:    now,
-			UpdatedAt:    now,
-			Metadata:     make(map[string]string),
+			ID:                     generateID(),
+			Username:               username,
+			Email:                  username + "@localhost", // Default pattern for dev users
+			PasswordHash:           hash,
+			PasswordChangeRequired: record.passwordChangeRequired,
+			Roles:                  roles,
+			Disabled:               record.disabled,
+			HomeDatabase:           record.homeDatabase,
+			CreatedAt:              now,
+			UpdatedAt:              now,
+			Metadata:               make(map[string]string),
 		}
 		return userRecordChange{
 			persist: a.persistUserRecord(user, "user"),
@@ -1371,20 +1389,34 @@ func (a *Authenticator) ChangePassword(ctx context.Context, username, oldPasswor
 			a.audit(AuditEvent{EventType: "password_change", Username: username, UserID: user.ID, Success: false, Details: "old password incorrect"})
 			return AuditEvent{}, ErrInvalidCredentials
 		}
-		if len(newPassword) < a.config.MinPasswordLength {
-			return AuditEvent{}, fmt.Errorf("%w: minimum %d characters required", ErrPasswordTooShort, a.config.MinPasswordLength)
-		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), a.config.BcryptCost)
-		if err != nil {
-			return AuditEvent{}, fmt.Errorf("failed to hash password: %w", err)
-		}
-		user.PasswordHash = string(hash)
-		return AuditEvent{EventType: "password_change"}, nil
-	}, func() {
-		for _, forget := range a.passwordListeners {
-			forget(username)
-		}
-	})
+		return a.replaceNativePassword(user, newPassword, false)
+	}, func() { a.notifyPasswordChange(username) })
+}
+
+func (a *Authenticator) hashNativePassword(password string) (string, error) {
+	if len(password) < a.config.MinPasswordLength {
+		return "", fmt.Errorf("%w: minimum %d characters required", ErrPasswordTooShort, a.config.MinPasswordLength)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), a.config.BcryptCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+	return string(hash), nil
+}
+
+func (a *Authenticator) replaceNativePassword(user *User, password string, required bool) (AuditEvent, error) {
+	hash, err := a.hashNativePassword(password)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	user.PasswordHash, user.PasswordChangeRequired = hash, required
+	return AuditEvent{EventType: "password_change"}, nil
+}
+
+func (a *Authenticator) notifyPasswordChange(username string) {
+	for _, forget := range a.passwordListeners {
+		forget(username)
+	}
 }
 
 // UpdateRoles changes a user's roles, persisting before live publication.
@@ -1417,28 +1449,43 @@ const (
 //
 //	err := authenticator.ChangeUserState("alice", auth.UserUnlock)
 func (a *Authenticator) ChangeUserState(ctx context.Context, username string, change UserStateChange) error {
-	var operation, eventType string
-	switch change {
-	case UserEnable:
-		operation, eventType = "user enable", "user_enable"
-	case UserDisable:
-		operation, eventType = "user disable", "user_disable"
-	case UserUnlock:
-		operation, eventType = "user unlock", "user_unlock"
-	default:
-		return fmt.Errorf("invalid user state change %d", change)
+	operation, eventType, err := userStateChangeEvent(change)
+	if err != nil {
+		return err
 	}
 	return a.mutateStoredUser(ctx, username, operation, func(user *User) (AuditEvent, error) {
-		if change == UserDisable {
-			user.Disabled = true
-		} else {
-			if change == UserEnable {
-				user.Disabled = false
-			}
-			user.FailedLogins, user.LockedUntil = 0, time.Time{}
-		}
+		applyUserState(user, change)
 		return AuditEvent{EventType: eventType}, nil
 	}, nil)
+}
+
+// userStateChangeEvent is the operation and audit event of one typed login
+// state transition.
+func userStateChangeEvent(change UserStateChange) (string, string, error) {
+	switch change {
+	case UserEnable:
+		return "user enable", "user_enable", nil
+	case UserDisable:
+		return "user disable", "user_disable", nil
+	case UserUnlock:
+		return "user unlock", "user_unlock", nil
+	default:
+		return "", "", fmt.Errorf("invalid user state change %d", change)
+	}
+}
+
+// applyUserState is the one user login-state transition: disable marks the
+// account suspended, while enable and unlock clear the failed-login lockout.
+func applyUserState(user *User, change UserStateChange) {
+	switch change {
+	case UserDisable:
+		user.Disabled = true
+	case UserEnable:
+		user.Disabled = false
+		user.FailedLogins, user.LockedUntil = 0, time.Time{}
+	case UserUnlock:
+		user.FailedLogins, user.LockedUntil = 0, time.Time{}
+	}
 }
 
 // UpdateUser updates profile information. Empty email preserves the current
@@ -1717,15 +1764,17 @@ func (a *Authenticator) copyUserSafe(u *User) *User {
 	}
 
 	return &User{
-		ID:        "", // Don't expose internal database IDs
-		Username:  u.Username,
-		Email:     u.Email,
-		Roles:     roles,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-		LastLogin: u.LastLogin,
-		Disabled:  u.Disabled,
-		Metadata:  metadata,
+		ID:                     "", // Don't expose internal database IDs
+		Username:               u.Username,
+		Email:                  u.Email,
+		Roles:                  roles,
+		CreatedAt:              u.CreatedAt,
+		UpdatedAt:              u.UpdatedAt,
+		LastLogin:              u.LastLogin,
+		Disabled:               u.Disabled,
+		HomeDatabase:           u.HomeDatabase,
+		PasswordChangeRequired: u.PasswordChangeRequired,
+		Metadata:               metadata,
 	}
 }
 

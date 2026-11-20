@@ -42,7 +42,7 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 	}
 	// Decay and REVEAL can change the visible corpus without a graph write.
 	// Its owner remains the same, but its document view is request-scoped.
-	fresh := requestLocal
+	fresh := requestLocal || e.fineGrainedGraph != nil
 	if storageHasDecayFiltering(e.storage) {
 		fresh = true
 	}

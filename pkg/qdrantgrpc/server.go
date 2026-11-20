@@ -247,6 +247,11 @@ type Server struct {
 	resolvedAccessResolver          func(roles []string, dbName string) auth.ResolvedAccess
 	databaseOperationAccessResolver func([]string, string, auth.DatabaseAccessMode, bool) (bool, auth.ResolvedAccess)
 
+	// Fine-grained admission (optional). When set, an authenticated request is
+	// admitted against the fine-grained policy owner instead of the role
+	// allowlists. A nil resolver keeps the RBAC principal.
+	fineGrainedAdmission func(context.Context, []string) (*auth.FineGrainedRequest, error)
+
 	grpcServer   *grpc.Server
 	listener     net.Listener
 	listenNative func(string, string) (net.Listener, error)
@@ -268,6 +273,15 @@ func AuthenticatedPrincipalID(ctx context.Context) string {
 
 // AllowDatabaseAccess implements DatabaseAccessChecker. Returns PermissionDenied if the principal may not access the database.
 func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write bool) error {
+	// A fine-grained principal is admitted by the policy its request carries, not
+	// by the role allowlists: which databases it may use, and what it may do in
+	// them, is the fine-grained owner's decision.
+	if admission := fineGrainedAdmissionFromContext(ctx); admission != nil {
+		if admission.allowsDatabase(database) {
+			return nil
+		}
+		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database), grpcresponse.QdrantSourceFallback)
+	}
 	if s.databaseAccessModeResolver == nil {
 		return nil
 	}
@@ -310,6 +324,15 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 
 // VisibleDatabases implements DatabaseAccessChecker. Returns the subset of candidates the principal may see.
 func (s *Server) VisibleDatabases(ctx context.Context, candidates []string) ([]string, error) {
+	if admission := fineGrainedAdmissionFromContext(ctx); admission != nil {
+		out := make([]string, 0, len(candidates))
+		for _, name := range candidates {
+			if admission.allowsDatabase(name) {
+				out = append(out, name)
+			}
+		}
+		return out, nil
+	}
 	if s.databaseAccessModeResolver == nil {
 		return candidates, nil
 	}
@@ -582,8 +605,8 @@ func (s *Server) Start() error {
 	server := grpc.NewServer(opts...)
 
 	var checker DatabaseAccessChecker = s
-	if s.databaseAccessModeResolver == nil {
-		checker = nil // no per-DB RBAC when resolvers not set
+	if s.databaseAccessModeResolver == nil && s.fineGrainedAdmission == nil {
+		checker = nil // no per-database RBAC and no fine-grained admission configured
 	}
 	collectionsService := NewCollectionsService(s.collections, checker)
 	collectionsService.localizer = s.config.Localizer
@@ -700,35 +723,17 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 	return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied(), grpcresponse.QdrantSourceFallback)
 }
 
-// unaryAuthInterceptor authenticates unary gRPC requests.
-// Supports both Basic Auth (username/password) and Bearer JWT tokens, matching HTTP endpoint behavior.
-func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	// Check if auth is enabled
-	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
-		return handler(ctx, req)
-	}
-
-	var claims *auth.JWTClaims
-	var err error
-
-	// Try Basic Auth first (Neo4j compatibility, same as HTTP endpoints)
+// authenticate resolves the principal of an authenticated gRPC request. Both
+// transports accept Basic credentials first, then a Bearer token or API key; a
+// rejected Basic credential falls through to the token headers, as before.
+func (s *Server) authenticate(ctx context.Context) (*auth.JWTClaims, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
 		if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
-			authHeader := authHeaders[0]
-			if strings.HasPrefix(authHeader, "Basic ") {
-				claims, err = s.handleBasicAuth(ctx, authHeader)
-				if err == nil {
-					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
-						return nil, err
-					}
-					ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
-					if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
-						return nil, err
-					}
-					return handler(ctx, req)
+			if header := authHeaders[0]; strings.HasPrefix(header, "Basic ") {
+				if claims, err := s.handleBasicAuth(ctx, header); err == nil {
+					return claims, nil
 				}
-				// If Basic Auth fails, fall through to try Bearer token
 			}
 		}
 	}
@@ -738,72 +743,62 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	if err != nil {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
 	}
-
-	// Validate token
-	claims, err = s.authenticator.ValidateToken(token)
+	claims, err := s.authenticator.ValidateToken(token)
 	if err != nil {
 		return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
 	}
+	return claims, nil
+}
 
-	// Add claims to context for use in handlers
+// unaryAuthInterceptor authenticates unary gRPC requests, then admits the
+// principal for the requested method (RBAC) and, when the installation enables
+// it, for the method's fine-grained action before the request database.
+// Supports both Basic Auth (username/password) and Bearer JWT tokens, matching HTTP endpoint behavior.
+func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// Check if auth is enabled
+	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
+		return handler(ctx, req)
+	}
+	claims, err := s.authenticate(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return nil, err
 	}
+	// Add claims to context for use in handlers
 	ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
+	ctx, err = s.admitFineGrained(ctx, info.FullMethod, claims)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
 		return nil, err
 	}
 	return handler(ctx, req)
 }
 
-// streamAuthInterceptor authenticates streaming gRPC requests.
+// streamAuthInterceptor authenticates streaming gRPC requests with the same
+// method and fine-grained admission as unary requests.
 // Supports both Basic Auth (username/password) and Bearer JWT tokens, matching HTTP endpoint behavior.
 func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	// Check if auth is enabled
 	if s.authenticator == nil || !s.authenticator.IsSecurityEnabled() {
 		return handler(srv, ss)
 	}
-
 	ctx := ss.Context()
-	var claims *auth.JWTClaims
-	var err error
-
-	// Try Basic Auth first (Neo4j compatibility, same as HTTP endpoints)
-	md, ok := metadata.FromIncomingContext(ctx)
-	if ok {
-		if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
-			authHeader := authHeaders[0]
-			if strings.HasPrefix(authHeader, "Basic ") {
-				claims, err = s.handleBasicAuth(ctx, authHeader)
-				if err == nil {
-					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
-						return err
-					}
-					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
-					return handler(srv, &authServerStream{ServerStream: ss, ctx: ctx})
-				}
-				// If Basic Auth fails, fall through to try Bearer token
-			}
-		}
-	}
-
-	// Try Bearer/JWT token extraction
-	token, err := s.extractTokenFromMetadata(ctx)
+	claims, err := s.authenticate(ctx)
 	if err != nil {
-		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantAuthenticationRequired(err.Error()), grpcresponse.QdrantSourceFallback)
+		return err
 	}
-
-	// Validate token
-	claims, err = s.authenticator.ValidateToken(token)
-	if err != nil {
-		return grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Unauthenticated, localization.QdrantInvalidOrExpiredToken(), grpcresponse.QdrantSourceFallback)
-	}
-
-	// Add claims to context for use in handlers
 	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	ctx, err = s.admitFineGrained(ctx, info.FullMethod, claims)
+	if err != nil {
+		return err
+	}
 	return handler(srv, &authServerStream{ServerStream: ss, ctx: ctx})
 }
 

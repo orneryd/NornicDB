@@ -31,7 +31,7 @@ func bindUserScalar[T string | bool | int | int64](b userRecordBinding, key stri
 // bindUserJSON commits a complete typed decode for normal stored JSON. Roles
 // reject type errors atomically; metadata applies only the ordered valid prefix
 // of a well-formed object when a value has the wrong type.
-func bindUserJSON[T []Role | map[string]string](b userRecordBinding, key string, field *T, atomic bool) {
+func bindUserJSON[T []Role | []string | map[string]string](b userRecordBinding, key string, field *T, atomic bool) {
 	if b.writing {
 		if *field == nil {
 			b.properties[key] = "null"
@@ -151,6 +151,15 @@ func mapUserRecord(direction userRecordDirection, user *User, node *storage.Node
 	}
 	bindUserScalar(b, "locked_until", &lockedUntil)
 	bindUserScalar(b, "disabled", &user.Disabled)
+	if !b.writing || user.HomeDatabase != "" {
+		bindUserScalar(b, "home_database", &user.HomeDatabase)
+	}
+	if !b.writing || user.PasswordChangeRequired {
+		bindUserScalar(b, "password_change_required", &user.PasswordChangeRequired)
+	}
+	if !b.writing || len(user.SecurityTags) != 0 {
+		bindUserJSON(b, "security_tags", &user.SecurityTags, true)
+	}
 	bindUserJSON(b, "metadata", &user.Metadata, false)
 	if !b.writing {
 		if hasCreated {

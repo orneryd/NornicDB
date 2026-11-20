@@ -120,6 +120,12 @@ func (s *Server) registerNeo4jRoutes(mux *http.ServeMux, uiHandler *uiHandler) {
 	// Pattern: /db/{databaseName}/tx/{txId} for transaction operations
 	// Pattern: /db/{databaseName}/tx/{txId}/commit for transaction commit
 	mux.HandleFunc("/db/", s.withAuth(s.handleDatabaseEndpoint, auth.PermRead))
+	s.registerRouteTable(mux, []routeSpec{
+		{"/db/{database}/query/v2", auth.PermRead, s.handleQueryAPI},
+		{"/db/{database}/query/v2/tx", auth.PermRead, s.handleQueryAPITransaction},
+		{"/db/{database}/query/v2/tx/{transaction}", auth.PermRead, s.handleQueryAPITransaction},
+		{"/db/{database}/query/v2/tx/{transaction}/commit", auth.PermRead, s.handleQueryAPITransaction},
+	})
 }
 
 func (s *Server) registerHealthRoutes(mux *http.ServeMux) {
@@ -162,6 +168,9 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 		{"/auth/access/privileges", auth.PermAdmin, s.handleAccessPrivileges},
 		{"/auth/entitlements", auth.PermRead, s.handleEntitlements},
 		{"/auth/role-entitlements", auth.PermAdmin, s.handleRoleEntitlements},
+		{"/auth/fgac/catalog", auth.PermAdmin, s.handleFineGrainedCatalog},
+		{"/auth/fgac/effective", "", s.handleFineGrainedEffective},
+		{"/auth/fgac/entity", auth.PermAdmin, s.handleFineGrainedEntity},
 	})
 }
 

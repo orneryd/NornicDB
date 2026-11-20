@@ -1,0 +1,392 @@
+package fgac
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
+)
+
+const (
+	// DatabaseSystem selects the Neo4j system database for administration.
+	DatabaseSystem = "system"
+	// DatabaseTarget selects the endpoint's target graph database.
+	DatabaseTarget = "target"
+
+	databasePlaceholder = "${database}"
+	passwordPlaceholder = "${password}"
+)
+
+// RequiredCoverage lists the documented flows every fixture must exercise.
+var RequiredCoverage = []string{
+	"property-rule",
+	"create-then-set",
+	"create-then-set-side-effect",
+	"role-grant",
+	"access-grant",
+	"access-deny",
+	"traverse-property-read",
+	"cross-role-deny",
+	"introspection",
+	"scoped-write-deny",
+	"scoped-write-deny-side-effect",
+	"transaction-rollback",
+	"transaction-rollback-side-effect",
+}
+
+var (
+	syntheticUserName = regexp.MustCompile(`^fgac_[a-z0-9_]+$`)
+	caseIDPattern     = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+)
+
+// Fixture is the synthetic graph, administration plan and documented cases
+// shared by both endpoints.
+type Fixture struct {
+	Name       string               `json:"name"`
+	Purpose    string               `json:"purpose"`
+	Principals map[string]Principal `json:"principals"`
+	Setup      Phase                `json:"setup"`
+	Teardown   Phase                `json:"teardown"`
+	Cases      []Case               `json:"cases"`
+}
+
+// Principal is a fixture principal. Admin principals use the endpoint's
+// operator-supplied credentials; every other principal uses the synthetic
+// password supplied to the harness.
+type Principal struct {
+	Admin bool   `json:"admin,omitempty"`
+	User  string `json:"user,omitempty"`
+}
+
+// Phase groups statements by the database they execute against.
+type Phase struct {
+	Graph          []string `json:"graph"`
+	Administration []string `json:"administration"`
+}
+
+// Case is one documented authorization flow.
+type Case struct {
+	ID          string      `json:"id"`
+	Covers      []string    `json:"covers"`
+	Description string      `json:"description"`
+	Database    string      `json:"database"`
+	Principal   string      `json:"principal"`
+	Impersonate string      `json:"impersonate,omitempty"`
+	Statements  []string    `json:"statements"`
+	Expect      Expectation `json:"expect"`
+}
+
+// Expectation is the documented outcome a reference and candidate must both
+// produce. Allow cases name their exact normalized rows. Deny cases name an
+// error code; a trailing dot means "any code with this prefix".
+type Expectation struct {
+	Kind string  `json:"kind"`
+	Code string  `json:"code,omitempty"`
+	Rows [][]any `json:"rows,omitempty"`
+}
+
+// LoadFixture reads, decodes, normalizes and validates a fixture file.
+func LoadFixture(path string) (*Fixture, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open FGAC fixture %s: %w", path, err)
+	}
+	defer file.Close()
+
+	decoder := convert.CypherInputJSON.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	var fixture Fixture
+	if err := decoder.Decode(&fixture); err != nil {
+		return nil, fmt.Errorf("decode FGAC fixture %s: %w", path, err)
+	}
+	if err := ensureEOF(decoder); err != nil {
+		return nil, fmt.Errorf("decode FGAC fixture %s: %w", path, err)
+	}
+	fixture.normalize()
+	if err := fixture.Validate(); err != nil {
+		return nil, fmt.Errorf("validate FGAC fixture %s: %w", path, err)
+	}
+	return &fixture, nil
+}
+
+func ensureEOF(decoder interface{ Decode(any) error }) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func (f *Fixture) normalize() {
+	for caseIndex := range f.Cases {
+		rows := f.Cases[caseIndex].Expect.Rows
+		for rowIndex := range rows {
+			for columnIndex := range rows[rowIndex] {
+				rows[rowIndex][columnIndex] = normalizeFixtureValue(rows[rowIndex][columnIndex])
+			}
+		}
+	}
+}
+
+func normalizeFixtureValue(value any) any {
+	switch typed := value.(type) {
+	case float64:
+		if typed == math.Trunc(typed) && !math.IsInf(typed, 0) && !math.IsNaN(typed) {
+			return int64(typed)
+		}
+		return typed
+	case []any:
+		normalized := make([]any, len(typed))
+		for index, item := range typed {
+			normalized[index] = normalizeFixtureValue(item)
+		}
+		return normalized
+	case map[string]any:
+		normalized := make(map[string]any, len(typed))
+		for key, item := range typed {
+			normalized[key] = normalizeFixtureValue(item)
+		}
+		return normalized
+	default:
+		return value
+	}
+}
+
+// Validate reports every defect in the fixture rather than stopping at the
+// first one.
+func (f *Fixture) Validate() error {
+	var problems []error
+	if strings.TrimSpace(f.Name) == "" {
+		problems = append(problems, errors.New("name is empty"))
+	}
+	if strings.TrimSpace(f.Purpose) == "" {
+		problems = append(problems, errors.New("purpose is empty"))
+	}
+	if len(f.Principals) == 0 {
+		problems = append(problems, errors.New("principals are empty"))
+	}
+	admin, hasAdmin := f.Principals["admin"]
+	if !hasAdmin || !admin.Admin {
+		problems = append(problems, errors.New("principal \"admin\" must be an admin principal"))
+	}
+	userNames := make(map[string]string, len(f.Principals))
+	for key, principal := range f.Principals {
+		if key == "" {
+			problems = append(problems, errors.New("principal key is empty"))
+			continue
+		}
+		if principal.Admin {
+			if principal.User != "" {
+				problems = append(problems, fmt.Errorf("admin principal %q must not name a user", key))
+			}
+			continue
+		}
+		if !syntheticUserName.MatchString(principal.User) {
+			problems = append(problems, fmt.Errorf("principal %q user %q must match %s", key, principal.User, syntheticUserName))
+		}
+		if previous, exists := userNames[principal.User]; exists {
+			problems = append(problems, fmt.Errorf("principals %q and %q share user %q", previous, key, principal.User))
+		}
+		userNames[principal.User] = key
+	}
+
+	problems = append(problems, validatePhase("setup", f.Setup)...)
+	problems = append(problems, validatePhase("teardown", f.Teardown)...)
+	problems = append(problems, validateTeardownSafety(f.Teardown)...)
+	problems = append(problems, validateSetupNames(f.Setup)...)
+
+	if len(f.Cases) == 0 {
+		problems = append(problems, errors.New("cases are empty"))
+	}
+	seenIDs := make(map[string]bool, len(f.Cases))
+	coverage := make(map[string]bool)
+	for caseIndex, testCase := range f.Cases {
+		location := fmt.Sprintf("case %d (%q)", caseIndex, testCase.ID)
+		if !caseIDPattern.MatchString(testCase.ID) {
+			problems = append(problems, fmt.Errorf("%s: id must be lower kebab-case", location))
+		}
+		if seenIDs[testCase.ID] {
+			problems = append(problems, fmt.Errorf("%s: duplicate id", location))
+		}
+		seenIDs[testCase.ID] = true
+		if strings.TrimSpace(testCase.Description) == "" {
+			problems = append(problems, fmt.Errorf("%s: description is empty", location))
+		}
+		if len(testCase.Covers) == 0 {
+			problems = append(problems, fmt.Errorf("%s: covers is empty", location))
+		}
+		for _, covered := range testCase.Covers {
+			if !knownCoverage(covered) {
+				problems = append(problems, fmt.Errorf("%s: unknown coverage %q", location, covered))
+			}
+			coverage[covered] = true
+		}
+		if testCase.Database != DatabaseSystem && testCase.Database != DatabaseTarget {
+			problems = append(problems, fmt.Errorf("%s: database %q must be %q or %q", location, testCase.Database, DatabaseSystem, DatabaseTarget))
+		}
+		if _, exists := f.Principals[testCase.Principal]; !exists {
+			problems = append(problems, fmt.Errorf("%s: unknown principal %q", location, testCase.Principal))
+		}
+		if testCase.Impersonate != "" {
+			principal, exists := f.Principals[testCase.Impersonate]
+			if !exists || principal.Admin {
+				problems = append(problems, fmt.Errorf("%s: impersonation requires a synthetic user principal", location))
+			}
+		}
+		if len(testCase.Statements) == 0 {
+			problems = append(problems, fmt.Errorf("%s: statements are empty", location))
+		}
+		for statementIndex, statement := range testCase.Statements {
+			if err := validateStatement(statement); err != nil {
+				problems = append(problems, fmt.Errorf("%s: statement %d: %w", location, statementIndex, err))
+			}
+		}
+		if err := testCase.Expect.Validate(); err != nil {
+			problems = append(problems, fmt.Errorf("%s: %w", location, err))
+		}
+	}
+	for _, required := range RequiredCoverage {
+		if !coverage[required] {
+			problems = append(problems, fmt.Errorf("cases do not cover %q", required))
+		}
+	}
+	return errors.Join(problems...)
+}
+
+func knownCoverage(value string) bool {
+	for _, required := range RequiredCoverage {
+		if value == required {
+			return true
+		}
+	}
+	return false
+}
+
+func validatePhase(name string, phase Phase) []error {
+	var problems []error
+	for _, group := range []struct {
+		name       string
+		statements []string
+	}{
+		{"graph", phase.Graph},
+		{"administration", phase.Administration},
+	} {
+		for index, statement := range group.statements {
+			if err := validateStatement(statement); err != nil {
+				problems = append(problems, fmt.Errorf("%s.%s statement %d: %w", name, group.name, index, err))
+			}
+		}
+	}
+	return problems
+}
+
+func validateStatement(statement string) error {
+	if strings.TrimSpace(statement) == "" {
+		return errors.New("statement is empty")
+	}
+	rest := statement
+	for {
+		start := strings.Index(rest, "${")
+		if start < 0 {
+			return nil
+		}
+		end := strings.Index(rest[start:], "}")
+		if end < 0 {
+			return errors.New("unterminated placeholder")
+		}
+		placeholder := rest[start : start+end+1]
+		if placeholder != databasePlaceholder && placeholder != passwordPlaceholder {
+			return fmt.Errorf("unsupported placeholder %q", placeholder)
+		}
+		rest = rest[start+end+1:]
+	}
+}
+
+// Validate checks one case expectation.
+func (expectation Expectation) Validate() error {
+	switch expectation.Kind {
+	case "allow":
+		if expectation.Code != "" {
+			return errors.New("allow expectation must not name a code")
+		}
+		if expectation.Rows == nil {
+			return errors.New("allow expectation must name rows; use [] for no rows")
+		}
+	case "deny":
+		if expectation.Rows != nil {
+			return errors.New("deny expectation must not name rows")
+		}
+		if !strings.HasPrefix(expectation.Code, "Neo.ClientError.") {
+			return fmt.Errorf("deny code %q is not a Neo4j client error", expectation.Code)
+		}
+		if strings.HasSuffix(expectation.Code, ".") && len(expectation.Code) == len("Neo.ClientError.") {
+			return fmt.Errorf("deny code prefix %q is too broad", expectation.Code)
+		}
+	default:
+		return fmt.Errorf("expectation kind %q must be \"allow\" or \"deny\"", expectation.Kind)
+	}
+	return nil
+}
+
+func validateTeardownSafety(phase Phase) []error {
+	var problems []error
+	for index, statement := range phase.Graph {
+		if !strings.Contains(statement, "DETACH DELETE") {
+			problems = append(problems, fmt.Errorf("teardown.graph statement %d must delete with DETACH DELETE", index))
+		}
+		if !strings.Contains(statement, "WHERE") || !strings.Contains(statement, "FGACDoc") || !strings.Contains(statement, "FGACOther") {
+			problems = append(problems, fmt.Errorf("teardown.graph statement %d must scope its delete to the synthetic FGACDoc/FGACOther labels", index))
+		}
+	}
+	for index, statement := range phase.Administration {
+		fields := strings.Fields(statement)
+		if len(fields) < 3 || !strings.EqualFold(fields[0], "DROP") {
+			problems = append(problems, fmt.Errorf("teardown.administration statement %d must be a DROP USER or DROP ROLE", index))
+			continue
+		}
+		if !strings.EqualFold(fields[1], "USER") && !strings.EqualFold(fields[1], "ROLE") {
+			problems = append(problems, fmt.Errorf("teardown.administration statement %d may only drop synthetic users or roles", index))
+			continue
+		}
+		if !syntheticUserName.MatchString(fields[2]) {
+			problems = append(problems, fmt.Errorf("teardown.administration statement %d drops non-synthetic name %q", index, fields[2]))
+		}
+	}
+	return problems
+}
+
+func validateSetupNames(phase Phase) []error {
+	var problems []error
+	for index, statement := range phase.Administration {
+		fields := strings.Fields(statement)
+		if len(fields) < 3 || !strings.EqualFold(fields[0], "CREATE") {
+			continue
+		}
+		if !strings.EqualFold(fields[1], "USER") && !strings.EqualFold(fields[1], "ROLE") {
+			problems = append(problems, fmt.Errorf("setup.administration statement %d may only create synthetic users or roles", index))
+			continue
+		}
+		if !syntheticUserName.MatchString(fields[2]) {
+			problems = append(problems, fmt.Errorf("setup.administration statement %d creates non-synthetic name %q", index, fields[2]))
+		}
+	}
+	return problems
+}
+
+// Substitute fills the only supported placeholders in a fixture statement.
+func Substitute(statement, database, password string) (string, error) {
+	substituted := strings.ReplaceAll(statement, databasePlaceholder, database)
+	substituted = strings.ReplaceAll(substituted, passwordPlaceholder, password)
+	if strings.Contains(substituted, "${") {
+		return "", fmt.Errorf("statement still contains a placeholder: %s", statement)
+	}
+	return substituted, nil
+}

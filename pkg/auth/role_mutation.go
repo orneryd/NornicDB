@@ -108,6 +108,9 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 			if err != nil {
 				return err
 			}
+			if err := changeFineGrainedRole(ctx, view, oldName, newName, remove); err != nil {
+				return err
+			}
 			delete(stagedRoles.roles, oldName)
 			if !remove {
 				stagedRoles.roles[newName] = struct{}{}

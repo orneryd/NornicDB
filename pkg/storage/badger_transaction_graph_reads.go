@@ -911,14 +911,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 // GetFirstNodeByLabel returns the first visible node with the given label.
 func (tx *BadgerTransaction) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	// Label discovery retains this statement's own admission context.
-	nodes, err := tx.GetNodesByLabel(ctx, label)
-	if err != nil {
-		return nil, err
-	}
-	if len(nodes) == 0 {
-		return nil, ErrNotFound
-	}
-	return nodes[0], nil
+	return FirstNodeResult(tx.GetNodesByLabel(ctx, label))
 }
 
 // AllNodes returns all visible nodes including pending transaction writes.

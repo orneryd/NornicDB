@@ -354,7 +354,8 @@ func (p *WatcherPlugin) actionHelp(ctx heimdall.ActionContext) (*heimdall.Action
 	p.requests++
 	p.mu.Unlock()
 
-	catalog := heimdall.ActionCatalog()
+	database, _ := ctx.Params["database"].(string)
+	catalog := heimdall.ActionCatalogForRequest(ctx.Context, database)
 	p.addEvent("info", "Help: listed actions", nil)
 	return &heimdall.ActionResult{
 		Success: true,

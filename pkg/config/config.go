@@ -248,6 +248,10 @@ type EmbeddingExplicitSettings struct {
 type AuthConfig struct {
 	// Enabled controls whether authentication is required
 	Enabled bool
+	// FGACEnabled selects fine-grained entitlements for authenticated requests.
+	FGACEnabled bool
+	// FGACNativeTags enables native tag predicates in Cypher 25 policy.
+	FGACNativeTags bool
 	// InitialUsername is the default admin username
 	InitialUsername string
 	// InitialPassword is the default admin password
@@ -1725,6 +1729,8 @@ type YAMLConfig struct {
 	// Authentication configuration
 	Auth struct {
 		Enabled           *bool  `yaml:"enabled"`
+		FGACEnabled       *bool  `yaml:"fgac_enabled"`
+		FGACNativeTags    *bool  `yaml:"fgac_native_tags"`
 		Username          string `yaml:"username"`
 		Password          string `yaml:"password"`
 		MinPasswordLength int    `yaml:"min_password_length"`
@@ -2292,6 +2298,8 @@ func LoadDefaults() *Config {
 // Environment variables take precedence over config file values.
 func applyEnvVars(config *Config) error {
 	// Authentication - supports both "username:password" and "username/password" formats
+	config.Auth.FGACEnabled = getEnvBool("NORNICDB_FGAC_ENABLED", config.Auth.FGACEnabled)
+	config.Auth.FGACNativeTags = getEnvBool("NORNICDB_FGAC_NATIVE_TAGS", config.Auth.FGACNativeTags)
 	authStr := getEnv("NORNICDB_AUTH", "")
 	// Backward compatibility: allow Neo4j env var
 	if authStr == "" {
@@ -3741,6 +3749,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 	// Also support dedicated auth section
 	if yamlCfg.Auth.Enabled != nil {
 		config.Auth.Enabled = *yamlCfg.Auth.Enabled
+	}
+	if yamlCfg.Auth.FGACEnabled != nil {
+		config.Auth.FGACEnabled = *yamlCfg.Auth.FGACEnabled
+	}
+	if yamlCfg.Auth.FGACNativeTags != nil {
+		config.Auth.FGACNativeTags = *yamlCfg.Auth.FGACNativeTags
 	}
 	if yamlCfg.Auth.Username != "" {
 		config.Auth.InitialUsername = yamlCfg.Auth.Username

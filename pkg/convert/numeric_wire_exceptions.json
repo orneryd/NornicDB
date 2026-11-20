@@ -403,10 +403,6 @@
     "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
     "sha256": "785a9ce4603567cd9a92ff8cd21f0aa5d1ec2006b60085a0d754feed097bfdca"
   },
-  "pkg/server/server_dbconfig.go:Server.handleDbLifecyclePrefix": {
-    "reason": "Author: #1665 implementation lane (Codex). Typed lifecycle scheduler/debt control input retains its integer/time fields. The delta only binds property output before the existing HTTP response owner.",
-    "sha256": "86875cd9ab36a104021bdfc67394af70c39e046fe89f341ce2384c590d27fffc"
-  },
   "pkg/storage/receipt.go:computeReceiptHash": {
     "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",
     "sha256": "8a6bee212022ea17fec7e5794622d4801e86b3386f1f7e292d7ba2d0df7d819e"
@@ -600,8 +596,8 @@
     "sha256": "c73a8cbaaa112250ddd2951a044de2d6d575a506872e7d72b6fc67a5e01967ee"
   },
   "internal/jsontext/codec.go:unmarshal": {
-    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds. Re-reviewed after release df07c94fb: only error metadata now delegates to jsonRootName and JSON Pointer field projection to match Go 1.27; syntax validation, exact string projection and number binding/normalization are unchanged.",
-    "sha256": "c157704408ea7a3138f12ba6de8a4de124db22fbb4a1e89c4ec915af5ac64ff4"
+    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds. Re-reviewed after release df07c94fb: only error metadata now delegates to jsonRootName and JSON Pointer field projection to match Go 1.27; syntax validation, exact string projection and number binding/normalization are unchanged. The typed binder also supports optional unknown-field rejection for policy documents.",
+    "sha256": "1fb16b78597fbbfa7c6887de2b4694b71c75528d898bfa06c3e94a0b04161fdf"
   },
   "internal/testutil/remotegraph/remote_graph.go:New": {
     "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",
@@ -618,10 +614,6 @@
   "pkg/replication/wal_v4_payload.go:decodeV4ReplicationValue": {
     "reason": "Author: #1665 implementation lane (Codex). Historical version-4 compatibility fallback after strict Gob framing. Its old JSON meaning is retained, rather than changing a historical format to the new property policy.",
     "sha256": "e0adf009a9250d8f048ce546e7944fe5e5929bec17d01ab7c09ad47bc85b90fc"
-  },
-  "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
-    "reason": "Author: #1665 implementation lane (Codex). Typed retry/control input is administrative metadata. The delta changes only the shared response adapter; retry authorization and request parsing are unchanged.",
-    "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
   },
   "pkg/storage/wal_v4_file_migration.go:scanV4MigrationWAL": {
     "reason": "Historical WAL framing reads typed WALEntry wrappers (uint64 sequence, uint32 checksum, opaque Data bytes); semantic property decoding remains with the WAL migration owner. Oversized embedding audit frames use the existing bounded streaming reader and do not add a JSON property decoder. NOR-412: frames of the spanned version (7) are accepted as a known version; the JSON read is the same typed WALEntry wrapper. NOR-412 upgrade (#1796): a store journal carries a complete old record over one frame whole through the same bounded reader (readOversizedFrame); the JSON read is still the typed WALEntry header and no property decoder is added. Re-reviewed 2026-11-13 after merged torn-tail recovery: scanV4MigrationWAL recognizes physically incomplete final active frames using walFrameCutShort; both JSON calls still decode the typed WALEntry wrapper. Complete, interior and sealed corruption remain errors. No raw property decoder is admitted.",
@@ -658,10 +650,6 @@
   "pkg/heimdall/handler.go:Handler.handleModels": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "b472c049f0c4bab151c313894b4c7c2715ec59af78ec4330ec249eecdb584ccf"
-  },
-  "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "ddbc37cba475b2f75eb563abead80c0896a33b197c84119f5be713ff1a3b2102"
   },
   "pkg/heimdall/handler.go:Handler.sendCancellationResponse": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",

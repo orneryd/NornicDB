@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -81,6 +82,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 			dynamic = dynamic || label.expression != ""
 		}
 	}
+	fineGrained := auth.FineGrainedRequestFromContext(ctx) != nil
 	touched := make([]interface{}, 0, len(items))
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
@@ -106,11 +108,15 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 					}
 				}
 				node, state := removals.mutableNode(row, item.variable, entity)
-				if err := e.removeFromNode(rowCtx, store, node, item, nodes, rels, result.Stats); err != nil {
+				key, err := e.removeFromNode(rowCtx, store, node, item, nodes, rels, result.Stats)
+				if err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}
-				if result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
+				if fineGrained && key != "" {
+					state.recordProperty(key, false)
+				}
+				if fineGrained && key != "" || result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
 					state.written += result.Stats.PropertiesSet - propertiesBefore
 					touched = appendTouchedEntity(touched, node)
 				}
@@ -128,11 +134,15 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 					}
 				}
 				relationship, state := removals.mutableEdge(row, item.variable, entity)
-				if err := e.removeProperty(rowCtx, relationship.Properties, item, nodes, rels, result.Stats); err != nil {
+				key, err := e.removeProperty(rowCtx, relationship.Properties, item, nodes, rels, result.Stats)
+				if err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}
-				if result.Stats.PropertiesSet != propertiesBefore {
+				if fineGrained && key != "" {
+					state.recordProperty(key, false)
+				}
+				if fineGrained && key != "" || result.Stats.PropertiesSet != propertiesBefore {
 					state.written += result.Stats.PropertiesSet - propertiesBefore
 					touched = appendTouchedEntity(touched, relationship)
 				}
@@ -142,14 +152,14 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 			switch typed := entity.(type) {
 			case *storage.Node:
 				state := removals.stateOfNode(typed)
-				if err := mutateNodeWithObservation(ctx, store, state.before, typed); err != nil {
+				if err := mutateNodeWithObservation(ctx, store, state.before, typed, state.propertyWrites); err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}
 				e.notifyNodeMutated(ctx, string(typed.ID))
 			case *storage.Edge:
 				state := removals.stateOfEdge(typed)
-				if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, typed); err != nil {
+				if err := mutateEdgeWithObservation(ctx, store, state.beforeEdge, typed, state.propertyWrites); err != nil {
 					restoreSetEntities(removals.states)
 					return err
 				}
@@ -245,36 +255,36 @@ func appendTouchedEntity(touched []interface{}, entity interface{}) []interface{
 
 // removeFromNode applies one REMOVE item to node: its labels (checked
 // against the label policies) or one property.
-func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engine, node *storage.Node, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
+func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engine, node *storage.Node, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) (string, error) {
 	if len(item.labels) == 0 {
 		return e.removeProperty(ctx, node.Properties, item, nodes, rels, stats)
 	}
 	labels, err := e.chainLabelNames(ctx, item.labels, nodes, rels)
 	if err != nil {
-		return err
+		return "", err
 	}
 	before := node.Labels
 	next, removed := removeNodeLabels(node.Labels, labels)
 	if removed == 0 {
-		return nil
+		return "", nil
 	}
 	node.Labels = next
 	if err := validatePolicyOnLabelChange(ctx, store, node, before); err != nil {
 		node.Labels = before
-		return err
+		return "", err
 	}
 	stats.LabelsRemoved += int(removed)
-	return nil
+	return "", nil
 }
 
 // removeProperty removes the property one REMOVE item names (n.p, or the
 // value of n[expr]) from properties.
-func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[string]interface{}, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
+func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[string]interface{}, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) (string, error) {
 	name := item.property
 	if item.key != "" {
 		key, err := e.dynamicPropertyKeyOf(ctx, item.key, nodes, rels, true)
 		if err != nil {
-			return err
+			return "", err
 		}
 		name = key
 	}
@@ -282,7 +292,7 @@ func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[str
 		delete(properties, name)
 		stats.PropertiesSet++
 	}
-	return nil
+	return name, nil
 }
 
 // pipelineRowWriteContext is the context a write clause (SET, REMOVE)

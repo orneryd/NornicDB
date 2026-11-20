@@ -58,7 +58,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 	ctx = WithConversationScope(ctx, req.ConversationID)
-	prompt := &PromptContext{Context: ctx, Thinking: req.Thinking, ConversationID: req.ConversationID, SourceDatabase: turn.Database, RequestID: generateID(), RequestTime: time.Now(), ActionPrompt: ActionPrompt(), UserMessage: content, Messages: turn.Messages, PluginData: map[string]interface{}{"message_id": req.MessageID}}
+	prompt := &PromptContext{Context: ctx, Thinking: req.Thinking, ConversationID: req.ConversationID, SourceDatabase: turn.Database, RequestID: generateID(), RequestTime: time.Now(), ActionPrompt: ActionPromptForRequest(ctx, turn.Database), UserMessage: content, Messages: turn.Messages, PluginData: map[string]interface{}{"message_id": req.MessageID}}
 	prompt.SetBifrost(h.bifrost)
 	lifecycle := &requestLifecycle{promptCtx: prompt, requestID: prompt.RequestID, database: newConversationDatabase(h.database, prompt), metrics: h.metrics, principalRoles: PrincipalRolesFromContext(ctx), databaseAccessMode: DatabaseAccessModeFromContext(ctx), resolvedAccessResolver: ResolvedAccessResolverFromContext(ctx)}
 	var flusher http.Flusher

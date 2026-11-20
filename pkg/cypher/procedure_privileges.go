@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -291,6 +292,9 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 // isShowPrivilegesCommand reports SHOW PRIVILEGES and SHOW ROLE[S] r[, …]
 // PRIVILEGES.
 func isShowPrivilegesCommand(ctx context.Context, cypher string) bool {
+	if isShowUserPrivileges(ctx, cypher) {
+		return true
+	}
 	if startsWithKeywords(ctx, cypher, "SHOW", "PRIVILEGES") || startsWithKeywords(ctx, cypher, "SHOW", "PRIVILEGE") {
 		return true
 	}
@@ -329,9 +333,14 @@ func showPrivilegeRoles(ctx context.Context, head string) []string {
 	return roles
 }
 
+var showPrivilegeColumns = []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}
+
 // executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
 // access, action, resource, graph, segment, role, immutable.
 func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string) (*ExecuteResult, error) {
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil && request.Runtime != nil {
+		return e.executeShowFineGrainedPrivileges(ctx, request, head)
+	}
 	system, err := e.privilegeStorage(false)
 	if err != nil {
 		return nil, err
@@ -344,7 +353,7 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 	for _, role := range showPrivilegeRoles(ctx, head) {
 		only[role] = true
 	}
-	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: slices.Clone(showPrivilegeColumns), Rows: [][]interface{}{}}
 	for _, grant := range grants {
 		if len(only) > 0 && !only[grant.Role] {
 			continue

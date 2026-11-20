@@ -339,30 +339,17 @@ func (h *LiveHeimdallInvoker) InvokeAction(ctx context.Context, action string, p
 
 // SendPrompt sends a prompt to the SLM and processes the response.
 func (h *LiveHeimdallInvoker) SendPrompt(ctx context.Context, prompt string) (*ActionResult, error) {
-	if h.generator == nil {
-		return &ActionResult{Success: false, Message: "SLM not available"}, nil
+	if h.generator != nil {
+		prompt = ActionPromptForRequest(ctx, "") + "\n\nUser: " + prompt
 	}
-
-	// Build system prompt with available actions
-	actionPrompt := ActionPrompt() // Use the global action prompt generator
-	fullPrompt := actionPrompt + "\n\nUser: " + prompt
-
-	// Generate response from SLM
-	response, err := h.generator.Generate(ctx, fullPrompt, DefaultGenerateParams())
-	if err != nil {
-		return &ActionResult{Success: false, Message: fmt.Sprintf("SLM error: %v", err)}, nil
+	result, err := h.SendRawPrompt(ctx, prompt)
+	if err != nil || !result.Success {
+		return result, err
 	}
-
-	// Try to parse as action
-	if parsedAction := parseActionEnvelope(response); parsedAction != nil {
-		return h.InvokeAction(ctx, parsedAction.Action, parsedAction.Params)
+	if action := parseActionEnvelope(result.Message); action != nil {
+		return h.InvokeAction(ctx, action.Action, action.Params)
 	}
-
-	// Return raw response if not an action
-	return &ActionResult{
-		Success: true,
-		Message: response,
-	}, nil
+	return result, nil
 }
 
 // SendRawPrompt sends a prompt directly to the SLM without action routing context.
@@ -1656,6 +1643,23 @@ func RegisterBuiltinAction(action ActionFunc) {
 
 // ExecuteAction executes an action by name with the given context.
 func ExecuteAction(name string, ctx ActionContext) (*ActionResult, error) {
+	if ctx.Context != nil {
+		if request := auth.FineGrainedRequestFromContext(ctx.Context); request != nil {
+			database, _ := ctx.Params["database"].(string)
+			database, selectable := fineGrainedActionDatabase(ctx.Context, database)
+			if !selectable {
+				return nil, auth.ErrFineGrainedForbidden
+			}
+			action := "heimdall.invoke." + name
+			if !request.CanAccessDatabase(database) || !request.AllowsDatabase(action, database, "") {
+				return nil, auth.ErrFineGrainedForbidden
+			}
+			ctx.Context = auth.WithFineGrainedDatabaseAction(ctx.Context, action)
+			if !request.Access.AllowsAllDatabases(action) {
+				ctx.Metrics = nil
+			}
+		}
+	}
 	m := GetSubsystemManager()
 	workCtx, release, accepted := m.acquireCallbackWork(ctx.Context)
 	if !accepted {
@@ -1700,7 +1704,10 @@ func ActionCatalog() map[string][]ActionFunc {
 // Each tool has name, description, and inputSchema (JSON Schema); when an action
 // has no InputSchema set, DefaultActionInputSchema is used.
 func ActionsAsMCPTools() []MCPTool {
-	catalog := ActionCatalog()
+	return mcpToolsForActionCatalog(ActionCatalog())
+}
+
+func mcpToolsForActionCatalog(catalog map[string][]ActionFunc) []MCPTool {
 	var tools []MCPTool
 	for _, actions := range catalog {
 		for _, a := range actions {
@@ -1728,8 +1735,15 @@ func HeimdallPluginsInitialized() bool {
 
 // ActionPrompt generates a list of available actions.
 func ActionPrompt() string {
-	catalog := ActionCatalog()
+	return renderActionPrompt(ActionCatalog())
+}
 
+// ActionPromptForRequest lists the actions the caller can discover and invoke.
+func ActionPromptForRequest(ctx context.Context, database string) string {
+	return renderActionPrompt(ActionCatalogForRequest(ctx, database))
+}
+
+func renderActionPrompt(catalog map[string][]ActionFunc) string {
 	var prompt string
 	for category, actions := range catalog {
 		prompt += fmt.Sprintf("## %s\n", category)

@@ -10,13 +10,16 @@ import (
 // mutateNodeWithObservation advances a user mutation's version time and sends
 // its immutable pre-mutation image through the canonical storage update API.
 // Callers own property/label rollback; this helper restores only the timestamp.
-func mutateNodeWithObservation(ctx context.Context, store storage.Engine, before, node *storage.Node) error {
+func mutateNodeWithObservation(ctx context.Context, store storage.Engine, before, node *storage.Node, intent ...storage.PropertyWriteIntent) error {
 	if node == nil {
 		return store.UpdateNode(ctx, storage.NodeUpdateRequest{Before: before})
 	}
 	previous := node.UpdatedAt
 	node.UpdatedAt = time.Now()
 	updateRequest := storage.NodeUpdateRequest{Before: before, After: node}
+	if len(intent) > 0 {
+		updateRequest.PropertyWrites = intent[0]
+	}
 	if err := store.UpdateNode(ctx, updateRequest); err != nil {
 		node.UpdatedAt = previous
 		return err
@@ -26,13 +29,16 @@ func mutateNodeWithObservation(ctx context.Context, store storage.Engine, before
 
 // mutateEdgeWithObservation stores edge as an update observed from before, as
 // mutateNodeWithObservation does for a node.
-func mutateEdgeWithObservation(ctx context.Context, store storage.Engine, before, edge *storage.Edge) error {
+func mutateEdgeWithObservation(ctx context.Context, store storage.Engine, before, edge *storage.Edge, intent ...storage.PropertyWriteIntent) error {
 	if edge == nil {
 		return store.UpdateEdge(ctx, storage.EdgeUpdateRequest{Before: before})
 	}
 	previous := edge.UpdatedAt
 	edge.UpdatedAt = time.Now()
 	updateRequest := storage.EdgeUpdateRequest{Before: before, After: edge}
+	if len(intent) > 0 {
+		updateRequest.PropertyWrites = intent[0]
+	}
 	if err := store.UpdateEdge(ctx, updateRequest); err != nil {
 		edge.UpdatedAt = previous
 		return err

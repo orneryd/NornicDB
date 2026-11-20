@@ -715,7 +715,11 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	if collection {
 		if r.Method == http.MethodGet {
-			httpresponse.WritePropertyJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
+			roles := auth.ReadRoleCatalog(s.roleStore, nil).RoleNames
+			if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+				roles = principal.Runtime.RoleNames()
+			}
+			httpresponse.WritePropertyJSON(w, http.StatusOK, roles)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -742,6 +746,11 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	stores := auth.RoleMutationStores{Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth}
+	if auth.FineGrainedRequestFromContext(r.Context()) != nil &&
+		(auth.NormalizeRoleName(name) == auth.FineGrainedPublicRole || auth.NormalizeRoleName(roleName) == auth.FineGrainedPublicRole) {
+		s.writeRoleRecordError(w, r, auth.ErrCannotDeleteBuiltinRole)
+		return
+	}
 	var err error
 	switch r.Method {
 	case http.MethodPost:

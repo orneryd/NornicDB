@@ -1,3 +1,5 @@
+import { loadFgacEffectiveRules } from "../utils/api";
+import { hasFgacActionFamily, permitsFgacAction } from "../utils/fgacCatalog";
 import { Disclosure } from "../components/common/Disclosure";
 import { useState, useEffect, useId } from "react";
 import { useNavigate } from "react-router-dom";
@@ -44,6 +46,8 @@ export function Security() {
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState<"token" | "config" | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canEditPolicy, setCanEditPolicy] = useState(false);
+  const [canUseKnowledge, setCanUseKnowledge] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
@@ -67,9 +71,13 @@ export function Security() {
       credentials: "include",
     })
       .then((res) => res.json())
-      .then((data) => {
+      .then(async (data) => {
+        const effective = await loadFgacEffectiveRules();
         const roles = data.roles || [];
-        setIsAdmin(roles.includes("admin"));
+        const legacyAdmin = roles.includes("admin");
+        setIsAdmin(effective.enforced ? permitsFgacAction(effective, "dbms.user.show") : legacyAdmin);
+        setCanEditPolicy(effective.enforced ? permitsFgacAction(effective, "dbms.security.policy.manage") : legacyAdmin);
+        setCanUseKnowledge(effective.enforced ? hasFgacActionFamily(effective, "knowledge.") : legacyAdmin);
         setUserInfo(data);
         setEmail(data.email || "");
         setCheckingAuth(false);
@@ -162,38 +170,38 @@ export function Security() {
         title="Security & API Tokens"
         backTo="/"
         actions={
-          isAdmin && (
+          (isAdmin || canEditPolicy || canUseKnowledge) && (
             <div className="flex gap-2">
-              <Button
+              {canEditPolicy && <Button
                 variant="secondary"
                 onClick={() => navigate("/security/database-access")}
               >
                 Database Access
-              </Button>
-              <Button
+              </Button>}
+              {isAdmin && <Button
                 variant="secondary"
                 onClick={() => navigate("/security/retention")}
               >
                 Retention Policies
-              </Button>
-              <Button
+              </Button>}
+              {isAdmin && <Button
                 variant="secondary"
                 onClick={() => navigate("/security/lifecycle")}
               >
                 MVCC Lifecycle
-              </Button>
-              <Button
+              </Button>}
+              {canUseKnowledge && <Button
                 variant="secondary"
                 onClick={() => navigate("/security/knowledge-policies")}
               >
                 Knowledge Policies
-              </Button>
-              <Button
+              </Button>}
+              {isAdmin && <Button
                 variant="secondary"
                 onClick={() => navigate("/security/admin")}
               >
                 👥 Admin Panel
-              </Button>
+              </Button>}
             </div>
           )
         }

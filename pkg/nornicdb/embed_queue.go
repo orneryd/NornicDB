@@ -104,6 +104,13 @@ type EmbedWorker struct {
 	nodeRetries   map[storage.NodeID]*nodeEmbeddingRetry // claimMu: retry ownership until an accepted outcome
 	retrySequence uint64                                 // claimMu: FIFO failure order, independent of deadline
 
+	// callerJobs records the caller operation that caused a requeued attempt.
+	// Nodes without a record are service (managed) work. callerJobCount lets the
+	// dispatch path skip the provenance lookup entirely when no caller operation
+	// is outstanding.
+	callerJobs     map[string]*callerEmbeddingJob // claimMu
+	callerJobCount atomic.Int32
+
 	embeddingEpoch atomic.Uint64
 
 	// workersStarted is true once StartWorkers() has been called (used when DeferWorkerStart is true).
@@ -459,10 +466,14 @@ func (ew *EmbedWorker) ParkedEmbeddingFailures(ctx context.Context, limit int) (
 	return failures, nil
 }
 
-// RetryParkedEmbeddingFailures clears terminal failure metadata and restores
-// the selected nodes to the durable pending queue. An empty ID list retries
-// every parked node.
+// RetryParkedEmbeddingFailures clears terminal failure state and requeues the
+// selected nodes. An empty ID list retries every parked node. If the context
+// binds a caller operation, the worker revalidates it before provider dispatch.
 func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []storage.NodeID) (int, error) {
+	caller, callerBound := ctx.Value(embeddingCallerKey{}).(embeddingCallerRequest)
+	if callerBound && caller.authority == nil {
+		return 0, ErrEmbeddingAuthorityRequired
+	}
 	if ew == nil || ew.storage == nil {
 		return 0, errors.New("embedding worker storage is unavailable")
 	}
@@ -475,6 +486,10 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 		return 0, err
 	}
 	retried := 0
+	var job *callerEmbeddingJob
+	if callerBound {
+		job = &callerEmbeddingJob{authority: caller.authority}
+	}
 	for _, failure := range failures {
 		if len(selected) > 0 {
 			if _, ok := selected[failure.NodeID]; !ok {
@@ -497,13 +512,9 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 		if err != nil {
 			return retried, err
 		}
-		embeddingutil.InvalidateManagedEmbeddings(node)
-		// Clearing the embedding state deletes the sidecar records (meta
-		// and chunk keys) so the node can be re-embedded cleanly.
-		if err := ew.commitNodeReset(node); err != nil {
+		if err := ew.resetCallerEmbedding(node, job); err != nil {
 			return retried, err
 		}
-		ew.addNodeToPendingEmbeddings(node.ID)
 		retried++
 	}
 	remaining := len(failures) - retried
@@ -1068,6 +1079,12 @@ func (ew *EmbedWorker) processNextResolvedBatch(selections ...embeddingSelection
 
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	for _, group := range groups {
+		admittedNodes, admittedRefusal := ew.admitSubmission(group.nodes, group.propertyBatcher != nil)
+		group.nodes = admittedNodes
+		progressed = progressed || admittedRefusal
+		if len(group.nodes) == 0 {
+			continue
+		}
 
 		sources := make([]embeddingutil.EmbedText, len(group.nodes))
 		texts := make([]string, len(group.nodes))
@@ -1154,6 +1171,14 @@ func (ew *EmbedWorker) processNextNode(selections ...embeddingSelection) (bool, 
 
 func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
 	defer ew.releaseNodeClaim(node.ID)
+	propertyEmbedder, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
+	usesProperties = usesProperties && propertyEmbedder.UsesDocumentProperties()
+
+	// Caller-caused input is revalidated at the submission boundary; a refusal
+	// is a durable outcome and never reaches the provider.
+	if admitted, refused := ew.admitSubmission([]*storage.Node{node}, usesProperties); len(admitted) == 0 {
+		return refused
+	}
 
 	// Build text for embedding (labels and properties per config include/exclude)
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
@@ -1163,9 +1188,8 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
 	// Embed documents through the provider-managed document path when available.
 	// Voyage contextualized mode uses this to return provider-generated chunks;
 	// other providers fall back to deterministic local chunking + micro-batches.
-	propertyEmbedder, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
 	var result nodeEmbeddingResult
-	if usesProperties && propertyEmbedder.UsesDocumentProperties() {
+	if usesProperties {
 		document, err := propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
 		ew.waitAfterProviderRequest()
 		result = documentNodeEmbeddingResult(document, err)
@@ -1197,6 +1221,14 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 	}
 
 	progressed := skipped
+	nodes, admittedRefusal := ew.admitSubmission(nodes, false)
+	progressed = progressed || admittedRefusal
+	if len(nodes) == 0 {
+		if progressed {
+			ew.signalTrigger()
+		}
+		return progressed, nil
+	}
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	sources := make([]embeddingutil.EmbedText, len(nodes))
 	texts := make([]string, len(nodes))
@@ -1523,9 +1555,14 @@ func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool, selections ...embe
 	return copyNodeForEmbedding(node), false, nil
 }
 
-func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
+func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID, nextJob ...*callerEmbeddingJob) {
 	ew.claimMu.Lock()
 	id := string(nodeID)
+	if len(nextJob) != 0 && nextJob[0] != nil {
+		ew.recordCallerAuthorityLocked(id, nextJob[0])
+	} else if ew.nodeRetries[nodeID] == nil {
+		ew.dropCallerAuthorityLocked(id)
+	}
 	attempt, claimed := ew.claimedNodes[id]
 	if claimed {
 		delete(ew.claimedNodes, id)
@@ -1797,6 +1834,9 @@ func copyNodeForEmbedding(src *storage.Node) *storage.Node {
 	}
 
 	dst.CopyEmbeddingIdentityFrom(src)
+	if interruptedCallerAttempt(src) {
+		dst.EmbedMeta = map[string]any{storage.EmbeddingCallerPendingKey: true}
+	}
 
 	// Copy labels
 	copy(dst.Labels, src.Labels)

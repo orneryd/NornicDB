@@ -772,6 +772,8 @@ type Server struct {
 	processConfig         *nornicConfig.Config
 	memoryPolicy          *memory.Policy
 	dbConfigStateMu       sync.RWMutex
+	fgacDBConfigWriteMu   sync.Mutex
+	fineGrainedRuntime    *auth.FineGrainedRuntime
 	dbConfigActive        map[string]map[string]string
 	dbConfigPending       map[string]map[string]struct{}
 	// perDBYAMLOverrides carries the `databases:` map from nornicdb.yaml,
@@ -1777,6 +1779,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
 		} else {
 			s.roleEntitlementsStore = roleEntitlementsStore
+		}
+		if globalConfig.Auth.FGACEnabled {
+			if err := s.initializeFineGrainedRuntime(ctx); err != nil {
+				return nil, err
+			}
 		}
 		dbConfigStore := dbconfig.NewStore(systemStorage)
 		// Seed yaml-declared per-DB overrides on first boot. After the

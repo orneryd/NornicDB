@@ -1,0 +1,16 @@
+{
+  "references": [
+    {
+      "version": "5.26.30",
+      "edition": "enterprise",
+      "image": "neo4j:5.26.30-enterprise",
+      "digest": "sha256:8befcd4e0f48ebd34c58ae071c3e960ca0479675d1046ec35580f8a1dd19891c"
+    },
+    {
+      "version": "2026.10.2",
+      "edition": "enterprise",
+      "image": "neo4j:2026.10.2-enterprise",
+      "digest": "sha256:941ba98b5acb7cfd9aa72a0aeebd6ffbefd870a514455620eac9ef0bc67e25a9"
+    }
+  ]
+}

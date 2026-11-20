@@ -54,6 +54,12 @@ import (
 //	defer historical.Close()
 //	nodes, err := historical.GetNodesByLabel(ctx, "Person")
 func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engine, error) {
+	return OpenHistoricalReadAtVersion(ctx, engine, MVCCVersion{CommitTimestamp: at.UTC(), CommitSequence: ^uint64(0)})
+}
+
+// OpenHistoricalReadAtVersion pins the exact committed version, including
+// its sequence, for every entity and adjacency read in the returned view.
+func OpenHistoricalReadAtVersion(ctx context.Context, engine Engine, version MVCCVersion) (Engine, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,7 +67,6 @@ func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engin
 	if err != nil {
 		return nil, err
 	}
-	version := MVCCVersion{CommitTimestamp: at.UTC(), CommitSequence: ^uint64(0)}
 	// The reader registration precedes the snapshot capture: a prune step
 	// decides its floors from the registered readers, so every step that starts
 	// after this registration keeps the versions the cutoff reads. A step

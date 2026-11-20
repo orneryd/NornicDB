@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
+	"github.com/orneryd/nornicdb/pkg/auth"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -114,7 +115,17 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 
 	// Get point count
 	var pointsCount uint64
-	if count, err := s.collections.PointCount(ctx, req.CollectionName); err == nil {
+	if principal := auth.FineGrainedRequestFromContext(ctx); principal != nil {
+		engine, _, err := s.collections.Open(ctx, req.CollectionName)
+		if err != nil {
+			return nil, err
+		}
+		points, err := principal.Graph(engine, req.CollectionName).GetNodesByLabel(ctx, QdrantPointLabel)
+		if err != nil {
+			return nil, err
+		}
+		pointsCount = uint64(len(points))
+	} else if count, err := s.collections.PointCount(ctx, req.CollectionName); err == nil {
 		pointsCount = uint64(count)
 	}
 

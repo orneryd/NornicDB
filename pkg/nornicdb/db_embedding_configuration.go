@@ -133,9 +133,9 @@ func (db *DB) SetDatabaseEmbeddingsEnabled(database string, enabled bool) {
 }
 
 func (db *DB) managedEmbeddingAllowed(id storage.NodeID) bool {
-	database, _, qualified := splitQualifiedID(string(id))
-	if !qualified {
-		database = db.defaultDatabaseName()
+	database, ok := db.EmbeddingDatabaseOfNodeID(id)
+	if !ok {
+		return false
 	}
 	engine := unwrapToBadgerEngine(db.baseStorage)
 	return engine == nil || engine.IsDatabaseEmbeddingsEnabled(database)

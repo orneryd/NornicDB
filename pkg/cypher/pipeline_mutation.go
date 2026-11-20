@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -218,7 +219,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			return nil, true, err
 		}
 		evalNodes := nodes
-		if simplePropertyAssignment {
+		if simplePropertyAssignment && auth.FineGrainedRequestFromContext(ctx) == nil {
 			if node := nodes[simpleTarget]; node != nil {
 				value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
 				if err != nil {

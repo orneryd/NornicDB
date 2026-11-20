@@ -72,8 +72,8 @@
     },
     {
       "path": "api-reference/bolt-protocol.md",
-      "sha256": "b2d5b7a18d9d3685977124c25ee33c2f4708c7367f9a958c76cedd9bfa65f842",
-      "bytes": 12457
+      "sha256": "3bef61c65770d49d9db01dddf2620805f9f3c58e4208ad75b0b876e0212822fa",
+      "bytes": 13212
     },
     {
       "path": "api-reference/cypher-functions/README.md",
@@ -392,8 +392,8 @@
     },
     {
       "path": "development/contributing.md",
-      "sha256": "4502ee938111cde4290b50d047f224f46f8e0d42102d8b7fdcf0b77ec01d3e1e",
-      "bytes": 16591
+      "sha256": "0fda3a5ecf59fa316a523e875c26a9d74f458cca5198c2a5ae2838868b7d1d7a",
+      "bytes": 16695
     },
     {
       "path": "development/count-store-visibility.md",
@@ -402,8 +402,8 @@
     },
     {
       "path": "development/cypher-preparation-context-api.md",
-      "sha256": "61d36d041ed11ae372a83b01b49729eda25d7fc5398a37bbd6cc91d77616642b",
-      "bytes": 6017
+      "sha256": "167ec75bf85f66ddc80c2fb4584db618b79d254b94f3a0e347a3e77a4718bcf5",
+      "bytes": 5947
     },
     {
       "path": "development/cypher-source-stage-api.md",
@@ -449,6 +449,11 @@
       "path": "development/graphify-relationship-outdated-investigation.md",
       "sha256": "3e18dad8a84a9f43a2c899f404cf0468bc3bf5d21212fbf6618d4a9091ebef12",
       "bytes": 6978
+    },
+    {
+      "path": "development/graphify-workspace.md",
+      "sha256": "ca226b2e83e78eff2f7006845220ed3d11e25a23652dfd20958a1fb20d1ba8d1",
+      "bytes": 7740
     },
     {
       "path": "development/graphml-go-api.md",
@@ -552,13 +557,13 @@
     },
     {
       "path": "development/setup.md",
-      "sha256": "c8b7343543e5fd6b10ba9abb4ad2b2b2bd5b1cbf1dc67b0f4c587f798cdfd9c6",
+      "sha256": "668fea1da1bc68bd46ee69e97c6e1c4fa2ad6819014b924189393d2c6b6935fe",
       "bytes": 8564
     },
     {
       "path": "development/storage-bulk-read-go-api.md",
-      "sha256": "f2bae80b7f19cfc180b090b74f18389f35acd1df8e2c2c1198d054a9a8f26625",
-      "bytes": 7211
+      "sha256": "2787f9258e79b3f9b5d11a2679cefbd24a3e5e8e6bb8e008116dd7903a9c1102",
+      "bytes": 8515
     },
     {
       "path": "development/storage-preparation-context.md",
@@ -702,13 +707,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "5d62933d32c160677fb79b4094975cd5bc51b36a2427e617f2660e3cfbec41bc",
-      "bytes": 218113
+      "sha256": "2b36b55f8ddc8a0a23efde023f6084959f1936f8a87624a8f76fa22f7de08032",
+      "bytes": 220495
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "5ab8aaa9cb589280e8c5e56cd6529c412f694100eb0ce46f73df5555a679f1c6",
-      "bytes": 159251
+      "sha256": "72c7cd7d8216e434ec2a3ca6f4cc70efde5b51451ad9747a147921a1f2796292",
+      "bytes": 160963
     },
     {
       "path": "getting-started/README.md",
@@ -822,8 +827,8 @@
     },
     {
       "path": "operations/configuration.md",
-      "sha256": "db7fb161a97ebc69b9ca8da2f97fe5f461794abf0433808363e877122e342c46",
-      "bytes": 79770
+      "sha256": "1cf606ccaa76c9170e60e48e276f24f4f3ae37aa78fada803b41cba69890dc75",
+      "bytes": 79938
     },
     {
       "path": "operations/dashboards/nornicdb-overview.json",
@@ -847,8 +852,8 @@
     },
     {
       "path": "operations/environment-variables.md",
-      "sha256": "09569916e91785b9c69b35262014de994b5ed922f963eddf4e3c9834571f6fbc",
-      "bytes": 266728
+      "sha256": "105a1e5671f345ae224a3534931d8d3ada5e9e15420f8e7fbab5e44e6d9afe8d",
+      "bytes": 266953
     },
     {
       "path": "operations/low-memory-mode.md",
@@ -867,8 +872,8 @@
     },
     {
       "path": "operations/monitoring.md",
-      "sha256": "daeb75c413119aafe4ba28d464af5471f5fb86cf5406d6057a79a0f4c52ebaaf",
-      "bytes": 14412
+      "sha256": "397f0ceb9cc19d4a5224794dc73b80031d8083c6831915835138e1499cffe5ce",
+      "bytes": 16244
     },
     {
       "path": "operations/mvcc-lifecycle-compaction.md",
@@ -1347,8 +1352,8 @@
     },
     {
       "path": "performance/hot-path-query-cookbook.md",
-      "sha256": "32b11577a08b20566cce9660705678c53b17ccc8c5ff04ed0727733cbe488efc",
-      "bytes": 30233
+      "sha256": "95c6e6d9100ec18980bb57d01bbc5c75e23c14b016fc87331cf51d8e3197a4cd",
+      "bytes": 29863
     },
     {
       "path": "performance/http-api-vs-neo4j.md",
@@ -1442,8 +1447,8 @@
     },
     {
       "path": "performance/v150-rc-corrections.md",
-      "sha256": "02716d2628ca276fe41df9b23ff84eebc20a1b901b841ac46b78dbfa61a6b0f7",
-      "bytes": 79952
+      "sha256": "c35af63385bad9fd307ef4eba79da7ab1bfd72beefded5063f1c397e7ab6fbf4",
+      "bytes": 84748
     },
     {
       "path": "performance/v150-result-copy-scratch.md",
@@ -1522,13 +1527,18 @@
     },
     {
       "path": "security/README.md",
-      "sha256": "141bf0ebee0e897a0ca5f291215eec4e89d9ce7ad55e483c1ab48b74a39c4970",
-      "bytes": 1611
+      "sha256": "146f763f71a1c40e8c47ea857f5c536aa0657325084d66588d982a9910061d4d",
+      "bytes": 1716
     },
     {
       "path": "security/entitlements.md",
       "sha256": "6fa1c63f8b9e0c4b580d1840c7b2fdb214e33eb7ee8a7f5d33baed31419e24db",
       "bytes": 4107
+    },
+    {
+      "path": "security/fine-grained-access-control.md",
+      "sha256": "861e163717654168e581d3e2fec3facdb556b5ec28cbe28ba86e8a051c5b9a4b",
+      "bytes": 6440
     },
     {
       "path": "security/http-security.md",
@@ -1707,8 +1717,8 @@
     },
     {
       "path": "user-guides/heimdall-ai-assistant.md",
-      "sha256": "7d12fc24e97f3c3a33b9e8e8135c75731a2a86612a433e9f519fda46163bc079",
-      "bytes": 30133
+      "sha256": "e1f3eface0c9aea83a2c0cf2e7f757ba37d4d96884b54350fe3e00ee378d0eb8",
+      "bytes": 31284
     },
     {
       "path": "user-guides/heimdall-context.md",

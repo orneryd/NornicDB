@@ -116,6 +116,22 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			return
 		}
 
+		ctx := context.WithValue(r.Context(), contextKeyClaims, claims)
+		if s.fineGrainedRuntime != nil {
+			ctx = auth.WithRequestIdentity(ctx, auth.RequestIdentity{ID: auth.PrincipalID(claims), Username: claims.Username})
+			principal, err := s.fineGrainedRuntime.Admit(ctx, claims.Roles)
+			if err == nil && principal.PasswordChangeRequired && r.Pattern != "/auth/password" && r.Pattern != "/auth/me" && r.Pattern != "/auth/logout" && r.Pattern != "/db/{database}/query/v2" {
+				s.writeNeo4jError(w, http.StatusForbidden, "Neo.ClientError.Security.CredentialsExpired", "password change required")
+				return
+			}
+			if err != nil || !fineGrainedHTTPAllowed(r, principal) {
+				s.writeNeo4jInsufficientPermissions(w, r)
+				return
+			}
+			handler(w, r.WithContext(auth.WithFineGrainedRequest(ctx, principal)))
+			return
+		}
+
 		// An empty permission denotes authenticated identity-only endpoints.
 		if requiredPerm != "" && !hasPermission(s, claims.Roles, requiredPerm) {
 			s.logAudit(r, claims.Sub, "access_denied", false,
@@ -124,8 +140,6 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			return
 		}
 
-		// Add claims to request context
-		ctx := context.WithValue(r.Context(), contextKeyClaims, claims)
 		handler(w, r.WithContext(ctx))
 	}
 }

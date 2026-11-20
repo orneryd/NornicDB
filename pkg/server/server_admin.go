@@ -8,6 +8,7 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -30,7 +31,11 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		if dbName == "system" {
 			continue
 		}
-		if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+		if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+			if !request.CanAccessDatabase(dbName) || !request.AllowsDatabase("database.stats.read", dbName, "") {
+				continue
+			}
+		} else if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
 			continue
 		}
 
@@ -93,7 +98,7 @@ const (
 // handleBackupOperation owns the common authorization, request and error
 // contract. The selected operation retains its existing storage side effects.
 func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, operation backupOperation) {
-	if !s.authorizeAllDatabaseOperation(w, r) {
+	if auth.FineGrainedRequestFromContext(r.Context()) == nil && !s.authorizeAllDatabaseOperation(w, r) {
 		return
 	}
 	if r.Method != http.MethodPost {

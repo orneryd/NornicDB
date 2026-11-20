@@ -27,7 +27,7 @@ func cypherGrammarVersion(query string) string {
 			version = rest[:end]
 			rest = strings.TrimSpace(rest[end:])
 		}
-		for rest != "" && !startsWithClauseKeyword(rest) {
+		for rest != "" && !startsCypherPreambleBody(rest) {
 			end := strings.IndexFunc(rest, cyphertext.IsWhitespace)
 			if end < 0 {
 				rest = ""

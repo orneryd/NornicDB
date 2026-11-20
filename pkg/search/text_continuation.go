@@ -159,6 +159,33 @@ func (s *Service) SearchTextContinuation(
 		}
 		return searchPageFromResultStream(page)
 	}
+	// An initial FGAC cursor owns its private corpus through Close. A later
+	// pull enters the existing registry using the still-authenticated owner
+	// and the retained stream checks that its policy is still current.
+	var release func() error
+	var transferred bool
+	if principal := s.requestedFineGrainedView(ctx); principal != nil {
+		view, buildErr := s.fineGrainedView(ctx, principal)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		release = view.Close
+		defer func() {
+			if !transferred {
+				_ = release()
+			}
+		}()
+		s = view
+		searchQuery = view.Search
+	}
+	ownStream := func(stream resultstream.Stream) resultstream.Stream {
+		if release == nil {
+			return stream
+		}
+		transferred = true
+		return newFineGrainedSearchStream(stream, s, release)
+	}
+
 	if request.Mode == "" {
 		request.Mode = SearchContinuationRanked
 	}
@@ -178,7 +205,7 @@ func (s *Service) SearchTextContinuation(
 		if err != nil {
 			return nil, err
 		}
-		page, err := registry.Start(ctx, scope, stream, request.N)
+		page, err := registry.Start(ctx, scope, ownStream(stream), request.N)
 		if err != nil {
 			return nil, err
 		}
@@ -317,10 +344,10 @@ func (s *Service) SearchTextContinuation(
 	if err != nil {
 		return nil, err
 	}
-	page, err := registry.Start(ctx, scope, &searchMetadataStream{
+	page, err := registry.Start(ctx, scope, ownStream(&searchMetadataStream{
 		Stream: stream, state: state, engine: s.engine, authorizeNode: request.AuthorizeNode,
 		projection: newResultPropertyProjection(ownedOptions.IncludeProperties, ownedOptions.ExcludeProperties),
-	}, request.N)
+	}), request.N)
 	if err != nil {
 		return nil, err
 	}
@@ -462,9 +489,7 @@ func (s *searchMetadataStream) RetainedBytes() int64 {
 }
 
 func (s *searchMetadataStream) SetRetainedBytesGrowthGuard(growthOK func() bool) {
-	if guarded, ok := s.Stream.(resultstream.RetainedBytesGrowthGuard); ok {
-		guarded.SetRetainedBytesGrowthGuard(growthOK)
-	}
+	resultstream.BindRetainedBytesGrowthGuard(s.Stream, growthOK)
 }
 
 func continuationRows(results []SearchResult) [][]any {
