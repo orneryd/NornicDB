@@ -40,7 +40,7 @@ repro_result() { # PASS|FAIL detail...
 about() {
   local l
   for l in "$@"; do echo "REPRO_ABOUT $l"; done
-  echo "REPRO_ABOUT RESULT forms: PASS (exit 0): the reader exited 0 and every result it printed is the expected one, on every instance; FAIL (exit 1): at least one reader failure path was observed, and the detail names each path with its count and message; HARNESS-ERROR (exit 2): the reproduction could not run (preflight, invalid REPRO_STORES/REPRO_COUNT, writer failure or incomplete store, reader output not as expected), or the reader exited nonzero although none of its results shows a failure path."
+  echo "REPRO_ABOUT RESULT forms: PASS (exit 0), FAIL (exit 1), HARNESS-ERROR (exit 2), under the conditions of the Verdict line above; HARNESS-ERROR also when the preflight fails, REPRO_STORES or REPRO_COUNT is not an integer >= 1, or the writer exits nonzero or leaves no expected.json or data/MANIFEST."
 }
 
 # require_count <name> <value>: an integer >= 1, else HARNESS-ERROR (an empty instance list would run nothing).

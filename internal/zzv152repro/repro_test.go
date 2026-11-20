@@ -6,7 +6,7 @@ package zzv152repro
 //	REPRO_ITEM=<item> [REPRO_ARGS='<args>'] go test ./internal/zzv152repro -run '^TestV152Repro$' -count=1 -v
 //
 // REPRO_ARGS: script arguments separated by spaces or commas, each of the form --name or --name=value (lowercase letters,
-// digits and dashes), e.g. REPRO_ARGS=--forced-overlap,--write-behind=off.
+// digits and dashes), e.g. REPRO_ARGS=--overlap-inducing,--write-behind=off.
 // It runs scripts/v152-repro/<item>.sh unchanged (bash, from the repository root), streams its output, and
 // fails unless the script exits 0 (PASS). Exit 1 is the claimed defect reproduced, exit 2 a harness error.
 // Outside the lab, run the script itself: bash scripts/v152-repro/<item>.sh

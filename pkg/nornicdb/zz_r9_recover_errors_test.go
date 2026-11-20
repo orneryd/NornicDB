@@ -82,6 +82,7 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 		}
 	}
 	realFail, replicaFail, wboffFail := 0, 0, 0
+	replayErrors, closeErrors := 0, 0
 	for i := 0; i < n; i++ {
 		work := filepath.Join(root, strconv.Itoa(i))
 		if err := os.RemoveAll(work); err != nil {
@@ -103,6 +104,7 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 		credKey := db.remoteCredentialKey
 		memPolicy := db.memoryPolicy
 		if err := db.Close(); err != nil {
+			fmt.Printf("R9REC iter=%d CLOSE-ERROR upgrade err=%v\n", i, err)
 			t.Fatalf("close after upgrade: %v", err)
 		}
 		if err := os.WriteFile(filepath.Join(base, "MANIFEST"), []byte("damaged"), 0o644); err != nil {
@@ -124,7 +126,10 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 			fmt.Printf("R9REC iter=%d REAL FAILED err=%v\n", i, rerr)
 		} else {
 			fmt.Printf("R9REC iter=%d REAL ok\n", i)
-			_ = rdb.Close()
+			if cerr := rdb.Close(); cerr != nil {
+				closeErrors++
+				fmt.Printf("R9REC iter=%d CLOSE-ERROR REAL err=%v\n", i, cerr)
+			}
 		}
 
 		// REPLICA: recoverBadgerFromSnapshotAndWAL's steps with Open's options, printing the errors;
@@ -161,7 +166,6 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fresh store: %v", err)
 		}
-		defer fresh.Close()
 		res, st, rerr2 := storage.RecoverIntoEngine(context.Background(), fresh, filepath.Join(backup, "wal"), snap)
 		fmt.Printf("R9REC iter=%d %s applied=%d skipped=%d failed=%d err=%v snapshotNodes=%d snapshotEdges=%d walEntries=%d writeBehind=%v\n",
 			i, label, res.Applied, res.Skipped, res.Failed, rerr2, st.SnapshotNodes, st.SnapshotEdges, st.WALEntries, opts.WriteBehind)
@@ -178,6 +182,13 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 				return nil
 			})
 		}
+		if rerr2 != nil {
+			replayErrors++
+		}
+		if cerr := fresh.Close(); cerr != nil {
+			closeErrors++
+			fmt.Printf("R9REC iter=%d CLOSE-ERROR %s err=%v\n", i, label, cerr)
+		}
 		return res.Failed
 		}
 		if runReplica(replica, "REPLICA", true) > 0 {
@@ -190,8 +201,11 @@ func TestR9RecoverErrorsV150AsyncdocsSnapClean(t *testing.T) {
 			t.Logf("cleanup %s: %v", work, err)
 		}
 	}
-	fmt.Printf("R9REC SUMMARY iterations=%d real_failed=%d replica_failed=%d replica_wboff_failed=%d\n", n, realFail, replicaFail, wboffFail)
+	fmt.Printf("R9REC SUMMARY iterations=%d real_failed=%d replica_failed=%d replica_wboff_failed=%d replica_replay_errors=%d close_errors=%d\n", n, realFail, replicaFail, wboffFail, replayErrors, closeErrors)
 	_ = os.RemoveAll(root)
+	if replayErrors+closeErrors > 0 {
+		t.Errorf("replica replay errors %d, close errors %d", replayErrors, closeErrors)
+	}
 	if realFail > 0 {
 		t.Errorf("the damaged store was refused at start in %d of %d starts", realFail, n)
 	}

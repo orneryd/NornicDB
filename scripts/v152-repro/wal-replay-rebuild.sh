@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-# G-wal-replay-rebuild (ledger UPG-RB4, R9-1): a v1.5.0 asynchronous store with nine 2 MiB documents and a
-# snapshot (scenario asyncdocs-snap-clean), whose MANIFEST is damaged, must be rebuilt at start from snapshot
-# plus journal with every acknowledged write, in both orders of TestV152SnapshotRebuild:
-#   A  open with storage upgrade allowed, close, damage, start again;
-#   B  damage the old store, then the first start with storage upgrade allowed.
+# G-wal-replay-rebuild (ledger UPG-RB4, R9-1), v1.5.0 store asyncdocs-snap-clean, orders A and B of
+# TestV152SnapshotRebuild. The steps are printed by the script (REPRO_ABOUT lines).
 # Writer: the v1.5.0 writer test TestUORBoltWrite at commit 87311bbd2 (v1.5.0 c99e77131 plus that test;
-# branch scratch/v152-upgrade-writers-v150). The writer is asynchronous and its journal differs from run to run, so
-# the script writes REPRO_STORES independent instances (default 8) and reads each.
+# branch scratch/v152-upgrade-writers-v150), run once per instance (REPRO_STORES, default 8).
 # Reader: TestV152SnapshotRebuild of this checkout, REPRO_COUNT repetitions (default 4) of each order per instance.
 # Usage (from a checkout of the candidate branch): bash scripts/v152-repro/wal-replay-rebuild.sh
 ITEM=wal-replay-rebuild
@@ -18,12 +14,14 @@ STORES="${REPRO_STORES-8}"
 WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
 about \
   "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 with the v1.5.0 writer test TestUORBoltWrite) reader=TestV152SnapshotRebuild instances=REPRO_STORES($STORES) repetitions=REPRO_COUNT($COUNT)" \
-  "instances: REPRO_STORES, default 8. The writer is asynchronous and its journal differs from run to run, and the failure of the real start-up is intermittent: the same build can show it in one run and not in another. PASS therefore means the failure was not observed in this run, not that it is absent." \
-  "i<k>: one independently written store instance; each is written and read once." \
+  "covers: the start-up refusal of the v1.5.0 store asyncdocs-snap-clean after its MANIFEST is overwritten. It does not cover the lost writes after a rebuild in the UPG-RB4 report, nor the other stores of the writer matrix." \
+  "steps, for each of the REPRO_STORES instances: the writer test writes the store into a new instance directory; the reader runs with go test -count=REPRO_COUNT; each repetition runs order A, then order B, each on a new copy of the store's data directory." \
+  "order A, before the common steps: nornicdb.Open with storage upgrade allowed; on an error the result is 'step=upgrade REFUSED' and the order ends; else close." \
+  "common steps (A after its first open, B from the start): (1) write the bytes 'damaged' over MANIFEST; (2) nornicdb.Open with storage upgrade allowed; on an error the result is 'step=rebuild FAILED' and the order ends; (3) rebuilt = a directory <data>.corrupted-* exists; (4) missing, changed, extra = the comparison of the open store's nodes, properties and vectors with the writer's expected.json; (5) close; (6) nornicdb.Open with storage upgrade allowed; on an error the result is 'step=second FAILED' and the order ends; (7) second_missing, second_changed, second_extra = the same comparison; (8) close; (9) the result line. A close that returns an error prints UPR_CLOSE_ERROR and stops the reader." \
   "A=intact-<n>-of-<count>, B=intact-<n>-of-<count>: n = the number of the reader's UPR_REBUILD_RESULT lines for that order that read exactly 'rebuilt=true missing=0 changed=0 extra=0 second_missing=0 second_changed=0 second_extra=0'." \
-  "paths=[<order> <path> x<k>: <message>; ...]: every other UPR_REBUILD_RESULT line, classified by the failure path it reports and grouped by order, path and message: 'upgrade refusal' (step=upgrade REFUSED, order A's first open with upgrade allowed), 'damaged-start refusal' (step=rebuild FAILED, the start on the damaged store), 'second-open error' (step=second FAILED), 'rebuilt=false' (the start did not rebuild), 'state difference' (rebuilt=true with missing/changed/extra > 0 at the rebuild or the second open). k counts repetitions." \
-  "reader_exit=<rc>: the reader's exit status for that instance. An instance with a failure path is FAIL whatever its exit status; an instance without one is PASS only with reader_exit=0, else HARNESS-ERROR." \
-  "HARNESS-ERROR also if an instance's log does not hold exactly 2 x count UPR_REBUILD_RESULT lines, or fewer instances were read than REPRO_STORES."
+  "paths=[<order> <path> x<k>: <message>; ...]: every other UPR_REBUILD_RESULT line, by its form: 'upgrade refusal' (step=upgrade REFUSED), 'damaged-start refusal' (step=rebuild FAILED), 'second-open error' (step=second FAILED), 'rebuilt=false' (rebuilt=false), 'state difference' (rebuilt=true with a count above 0), 'unrecognised result' (any other form); grouped by order, path and message; k counts lines." \
+  "reader_exit=<rc>: the reader's exit status for that instance." \
+  "Verdict: HARNESS-ERROR if an instance prints UPR_CLOSE_ERROR, its log does not hold exactly 2 x REPRO_COUNT UPR_REBUILD_RESULT lines, reader_exit != 0 on an instance without a path, or fewer instances were read than REPRO_STORES. Otherwise FAIL if an instance has a path, and PASS if none has; PASS is printed as 'not observed in this run'."
 require_count REPRO_STORES "$STORES"
 require_count REPRO_COUNT "$COUNT"
 preflight "$WRITER"
@@ -39,6 +37,8 @@ for k in $(seq 1 "$STORES"); do
   UPR_ROOT="$iroot" UPR_READ_DIR=read UPR_ONLY="v150/$SCENARIO" \
     run_reader "$log" ./pkg/bolt -run '^TestV152SnapshotRebuild$' -count="$COUNT" -timeout=45m -v
   rc=$?
+  closes=$(grep -a -E '^UPR_CLOSE_ERROR ' "$log" | cut -c1-400 | norm_msg | tr '\n' ';' | sed 's/;$//')
+  [[ -z $closes ]] || harness_fail "instance $k: close error: $closes"
   lines=$(grep -a -E "^UPR_REBUILD_RESULT v150/$SCENARIO " "$log")
   printf '%s\n' "$lines" | cut -c1-400 | norm_msg | sed "s/^/REPRO_READER i$k /"
   got=$(printf '%s\n' "$lines" | grep -a -c 'UPR_REBUILD_RESULT')
@@ -70,5 +70,5 @@ for k in $(seq 1 "$STORES"); do
   read_instances=$((read_instances + 1))
 done
 [[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
-[[ $failed -eq 0 ]] && repro_result PASS "not observed in this run (intermittent) $detail"
+[[ $failed -eq 0 ]] && repro_result PASS "not observed in this run $detail"
 repro_result FAIL "$detail"
