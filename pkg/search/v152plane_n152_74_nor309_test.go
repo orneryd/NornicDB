@@ -1,7 +1,8 @@
 package search
 
 // Port: the NOR-309 part of the search_result_materialization_test.go revision in
-// Plane item N152-74 (block 0); the rest of that file is already at the pin.
+// Plane item N152-74 (block 0, from its const block on); the rest of that file is
+// already at the pin.
 
 import (
 	"slices"
@@ -13,6 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	nor309Query            = "nor309"
+	nor309FirstHit         = storage.NodeID("nor309-a")
+	nor309SecondHit        = storage.NodeID("nor309-b")
+	nor309InjectedProperty = "injected_by_caller"
+	nor309Database         = "session"
+)
+
+// batchlessEngine hides the embedding-free batch reader that the wrapped engine
+// forwards, so a search hit is read one id at a time: the branch an embedded
+// engine without that optional capability takes.
+type batchlessEngine struct{ storage.Engine }
+
+// nor309Store is the supported embedded fixture: two stored hits whose labels
+// and supported nested property values are what a delivery must detach, the
+// engine the search reads them from, and the search service retaining the hits.
 type nor309Store struct {
 	engine  storage.Engine
 	service *Service
