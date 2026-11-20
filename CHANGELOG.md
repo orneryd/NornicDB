@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Preserve declared columns, null-only groups, counts, and ordering in the exported optimized relationship aggregate route by using the canonical query pipeline.
+- Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 
 - Preserve transaction cleanup failures alongside BEGIN setup errors.

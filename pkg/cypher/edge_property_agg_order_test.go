@@ -34,8 +34,8 @@ func edgeAggReadOrderExecutor(t *testing.T) *StorageExecutor {
 	return exec
 }
 
-// TestEdgePropertyAggMinMaxIgnoreReadOrder runs the detector-supported
-// min/max shape through the exported detector and optimizer pair. Per-end-node
+// TestEdgePropertyAggMinMaxIgnoreReadOrder runs the
+// min/max shape through Execute. Per-end-node
 // min and max don't depend on the order relationships are read in: half the
 // products see 1 then 2 and the other half 2 then 1, so every group must still
 // report min 1 and max 2.
@@ -44,16 +44,8 @@ func TestEdgePropertyAggMinMaxIgnoreReadOrder(t *testing.T) {
 	exec := edgeAggReadOrderExecutor(t)
 	ctx := context.Background()
 
-	info, err := DetectQueryPattern(ctx, query)
+	res, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
-	require.Equal(t, PatternEdgePropertyAgg, info.Pattern, "the min/max edge aggregate shape is in the detector's population")
-	require.Equal(t, "rating", info.AggProperty)
-	require.Equal(t, "r", info.RelVar)
-	require.Equal(t, []string{"min", "max"}, info.AggFunctions)
-
-	res, handled := exec.ExecuteOptimized(ctx, query, info)
-	require.True(t, handled, "the detector's own PatternInfo must be handled by the optimizer")
-	require.NotNil(t, res)
 	require.Equal(t, []string{"product", "min", "max"}, res.Columns)
 	require.Len(t, res.Rows, 4)
 
@@ -68,9 +60,4 @@ func TestEdgePropertyAggMinMaxIgnoreReadOrder(t *testing.T) {
 	}
 	require.Equal(t, map[string]bool{"p00": true, "p01": true, "p02": true, "p03": true}, seen,
 		"every product is its own group")
-
-	general, err := exec.Execute(ctx, query, nil)
-	require.NoError(t, err)
-	require.Equal(t, general.Columns, res.Columns)
-	require.ElementsMatch(t, general.Rows, res.Rows, "the unordered optimized route must meet the general query contract")
 }

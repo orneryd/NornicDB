@@ -31,16 +31,7 @@ Composite pipeline executor:
 
 - `executePipeline` (pkg/cypher/pipeline_executor.go) walks a query as an ordered sequence of `MATCH`/`CREATE`/`WITH`/`UNWIND`/`RETURN` clauses, threading a binding context between them. It handles composite shapes that the single-clause handlers mis-parse — most notably `MATCH ... CREATE ... WITH ... UNWIND <list> AS x MATCH ... CREATE ...` where a nested `UNWIND` follows a `WITH` that carries a row forward. `$param` references are substituted from context before clause splitting. The pipeline refuses (falls back) on `MERGE`, `OPTIONAL MATCH`, `SET`, `REMOVE`, `DELETE`, `FOREACH`, and `CALL` clauses — those stay on their dedicated handlers.
 
-Optimized executor patterns:
-
-- `PatternMutualRelationship`: `MATCH (a)-[:T]->(b)-[:T]->(a) RETURN ...`
-- `PatternIncomingCountAgg`: `MATCH (x)<-[:T]-(y) RETURN x.name, count(y)`
-- `PatternOutgoingCountAgg`: `MATCH (x)-[:T]->(y) RETURN x.name, count(y)`
-- `PatternEdgePropertyAgg`: grouped edge-property aggregates such as `avg(r.prop), count(r)`.
-  `ExecuteOptimized` answers this pattern by running the same clause pipeline as the general
-  path, so it adds no separate aggregation implementation and no separate performance profile;
-  the documented entry point exists for callers that detect the pattern themselves.
-- `PatternLargeResultSet`: large `MATCH ... LIMIT > 100` result sets routed to batched lookup execution
+Grouped relationship aggregates use the regular clause pipeline through Execute.
 
 Not every fast query in this cookbook maps 1:1 to a single trace flag, but every traced or optimized hot path currently exposed by the executor is represented here.
 
