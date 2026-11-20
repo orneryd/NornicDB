@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -120,4 +121,34 @@ func TestMVCCSequenceBlockRefillsAfterNamespaceDrop(t *testing.T) {
 	ceiling, err = engine.loadPersistedNamespaceSequence("test")
 	require.NoError(t, err)
 	require.Greater(t, ceiling, uint64(mvccSequenceBlockSize))
+}
+
+func TestMVCCSequenceBlockWithholdsVersionsUntilDirectorySync(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "store")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("directory symlinks unavailable: %v", err)
+	}
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(link))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	state, err := engine.namespaceMVCC("test")
+	require.NoError(t, err)
+	// The active WAL stays open. Hiding its directory path makes the
+	// durability step fail after Badger has written the reservation.
+	require.NoError(t, os.Remove(link))
+	t.Cleanup(func() {
+		if _, err := os.Lstat(link); os.IsNotExist(err) {
+			require.NoError(t, os.Symlink(dir, link))
+		}
+	})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:retry"})
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorContains(t, err, "reserve durable MVCC sequence block")
+	require.Zero(t, state.seq.Load())
+	require.Zero(t, state.reservedThrough.Load())
+	require.NoError(t, os.Symlink(dir, link))
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "test:retry"})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), state.seq.Load())
 }

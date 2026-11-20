@@ -287,7 +287,7 @@ func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, pub
 		return ts, err
 	}
 	if syncMetadata {
-		if err := m.syncIfPersistent(); err != nil {
+		if err := m.syncMVCCReservation(); err != nil {
 			return ts, err
 		}
 	}

@@ -83,3 +83,16 @@ func (b *BadgerEngine) prepareRecoveredMVCCVersion(ctx context.Context, namespac
 	_, err = state.reserveCommitTimestamp(version.CommitTimestamp, false)
 	return err
 }
+
+func (m *managedBadgerDB) syncMVCCReservation() error {
+	if err := m.syncIfPersistent(); err != nil {
+		return err
+	}
+	options := m.DB.Opts()
+	if options.InMemory {
+		return nil
+	}
+	// A refill can create a new memtable WAL. Badger synchronizes the file
+	// contents, so also make its directory entry durable before issuing IDs.
+	return syncDir(options.Dir)
+}
