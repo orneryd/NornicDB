@@ -107,11 +107,9 @@ func (s *Server) writeQueryAPIResponse(w http.ResponseWriter, transaction Transa
 		if explicit == nil {
 			response.Bookmarks = []string{s.generateBookmark()}
 		}
-		response.Data = &queryAPIResult{Fields: []string{}, Values: [][]any{}}
 		if len(transaction.Results) != 0 {
 			result := transaction.Results[0]
-			response.Data.Fields = result.Columns
-			response.Data.Values = make([][]any, len(result.Data))
+			response.Data = &queryAPIResult{Fields: result.Columns, Values: make([][]any, len(result.Data))}
 			for i, row := range result.Data {
 				response.Data.Values[i] = row.Row
 			}

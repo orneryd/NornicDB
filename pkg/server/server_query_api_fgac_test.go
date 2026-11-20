@@ -49,6 +49,9 @@ func TestFineGrainedQueryAPIImpersonation(t *testing.T) {
 	require.NotEmpty(t, node["elementId"])
 	require.Equal(t, []any{"Article"}, node["labels"])
 	require.Equal(t, map[string]any{"title": "Visible"}, node["properties"])
+	empty := run(database, admin, "MATCH (n:Article) WHERE false RETURN n.title AS title", "reader")
+	require.NotContains(t, empty, "errors")
+	require.Equal(t, map[string]any{"fields": []any{"title"}, "values": []any{}}, empty["data"])
 	entityPath := "/auth/fgac/entity?element_id=" + url.QueryEscape(node["elementId"].(string))
 	resolved := makeRequest(t, server, http.MethodGet, entityPath, nil, "Bearer "+admin)
 	require.Equal(t, http.StatusOK, resolved.Code, resolved.Body.String())
@@ -63,6 +66,7 @@ func TestFineGrainedQueryAPIImpersonation(t *testing.T) {
 	path := "/db/" + database + "/query/v2/tx"
 	opened := callFineGrainedQueryAPI(t, router, path, admin, map[string]any{"impersonatedUser": "reader"})
 	require.NotContains(t, opened, "errors")
+	require.NotContains(t, opened, "data")
 	transactionID := opened["transaction"].(map[string]any)["id"].(string)
 	txPath := path + "/" + transactionID
 	used := callFineGrainedQueryAPI(t, router, txPath, admin, map[string]any{"statement": "MATCH (n:Article) RETURN n.title, n.draft"})
@@ -73,6 +77,7 @@ func TestFineGrainedQueryAPIImpersonation(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", mismatch["errors"].([]any)[0].(map[string]any)["code"])
 	closed := callFineGrainedQueryAPI(t, router, txPath+"/commit", admin, map[string]any{})
 	require.NotContains(t, closed, "errors")
+	require.NotContains(t, closed, "data")
 	require.NotEmpty(t, closed["bookmarks"])
 
 	require.NotContains(t, run("system", admin, "ALTER USER reader SET PASSWORD CHANGE REQUIRED", ""), "errors")
