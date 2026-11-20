@@ -48,7 +48,7 @@ const uprRoot = "/work/tnrun/v152-upg"
 var uprBuilds = []string{"b6", "v150", "v151"}
 
 // uprReadDir is this reader build's scratch area on the lab dataset.
-var uprReadDir = "read-pin"
+var uprReadDir = "read-pin-r9ctl"
 
 type uprNode struct {
 	ID        string   `json:"id"`
