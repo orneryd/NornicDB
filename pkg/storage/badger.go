@@ -1182,7 +1182,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		}
 		engine.db = newDB
 		db = newDB
-		engine.compactAfterMigration()
+		engine.compactAfterMigration(engine.work.Context())
 	}
 
 	if err := engine.loadMVCCFloorKeys(db); err != nil {

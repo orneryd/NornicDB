@@ -40,14 +40,22 @@ func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
 		"currentMVCCReadVersion must not return a timestamp earlier than the high-water mark")
 }
 
+func allocateMVCCVersionInTestUpdate(t *testing.T, engine *MemoryEngine, stamp time.Time) MVCCVersion {
+	t.Helper()
+	var version MVCCVersion
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		var err error
+		version, err = engine.allocateMVCCVersion(t.Context(), txn, "test", stamp)
+		return err
+	}))
+	return version
+}
+
 func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
 	e := newTestMemoryEngine(t)
 
 	commitAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		_, err := e.allocateMVCCVersion(t.Context(), txn, "test", commitAt)
-		return err
-	}))
+	allocateMVCCVersionInTestUpdate(t, e, commitAt)
 	state, err := e.namespaceMVCC("test")
 	require.NoError(t, err)
 	require.Equal(t, commitAt.UnixNano(), state.highWaterNanos.Load(),
@@ -56,10 +64,7 @@ func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
 	// A subsequent allocate at an EARLIER timestamp must not lower the
 	// high-water mark — monotonicity is the whole point.
 	earlier := commitAt.Add(-time.Hour)
-	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
-		_, err := e.allocateMVCCVersion(t.Context(), txn, "test", earlier)
-		return err
-	}))
+	allocateMVCCVersionInTestUpdate(t, e, earlier)
 	require.Equal(t, commitAt.UnixNano(), state.highWaterNanos.Load(),
 		"high-water mark must never go backward")
 }

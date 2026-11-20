@@ -369,7 +369,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(ctx context.Context, stats *v1ToV
 // committed by writeSchemaVersion, and a failed compaction just leaves
 // the store with stale bytes that the background GC will eventually
 // clean up.
-func (b *BadgerEngine) compactAfterMigration() {
+func (b *BadgerEngine) compactAfterMigration(ctx context.Context) {
 	if b.db == nil {
 		return
 	}
@@ -392,7 +392,7 @@ func (b *BadgerEngine) compactAfterMigration() {
 	gcStart := time.Now()
 	rewrites := 0
 	for {
-		err := b.db.RunValueLogGC(0.5)
+		err := b.db.RunValueLogGC(ctx, 0.5)
 		if err == nil {
 			rewrites++
 			continue

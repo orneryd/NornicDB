@@ -228,8 +228,10 @@ func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, publicati
 // RunValueLogGC can submit native writes while relocating values. It shares
 // the commit gate so it cannot rotate the memtable while a reservation is
 // being written and synced under the exclusive gate.
-func (m *managedBadgerDB) RunValueLogGC(discardRatio float64) error {
-	m.commitGate.RLock()
+func (m *managedBadgerDB) RunValueLogGC(ctx context.Context, discardRatio float64) error {
+	if err := m.commitGate.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer m.commitGate.RUnlock()
 	return m.DB.RunValueLogGC(discardRatio)
 }

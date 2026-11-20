@@ -58,7 +58,7 @@ func TestMigrationV1ToV2_ClosedDB_ErrorBranches(t *testing.T) {
 func TestMigrationV1ToV2_CompactAfterMigration_NilAndClosedDB(t *testing.T) {
 	t.Run("nil db is no-op", func(t *testing.T) {
 		engine := &BadgerEngine{}
-		engine.compactAfterMigration()
+		engine.compactAfterMigration(t.Context())
 	})
 
 	t.Run("closed db hits flatten/gc error branches without panic", func(t *testing.T) {
@@ -70,6 +70,6 @@ func TestMigrationV1ToV2_CompactAfterMigration_NilAndClosedDB(t *testing.T) {
 		require.NoError(t, engine.Close())
 
 		// Should not panic even when Badger returns errors.
-		engine.compactAfterMigration()
+		engine.compactAfterMigration(t.Context())
 	})
 }
