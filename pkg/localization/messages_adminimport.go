@@ -22,6 +22,7 @@ const (
 	MessageAdminImportNoNodeCSVFiles           MessageID = "adminimport.no_node_csv_files"
 	MessageAdminExportOutputDirectoryRequired  MessageID = "adminimport.export_output_directory_required"
 	MessageAdminExportCustomQuoteUnsupported   MessageID = "adminimport.export_custom_quote_unsupported"
+	MessageAdminExportLabelUnsupported         MessageID = "adminimport.export_label_unsupported"
 	MessageAdminImportUnsupportedCSVHeader     MessageID = "adminimport.unsupported_csv_header"
 	MessageAdminImportSchemaApplicationFailed  MessageID = "adminimport.schema_application_failed"
 	MessageAdminImportDuplicateNodeID          MessageID = "adminimport.duplicate_node_id"
@@ -98,6 +99,19 @@ func AdminExportOutputDirectoryRequired() Message {
 func AdminExportCustomQuoteUnsupported() Message {
 	return Message{ID: MessageAdminExportCustomQuoteUnsupported, Fallback: "custom quote characters are not supported for Neo4j CSV export"}
 }
+
+// AdminExportLabelUnsupported identifies a label the Neo4j CSV label field
+// cannot preserve. Quoting keeps control characters explicit in diagnostics.
+// One representability contract covers the label array field: labels must be
+// nonempty, have no leading or trailing whitespace, and contain no array
+// delimiter. For example, label "A;B" with delimiter ';' needs another array
+// delimiter, and label " Archive " needs a nonempty label without surrounding
+// whitespace.
+func AdminExportLabelUnsupported(label string, delimiter rune) Message {
+	quotedLabel, quotedDelimiter := strconv.Quote(label), strconv.QuoteRune(delimiter)
+	return Message{ID: MessageAdminExportLabelUnsupported, Fallback: "label " + quotedLabel + " cannot be written to Neo4j CSV with array delimiter " + quotedDelimiter + ": labels must be nonempty, must not have leading or trailing whitespace, and must not contain the array delimiter; choose a suitable --array-delimiter for a delimiter conflict, or use a nonempty label without leading or trailing whitespace, or another export format, for a normalization conflict", Data: map[string]any{"Label": quotedLabel, "Delimiter": quotedDelimiter}}
+}
+
 func AdminImportUnsupportedCSVHeader(path string) Message {
 	return Message{ID: MessageAdminImportUnsupportedCSVHeader, Fallback: "unsupported CSV header in Neo4j source directory: " + path, Data: map[string]any{"Path": path}}
 }

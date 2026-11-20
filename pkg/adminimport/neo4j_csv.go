@@ -22,6 +22,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// Neo4jCSVExportOptions configures the offline CSV package. ArrayDelimiter
+// defaults to a semicolon. Export rejects labels containing that delimiter,
+// empty labels, and surrounding whitespace because import cannot preserve them.
 type Neo4jCSVExportOptions struct {
 	OutputDir       string
 	Delimiter       rune
@@ -90,6 +93,10 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 	return nodeSources, relSources, nil
 }
 
+// ExportNeo4jCSV writes a Neo4j-compatible node, relationship and schema package.
+// Labels that the configured label field cannot preserve are rejected before
+// any package file is created or truncated. For example, label "Part;Archive"
+// requires an ArrayDelimiter other than ';' for both export and import.
 func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 	if opts.OutputDir == "" {
 		return unsupported(localization.AdminExportOutputDirectoryRequired())
@@ -174,6 +181,18 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 }
 
 func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptions) error {
+	// Validate the complete label population before the shared writer opens the
+	// destination. The :LABEL field splits on the array delimiter and cannot
+	// escape an embedded delimiter under the Neo4j CSV contract, while this
+	// importer trims and drops surrounding-whitespace or empty label elements.
+	// Those are one representability contract, so one diagnostic states it.
+	for _, node := range nodes {
+		for _, label := range node.Labels {
+			if label == "" || strings.TrimSpace(label) != label || strings.ContainsRune(label, opts.ArrayDelimiter) {
+				return unsupported(localization.AdminExportLabelUnsupported(label, opts.ArrayDelimiter))
+			}
+		}
+	}
 	return writeEntityCSV(path, []string{":ID", ":LABEL"}, inferNodeColumns(nodes), nodes, opts,
 		func(node *storage.Node, lead []csvExportCell) {
 			lead[0].Text = string(node.ID)

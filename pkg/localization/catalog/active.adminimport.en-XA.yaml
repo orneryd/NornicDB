@@ -100,3 +100,6 @@
 - id: adminimport.read_header_failed
   description: Expanded pseudo-locale CSV header read failure.
   other: "[!! failed to read CSV header !!]"
+- id: adminimport.export_label_unsupported
+  description: Expanded pseudo-locale Admin export rejection of a label the Neo4j CSV label field cannot preserve. Label and Delimiter are quoted literal values.
+  other: "[!! label {{.Label}} cannot be written to Neo4j CSV with array delimiter {{.Delimiter}}: labels must be nonempty, must not have leading or trailing whitespace, and must not contain the array delimiter; choose a suitable --array-delimiter for a delimiter conflict, or use a nonempty label without leading or trailing whitespace, or another export format, for a normalization conflict !!]"

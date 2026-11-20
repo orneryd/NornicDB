@@ -100,3 +100,6 @@
 - id: adminimport.read_header_failed
   description: Error al leer un encabezado CSV.
   other: no se pudo leer el encabezado CSV
+- id: adminimport.export_label_unsupported
+  description: Rechazo de exportación de una etiqueta que el campo de etiquetas CSV de Neo4j no puede conservar. Label y Delimiter son valores literales entre comillas.
+  other: "la etiqueta {{.Label}} no se puede escribir en CSV de Neo4j con el delimitador de matrices {{.Delimiter}}: las etiquetas no deben estar vacías, no deben tener espacios en blanco al principio ni al final y no deben contener el delimitador de matrices; elija un --array-delimiter adecuado para un conflicto de delimitador, o use una etiqueta no vacía sin espacios en blanco al principio ni al final, u otro formato de exportación, para un conflicto de normalización"
