@@ -96,7 +96,7 @@ func TestReviewR7RegisteringTransactionLosesFreshAsOfCut(t *testing.T) {
 	require.NoError(t,err)
 	cut, err := b.GetNodeCurrentHead(t.Context(),id)
 	require.NoError(t,err)
-	tx, err := b.BeginTransaction(t.Context())
+	tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t,err)
 	defer func(){ _ = tx.Rollback() }()
 	for v:=1;v<=5;v++ { require.NoError(t,b.UpdateNode(t.Context(),NodeUpdateRequest{After:&Node{ID:id,Properties:map[string]any{"v":v}}})) }

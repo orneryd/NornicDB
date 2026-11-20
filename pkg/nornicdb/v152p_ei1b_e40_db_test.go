@@ -44,6 +44,7 @@ func zzEI1bDBConfig() *Config {
 	cfg.EmbeddingWorker.IncludeLabels = false
 	cfg.Database.AsyncWritesEnabled = false
 	cfg.Database.WALAutoCompactionEnabled = false
+	cfg.Database.WALSnapshotInterval = 100 * time.Millisecond // port: see v152AutoSnapshot
 	return cfg
 }
 
@@ -74,7 +75,7 @@ func TestZZEI1bE40DatabaseWorker(t *testing.T) {
 	require.NoError(t, err)
 	sdir := filepath.Join(root, "snapshots")
 	require.NoError(t, os.MkdirAll(sdir, 0o755))
-	require.NoError(t, storage.EI1bAutoSnapshot(base, sdir))
+	v152AutoSnapshot(t, base, sdir)
 	snaps, _ := filepath.Glob(filepath.Join(sdir, "*"))
 	t.Logf("E40DB before: workerErr=%v live=%s liveMeta=%v snapshots=%d", werr, zzEI1bAxisOf(live.ChunkEmbeddings), live.EmbedMeta, len(snaps))
 	require.NoError(t, db.Close())

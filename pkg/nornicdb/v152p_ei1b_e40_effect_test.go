@@ -100,6 +100,7 @@ func TestZZEI1bE40Effect(t *testing.T) {
 			engine.SetEmbeddingTextPolicy(storage.EmbeddingTextPolicy{Include: []string{"text"}})
 			cfg := storage.DefaultWALConfig()
 			cfg.Dir = filepath.Join(dir, "wal")
+			cfg.SnapshotInterval = 100 * time.Millisecond // port: drive the automatic snapshot through EnableAutoCompaction
 			wal, err := storage.NewWAL(cfg.Dir, cfg)
 			require.NoError(t, err)
 			w := storage.NewWALEngine(engine, wal)
@@ -122,7 +123,7 @@ func TestZZEI1bE40Effect(t *testing.T) {
 			if snap == "auto" {
 				sdir := filepath.Join(dir, "snapshots")
 				require.NoError(t, os.MkdirAll(sdir, 0o755))
-				require.NoError(t, storage.EI1bAutoSnapshot(w, sdir))
+				v152AutoSnapshot(t, w, sdir)
 				matches, _ := filepath.Glob(filepath.Join(sdir, "*"))
 				require.Len(t, matches, 1)
 				snapshot = matches[0]
@@ -196,4 +197,21 @@ func TestZZEI1bE40Effect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// v152AutoSnapshot replaces the probe seam EI1bAutoSnapshot (a non-test hook in
+// pkg/storage): it takes the journal wrapper's automatic snapshot through the
+// exported EnableAutoCompaction with a short configured interval, waits for the
+// first snapshot file, then stops the loop.
+func v152AutoSnapshot(t *testing.T, w *storage.WALEngine, dir string) {
+	t.Helper()
+	require.NoError(t, w.EnableAutoCompaction(dir))
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if m, _ := filepath.Glob(filepath.Join(dir, "*")); len(m) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	w.DisableAutoCompaction()
 }
