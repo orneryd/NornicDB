@@ -37,7 +37,7 @@ func TestEI1CorruptRelationshipRowPublic(t *testing.T) {
 	t.Logf("bad edge ids: %v", r.Rows)
 	// Find the stored relationship row whose key ends with the bad edge's ID.
 	var target []byte
-	all, _ := b.AllEdges()
+	all, _ := b.AllEdges(ctx)
 	for _, e := range all {
 		if e.Properties["name"] == "bad" {
 			target = []byte(e.ID)
