@@ -40,7 +40,7 @@ repro_result() { # PASS|FAIL detail...
 about() {
   local l
   for l in "$@"; do echo "REPRO_ABOUT $l"; done
-  echo "REPRO_ABOUT RESULT forms: PASS (exit 0): the claimed defect did not occur on any instance; FAIL (exit 1): it occurred; HARNESS-ERROR (exit 2): the reproduction could not run (preflight, invalid REPRO_STORES/REPRO_COUNT, writer failure or incomplete store, reader output not as expected); the detail names the cause."
+  echo "REPRO_ABOUT RESULT forms: PASS (exit 0): the reader exited 0 and every result it printed is the expected one, on every instance; FAIL (exit 1): at least one reader failure path was observed, and the detail names each path with its count and message; HARNESS-ERROR (exit 2): the reproduction could not run (preflight, invalid REPRO_STORES/REPRO_COUNT, writer failure or incomplete store, reader output not as expected), or the reader exited nonzero although none of its results shows a failure path."
 }
 
 # require_count <name> <value>: an integer >= 1, else HARNESS-ERROR (an empty instance list would run nothing).
@@ -152,6 +152,11 @@ write_store() {
     fp=$(cd "$d/data" && find wal snapshots -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do "${SHA256[@]}" "$f"; done | "${SHA256[@]}" | cut -c1-16)
     say "store $build/$sc written: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
   done
+}
+
+# norm_msg: a reader message with the temporary root replaced by <root> and node IDs by <id> (stdin to stdout).
+norm_msg() {
+  sed -E -e "s#${ROOT:-/nonexistent-root}#<root>#g" -e 's/nornic:[0-9a-f-]{8,}/<id>/g' -e 's/\\"/"/g'
 }
 
 # run_reader <log> <go test args...>: runs a reader of this checkout (UPR_COPY exported); returns its exit status.
