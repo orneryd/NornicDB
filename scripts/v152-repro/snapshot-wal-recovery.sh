@@ -14,11 +14,22 @@
 ITEM=snapshot-wal-recovery
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO=asyncdocs-snap-clean
-COUNT="${REPRO_COUNT:-12}"
-STORES="${REPRO_STORES:-3}"
+COUNT="${REPRO_COUNT-12}"
+STORES="${REPRO_STORES-3}"
 
+WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
+about \
+  "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 + upgrade-lane writer) reader=TestR9RecoverErrorsV150AsyncdocsSnapClean instances=REPRO_STORES($STORES) starts_per_instance=REPRO_COUNT($COUNT)" \
+  "i<k>: one independently written store instance; each iteration of the reader opens a fresh copy with upgrade allowed, closes it, damages its MANIFEST, and recovers three identical copies: REAL (nornicdb.Open), REPLICA (the steps of recoverBadgerFromSnapshotAndWAL with Open's options, write-behind on) and REPLICA-WBOFF (the same, write-behind off)." \
+  "iterations, real_failed, replica_failed, replica_wboff_failed: copied from the reader's 'R9REC SUMMARY' line. real_failed = iterations whose REAL nornicdb.Open returned an error; replica_failed / replica_wboff_failed = iterations whose replica recovery reported Failed > 0 (an iteration counts once however many entries failed; a replica can report failed=1 with err=<nil>)." \
+  "entries: <k> REPLICA[-WBOFF]-ERROR seq=<s> op=<o> err=<e>;...: k = the number of the reader's error lines with that sequence, operation and error (one line per failed journal entry per replica recovery), node IDs replaced by <id>." \
+  "refused_starts = the sum of real_failed over the instances. PASS only if refused_starts = 0. HARNESS-ERROR also if an instance has no SUMMARY line, iterations != count, fewer than count iterations reached the REAL step, or fewer instances were read than REPRO_STORES."
+require_count REPRO_STORES "$STORES"
+require_count REPRO_COUNT "$COUNT"
+preflight "$WRITER"
 repro_root
-prepare_writer 87311bbd23df966296ebfae50eeae3ba9ab5be51
+prepare_writer "$WRITER"
+read_instances=0
 detail="store=v150/$SCENARIO instances=$STORES starts_per_instance=$COUNT"
 total=0
 for k in $(seq 1 "$STORES"); do
@@ -39,6 +50,8 @@ for k in $(seq 1 "$STORES"); do
   errs=$(grep -a -o -E 'REPLICA(-WBOFF)?-ERROR seq=[0-9]+ op=[a-z_]+ err=[^"\\]*' "$log" | sed -E 's/nornic:[0-9a-f-]+/<id>/g' | sort | uniq -c | sed 's/^ *//' | tr '\n' ';')
   detail+=" i$k:[${sum#R9REC SUMMARY } entries: ${errs:-none}]"
   total=$((total + real))
+  read_instances=$((read_instances + 1))
 done
+[[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
 [[ $total -eq 0 ]] && repro_result PASS "$detail"
 repro_result FAIL "refused_starts=$total $detail"

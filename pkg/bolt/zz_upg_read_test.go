@@ -223,8 +223,7 @@ func uprHashes(dir string) string {
 
 func uprCopy(t testing.TB, src, dst string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
-	out, err := exec.Command("cp", "-a", "--sparse=always", src, dst).CombinedOutput()
-	require.NoError(t, err, string(out))
+	require.NoError(t, uprCopyDir(src, dst))
 }
 
 // uprConfig: the write mode of the store's producer, as the frozen report's
@@ -594,4 +593,37 @@ func TestV152TornAuditRead(t *testing.T) {
 		}
 	}
 	uprRequireRan(t, selected, ran)
+}
+
+// uprCopyDir copies the directory src to dst (dst must not exist). Method: UPR_COPY=gnu (cp -a --sparse=always),
+// gcp (gcp -a --sparse=always, GNU cp as installed on macOS/BSD), or plain (cp -R -p, no sparse files: the copy
+// takes the store's apparent size on disk). Unset, the first method present that succeeds is used.
+func uprCopyDir(src, dst string) error {
+	methods := map[string][]string{
+		"gnu":   {"cp", "-a", "--sparse=always", src, dst},
+		"gcp":   {"gcp", "-a", "--sparse=always", src, dst},
+		"plain": {"cp", "-R", "-p", src, dst},
+	}
+	order := []string{"gnu", "gcp", "plain"}
+	if m := os.Getenv("UPR_COPY"); m != "" {
+		if _, ok := methods[m]; !ok {
+			return fmt.Errorf("UPR_COPY=%q: want gnu, gcp or plain", m)
+		}
+		order = []string{m}
+	}
+	var last error
+	for _, m := range order {
+		args := methods[m]
+		if _, err := exec.LookPath(args[0]); err != nil {
+			last = fmt.Errorf("copy method %s: %v", m, err)
+			continue
+		}
+		_ = os.RemoveAll(dst)
+		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		last = fmt.Errorf("copy method %s (%s): %v: %s", m, strings.Join(args[:len(args)-2], " "), err, out)
+	}
+	return last
 }

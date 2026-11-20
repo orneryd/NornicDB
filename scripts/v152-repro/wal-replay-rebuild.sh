@@ -14,11 +14,22 @@
 ITEM=wal-replay-rebuild
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SCENARIO=asyncdocs-snap-clean
-COUNT="${REPRO_COUNT:-4}"
-STORES="${REPRO_STORES:-3}"
+COUNT="${REPRO_COUNT-4}"
+STORES="${REPRO_STORES-3}"
 
+WRITER=87311bbd23df966296ebfae50eeae3ba9ab5be51
+about \
+  "item=$ITEM store=v150/$SCENARIO writer=$WRITER (v1.5.0 c99e77131 + upgrade-lane writer) reader=TestV152SnapshotRebuild instances=REPRO_STORES($STORES) repetitions=REPRO_COUNT($COUNT)" \
+  "i<k>: one independently written store instance; each is written and read once." \
+  "A=intact-<n>-of-<count>, B=intact-<n>-of-<count>: n = the number of the reader's UPR_REBUILD_RESULT lines for that order that read exactly 'rebuilt=true missing=0 changed=0 extra=0 second_missing=0 second_changed=0 second_extra=0'. A repetition is missing from n for every failure path of the reader: order A's upgrade refused (step=upgrade REFUSED), the start on the damaged store refused (step=rebuild FAILED), no rebuild (rebuilt=false), a state difference at the rebuild or at the second open (missing/changed/extra > 0), or the second open refused (step=second FAILED)." \
+  "refusals=[<k> <message>;...]: k = the number of reader-log lines that contain 'incomplete or empty replay: <...>', grouped by message. A refused start prints the message on several lines, so k counts log lines, not refused starts; the intact counts are the result." \
+  "PASS only if n = count for both orders on every instance and every reader exited 0. HARNESS-ERROR also if an instance's log does not hold exactly 2 x count UPR_REBUILD_RESULT lines, or fewer instances were read than REPRO_STORES."
+require_count REPRO_STORES "$STORES"
+require_count REPRO_COUNT "$COUNT"
+preflight "$WRITER"
 repro_root
-prepare_writer 87311bbd23df966296ebfae50eeae3ba9ab5be51
+prepare_writer "$WRITER"
+read_instances=0
 detail="store=v150/$SCENARIO instances=$STORES repetitions=$COUNT"
 bad=0
 for k in $(seq 1 "$STORES"); do
@@ -41,6 +52,8 @@ for k in $(seq 1 "$STORES"); do
   errs=$(grep -a -o 'incomplete or empty replay: [^)]*' "$log" | sort | uniq -c | sed 's/^ *//' | tr '\n' ';')
   [[ -n $errs ]] && part+=" refusals=[$errs]"
   detail+="$part"
+  read_instances=$((read_instances + 1))
 done
+[[ $read_instances -eq $STORES ]] || harness_fail "read $read_instances of $STORES instances"
 [[ $bad -eq 0 ]] && repro_result PASS "$detail"
 repro_result FAIL "$detail"
