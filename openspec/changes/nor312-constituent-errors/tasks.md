@@ -1,5 +1,13 @@
 # TODO
 
+## PR review correction
+
+- [x] Preserve fail-first evidence for the access-inventory classifier: 14 of 25 extractor cases fail on PR head c3bfc42f2 (including success guards, unrelated returned errors, renamed bindings and conditional return/continue).
+- [x] Track the assigned error's AST binding, inspect failure paths and the actual error result, and leave unsupported control flow unclassified. Distinguish block fallthrough and conditional policies from unconditional propagation.
+- [x] Re-extract all direct sites: storage 38 (31 propagate, 3 skip, 2 fallthrough, 2 conditional), Cypher 1 (propagate). Pin both conditional guards for policy review. This syntactic audit does not establish end-to-end correctness; retain the public-path regression tests and unresolved umbrella scope.
+- [x] Correct point-read benchmark comments: map order makes unqualified work vary from one to N sources, so it is not a fixed worst-case fan-out baseline.
+- [ ] Complete focused checks, canonical duplicate analysis, Go/security follow-up reviews and push the correction to PR #1869. Broader runtime qualification remains with CI.
+
 - [x] Worker reproduced 22 exact direct-storage error-returning failures on e8cd436e5; public Cypher controls passed.
 - [x] Converged the composite first-match read, write, broadcast and sum walks into the shared owners (`readFirstConstituent`, `writeFirstConstituent`, `walkReadableConstituents`, `sumConstituentCounts`, `sumConstituentDegree`), and folded the qualified selector's participant opener into the selector that resolves it.
 - [x] Kept every published identity and access contract of the converged routes: direct sentinel for ordinary node/edge reads and update/delete, `errors.Is` for MVCC providers and the projected tail, failing-source head payload beside its error, source order and qualified provenance, no same-engine plain fallback after a provider not-found, zero (not partial) sums, and the existing bulk-operation error contract.

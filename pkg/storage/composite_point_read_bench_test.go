@@ -8,10 +8,11 @@ import (
 )
 
 // BenchmarkCompositeEntityPointRead is the bounded point-read baseline for the
-// composite's identity reads. One seeded source owns the entity, so an
-// unqualified read walks every readable source while a qualified read routes
-// straight to the owner. Every iteration asserts the resolved value, so a
-// faster number cannot come from a read that silently stopped resolving.
+// composite's identity reads. One seeded source owns the entity. Unqualified
+// reads inspect between one and count sources because source iteration uses a
+// map; these timings do not establish a fixed worst-case fan-out comparison.
+// Qualified reads route to the owner. Every iteration checks for a resolved
+// entity (or the expected head version), rather than timing an absent result.
 func BenchmarkCompositeEntityPointRead(b *testing.B) {
 	for _, count := range []int{2, 8} {
 		for _, qualified := range []bool{false, true} {
@@ -126,8 +127,8 @@ const (
 )
 
 // newCompositePointReadBenchmark builds the requested number of in-memory
-// constituents and seeds the entity in the last one so the unqualified walk is
-// bounded by the constituent count. It returns the owning alias and the
+// constituents and seeds one owner. Construction order does not determine the
+// unqualified read order. It returns the owning alias and the
 // creation versions used by the visible-at and head reads.
 func newCompositePointReadBenchmark(b *testing.B, constituentCount int) (*CompositeEngine, string, MVCCVersion, MVCCVersion) {
 	b.Helper()

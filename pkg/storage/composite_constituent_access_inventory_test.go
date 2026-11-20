@@ -7,7 +7,9 @@
 package storage
 
 import (
+	"bytes"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -33,8 +35,12 @@ const (
 	accessPropagates constituentAccessClass = "propagate"
 	// accessSkips drops the failed constituent and keeps going.
 	accessSkips constituentAccessClass = "skip"
-	// accessDiscards drops the error result entirely.
+	// accessDiscards drops the error result or returns a different error.
 	accessDiscards constituentAccessClass = "discard"
+	// accessFallsThrough leaves this block without handling the access error.
+	accessFallsThrough constituentAccessClass = "fallthrough"
+	// accessConditional has different handling on different failure paths.
+	accessConditional constituentAccessClass = "conditional"
 	// accessUnclassified is a call site the extractor could not classify; it
 	// must never appear in a recorded inventory.
 	accessUnclassified constituentAccessClass = "unclassified"
@@ -46,6 +52,7 @@ type constituentAccessSite struct {
 	file, function string
 	line           int
 	class          constituentAccessClass
+	handling       ast.Stmt
 }
 
 func (s constituentAccessSite) key() string { return s.file + "#" + s.function }
@@ -127,18 +134,24 @@ func scanConstituentAccessBlock(fset *token.FileSet, statements []ast.Stmt, file
 	for index, statement := range statements {
 		switch current := statement.(type) {
 		case *ast.AssignStmt:
-			for position, value := range current.Rhs {
-				if !isConstituentAccessCall(value, methods) || len(current.Lhs) <= position {
+			for _, value := range current.Rhs {
+				if !isConstituentAccessCall(value, methods) {
 					continue
 				}
 				class := accessUnclassified
-				switch {
-				case discardsError(current):
-					class = accessDiscards
-				case index+1 < len(statements):
-					class = classFromNextStatement(statements[index+1])
+				if len(current.Rhs) == 1 && len(current.Lhs) == 2 {
+					if binding, ok := current.Lhs[1].(*ast.Ident); ok {
+						if binding.Name == "_" {
+							class = accessDiscards
+						} else {
+							class = classifyAccessFailure(statements[index+1:], binding)
+						}
+					}
 				}
 				record(current, class)
+				if class == accessConditional {
+					sites[len(sites)-1].handling = statements[index+1]
+				}
 			}
 		case *ast.ReturnStmt:
 			for _, result := range current.Results {
@@ -185,48 +198,183 @@ func isConstituentAccessCall(expression ast.Expr, methods map[string]bool) bool 
 	return ok && methods[selector.Sel.Name]
 }
 
-// discardsError reports whether the assignment discards the call's error
-// result (the second result of the access call).
-func discardsError(assignment *ast.AssignStmt) bool {
-	if len(assignment.Lhs) < 2 {
-		return false
-	}
-	identifier, ok := assignment.Lhs[1].(*ast.Ident)
-	return ok && identifier.Name == "_"
-}
-
-// classFromNextStatement classifies the access error by the statement that
-// consumes it: continue keeps the partial result, return reports the failure.
-func classFromNextStatement(statement ast.Stmt) constituentAccessClass {
-	examine, ok := statement.(*ast.IfStmt)
-	if !ok || !mentionsErr(examine.Cond) {
-		return accessUnclassified
-	}
-	return blockClass(examine.Body.List)
-}
-
-func blockClass(statements []ast.Stmt) constituentAccessClass {
-	for _, statement := range statements {
-		switch current := statement.(type) {
-		case *ast.BranchStmt:
-			if current.Tok == token.CONTINUE {
-				return accessSkips
-			}
-		case *ast.ReturnStmt:
-			return accessPropagates
-		case *ast.IfStmt:
-			if class := blockClass(current.Body.List); class != accessUnclassified {
-				return class
-			}
+// This is a deliberately bounded syntactic audit, not Go data-flow analysis.
+// Interpret the local tail with the assigned access error known to be nonnil.
+// Unsupported effects/control flow fail closed instead of becoming evidence
+// of propagation. Object identity prevents a different or shadowed err binding
+// from standing in for the access error.
+func classifyAccessFailure(statements []ast.Stmt, binding *ast.Ident) constituentAccessClass {
+	if len(statements) > 0 {
+		if guard, ok := statements[0].(*ast.IfStmt); ok && !accessExpressionUses(guard.Cond, binding) {
+			return accessUnclassified
 		}
 	}
-	return accessUnclassified
+	paths := accessFailurePaths(statements, binding)
+	switch paths {
+	case accessPathPropagate:
+		return accessPropagates
+	case accessPathSkip:
+		return accessSkips
+	case accessPathDiscard:
+		return accessDiscards
+	case accessPathFallthrough:
+		return accessFallsThrough
+	default:
+		if paths&accessPathUnknown != 0 {
+			return accessUnclassified
+		}
+		return accessConditional
+	}
 }
 
-func mentionsErr(expression ast.Expr) bool {
+type accessFailurePath uint8
+
+const (
+	accessPathPropagate accessFailurePath = 1 << iota
+	accessPathSkip
+	accessPathDiscard
+	accessPathFallthrough
+	accessPathUnknown
+)
+
+func accessFailurePaths(statements []ast.Stmt, binding *ast.Ident) accessFailurePath {
+	if len(statements) == 0 {
+		return accessPathFallthrough
+	}
+	tail := statements[1:]
+	switch current := statements[0].(type) {
+	case *ast.ReturnStmt:
+		if len(current.Results) == 0 {
+			return accessPathUnknown // Named return values require data-flow analysis.
+		}
+		result := current.Results[len(current.Results)-1]
+		if accessErrorIdentity(result, binding) {
+			return accessPathPropagate
+		}
+		// localizedError's second argument is the wrapped cause. Merely
+		// mentioning the error in a message or an arbitrary call is not proof.
+		if call, ok := result.(*ast.CallExpr); ok {
+			if function, ok := call.Fun.(*ast.Ident); ok && function.Obj == nil && function.Name == "localizedError" && len(call.Args) == 2 && accessErrorIdentity(call.Args[1], binding) {
+				return accessPathPropagate
+			}
+		}
+		if accessExpressionUses(result, binding) {
+			return accessPathUnknown
+		}
+		return accessPathDiscard
+	case *ast.BranchStmt:
+		if current.Tok == token.CONTINUE && current.Label == nil {
+			return accessPathSkip
+		}
+	case *ast.IfStmt:
+		if current.Init != nil {
+			return accessPathUnknown // May overwrite or shadow the access error.
+		}
+		truth := accessFailureCondition(current.Cond, binding)
+		var paths accessFailurePath
+		if truth&2 != 0 {
+			branch := append(append([]ast.Stmt(nil), current.Body.List...), tail...)
+			paths |= accessFailurePaths(branch, binding)
+		}
+		if truth&1 != 0 {
+			branch := tail
+			switch alternate := current.Else.(type) {
+			case *ast.BlockStmt:
+				branch = append(append([]ast.Stmt(nil), alternate.List...), tail...)
+			case *ast.IfStmt:
+				branch = append([]ast.Stmt{alternate}, tail...)
+			case nil:
+			default:
+				return accessPathUnknown
+			}
+			paths |= accessFailurePaths(branch, binding)
+		}
+		if truth != 0 {
+			return paths
+		}
+	case *ast.DeclStmt:
+		// The head-read adapter declares an uninitialized zero value before
+		// returning it beside err. Initializers and other effects are unknown.
+		if declaration, ok := current.Decl.(*ast.GenDecl); ok && declaration.Tok == token.VAR {
+			for _, spec := range declaration.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok || len(value.Values) != 0 {
+					return accessPathUnknown
+				}
+			}
+			return accessFailurePaths(tail, binding)
+		}
+	}
+	return accessPathUnknown
+}
+
+// Truth is a bit set: 1=false, 2=true, 3=either, 0=unsupported use of the
+// access error. Unknown policy predicates explore both paths; success-only
+// guards cannot publish the error from their unreachable body.
+func accessFailureCondition(expression ast.Expr, binding *ast.Ident) uint8 {
+	switch current := expression.(type) {
+	case *ast.ParenExpr:
+		return accessFailureCondition(current.X, binding)
+	case *ast.UnaryExpr:
+		if current.Op == token.NOT {
+			truth := accessFailureCondition(current.X, binding)
+			return (truth&1)<<1 | (truth&2)>>1
+		}
+	case *ast.BinaryExpr:
+		if current.Op == token.EQL || current.Op == token.NEQ {
+			left, right := current.X, current.Y
+			if accessErrorIdentity(right, binding) {
+				left, right = right, left
+			}
+			if nilValue, ok := right.(*ast.Ident); ok && nilValue.Name == "nil" && nilValue.Obj == nil && accessErrorIdentity(left, binding) {
+				if current.Op == token.NEQ {
+					return 2
+				}
+				return 1
+			}
+		}
+		if current.Op == token.LAND || current.Op == token.LOR {
+			left, right := accessFailureCondition(current.X, binding), accessFailureCondition(current.Y, binding)
+			if left == 0 || right == 0 {
+				return 0
+			}
+			var truth uint8
+			for a := uint8(1); a <= 2; a++ {
+				for b := uint8(1); b <= 2; b++ {
+					if left&a != 0 && right&b != 0 {
+						value := a == 2 && b == 2
+						if current.Op == token.LOR {
+							value = a == 2 || b == 2
+						}
+						if value {
+							truth |= 2
+						} else {
+							truth |= 1
+						}
+					}
+				}
+			}
+			return truth
+		}
+	}
+	if accessExpressionUses(expression, binding) {
+		return 0
+	}
+	return 3
+}
+
+func accessErrorIdentity(expression ast.Expr, binding *ast.Ident) bool {
+	if parenthesized, ok := expression.(*ast.ParenExpr); ok {
+		return accessErrorIdentity(parenthesized.X, binding)
+	}
+	identifier, ok := expression.(*ast.Ident)
+	return ok && binding.Obj != nil && identifier.Obj == binding.Obj
+}
+
+func accessExpressionUses(expression ast.Expr, binding *ast.Ident) bool {
 	found := false
 	ast.Inspect(expression, func(node ast.Node) bool {
-		if identifier, ok := node.(*ast.Ident); ok && identifier.Name == "err" {
+		if identifier, ok := node.(*ast.Ident); ok && accessErrorIdentity(identifier, binding) {
 			found = true
 		}
 		return !found
@@ -243,14 +391,14 @@ var recordedStorageAccessInventory = map[string][]constituentAccessClass{
 	"composite_capabilities.go#StreamNodesWithOptions":   {accessPropagates},
 	"composite_capabilities.go#ForEachNodeIDByLabel":     {accessPropagates},
 	"composite_capabilities.go#IterateNodes":             {accessPropagates},
-	"composite_capabilities.go#walkReadableConstituents": {accessPropagates},
+	"composite_capabilities.go#walkReadableConstituents": {accessConditional},
 	"composite_capabilities.go#GetSchemaForNamespace":    {accessSkips},
 
 	"composite_engine.go#getConstituentForWrite":      {accessPropagates},
 	"composite_engine.go#GetConstituentByAlias":       {accessPropagates},
 	"composite_engine.go#CreateNode":                  {accessPropagates},
 	"composite_engine.go#UpdateNode":                  {accessPropagates},
-	"composite_engine.go#CreateEdge":                  {accessPropagates, accessPropagates, accessPropagates, accessPropagates, accessPropagates, accessPropagates},
+	"composite_engine.go#CreateEdge":                  {accessPropagates, accessFallsThrough, accessFallsThrough, accessPropagates, accessPropagates, accessPropagates},
 	"composite_engine.go#UpdateEdge":                  {accessPropagates},
 	"composite_engine.go#materializeConstituents":     {accessPropagates},
 	"composite_engine.go#streamConstituents":          {accessPropagates},
@@ -265,7 +413,7 @@ var recordedStorageAccessInventory = map[string][]constituentAccessClass{
 	"composite_engine.go#sumConstituentCounts":        {accessPropagates},
 	"composite_engine.go#StreamNodeChunks":            {accessPropagates},
 
-	"composite_entity_lookup.go#constituentsForEntity": {accessPropagates},
+	"composite_entity_lookup.go#constituentsForEntity": {accessConditional},
 	"composite_entity_lookup.go#ConstituentStorage":    {accessPropagates},
 	"composite_entity_lookup.go#readFirstConstituent":  {accessPropagates},
 	"composite_entity_lookup.go#writeFirstConstituent": {accessPropagates, accessPropagates},
@@ -279,6 +427,20 @@ var recordedStorageAccessInventory = map[string][]constituentAccessClass{
 // consumer that resolves USE composite.constituent.
 var recordedCypherAccessInventory = map[string][]constituentAccessClass{
 	"executor_use.go#resolveCompositeConstituent": {accessPropagates},
+}
+
+// Pin both conditional guards so an inverted policy cannot retain the same
+// class unnoticed. These snapshots prompt review; runtime tests establish the
+// public contracts.
+var recordedConditionalAccessPolicies = map[string]string{
+	"composite_capabilities.go#walkReadableConstituents": `if err != nil {
+		if access == constituentAccessRequired { return err }
+		continue
+	}`,
+	"composite_entity_lookup.go#constituentsForEntity": `if err != nil {
+		if c.configuredConstituentDatabase(alias) == database { return nil, nil, local, true, err }
+		continue
+	}`,
 }
 
 func TestCompositeConstituentAccessCallSiteInventory(t *testing.T) {
@@ -296,13 +458,23 @@ func TestCompositeConstituentAccessCallSiteInventory(t *testing.T) {
 			for _, site := range sites {
 				actual[site.key()] = append(actual[site.key()], site.class)
 				t.Logf("%s:%d %s %s", site.file, site.line, site.function, site.class)
+				if site.class == accessConditional {
+					var source bytes.Buffer
+					if err := format.Node(&source, token.NewFileSet(), site.handling); err != nil {
+						t.Fatal(err)
+					}
+					want, recorded := recordedConditionalAccessPolicies[site.key()]
+					if !recorded || strings.Join(strings.Fields(source.String()), " ") != strings.Join(strings.Fields(want), " ") {
+						t.Fatalf("%s: conditional access policy requires review:\n%s", site.key(), source.String())
+					}
+				}
 			}
 			classes := map[constituentAccessClass]int{}
 			for _, site := range sites {
 				classes[site.class]++
 			}
-			t.Logf("total=%d propagate=%d skip=%d discard=%d unclassified=%d",
-				total, classes[accessPropagates], classes[accessSkips], classes[accessDiscards], classes[accessUnclassified])
+			t.Logf("total=%d propagate=%d skip=%d discard=%d fallthrough=%d conditional=%d unclassified=%d",
+				total, classes[accessPropagates], classes[accessSkips], classes[accessDiscards], classes[accessFallsThrough], classes[accessConditional], classes[accessUnclassified])
 			if classes[accessUnclassified] != 0 {
 				t.Fatalf("%d call sites could not be classified", classes[accessUnclassified])
 			}
