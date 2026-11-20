@@ -162,21 +162,42 @@ func (s *Service) SearchTextContinuation(
 	// An initial FGAC cursor owns its private corpus through Close. A later
 	// pull enters the existing registry using the still-authenticated owner
 	// and the retained stream checks that its policy is still current.
-	var release func() error
-	var transferred bool
 	if principal := s.requestedFineGrainedView(ctx); principal != nil {
 		view, buildErr := s.fineGrainedView(ctx, principal)
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		release = view.Close
+		// The corpus that serves the new stream builds it, and the stream
+		// takes the corpus over or the corpus is released.
+		return view.startTextContinuation(ctx, query, opts, request, chunkQuery, embedQuery, view.Search, errorPolicy, registry, scope, view.Close)
+	}
+	return s.startTextContinuation(ctx, query, opts, request, chunkQuery, embedQuery, searchQuery, errorPolicy, registry, scope, nil)
+}
+
+// startTextContinuation builds and starts one new continuation stream. It runs
+// on the Service whose corpus serves the search: the database index, or a
+// fine-grained principal's private corpus, which is released unless the started
+// stream takes ownership of it.
+func (s *Service) startTextContinuation(
+	ctx context.Context,
+	query string,
+	opts *SearchOptions,
+	request SearchContinuationRequest,
+	chunkQuery ChunkQueryFunc,
+	embedQuery EmbedQueryFunc,
+	searchQuery SearchQueryFunc,
+	errorPolicy ChunkedSearchErrorPolicy,
+	registry continuationRegistry,
+	scope resultstream.Scope,
+	release func() error,
+) (*SearchContinuationPage, error) {
+	var transferred bool
+	if release != nil {
 		defer func() {
 			if !transferred {
 				_ = release()
 			}
 		}()
-		s = view
-		searchQuery = view.Search
 	}
 	ownStream := func(stream resultstream.Stream) resultstream.Stream {
 		if release == nil {
