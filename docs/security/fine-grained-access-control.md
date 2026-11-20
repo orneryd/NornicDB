@@ -78,6 +78,15 @@ the draft, then choose **Save changes**. The **Members** view shows current
 members and supports adding or removing users. The entitlement library lets
 you maintain a definition reused by several roles.
 
+The example below stages a read entitlement for the `summary` property on
+`Incident` nodes in the `nornic` database. To run a graph query, the member
+also needs database access and traversal for the intended nodes.
+
+![The FGAC editor showing the database, node label, and property scope](../assets/images/fgac/entitlement-editor.png)
+
+See the [saved role](../assets/images/fgac/role-entitlements.png) and
+[member assignment on mobile](../assets/images/fgac/role-members-mobile.png).
+
 The editor offers individual actions for managed embedding, Heimdall, and
 knowledge policy operations. Feature actions and access to the graph used by
 the feature are independent grants. The existing Database Access layout is
