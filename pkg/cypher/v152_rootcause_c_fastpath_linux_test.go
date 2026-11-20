@@ -73,3 +73,40 @@ func TestV152RCCFastPathRateVariance(t *testing.T) {
 	}
 	t.Logf("RCC_FASTPATH_SUMMARY threshold=5000 batches_below=%d batches_above=%d", below, above)
 }
+
+// TestV152RCCFastPathWithLimitRateVariance does the same for the WITH LIMIT
+// workload of fastpath_test.go:14-61 (threshold 10,000 ops/s).
+func TestV152RCCFastPathWithLimitRateVariance(t *testing.T) {
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	for i := 0; i < 10; i++ {
+		_, err := engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("actor%d", i)), Labels: []string{"Actor"}, Properties: map[string]interface{}{"name": fmt.Sprintf("Actor_%d", i)}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(fmt.Sprintf("movie%d", i)), Labels: []string{"Movie"}, Properties: map[string]interface{}{"title": fmt.Sprintf("Movie_%d", i)}})
+		require.NoError(t, err)
+	}
+	executor := NewStorageExecutor(engine)
+	ctx := context.Background()
+	query := "MATCH (a:Actor), (m:Movie) WITH a, m LIMIT 1 CREATE (a)-[r:TEMP_REL]->(m) DELETE r"
+	below, above := 0, 0
+	for batch := 0; batch < 12; batch++ {
+		load, _ := os.ReadFile("/proc/loadavg")
+		throttleBefore := v152RCCThrottle()
+		cpu0, start := v152RCCCPUSeconds(), time.Now()
+		for i := 0; i < 1000; i++ {
+			result, err := executor.Execute(ctx, query, nil)
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Stats.RelationshipsCreated)
+		}
+		wall := time.Since(start).Seconds()
+		cpu := v152RCCCPUSeconds() - cpu0
+		rate := 1000 / wall
+		if rate < 10000 {
+			below++
+		} else {
+			above++
+		}
+		t.Logf("RCC_FASTPATH_WITHLIMIT batch=%d wall_ops_per_s=%.0f cpu_us_per_op=%.1f cpu_over_wall=%.2f compound_fastpath=%v loadavg=%q throttle_before=%s throttle_after=%s",
+			batch, rate, cpu*1e6/1000, cpu/wall, executor.LastHotPathTrace().CompoundQueryFastPath, strings.TrimSpace(string(load)), throttleBefore, v152RCCThrottle())
+	}
+	t.Logf("RCC_FASTPATH_WITHLIMIT_SUMMARY threshold=10000 batches_below=%d batches_above=%d", below, above)
+}
