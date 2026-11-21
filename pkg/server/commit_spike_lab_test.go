@@ -21,6 +21,7 @@ package server
 //   CS_SEARCH      1: build search indexes before the transaction (default 1)
 //   CS_PROFILE     1: CPU + alloc profiles of the COMMIT only (default 1)
 //   CS_STACKS_MS   goroutine stack sample interval during COMMIT (default 2000, 0 off)
+//   CS_BM25_PROPS  comma list: limit full-text indexing to these properties (default: engine default, all)
 //   HS_MEMLIMIT    Go soft memory limit (default 18 GiB)
 
 import (
@@ -154,8 +155,8 @@ func csRunOne(t *testing.T, n int) {
 	doProf := hsEnvI("CS_PROFILE", 1) == 1
 	stacksMS := hsEnvI("CS_STACKS_MS", 2000)
 	nExtra := int(float64(n) * extra)
-	hsLog("CSCONFIG N=%d extra=%d view_chars=%d text_chars=%d chunk_chars=%d dims=%d smallTx=%d mvccRet=%d walSync=%s search=%v include=%q gomaxprocs=%d",
-		n, nExtra, viewChars, textChars, chunkChars, dims, smallTx, mvccRet, walSync, search, embedInclude(), runtime.GOMAXPROCS(0))
+	hsLog("CSCONFIG N=%d extra=%d view_chars=%d text_chars=%d chunk_chars=%d dims=%d smallTx=%d mvccRet=%d walSync=%s search=%v include=%q bm25=%q wal_env=%q gomaxprocs=%d",
+		n, nExtra, viewChars, textChars, chunkChars, dims, smallTx, mvccRet, walSync, search, embedInclude(), hsEnvS("CS_BM25_PROPS", ""), os.Getenv("NORNICDB_WAL_ENABLED"), runtime.GOMAXPROCS(0))
 
 	emb := &hsEmbedder{dims: dims}
 	server, authenticator := setupTestServerWithDatabaseConfig(t, func(c *nornicdb.Config) {
@@ -165,6 +166,9 @@ func csRunOne(t *testing.T, n int) {
 		c.Memory.EmbeddingDimensions = dims
 		if inc := embedInclude(); inc != "" {
 			c.EmbeddingWorker.PropertiesInclude = strings.Split(inc, ",")
+		}
+		if bp := hsEnvS("CS_BM25_PROPS", ""); bp != "" {
+			c.Memory.SearchBM25Properties = strings.Split(bp, ",")
 		}
 	}, nil)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
