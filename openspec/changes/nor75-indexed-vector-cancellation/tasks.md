@@ -1,0 +1,4 @@
+- [x] Reproduce continued indexed hydration on the release branch.
+- [x] Poll the request in the indexed search and hydration owners.
+- [x] Cover delayed cancellation propagation and cancellation during hydration with deterministic regressions.
+- [ ] Complete the release verification and duplicate review.
