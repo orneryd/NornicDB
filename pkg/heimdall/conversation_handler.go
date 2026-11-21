@@ -154,6 +154,17 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	if lifecycle.streamedAnswer.Len() == 0 {
 		response.Choices[0].Delta.Content = reply
 	}
+	if len(lifecycle.postExecute) != 0 {
+		if response.Choices[0].Delta.Content != "" {
+			response.Choices[0].FinishReason = ""
+			data, _ := valueconvert.PropertyJSON.Marshal(response)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+			response.Choices[0].Delta.Content = ""
+			response.Choices[0].FinishReason = "stop"
+		}
+		h.flushPostExecute(ctx, lifecycle)
+	}
 	data, _ := valueconvert.PropertyJSON.Marshal(response)
 	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)
 	flusher.Flush()
