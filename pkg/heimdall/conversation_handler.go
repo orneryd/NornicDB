@@ -94,7 +94,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	CallPrePromptHooks(prompt)
-	h.sendStreamNotifications(lifecycle, prompt.DrainNotifications())
+	h.sendStreamNotifications(lifecycle, prompt.DrainNotifications(), false)
 	params := DefaultGenerateParams()
 	params.MaxTokens = req.MaxTokens
 	if params.MaxTokens <= 0 {

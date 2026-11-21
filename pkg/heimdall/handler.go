@@ -870,18 +870,15 @@ func (h *Handler) flushPostExecute(ctx context.Context, l *requestLifecycle) {
 		if ctx.Err() != nil {
 			return
 		}
-		h.writeStreamNotifications(l, work.context.DrainNotifications())
+		h.sendStreamNotifications(l, work.context.DrainNotifications(), l.legacyPostExecuteStream)
 	}
 }
 
 // sendStreamNotifications writes queued notifications as SSE chunks (used when streaming with tools).
-func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []QueuedNotification) {
-	if !lifecycle.compatMode {
-		h.writeStreamNotifications(lifecycle, notifs)
+func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []QueuedNotification, includeCompatibility bool) {
+	if lifecycle.compatMode && !includeCompatibility {
+		return
 	}
-}
-
-func (h *Handler) writeStreamNotifications(lifecycle *requestLifecycle, notifs []QueuedNotification) {
 	if lifecycle.StreamWriter == nil || lifecycle.StreamFlusher == nil || lifecycle.StreamModel == "" {
 		return
 	}
@@ -993,7 +990,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 			}
 			preExecCtx.SetBifrost(h.bifrost)
 			preExecResult := CallPreExecuteHooks(preExecCtx)
-			h.sendStreamNotifications(lifecycle, preExecCtx.DrainNotifications())
+			h.sendStreamNotifications(lifecycle, preExecCtx.DrainNotifications(), false)
 			if preExecCtx.Cancelled() {
 				messages = append(messages, ToolRoundMessage{Role: "tool", ToolCallID: tc.Id, Content: "Cancelled: " + preExecCtx.CancelReason()})
 				continue
@@ -1308,7 +1305,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 	lifecycle.StreamWriter = w
 	lifecycle.StreamFlusher = flusher
 	lifecycle.StreamModel = model
-	h.sendStreamNotifications(lifecycle, lifecycle.promptCtx.DrainNotifications())
+	h.sendStreamNotifications(lifecycle, lifecycle.promptCtx.DrainNotifications(), false)
 
 	// systemPrompt already carries the native tool contract, so the model answers from
 	// context when possible instead of calling tools.
