@@ -46,9 +46,10 @@ RETURN reduce(out = '', i IN range(0, size(lines) - 1) |
 const textIntervalFixture = `CREATE (:Source {id: 'source-1', text: 'Hi 😀 there\nquoted > line\n\nlast é',
   starts: [0, 11, 26], ends: [11, 25, 32], roles: ['own', 'quoted', 'own'], labels: ['intro', 'quote', 'tail']})`
 
-func newTextIntervalExecutor(t testing.TB) *StorageExecutor {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "textintervals"))
-	_, err := exec.Execute(context.Background(), textIntervalFixture, nil)
+func newTextIntervalExecutor(t testing.TB, base storage.Engine, seed string, params map[string]any) *StorageExecutor {
+	t.Helper()
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "textintervals"))
+	_, err := exec.Execute(t.Context(), seed, params)
 	require.NoError(t, err)
 	return exec
 }
@@ -70,7 +71,7 @@ func textPart(start, end int64, role string) map[string]interface{} {
 }
 
 func TestTextIntervalRecipesMatchNeo4j(t *testing.T) {
-	exec := newTextIntervalExecutor(t)
+	exec := newTextIntervalExecutor(t, newTestMemoryEngine(t), textIntervalFixture, nil)
 
 	for _, c := range []struct {
 		start, end int64
