@@ -171,7 +171,7 @@ func (b *BadgerEngine) createEdgeWithWriteContext(ctx context.Context, edge *Edg
 			}
 		}
 
-		version, err := b.allocateMVCCVersion(txn, dbName, time.Now())
+		version, err := b.allocateMVCCVersion(ctx, txn, dbName, time.Now())
 		if err != nil {
 			return err
 		}
@@ -434,7 +434,7 @@ func (b *BadgerEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpdateR
 		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
+		version, err := b.allocateMVCCVersion(ctx, txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
 			return err
 		}
@@ -688,7 +688,7 @@ func (b *BadgerEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
 		return appendOperationPublicationKeys(preparationContext, nil, &constraints, operations)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
+		version, err := b.allocateMVCCVersion(ctx, txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
 			return err
 		}

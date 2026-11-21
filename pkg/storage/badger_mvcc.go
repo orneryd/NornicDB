@@ -1802,7 +1802,7 @@ func applyMVCCBootstrapBatch[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *B
 			if !pending {
 				continue
 			}
-			if err := writeMVCCBootstrapHead[E, ID, M](b, txn, id, entity); err != nil {
+			if err := writeMVCCBootstrapHead[E, ID, M](b, ctx, txn, id, entity); err != nil {
 				return err
 			}
 		}
@@ -1832,10 +1832,10 @@ func mvccBootstrapHeadPending[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *
 // established that no head exists, or that the stored head reports the live
 // body as deleted. Version allocation keeps the existing per-namespace
 // sequence and the body's timestamps.
-func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, txn *badger.Txn, id ID, entity E) error {
+func writeMVCCBootstrapHead[E any, ID ~string, M mvccBootstrapKind[E, ID]](b *BadgerEngine, ctx context.Context, txn *badger.Txn, id ID, entity E) error {
 	var kind M
 	createdAt, updatedAt := kind.entityTimes(entity)
-	version, err := b.allocateHistoricalMVCCVersion(txn, kind.entityNamespace(entity), mvccBootstrapTime(createdAt, updatedAt))
+	version, err := b.allocateHistoricalMVCCVersion(ctx, txn, kind.entityNamespace(entity), mvccBootstrapTime(createdAt, updatedAt))
 	if err != nil {
 		return err
 	}
@@ -1877,7 +1877,7 @@ func bootstrapMVCCFromCurrentStateInTxn[E any, ID ~string, M mvccBootstrapKind[E
 		if skip {
 			continue
 		}
-		if err := writeMVCCBootstrapHead[E, ID, M](b, txn, id, entity); err != nil {
+		if err := writeMVCCBootstrapHead[E, ID, M](b, context.Background(), txn, id, entity); err != nil {
 			return err
 		}
 	}

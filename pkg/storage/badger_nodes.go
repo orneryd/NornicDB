@@ -94,7 +94,7 @@ func (b *BadgerEngine) createNodeWithWriteContext(ctx context.Context, node *Nod
 		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, nil, image)
 	}
 	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
+		version, err := b.allocateMVCCVersion(ctx, txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
 		}
@@ -562,7 +562,7 @@ func (b *BadgerEngine) UpdateNode(ctx context.Context, updateRequest NodeUpdateR
 		return appendNodePublicationKeys(preparationContext, nil, &constraints, node.ID, existingNode, image)
 	}
 	err := b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
+		version, err := b.allocateMVCCVersion(ctx, txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
 		}
