@@ -19,6 +19,13 @@ import (
 // complete only because every keyed value is filed: a list that was not filed
 // made an indexed equality on it return no rows (#844).
 //
+// A list or map holding NaN reports no key either: NaN is unequal to itself
+// (compareConstraintNumbers), so no canonical text is a reflexive equality
+// token for that value. Typing one anyway filed two values the constraint
+// equality owner keeps apart under one key, so the UNIQUE claim cache and a
+// value cache rebuild disagreed with the label scan (NOR-374). Scalar NaN keeps
+// its own numeric key; a lookup with it matches nothing, as its equality does.
+//
 // ctx is the lifetime the key is prepared for. Keying a list or map writes its
 // canonical text element by element, which is linear in the value's element
 // count, so that traversal observes ctx every bulkReadCancellationInterval
@@ -142,7 +149,9 @@ func exactUnsignedIndexKey(n uint64) interface{} {
 // of its elements, numbers in their numeric form, so [1, 2] and [1.0, 2.0]
 // share a key, and map entries in key order. Its own type keeps it apart from
 // string keys. It contributes to complete nonnull candidates, but is not a
-// property value that an ordered index read can sort.
+// property value that an ordered index read can sort. A value holding an
+// element without a canonical text of its own (NaN, a byte array) has no
+// composite key.
 type compositeIndexKey string
 
 func compositeIndexKeyOf(ctx context.Context, value interface{}) (compositeIndexKey, bool, error) {
