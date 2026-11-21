@@ -305,3 +305,77 @@ func TestVerifyH6Steps(t *testing.T) {
 		_ = os.RemoveAll(dir)
 	}
 }
+
+// TestVerifyH6CacheProof (L-H6-001 root cause by run): the same graph at each
+// scale, opened once with the default Badger node cache cap (10,000 entries,
+// pkg/storage/badger.go:135) and once with VERIFY_H6_CACHE_BIG entries. Times
+// T06 as the harness does (one warm-up, three timed, drop after each), the
+// label read alone, and three first-run full reads with distinct statement
+// texts (no result-cache hit). VERIFY_H6_CACHE lines.
+//
+// Run: VERIFY_H6=1 [VERIFY_H6_SCALES=1,16,64] [VERIFY_H6_CACHE_BIG=1000000]
+//      go test ./pkg/server -run '^TestVerifyH6CacheProof$' -count=1 -timeout=90m -v
+func TestVerifyH6CacheProof(t *testing.T) {
+	if os.Getenv("VERIFY_H6") == "" {
+		t.Skip("set VERIFY_H6=1")
+	}
+	scales := []int{1, 16, 64}
+	if v := os.Getenv("VERIFY_H6_SCALES"); v != "" {
+		scales = nil
+		for _, s := range strings.Split(v, ",") {
+			n, _ := strconv.Atoi(s)
+			scales = append(scales, n)
+		}
+	}
+	big := huntEnvInt("VERIFY_H6_CACHE_BIG", 1000000)
+	worker, _ := os.Hostname()
+	base, err := os.MkdirTemp(huntEnv("HUNT_TMP", os.TempDir()), "verify-h6-cache-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	ctx := context.Background()
+	var unique int64
+	for _, cache := range []int{0, big} {
+		for _, f := range scales {
+			dir := filepath.Join(base, fmt.Sprintf("c%d-x%d", cache, f))
+			h := huntOpen(t, dir, huntOptions{QueryCache: true, NodeCacheMaxEntries: cache})
+			buildStart := time.Now()
+			huntH6Build(t, h, f)
+			build := time.Since(buildStart).Seconds()
+			emit := func(step string, rep int, elapsed time.Duration, extra map[string]any) {
+				rec := map[string]any{"cache": cache, "scale": f, "step": step, "rep": rep, "ms": float64(elapsed.Microseconds()) / 1000,
+					"us_per_node": float64(elapsed.Nanoseconds()) / 1000 / float64(huntH6BaseNodes*f), "build_s": build, "worker": worker}
+				for k, v := range extra {
+					rec[k] = v
+				}
+				data, _ := json.Marshal(rec)
+				fmt.Printf("VERIFY_H6_CACHE %s\n", data)
+			}
+			for rep := 0; rep < 4; rep++ {
+				unique++
+				name := fmt.Sprintf("hunt_h6_c%d", unique)
+				start := time.Now()
+				outcome := h.Run(routeBoltAuto, fmt.Sprintf("CREATE INDEX %s FOR (n:G) ON (n.s)", name), nil, 30*time.Minute)
+				elapsed := time.Since(start)
+				_ = h.Run(routeBoltAuto, "DROP INDEX "+name+" IF EXISTS", nil, 10*time.Minute)
+				emit("T06", rep, elapsed, map[string]any{"code": outcome.Code})
+			}
+			for rep := 0; rep < 3; rep++ {
+				start := time.Now()
+				nodes, err := storage.GetStoredNodesByLabel(ctx, h.db.GetStorage(), "G")
+				if err != nil {
+					t.Fatalf("read: %v", err)
+				}
+				emit("label_read", rep, time.Since(start), map[string]any{"nodes": len(nodes)})
+			}
+			for rep := 0; rep < 3; rep++ {
+				start := time.Now()
+				outcome := h.Run(routeBoltAuto, fmt.Sprintf("MATCH (n:G) RETURN count(n.s) AS c%d", rep), nil, 30*time.Minute)
+				emit("SCAN", rep, time.Since(start), map[string]any{"code": outcome.Code})
+			}
+			h.Close(t)
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
