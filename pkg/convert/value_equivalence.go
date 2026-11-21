@@ -15,8 +15,6 @@ func ValueEquivalenceKey(value any) string {
 		return "N"
 	case string:
 		return "S" + typed
-	case int64:
-		return IntegerEquivalenceKey(typed)
 	}
 	var key strings.Builder
 	if !AppendScalarEquivalenceKey(&key, value, false) {
@@ -34,17 +32,18 @@ func ValueEquivalenceKey(value any) string {
 // AppendScalarEquivalenceKey handles booleans, bytes, and numbers. Pass
 // distinguishFloat64 for a removal operation that preserves numeric types.
 func AppendScalarEquivalenceKey(key *strings.Builder, value any, distinguishFloat64 bool) bool {
-	switch typed := value.(type) {
-	case bool:
-		if typed {
+	if boolean, ok := value.(bool); ok {
+		if boolean {
 			key.WriteString("Bt")
 		} else {
 			key.WriteString("Bf")
 		}
 		return true
-	case []byte:
+	}
+	// A byte string is a scalar key even though ReadList can view its bytes.
+	if bytes, ok := value.([]byte); ok {
 		key.WriteByte('X')
-		key.Write(typed)
+		key.Write(bytes)
 		return true
 	}
 	number, ok := ReadNumber(value)
