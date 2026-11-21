@@ -269,3 +269,112 @@ func TestL2_e39_Cause(t *testing.T) {
 		break
 	}
 }
+
+// l2E39Records lists the journal records after seq: operation, data size, and
+// for an entity_commit the vector references it carries and the chunk count of
+// each node image in it. It returns the last sequence seen.
+func l2E39Records(t *testing.T, walDir string, after uint64, label string) uint64 {
+	t.Helper()
+	last := after
+	var total int
+	err := VisitWALEntriesAfterFromDir(context.Background(), walDir, after, func(e WALEntry) error {
+		last = e.Sequence
+		total += len(e.Data)
+		line := fmt.Sprintf("L2CAUSE E39 %s seq=%d op=%s data=%d B", label, e.Sequence, e.Operation, len(e.Data))
+		if e.Operation == OpEntityCommit {
+			var data walEntityCommitData
+			if err := decodeRecoveryPayload(e.Data, &data); err != nil {
+				line += fmt.Sprintf(" decodeErr=%v", err)
+			} else if envelope, ops, err := DecodeEntityTransaction(data.Payload); err != nil {
+				line += fmt.Sprintf(" envelopeErr=%v", err)
+			} else {
+				line += fmt.Sprintf(" vectorReferences=%d", len(envelope.VectorReferences.entries))
+				for _, op := range ops {
+					chunks := 0
+					if op.Node != nil {
+						chunks = len(op.Node.ChunkEmbeddings)
+					}
+					line += fmt.Sprintf(" [%s node=%s chunks=%d]", op.Type, op.NodeID, chunks)
+				}
+			}
+		}
+		t.Log(line)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("visit journal: %v", err)
+	}
+	t.Logf("L2CAUSE E39 %s total record data %d B", label, total)
+	return last
+}
+
+// TestL2_e39_Cause2: the 17,000-chunk node of the Repro (large-record
+// policy), updated twice with one property each. For each update it lists the
+// records the update appended. Reading (pin): WALEngine.UpdateNode
+// (wal_mutations.go:212-230) passes the blind request to
+// BadgerEngine.UpdateNode, whose operation is {OpUpdateNode, Node: image,
+// OldNode: existingNode (decodeNodeWithEmbeddings, with all vectors),
+// nodeAnchorEligible: true} (badger_nodes.go:550, :623); the commit's
+// prepareNativeWAL (native_wal_publication.go:40) calls
+// WAL.managedReferences (managed_vector_reference.go:124), which, for an
+// unchanged vector fingerprint, journals the old image's vectors once as a
+// managed_vector_anchor record (managed_vector_anchor.go:161-201) and lets the
+// entity_commit carry a reference instead of the vectors. If that holds, the
+// first update's growth is the anchor (full vectors, once per node image) and
+// the second update journals only a small entity_commit; if instead the
+// entity_commit itself carries 17,000 chunks, the image is not replaced.
+// It also computes the fingerprints managedReferences compares for the
+// stored node and the updated image.
+func TestL2_e39_Cause2(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	b := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true, synchronous: true, manualDrain: true, records: WALRecordsLarge})
+	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
+	wal := b.bufferedCommitWAL
+	w := NewWALEngine(b, wal)
+	walDir := filepath.Join(dir, "wal")
+	if _, err := w.CreateNode(ctx, &Node{ID: "test:n", Properties: map[string]any{"text": "alpha"}}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	n, err := b.GetNode(ctx, "test:n")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	vectors := make([][]float32, l2E39Chunks)
+	for i := range vectors {
+		v := make([]float32, l2E39Dims)
+		for j := range v {
+			v[j] = float32(i*l2E39Dims+j) / 7
+		}
+		vectors[i] = v
+	}
+	n.ChunkEmbeddings = vectors
+	n.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": l2E39Chunks}
+	if err := w.UpdateNodeEmbeddingSidecar(ctx, n); err != nil {
+		t.Fatalf("sidecar: %v", err)
+	}
+	_ = wal.Sync()
+	seq := l2E39Records(t, walDir, 0, "setup")
+
+	for round, value := range []any{true, "second"} {
+		n, err = w.GetNode(ctx, "test:n")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if len(n.ChunkEmbeddings) != l2E39Chunks {
+			t.Fatalf("precondition: %d chunks before update %d", len(n.ChunkEmbeddings), round+1)
+		}
+		old := copyNode(n)
+		n.Properties["flag"] = value
+		oldPrint, err1 := managedVectorFingerprint(ctx, old.ChunkEmbeddings)
+		newPrint, err2 := managedVectorFingerprint(ctx, n.ChunkEmbeddings)
+		t.Logf("L2CAUSE E39 update%d fingerprint stored==image: %v (errs %v %v)", round+1, oldPrint == newPrint && err1 == nil && err2 == nil, err1, err2)
+		sizeBefore := l2E39DirSize(t, walDir)
+		if err := w.UpdateNode(ctx, NodeUpdateRequest{After: n}); err != nil {
+			t.Logf("L2CAUSE E39 update%d error: %v", round+1, err)
+		}
+		_ = wal.Sync()
+		t.Logf("L2CAUSE E39 update%d journal growth %d B (vector data %d B)", round+1, l2E39DirSize(t, walDir)-sizeBefore, l2E39VectorBytes)
+		seq = l2E39Records(t, walDir, seq, fmt.Sprintf("update%d", round+1))
+	}
+}
