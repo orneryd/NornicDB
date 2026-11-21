@@ -27,7 +27,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func huntH10Seeds(f *testing.F) {
+// huntH10LeadSeeds are seed indexes left out because they are already leads
+// (DECISIONS 15): seed#1320 = H1-tck-00390, the TCK movie-graph CREATE script
+// (L-H10-002). Only targets 1 and 3 leave them out.
+var huntH10LeadSeeds = map[int]bool{1320: true}
+
+func huntH10Seeds(f *testing.F) { huntH10SeedsSkipping(f, nil) }
+
+func huntH10SeedsSkipping(f *testing.F, skip map[int]bool) {
 	f.Helper()
 	file, err := os.Open(filepath.Join("..", "server", "testdata", "hunt", "h1-corpus.json.gz"))
 	if err != nil {
@@ -52,12 +59,21 @@ func huntH10Seeds(f *testing.F) {
 	if err := json.NewDecoder(reader).Decode(&corpus); err != nil {
 		f.Fatal(err)
 	}
+	index := 0
+	add := func(q string) {
+		if skip[index] {
+			f.Logf("H10 seed left out (already a lead): seed#%d, %d bytes, %.60q", index, len(q), q)
+		} else {
+			f.Add(q)
+		}
+		index++
+	}
 	for _, g := range corpus.Groups {
 		for _, s := range g.Setup {
-			f.Add(s)
+			add(s)
 		}
 		for _, s := range g.Statements {
-			f.Add(s.Query)
+			add(s.Query)
 		}
 	}
 }
@@ -77,7 +93,7 @@ func huntH10Bounded(t *testing.T, limit time.Duration, input string, fn func()) 
 }
 
 func FuzzHuntH10NornicParse(f *testing.F) {
-	huntH10Seeds(f)
+	huntH10SeedsSkipping(f, huntH10LeadSeeds)
 	parser := NewParser()
 	f.Fuzz(func(t *testing.T, query string) {
 		huntH10Remember("FuzzHuntH10NornicParse", []byte(query))
@@ -110,7 +126,7 @@ func FuzzHuntH10ANTLRParse(f *testing.F) {
 }
 
 func FuzzHuntH10Execute(f *testing.F) {
-	huntH10Seeds(f)
+	huntH10SeedsSkipping(f, huntH10LeadSeeds)
 	f.Fuzz(func(t *testing.T, query string) {
 		huntH10Remember("FuzzHuntH10Execute", []byte(query))
 		defer func() {

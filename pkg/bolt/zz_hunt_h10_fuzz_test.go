@@ -48,7 +48,7 @@ func FuzzHuntH10PackStream(f *testing.F) {
 		int64(1), int64(-1 << 40), 1.5, "text", []any{int64(1), "a", nil}, map[string]any{"k": []any{true, false}},
 		[]byte{0, 1, 2}, nil, map[string]any{"nested": map[string]any{"x": int64(3)}},
 	} {
-		f.Add(encodePackStreamValue(seed))
+		f.Add(encodePackStreamValueInto(nil, seed))
 	}
 	f.Add(huntH10Struct(0x10, "RETURN 1", map[string]any{}, map[string]any{}))
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -78,7 +78,9 @@ func FuzzHuntH10PackStream(f *testing.F) {
 		default:
 			return // structures (temporal, spatial, graph) have their own encoders
 		}
-		again, _, err := decodePackStreamValue(encodePackStreamValue(value), 0)
+		// Re-encode with the server's encoder (encodePackStreamValueInto), not the
+		// fallback encodePackStreamValue, which has no []byte case (DECISIONS 15).
+		again, _, err := decodePackStreamValue(encodePackStreamValueInto(nil, value), 0)
 		if err != nil {
 			t.Fatalf("value %#v decoded from %x does not decode after encoding: %v", value, data, err)
 		}

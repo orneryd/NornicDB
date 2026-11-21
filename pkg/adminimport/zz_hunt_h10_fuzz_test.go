@@ -40,7 +40,8 @@ func huntH10NodeSet(t *testing.T, engine storage.Engine) []string {
 }
 
 func FuzzHuntH10CSVImport(f *testing.F) {
-	f.Add("id:ID,name,age:int,:LABEL\n1,Ann,30,Person\n2,Bob,,Person;Admin\n")
+	// Left out (DECISIONS 15, already lead L-H10-001): the former seed#0
+	// "id:ID,name,age:int,:LABEL\n1,Ann,30,Person\n2,Bob,,Person;Admin\n".
 	f.Add("id:ID,score:float,tags:string[],:LABEL\n1,1.5,a;b;c,T\n2,-0.0,,T\n")
 	f.Add("id:ID,flag:boolean,when:datetime,:LABEL\n1,true,2026-01-01T00:00:00Z,E\n")
 	f.Add("id:ID,\"quoted, name\",:LABEL\n1,\"a \"\"b\"\" c\",Q\n")
