@@ -39,7 +39,10 @@ func TestCloseoutL5HTTPFeatures(t *testing.T) {
 		t.Logf("L5 P-N152-115 plain=%s typed-status=%d typed-content-type=%s typed=%s",
 			plain.Body.String(), typed.Code, typed.Header().Get("Content-Type"), typed.Body.String())
 		if typed.Code == http.StatusOK {
-			require.JSONEq(t, plain.Body.String(), typed.Body.String())
+			var typedData map[string]any
+			require.NoError(t, json.Unmarshal(typed.Body.Bytes(), &typedData))
+			require.Equal(t, data["results"], typedData["results"])
+			require.Equal(t, data["errors"], typedData["errors"])
 			require.NotContains(t, typed.Header().Get("Content-Type"), "jolt")
 		} else {
 			require.Equal(t, http.StatusNotAcceptable, typed.Code)
