@@ -258,6 +258,9 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 	if !selectable {
 		return nil, "", r.databaseForbidden(database)
 	}
+	if !auth.FineGrainedDatabaseActionAllowed(ctx, dbName) {
+		return nil, "", auth.ErrFineGrainedForbidden
+	}
 	if !allows(dbName, permission) {
 		if permission == auth.Permission("access") {
 			return nil, "", r.databaseForbidden(database)

@@ -525,6 +525,7 @@ func (m *DatabaseManager) dropAdmitted(ctx context.Context, name string, release
 	policy := catalogTransitionPolicy{durability: catalogDurableDrop, dropName: name}
 	completionOnly := false
 	var intentErr error
+	expectedID, _ := ctx.Value(dropDatabaseIdentityKey{}).(string)
 	if err := m.transitionCatalog(ctx, policy, func(candidate *DatabaseManager) error {
 		info := candidate.databases[name]
 		if info == nil {
@@ -536,6 +537,9 @@ func (m *DatabaseManager) dropAdmitted(ctx context.Context, name string, release
 			candidate.transitionPendingDrop(name, false)
 			completionOnly = true
 			return nil
+		}
+		if expectedID != "" && info.ID != expectedID {
+			return ErrDatabaseNotFound
 		}
 		if info.Type == "system" {
 			return ErrCannotDropSystemDB

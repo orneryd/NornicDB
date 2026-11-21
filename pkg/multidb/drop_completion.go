@@ -7,6 +7,14 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+type dropDatabaseIdentityKey struct{}
+
+// WithDropDatabaseIdentity ties a subsequent DROP to an authorized database
+// incarnation. The DROP owner compares the identity under its catalog gate.
+func WithDropDatabaseIdentity(ctx context.Context, databaseID string) context.Context {
+	return context.WithValue(ctx, dropDatabaseIdentityKey{}, databaseID)
+}
+
 // dropHandoff decides who finishes a new DROP intent: the DROP call that
 // submitted it, while that call still waits, or else the owner's completion.
 // The receipt callback and the waiter each report once; exactly one of them

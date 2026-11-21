@@ -168,7 +168,7 @@ func (s *Session) handleHello(data []byte) error {
 
 	// Extract and validate database name
 	dbName := authParams["database"]
-	if dbName == "" && s.server != nil && s.server.dbManager != nil {
+	if dbName == "" && s.server != nil && s.server.dbManager != nil && s.server.fineGrainedAdmission == nil {
 		// Use default database if not specified
 		dbName = s.server.dbManager.DefaultDatabaseName()
 	}
@@ -212,12 +212,16 @@ func (s *Session) handleHello(data []byte) error {
 			localization.BoltHelloEvent(remoteAddr, s.authResult.Username, s.authResult.Roles, dbName))
 	}
 
-	return s.sendSuccess(map[string]any{
+	response := map[string]any{
 		"server":        s.server.config.serverAnnouncement(),
 		"connection_id": "nornic-1",
 		"hints":         map[string]any{},
 		"patch_bolt":    []any{"utc"},
-	})
+	}
+	if principal, _, err := s.fineGrainedPrincipal(s.parentContext(), nil); err == nil && principal != nil && principal.PasswordChangeRequired {
+		response["credentials_expired"] = true
+	}
+	return s.sendSuccess(response)
 }
 
 func (s *Session) bindDatabaseConnection(databaseName string) error {

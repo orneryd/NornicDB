@@ -40,7 +40,7 @@ func NewRoleStore(systemStorage storage.Engine) *RoleStore {
 // Load reads all _Role nodes from storage into memory.
 func (r *RoleStore) Load(ctx context.Context) error {
 	m := make(map[string]struct{})
-	err := storage.StreamNodesWithFallback(ctx, r.storage, 1000, func(n *storage.Node) error {
+	err := r.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: rolePrefix}, func(n *storage.Node) error {
 		for _, l := range n.Labels {
 			if l == roleLabel {
 				name := roleNameFromNodeID(string(n.ID))

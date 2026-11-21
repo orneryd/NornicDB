@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -48,6 +49,7 @@ type GraphProjection struct {
 	Configuration            map[string]interface{} // as gds.graph.list reports it
 	schema                   map[string]interface{} // GDS's schema, with each relationship type's direction
 	nodeIndex                map[string]int
+	authorizationScope       string
 }
 
 // ProjectedRelationship is one relationship of a projection, from Source
@@ -72,6 +74,24 @@ func gdsCatalogKey(database, name string) string {
 	return database + "\x00" + name
 }
 
+// gdsAuthorizationScope binds a retained projection to its authenticated
+// creator, policy, and stable database identity.
+func gdsAuthorizationScope(ctx context.Context, database string) string {
+	request := auth.FineGrainedRequestFromContext(ctx)
+	if request == nil {
+		return ""
+	}
+	return request.DatabaseID(database) + "\x00" + GetAuthenticatedPrincipalFromContext(ctx) + "\x00" + request.Fingerprint
+}
+
+func gdsRequestCatalogKey(ctx context.Context, database, name string) string {
+	key := gdsCatalogKey(database, name)
+	if scope := gdsAuthorizationScope(ctx, database); scope != "" {
+		key += "\x00" + scope
+	}
+	return key
+}
+
 // lookupGraphProjection is database's projection called name, or GDS's
 // error for a graph the catalog doesn't hold. It is the one owner of a
 // projection catalog lookup: every caller's lookup is one request, recorded
@@ -79,7 +99,7 @@ func gdsCatalogKey(database, name string) string {
 // to use the answer.
 func lookupGraphProjection(ctx context.Context, database, name string) (*GraphProjection, error) {
 	projectionsMu.RLock()
-	projection, exists := readGraphProjectionLocked(ctx, gdsCatalogKey(database, name), name)
+	projection, exists := readGraphProjectionLocked(ctx, gdsRequestCatalogKey(ctx, database, name), name)
 	projectionsMu.RUnlock()
 	if !exists {
 		return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
@@ -106,9 +126,10 @@ func readGraphProjectionLocked(ctx context.Context, key, name string) (*GraphPro
 func databaseProjections(ctx context.Context, database string) []*GraphProjection {
 	projectionsMu.RLock()
 	defer projectionsMu.RUnlock()
+	scope := gdsAuthorizationScope(ctx, database)
 	var projections []*GraphProjection
 	for _, projection := range graphProjections {
-		if projection.Database == database {
+		if projection.Database == database && projection.authorizationScope == scope {
 			projections = append(projections, projection)
 		}
 	}
@@ -190,13 +211,14 @@ func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interf
 	configuration["relationshipProjection"] = projection.RelationshipProjection
 	projection.Configuration = configuration
 	projection.Database = e.databaseName()
+	projection.authorizationScope = gdsAuthorizationScope(ctx, projection.Database)
 
 	// Observe cancellation after projection construction as well as during the
 	// streams, before making the completed projection visible in the catalog.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	key := gdsCatalogKey(projection.Database, graphName)
+	key := gdsRequestCatalogKey(ctx, projection.Database, graphName)
 	projectionsMu.Lock()
 	if _, exists := readGraphProjectionLocked(ctx, key, graphName); exists {
 		projectionsMu.Unlock()
@@ -1023,7 +1045,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	defer projectionsMu.Unlock()
 	if failIfMissing {
 		for _, name := range names {
-			if _, exists := readGraphProjectionLocked(ctx, gdsCatalogKey(database, name), name); !exists {
+			if _, exists := readGraphProjectionLocked(ctx, gdsRequestCatalogKey(ctx, database, name), name); !exists {
 				return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
 			}
 		}
@@ -1031,7 +1053,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	columns := columnNames(gdsGraphDropColumns)
 	rows := make([][]any, 0, len(names))
 	for _, name := range names {
-		key := gdsCatalogKey(database, name)
+		key := gdsRequestCatalogKey(ctx, database, name)
 		projection, exists := readGraphProjectionLocked(ctx, key, name)
 		if !exists {
 			continue

@@ -626,6 +626,14 @@ type relationshipCandidate struct {
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
 func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	if principal := s.requestedFineGrainedView(ctx); principal != nil {
+		view, err := s.fineGrainedView(ctx, principal)
+		if err != nil {
+			return nil, err
+		}
+		defer view.Close()
+		return view.SearchRelationships(ctx, query, embedding, opts)
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err

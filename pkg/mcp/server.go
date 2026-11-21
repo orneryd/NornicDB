@@ -729,11 +729,26 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		case string(auth.PermWrite):
 			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
 		}
+
 		ctx = contextWithAuthorizedDatabase(ctx, database)
 	} else if auth.RequestDatabaseAccessModeFromContext(ctx) != nil {
 		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	} else if databaseSelection != "" {
 		ctx = ContextWithDatabase(ctx, databaseSelection)
+	}
+
+	if principal := auth.FineGrainedRequestFromContext(ctx); principal != nil {
+		database := DatabaseFromContext(ctx)
+		if database == "" {
+			database = s.DefaultDatabaseName()
+		}
+		action := "mcp.invoke." + name
+		if !builtin {
+			action = "heimdall.invoke." + name
+		}
+		if !principal.CanAccessDatabase(database) || !principal.AllowsDatabase(action, database, "") {
+			return nil, auth.ErrFineGrainedForbidden
+		}
 	}
 
 	if !builtin {
@@ -803,8 +818,22 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 			return nil, nil, localizedError(localization.MCPDatabaseExecutorUnavailable(dbName), nil)
 		}
 		return e, func(ctx context.Context, id string) (*nornicdb.Node, error) {
+			if principal := auth.FineGrainedRequestFromContext(ctx); principal != nil {
+				engine, err := s.storageForContext(ctx)
+				if err != nil {
+					return nil, err
+				}
+				node, err := principal.Graph(engine, dbName).GetNode(ctx, storage.NodeID(normalizeNodeElementIDForDatabase(dbName, id)))
+				if err != nil {
+					return nil, err
+				}
+				return &nornicdb.Node{ID: string(node.ID), Labels: node.Labels, Properties: node.Properties, CreatedAt: node.CreatedAt}, nil
+			}
 			return gn(ctx, normalizeNodeElementIDForDatabase(dbName, id))
 		}, nil
+	}
+	if auth.FineGrainedRequestFromContext(ctx) != nil {
+		return nil, nil, auth.ErrFineGrainedForbidden
 	}
 	if s.db != nil {
 		exec := s.db.GetCypherExecutor()

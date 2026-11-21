@@ -204,10 +204,14 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *com
 			return err
 		}
 
-		if err := cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) }); err != nil {
-			return err
-		}
-		return nil
+		return cw.write(cw.ctx, func(txn *badger.Txn) error {
+			callerPending, _ := metadata[EmbeddingCallerPendingKey].(bool)
+			failed, _ := metadata["embedding_failed"].(bool)
+			if callerPending && !failed && len(node.ChunkEmbeddings) == 0 {
+				return b.setPendingEmbeddingInTxn(txn, node.ID)
+			}
+			return txn.Delete(pendingEmbedKey(node.ID))
+		})
 	})
 	if errors.Is(err, badger.ErrConflict) {
 		return ErrEmbeddingSourceChanged
@@ -260,7 +264,7 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badge
 	}
 	attempt := embedded.EmbeddingAttempt()
 	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
-	if attempt != nil && (failed || len(embedded.EmbedMeta) == 0) {
+	if attempt != nil && (attempt.RequireExactBody || failed || len(embedded.EmbedMeta) == 0) {
 		var matches bool
 		var err error
 		if len(logicalSource) > 0 {

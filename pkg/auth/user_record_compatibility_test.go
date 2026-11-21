@@ -80,6 +80,11 @@ func userRecordCompatibilitySnapshot(value any) ([]byte, error) {
 			continue
 		}
 		entry := item.Field(index).Interface()
+		// The frozen fixture predates these optional fields. Any nonzero
+		// value for a legacy record must still fail the exact fixture comparison.
+		if (field.Name == "HomeDatabase" || field.Name == "PasswordChangeRequired" || field.Name == "SecurityTags") && item.Field(index).IsZero() {
+			continue
+		}
 		if timestamp, ok := entry.(time.Time); ok {
 			entry = timestamp.UTC()
 		}
@@ -174,5 +179,25 @@ func TestUserRecordMetadataEntryAdmission(t *testing.T) {
 				t.Fatalf("metadata=%#v want %#v", user.Metadata, test.want)
 			}
 		})
+	}
+}
+
+func TestFineGrainedUserRecordRoundTrip(t *testing.T) {
+	user := &User{Username: "first-login", HomeDatabase: "work", PasswordChangeRequired: true}
+	stored := mapUserRecord(storeUserRecord, user, nil).Node
+	if stored.Properties["home_database"] != "work" || stored.Properties["password_change_required"] != true {
+		t.Fatal("fine-grained account fields were not stored")
+	}
+	loaded := mapUserRecord(loadUserRecord, nil, stored).User
+	if loaded.HomeDatabase != user.HomeDatabase || !loaded.PasswordChangeRequired {
+		t.Fatal("fine-grained account fields did not survive reopening")
+	}
+	loaded.HomeDatabase, loaded.PasswordChangeRequired = "", false
+	stored = mapUserRecord(storeUserRecord, loaded, nil).Node
+	if _, found := stored.Properties["password_change_required"]; found {
+		t.Fatal("a cleared password change requirement remained stored")
+	}
+	if _, found := stored.Properties["home_database"]; found {
+		t.Fatal("a cleared home database remained stored")
 	}
 }

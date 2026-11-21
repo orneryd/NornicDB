@@ -48,8 +48,14 @@ func NewBasicAuthCache(maxEntries int, ttl time.Duration) *BasicAuthCache {
 
 // GetFromHeader retrieves cached claims using the full Basic auth header.
 func (c *BasicAuthCache) GetFromHeader(authHeader string) (*JWTClaims, bool) {
+	claims, _, found := c.GetFromHeaderWithGeneration(authHeader)
+	return claims, found
+}
+
+// GetFromHeaderWithGeneration returns the cache generation observed with the claims.
+func (c *BasicAuthCache) GetFromHeaderWithGeneration(authHeader string) (*JWTClaims, uint64, bool) {
 	if c == nil || authHeader == "" {
-		return nil, false
+		return nil, 0, false
 	}
 	return c.get(authCacheKey("auth.basic.header", authHeader))
 }
@@ -74,8 +80,14 @@ func (c *BasicAuthCache) SetFromHeaderAtGeneration(authHeader string, claims *JW
 
 // Get retrieves cached claims using username/password (when header isn't available).
 func (c *BasicAuthCache) Get(username, password string) (*JWTClaims, bool) {
+	claims, _, found := c.GetWithGeneration(username, password)
+	return claims, found
+}
+
+// GetWithGeneration returns the cache generation observed with the claims.
+func (c *BasicAuthCache) GetWithGeneration(username, password string) (*JWTClaims, uint64, bool) {
 	if c == nil || username == "" || password == "" {
-		return nil, false
+		return nil, 0, false
 	}
 	return c.get(authCacheKey("auth.basic.credentials", username, password))
 }
@@ -147,7 +159,7 @@ func authCacheKey(namespace string, parts ...string) [32]byte {
 	return key
 }
 
-func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
+func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, uint64, bool) {
 	now := time.Now()
 
 	c.mu.Lock()
@@ -155,13 +167,13 @@ func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
 
 	entry, ok := c.entries[key]
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	if now.After(entry.expiresAt) {
 		delete(c.entries, key)
-		return nil, false
+		return nil, 0, false
 	}
-	return cloneJWTClaims(entry.claims), true
+	return cloneJWTClaims(entry.claims), c.generation, true
 }
 
 func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims, generation uint64) {

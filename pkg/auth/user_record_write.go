@@ -62,6 +62,11 @@ func (a *Authenticator) writeUserRecords(ctx context.Context, stage func() (user
 		return err
 	}
 	defer a.recordOrder.unlock()
+	if a.fgacUsers != nil {
+		if err := a.refreshFineGrainedUsersOrdered(ctx); err != nil {
+			return err
+		}
+	}
 	change, err := stage()
 	if err != nil {
 		return err

@@ -297,12 +297,10 @@ func (v *graphIdentityStorage) GetEdgeBetween(ctx context.Context, start, end st
 	return v.edge(edge), err
 }
 func (v *graphIdentityStorage) GetInDegree(ctx context.Context, key storage.NodeID) (int, error) {
-	edges, err := v.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: key})
-	return len(edges), err
+	return storage.CountAdjacentEdges(ctx, v, storage.AdjacentEdgeRead{Direction: storage.AdjacentIncoming, Node: key})
 }
 func (v *graphIdentityStorage) GetOutDegree(ctx context.Context, key storage.NodeID) (int, error) {
-	edges, err := v.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: key})
-	return len(edges), err
+	return storage.CountAdjacentEdges(ctx, v, storage.AdjacentEdgeRead{Node: key})
 }
 func (v *graphIdentityStorage) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	return v.Engine.StreamNodesWithOptions(ctx, options, func(node *storage.Node) error { return visit(v.node(node)) })
