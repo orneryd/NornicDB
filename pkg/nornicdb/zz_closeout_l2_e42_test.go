@@ -14,8 +14,19 @@ package nornicdb_test
 // a 30 s lifecycle cycle). One database per scenario, opened like the entry's
 // server database (DefaultConfig, retention 100 or 0), its automatic
 // lifecycle paused so the test places the prune itself. Each round:
-//   - history: 6,000 nodes created and updated once (with retention 100 each
-//     keeps one archived version the prune may delete);
+//   - a cleanup prune with no reader open, so leftovers of the previous round
+//     (its victims' reclaimable tombstoned chains) are gone and every round's
+//     measured prune has the same work;
+//   - history: 6,000 nodes created and updated twice. Read at the pin
+//     (pruneMVCCKeyspaceInTxn, badger_mvcc.go:1898-2120): the version
+//     keyspace holds only archived predecessors (the live body is the head),
+//     and with MaxVersionsPerKey 1 the kernel keeps one archived record, so a
+//     key needs two archived records (two updates) before one is deletable;
+//     with one update there is nothing to prune (the first lab run: 0). The
+//     open delete's registered reader sees the head, newer than both records,
+//     so it keeps neither (mvccPruneReaders.keepFrom). A tombstoned chain is
+//     not reclaimed while a reader is registered, which is why the earlier
+//     version's overlapping prune found nothing;
 //   - 6,000 victim nodes; one implicit transaction deletes all of them (the
 //     auto-commit DELETE of the entry, at the storage layer);
 //   - the prune (PruneMVCCVersions with MaxVersionsPerKey 1 and the
@@ -63,6 +74,7 @@ type l2E42Round struct {
 	staging  time.Duration
 	prune    time.Duration
 	pruned   int64
+	cleanup  int64
 	survived int
 }
 
@@ -118,15 +130,20 @@ func l2E42Prune(t *testing.T, engine *storage.BadgerEngine) (int64, time.Duratio
 func l2E42RunRound(t *testing.T, engine *storage.BadgerEngine, round int, pruneBefore bool, during func() (int64, time.Duration)) l2E42Round {
 	t.Helper()
 	ctx := context.Background()
+	var result l2E42Round
+	// Cleanup with no reader open: the previous round's reclaimable chains go
+	// now, so the measured prune below has only this round's history.
+	result.cleanup, _ = l2E42Prune(t, engine)
 	history := l2E42Bulk(t, engine, fmt.Sprintf("h%d-", round), "ZZHist", l2E42History)
-	for i, id := range history {
-		node := &storage.Node{ID: id, Labels: []string{"ZZHist"}, Properties: map[string]any{"i": int64(i), "v": int64(1)}}
-		if err := engine.UpdateNode(ctx, storage.NodeUpdateRequest{After: node}); err != nil {
-			t.Fatalf("update history %s: %v", id, err)
+	for v := int64(1); v <= 2; v++ {
+		for i, id := range history {
+			node := &storage.Node{ID: id, Labels: []string{"ZZHist"}, Properties: map[string]any{"i": int64(i), "v": v}}
+			if err := engine.UpdateNode(ctx, storage.NodeUpdateRequest{After: node}); err != nil {
+				t.Fatalf("update history %s: %v", id, err)
+			}
 		}
 	}
 	victims := l2E42Bulk(t, engine, fmt.Sprintf("d%d-", round), "ZZDel", l2E42Victims)
-	var result l2E42Round
 	if pruneBefore {
 		result.pruned, result.prune = l2E42Prune(t, engine)
 	}
@@ -191,7 +208,7 @@ func l2E42MedianCommit(results []l2E42Round) time.Duration {
 func l2E42Describe(name string, results []l2E42Round) string {
 	s := name + ":"
 	for _, r := range results {
-		s += fmt.Sprintf(" [commit=%v staging=%v prune=%v pruned=%d survived=%d]", r.commit.Round(time.Millisecond), r.staging.Round(time.Millisecond), r.prune.Round(time.Millisecond), r.pruned, r.survived)
+		s += fmt.Sprintf(" [commit=%v staging=%v prune=%v pruned=%d cleanup=%d survived=%d]", r.commit.Round(time.Millisecond), r.staging.Round(time.Millisecond), r.prune.Round(time.Millisecond), r.pruned, r.cleanup, r.survived)
 	}
 	return s
 }
@@ -212,14 +229,20 @@ func TestL2_e42_Repro(t *testing.T) {
 			}
 		}
 	}
-	// The overlap only exists if the overlapping prune committed work.
-	var overlapPruned int64
-	for _, r := range a {
-		overlapPruned += r.pruned
-	}
-	if overlapPruned < int64(l2E42History*l2E42Rounds/2) {
-		t.Logf("L2RESULT E42 INCONCLUSIVE overlapping prune deleted only %d records; %s", overlapPruned, figures)
-		t.Skipf("the overlapping prune committed too little work to test the overlap: %s", figures)
+	// Precondition, asserted before any verdict: the measured prune of A
+	// (inside the open delete) and of B (before it) each deleted at least one
+	// archived record per history node, so both scenarios carry the prune
+	// work and A's prune commits did land inside the delete's window (the
+	// prune runs synchronously between the delete's staging and its commit,
+	// an ordering, not a timing). A shortfall is a harness failure, not the
+	// defect.
+	for _, set := range [][]l2E42Round{a, b} {
+		for _, r := range set {
+			if r.pruned < l2E42History {
+				t.Logf("L2RESULT E42 HARNESS-FAIL measured prune deleted %d records, want >= %d; %s", r.pruned, l2E42History, figures)
+				t.Fatalf("harness precondition failed (not the defect): a measured prune deleted %d records, want at least %d: %s", r.pruned, l2E42History, figures)
+			}
+		}
 	}
 	if ratio > l2E42MaxRatio && medA-reference > l2E42MinExtra {
 		t.Logf("L2RESULT E42 DEFECT %s", figures)
@@ -239,10 +262,10 @@ func TestL2_e42_Control(t *testing.T) {
 	if b[0].survived != 0 || c[0].survived != 0 {
 		t.Fatalf("victims readable after commit: %s; %s", l2E42Describe("B", b), l2E42Describe("C", c))
 	}
-	// Each history node keeps one archived version at retention 100; the
-	// prune must find most of them.
-	if b[0].pruned < l2E42History/2 {
-		t.Fatalf("retention-100 prune deleted %d records, want at least %d: %s", b[0].pruned, l2E42History/2, l2E42Describe("B", b))
+	// Each history node has two archived versions at retention 100 and the
+	// prune keeps one: at least one record per history node goes.
+	if b[0].pruned < l2E42History {
+		t.Fatalf("retention-100 prune deleted %d records, want at least %d: %s", b[0].pruned, l2E42History, l2E42Describe("B", b))
 	}
 	t.Logf("L2RESULT E42 CONTROL OK %s; %s", l2E42Describe("B", b), l2E42Describe("C", c))
 }
