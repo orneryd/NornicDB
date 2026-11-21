@@ -92,7 +92,7 @@ func runFabricEmbeddingExecutionFrames(t *testing.T, forms []embeddingFrameForm)
 										// YIELD * rule, with or without USE and for any name, so either
 										// rejection is the release behavior here.
 										require.Error(t, err, query)
-										if !strings.Contains(err.Error(), "YIELD * is only valid for a standalone procedure call") {
+										if !strings.Contains(err.Error(), "Cannot use `YIELD *` outside standalone call") {
 											require.Contains(t, err.Error(), "Variable `"+strings.Trim(name, "`")+"` not defined", query)
 										}
 										return
