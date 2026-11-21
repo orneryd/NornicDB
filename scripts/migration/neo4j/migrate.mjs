@@ -2,14 +2,13 @@
 // Neo4j → NornicDB migration (Node).
 //
 // Bolt → Bolt. Reads constraints, indexes, nodes, and relationships from a
-// source Neo4j instance and replays them into NornicDB using hot-path
-// UNWIND/MERGE shapes from docs/performance/hot-path-query-cookbook.md.
+// source Neo4j instance and replays them into NornicDB using shared queries.json
+// destination statements and verified applied-row counts.
 //
 // Phases:
 //   1. Schema  — constraints, then indexes (vector and fulltext last).
-//   2. Nodes   — UNWIND $rows MERGE on _neo4j_id. Hits UnwindSimpleMergeBatch.
-//   3. Edges   — UNWIND $rows MATCH (a), MATCH (b) CREATE edge.
-//                Hits UnwindMultiMatchCreateBatch.
+//   2. Nodes   — MERGE on _neo4j_id, preserve labels as data for promotion.
+//   3. Edges   — match visible endpoints, MERGE by source ID and SET props.
 //
 // Install:
 //   npm install neo4j-driver
@@ -24,6 +23,8 @@
 // --dry-run.
 
 import neo4j from "neo4j-driver";
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 function parseArgs(argv) {
   const args = {
@@ -167,12 +168,18 @@ async function replicateSchema(srcSess, dstSess, dryRun) {
 
 // ---- Nodes ----------------------------------------------------------------
 
-const NODE_UPSERT_CYPHER = `
-UNWIND $rows AS row
-MERGE (n:_Migrated {_neo4j_id: row.id})
-SET n += row.props
-SET n._neo4j_labels = row.labels
-`;
+// One destination statement owner is shared with the Go and Python clients.
+const QUERIES = JSON.parse(readFileSync(new URL("./queries.json", import.meta.url), "utf8"));
+const NODE_UPSERT_CYPHER = QUERIES.nodes;
+
+async function applyBatch(dst, query, rows) {
+  const result = await dst.run(query, { rows });
+  const applied = result.records.length === 1 ? Number(result.records[0].get("applied")) : NaN;
+  if (!Number.isInteger(applied) || applied !== rows.length) {
+    throw new Error(`migration batch incomplete: target applied ${applied} of ${rows.length} source rows`);
+  }
+  return applied;
+}
 
 async function fetchLabels(sess) {
   const rs = await fetchAll(sess, "CALL db.labels() YIELD label RETURN label");
@@ -214,15 +221,13 @@ async function replicateNodes(srcSess, dstSess, labels, filter, batch, dryRun) {
     if (label.startsWith("_")) continue;
     let moved = 0;
     for await (const chunk of streamNodes(srcSess, label, batch)) {
-      if (!dryRun) {
-        await dstSess.run(NODE_UPSERT_CYPHER, { rows: chunk });
-      }
-      moved += chunk.length;
-      total += chunk.length;
+      const applied = dryRun ? chunk.length : await applyBatch(dstSess, NODE_UPSERT_CYPHER, chunk);
+      moved += applied;
+      total += applied;
       console.log(`  · :${label}: ${moved}`);
     }
   }
-  console.log(`  total nodes upserted: ${total}`);
+  console.log(`  ${dryRun ? "source node rows read (dry run)" : "target node rows applied"}: ${total}`);
 }
 
 // ---- Edges ----------------------------------------------------------------
@@ -263,11 +268,8 @@ async function* streamEdges(sess, relType, batch) {
   }
 }
 
-const edgeCreateCypher = (t) =>
-  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId}) MATCH (b:_Migrated {_neo4j_id: row.endId}) CREATE (a)-[:\`${t}\` {_neo4j_id: row.id}]->(b)`;
-
-const edgePropsCypher = (t) =>
-  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:\`${t}\` {_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) SET r += row.props`;
+const edgeUpsertCypher = (t) =>
+  QUERIES.edges.replaceAll("{{type}}", "`" + t.replaceAll("`", "``") + "`");
 
 async function replicateEdges(srcSess, dstSess, types, filter, batch, dryRun) {
   console.log("\n[edges]");
@@ -275,24 +277,15 @@ async function replicateEdges(srcSess, dstSess, types, filter, batch, dryRun) {
   for (const t of types) {
     if (filter.size > 0 && !filter.has(t)) continue;
     let moved = 0;
-    const createQ = edgeCreateCypher(t);
-    const propsQ = edgePropsCypher(t);
+    const createQ = edgeUpsertCypher(t);
     for await (const chunk of streamEdges(srcSess, t, batch)) {
-      if (!dryRun) {
-        await dstSess.run(createQ, { rows: chunk });
-        const hasProps = chunk.some(
-          (r) => r.props && Object.keys(r.props).length > 0,
-        );
-        if (hasProps) {
-          await dstSess.run(propsQ, { rows: chunk });
-        }
-      }
-      moved += chunk.length;
-      total += chunk.length;
+      const applied = dryRun ? chunk.length : await applyBatch(dstSess, createQ, chunk);
+      moved += applied;
+      total += applied;
       console.log(`  · :${t}: ${moved}`);
     }
   }
-  console.log(`  total edges created: ${total}`);
+  console.log(`  ${dryRun ? "source relationship rows read (dry run)" : "target relationship rows applied"}: ${total}`);
 }
 
 // ---- Main -----------------------------------------------------------------
@@ -341,7 +334,11 @@ async function main() {
   console.log(`\nDone in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+export { applyBatch, edgeUpsertCypher, NODE_UPSERT_CYPHER, replicateNodes, replicateEdges };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

@@ -1,16 +1,15 @@
 // Neo4j → NornicDB migration (Go).
 //
 // Bolt → Bolt. Reads constraints, indexes, nodes, and relationships from a
-// source Neo4j instance and replays them into NornicDB using hot-path
-// UNWIND/MERGE shapes from docs/performance/hot-path-query-cookbook.md.
+// source Neo4j instance and replays them into NornicDB using the shared
+// queries.json destination statements and verified applied-row counts.
 //
 // Phases (always in this order):
 //
 //  1. Schema  — constraints, then indexes (vector and fulltext last).
 //  2. Nodes   — UNWIND $rows MERGE on _neo4j_id key, SET props.
-//                Hits UnwindSimpleMergeBatch.
-//  3. Edges   — UNWIND $rows MATCH (a), MATCH (b) CREATE edge.
-//                Hits UnwindMultiMatchCreateBatch.
+//                Preserves source labels as data for final promotion.
+//  3. Edges   — match visible endpoints, MERGE by source ID and SET props.
 //
 // Run:
 //
@@ -26,6 +25,8 @@ package main
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -240,12 +241,42 @@ func replicateSchema(ctx context.Context, src, dst neo4j.SessionWithContext, dry
 
 // ---- Nodes -----------------------------------------------------------------
 
-const nodeUpsertCypher = `
-UNWIND $rows AS row
-MERGE (n:_Migrated {_neo4j_id: row.id})
-SET n += row.props
-SET n._neo4j_labels = row.labels
-`
+// Shared destination statements are embedded so `go run migrate.go` works.
+//
+//go:embed queries.json
+var queryJSON []byte
+
+var migrationQueries = func() map[string]string {
+	var queries map[string]string
+	if err := json.Unmarshal(queryJSON, &queries); err != nil {
+		panic(err)
+	}
+	return queries
+}()
+
+var nodeUpsertCypher = migrationQueries["nodes"]
+
+// applyBatch consumes the target result before reporting applied rows. A missing
+// endpoint is a failed migration batch, not a successfully copied source row.
+func applyBatch(ctx context.Context, dst neo4j.SessionWithContext, query string, rows []map[string]any) (int, error) {
+	result, err := dst.Run(ctx, query, map[string]any{"rows": rows})
+	if err != nil {
+		return 0, err
+	}
+	record, err := result.Single(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = result.Consume(ctx); err != nil {
+		return 0, err
+	}
+	value, ok := record.Get("applied")
+	applied, integer := value.(int64)
+	if !ok || !integer || applied != int64(len(rows)) {
+		return 0, fmt.Errorf("migration batch incomplete: target applied %v of %d source rows", value, len(rows))
+	}
+	return int(applied), nil
+}
 
 func fetchNodeLabels(ctx context.Context, sess neo4j.SessionWithContext) ([]string, error) {
 	rs, err := fetchRecords(ctx, sess, "CALL db.labels() YIELD label RETURN label")
@@ -322,13 +353,16 @@ func replicateNodes(ctx context.Context, src, dst neo4j.SessionWithContext, labe
 		}
 		moved := 0
 		err := streamNodes(ctx, src, label, batch, func(chunk []map[string]any) error {
+			applied := len(chunk)
 			if !dryRun {
-				if _, err := dst.Run(ctx, nodeUpsertCypher, map[string]any{"rows": chunk}); err != nil {
+				var err error
+				applied, err = applyBatch(ctx, dst, nodeUpsertCypher, chunk)
+				if err != nil {
 					return err
 				}
 			}
-			moved += len(chunk)
-			total += len(chunk)
+			moved += applied
+			total += applied
 			fmt.Printf("  · :%s: %d\n", label, moved)
 			return nil
 		})
@@ -336,7 +370,11 @@ func replicateNodes(ctx context.Context, src, dst neo4j.SessionWithContext, labe
 			return total, err
 		}
 	}
-	fmt.Printf("  total nodes upserted: %d\n", total)
+	if dryRun {
+		fmt.Printf("  source node rows read (dry run): %d\n", total)
+	} else {
+		fmt.Printf("  target node rows applied: %d\n", total)
+	}
 	return total, nil
 }
 
@@ -403,24 +441,8 @@ func streamEdges(ctx context.Context, sess neo4j.SessionWithContext, relType str
 	}
 }
 
-func edgeCreateCypher(relType string) string {
-	return fmt.Sprintf(
-		"UNWIND $rows AS row "+
-			"MATCH (a:_Migrated {_neo4j_id: row.startId}) "+
-			"MATCH (b:_Migrated {_neo4j_id: row.endId}) "+
-			"CREATE (a)-[:`%s` {_neo4j_id: row.id}]->(b)",
-		relType,
-	)
-}
-
-func edgePropsCypher(relType string) string {
-	return fmt.Sprintf(
-		"UNWIND $rows AS row "+
-			"MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:`%s` "+
-			"{_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) "+
-			"SET r += row.props",
-		relType,
-	)
+func edgeUpsertCypher(relType string) string {
+	return strings.ReplaceAll(migrationQueries["edges"], "{{type}}", "`"+strings.ReplaceAll(relType, "`", "``")+"`")
 }
 
 func replicateEdges(ctx context.Context, src, dst neo4j.SessionWithContext, types []string, filter map[string]struct{}, batch int, dryRun bool) (int, error) {
@@ -433,28 +455,18 @@ func replicateEdges(ctx context.Context, src, dst neo4j.SessionWithContext, type
 			}
 		}
 		moved := 0
-		createQ := edgeCreateCypher(t)
-		propsQ := edgePropsCypher(t)
+		createQ := edgeUpsertCypher(t)
 		err := streamEdges(ctx, src, t, batch, func(chunk []map[string]any) error {
+			applied := len(chunk)
 			if !dryRun {
-				if _, err := dst.Run(ctx, createQ, map[string]any{"rows": chunk}); err != nil {
+				var err error
+				applied, err = applyBatch(ctx, dst, createQ, chunk)
+				if err != nil {
 					return err
 				}
-				hasProps := false
-				for _, r := range chunk {
-					if p, ok := r["props"].(map[string]any); ok && len(p) > 0 {
-						hasProps = true
-						break
-					}
-				}
-				if hasProps {
-					if _, err := dst.Run(ctx, propsQ, map[string]any{"rows": chunk}); err != nil {
-						return err
-					}
-				}
 			}
-			moved += len(chunk)
-			total += len(chunk)
+			moved += applied
+			total += applied
 			fmt.Printf("  · :%s: %d\n", t, moved)
 			return nil
 		})
@@ -462,7 +474,11 @@ func replicateEdges(ctx context.Context, src, dst neo4j.SessionWithContext, type
 			return total, err
 		}
 	}
-	fmt.Printf("  total edges created: %d\n", total)
+	if dryRun {
+		fmt.Printf("  source relationship rows read (dry run): %d\n", total)
+	} else {
+		fmt.Printf("  target relationship rows applied: %d\n", total)
+	}
 	return total, nil
 }
 
