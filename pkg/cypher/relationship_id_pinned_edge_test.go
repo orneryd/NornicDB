@@ -20,6 +20,9 @@ type adjacencyReadSpy struct {
 	entries int
 	streams int
 	fail    bool
+	// mu: close-out L7 bypass for L-H7-013 (scratch branch only); the
+	// executor may read adjacency from several goroutines at once.
+	mu sync.Mutex
 }
 
 // ReadCountStore preserves the real planning statistics while observing adjacency.
@@ -42,15 +45,21 @@ func (s *adjacencyReadSpy) Namespace() string {
 func (s *adjacencyReadSpy) GetInnerEngine() storage.Engine { return s.Engine }
 
 func (s *adjacencyReadSpy) count(edges []*storage.Edge) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	s.entries += len(edges)
 }
 
 func (s *adjacencyReadSpy) countStream() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.streams++
 }
 
 func (s *adjacencyReadSpy) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls, s.entries, s.streams = 0, 0, 0
 }
 
