@@ -131,3 +131,30 @@ func TestProjectedReadPointProjectionThroughManagedDatabase(t *testing.T) {
 	require.Zero(t, spy.Query.Load())
 	require.Zero(t, spy.Full.Load())
 }
+
+func TestProjectedReadRepeatedMatchVariable(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		ctx := t.Context()
+		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "repeated")
+		seed := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+		for _, setup := range []string{
+			"CREATE CONSTRAINT repeated_doc_key IF NOT EXISTS FOR (n:Doc) REQUIRE n.key IS UNIQUE",
+			"CREATE (:Doc {key:'one', extra:7}), (:Doc {key:'two', extra:8})",
+		} {
+			_, err := seed.Execute(ctx, setup, nil)
+			require.NoError(t, err)
+		}
+
+		spy := &projectedPointReadSpy{QueryNodeReadSpy: storagefault.NewQueryNodeReadSpy(store)}
+		exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0})
+		rows, err := exec.Execute(ctx,
+			"UNWIND $keys AS key MATCH (n:Doc {key:key}), (n:Doc {extra:7}) RETURN n.key",
+			map[string]any{"keys": []any{"one", "two"}})
+		require.NoError(t, err)
+		require.Equal(t, [][]any{{"one"}}, rows.Rows)
+		require.Len(t, spy.projections, 2)
+		for _, fields := range spy.projections {
+			require.ElementsMatch(t, []string{"key", "extra"}, fields)
+		}
+	})
+}

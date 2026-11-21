@@ -309,15 +309,15 @@ func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSour
 }
 
 type pipelineNodeMatchSourcePlan struct {
-	templates      []*pipelineNodeMatchTemplate
-	supported      bool
-	earlyLimitSafe bool
+	templates            []*pipelineNodeMatchTemplate
+	supported            bool
+	hasRepeatedVariables bool
 }
 
 var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096, boundedCacheStringShardIndex)
 
 func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, clause string) pipelineNodeMatchSourcePlan {
-	plan := pipelineNodeMatchSourcePlan{earlyLimitSafe: true}
+	var plan pipelineNodeMatchSourcePlan
 	body := pipelineClauseBody(clause, "MATCH")
 	if topLevelKeywordIndex(ctx, body, "WHERE") >= 0 {
 		return plan
@@ -342,7 +342,7 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, cl
 		}
 		templates[index] = template
 		if _, repeated := variables[template.variable]; repeated {
-			plan.earlyLimitSafe = false
+			plan.hasRepeatedVariables = true
 		}
 		variables[template.variable] = struct{}{}
 	}
@@ -372,7 +372,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	if !plan.supported {
 		return nil, false, nil
 	}
-	if !plan.earlyLimitSafe {
+	if plan.hasRepeatedVariables {
 		hint.limit, hint.earlyLimit = -1, -1
 	}
 	templates := plan.templates
@@ -391,6 +391,17 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		inline := make(map[string]interface{}, len(template.properties))
 		for _, property := range template.properties {
 			inline[property.key] = nil
+		}
+		// Later patterns test an already-bound node from this read. Include
+		// their inline keys before narrowing its property image.
+		if plan.hasRepeatedVariables {
+			for _, sibling := range templates[index+1:] {
+				if sibling.variable == template.variable {
+					for _, property := range sibling.properties {
+						inline[property.key] = nil
+					}
+				}
+			}
 		}
 		pattern := nodePatternInfo{variable: template.variable, labels: template.labels, properties: inline}
 		templateHints[index].projection, templateHints[index].projectionSafe = pipelineLabelScanProjection(ctx, pattern, "", hint.readTail)
