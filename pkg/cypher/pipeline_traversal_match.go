@@ -217,9 +217,7 @@ func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool 
 // clause in this row. When it is, the caller can seed
 // executeMatchWithRelationshipsWithPathSeeded from that single node instead
 // of expanding the whole pattern over the store and joining the bound value
-// afterward. Both bound endpoints are retained; end-node binding is only
-// honored for non-chained patterns, since reversing a multi-segment chain
-// is not supported.
+// afterward. End-node seeds are available for single segments and fixed chains.
 //
 // The seeded endpoint skips the scan that would otherwise apply the pattern's
 // labels and inline properties for that endpoint, so they are checked here:
@@ -236,13 +234,12 @@ func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, patter
 		}
 		startSeedNodes = []*storage.Node{node}
 	}
-	if !matches.IsChained {
-		if node, ok := pipelineBoundNode(row, matches.EndNode.variable); ok {
-			if !e.matchesEndPattern(node, &matches.EndNode) {
-				return nil, nil, true
-			}
-			endSeedNodes = []*storage.Node{node}
+	if node, ok := pipelineBoundNode(row, matches.EndNode.variable); ok &&
+		(!matches.IsChained || len(startSeedNodes) == 0 && matches.canSeedEnd()) {
+		if !e.matchesEndPattern(node, &matches.EndNode) {
+			return nil, nil, true
 		}
+		endSeedNodes = []*storage.Node{node}
 	}
 	return startSeedNodes, endSeedNodes, false
 }
