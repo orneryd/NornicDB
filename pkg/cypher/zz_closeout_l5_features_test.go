@@ -9,7 +9,7 @@ import (
 )
 
 func TestCloseoutL5Cypher(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "closeout_l5"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "closeout_l5"))
 	query := func(t *testing.T, stmt string) *ExecuteResult {
 		t.Helper()
 		result, err := exec.Execute(t.Context(), stmt, nil)
@@ -48,7 +48,6 @@ func TestCloseoutL5Cypher(t *testing.T) {
 		{"H-253", "apoc.algo.wcc", true, []string{"gds.wcc.stream"}},
 		{"H-177", "db.index.fulltext.querynodes", true, []string{"db.index.containedin"}},
 		{"H-185", "abs", false, []string{"text.key"}},
-		
 		{"P-N152-110", "gds.graph.project", true, []string{"gds.graph.project.cypher", "gds.louvain.stream"}},
 	} {
 		t.Run(tc.id, func(t *testing.T) {

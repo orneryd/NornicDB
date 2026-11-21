@@ -9,7 +9,7 @@ import (
 )
 
 func TestCloseoutL5IndexSurfaces(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "closeout_l5_index"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "closeout_l5_index"))
 	run := func(t *testing.T, statement string) [][]any {
 		t.Helper()
 		result, err := exec.Execute(t.Context(), statement, nil)
@@ -43,7 +43,7 @@ func TestCloseoutL5IndexSurfaces(t *testing.T) {
 }
 
 func TestCloseoutL5Trigger(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "closeout_l5_trigger"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "closeout_l5_trigger"))
 	run := func(stmt string) [][]any {
 		t.Helper()
 		result, err := exec.Execute(t.Context(), stmt, nil)
