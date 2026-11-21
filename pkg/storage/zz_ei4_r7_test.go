@@ -68,4 +68,3 @@ func TestEI4R7NormalizedBodyCrashAdmission(t *testing.T){
  t.Logf("recovery count=%d error=%v native cause=%v",n,err,ei4r7NativeCause(err))
  require.NoError(t,err,"a journaled admitted image must be recoverable")
 }
-

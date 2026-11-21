@@ -47,7 +47,7 @@ func TestEI4R1795ClearJournalOrderWithNoopNodeWrite(t *testing.T) {
 			ctx := context.Background()
 			lab := rrvOpen(t, t.TempDir())
 			lab.create("alpha", rrvVectors(2, 1), rrvWorkerMeta(2), nil)
-			snapshot := lab.snapshotPeriodic()
+			snapshot := takePeriodicSnapshot(t, lab.journal, lab.dir)
 			inner := &ei4ClearHook{BadgerEngine: lab.engine}
 			journal := NewWALEngine(inner, lab.wal)
 			inner.hook = func() {
@@ -94,7 +94,7 @@ func TestEI4InlineClientWriteDuringWorkerAttempt(t *testing.T) {
 			live := rrvRead(t, lab.engine)
 			snapshot := ""
 			if snap == "periodic" {
-				snapshot = lab.snapshotPeriodic()
+				snapshot = takePeriodicSnapshot(t, lab.journal, lab.dir)
 			} else {
 				snapshot = lab.snapshotFull()
 			}
@@ -131,7 +131,7 @@ func TestEI4AsyncRebuildAfterVectorRefresh(t *testing.T) {
 				}
 				var snapshot string
 				if compact {
-					snapshot = lab.snapshotPeriodic()
+					snapshot = takePeriodicSnapshot(t, lab.journal, lab.dir)
 				} else {
 					snapshot = filepath.Join(dir, "snap.nds")
 					require.NoError(t, SaveStreamingSnapshot(ctx, engine, snapshot, SnapshotOptions{Sequence: lab.wal.Sequence()}))
