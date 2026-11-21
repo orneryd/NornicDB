@@ -19,10 +19,11 @@ func TestReferencePinsAreExactAndImmutable(t *testing.T) {
 			Digest:  "sha256:8befcd4e0f48ebd34c58ae071c3e960ca0479675d1046ec35580f8a1dd19891c",
 		},
 		{
-			Version: "2026.10.2",
-			Edition: "enterprise",
-			Image:   "neo4j:2026.10.2-enterprise",
-			Digest:  "sha256:941ba98b5acb7cfd9aa72a0aeebd6ffbefd870a514455620eac9ef0bc67e25a9",
+			Version:    "2026.10.2",
+			Edition:    "enterprise",
+			Image:      "neo4j:2026.10.2-enterprise",
+			Digest:     "sha256:941ba98b5acb7cfd9aa72a0aeebd6ffbefd870a514455620eac9ef0bc67e25a9",
+			NativeABAC: true,
 		},
 	}
 	if !reflect.DeepEqual(pins.References, want) {

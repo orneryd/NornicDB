@@ -1643,21 +1643,19 @@ func RegisterBuiltinAction(action ActionFunc) {
 
 // ExecuteAction executes an action by name with the given context.
 func ExecuteAction(name string, ctx ActionContext) (*ActionResult, error) {
-	if ctx.Context != nil {
-		if request := auth.FineGrainedRequestFromContext(ctx.Context); request != nil {
-			database, _ := ctx.Params["database"].(string)
-			database, selectable := fineGrainedActionDatabase(ctx.Context, database)
-			if !selectable {
-				return nil, auth.ErrFineGrainedForbidden
-			}
-			action := "heimdall.invoke." + name
-			if !request.CanAccessDatabase(database) || !request.AllowsDatabase(action, database, "") {
-				return nil, auth.ErrFineGrainedForbidden
-			}
-			ctx.Context = auth.WithFineGrainedDatabaseAction(ctx.Context, action)
-			if !request.Access.AllowsAllDatabases(action) {
-				ctx.Metrics = nil
-			}
+	if request := auth.FineGrainedRequestFromContext(ctx.Context); request != nil {
+		database, _ := ctx.Params["database"].(string)
+		database, selectable := fineGrainedActionDatabase(ctx.Context, database)
+		if !selectable {
+			return nil, auth.ErrFineGrainedForbidden
+		}
+		action := "heimdall.invoke." + name
+		if !request.CanAccessDatabase(database) || !request.AllowsDatabase(action, database, "") {
+			return nil, auth.ErrFineGrainedForbidden
+		}
+		ctx.Context = auth.WithFineGrainedDatabaseAction(ctx.Context, action)
+		if !request.Access.AllowsAllDatabases(action) {
+			ctx.Metrics = nil
 		}
 	}
 	m := GetSubsystemManager()

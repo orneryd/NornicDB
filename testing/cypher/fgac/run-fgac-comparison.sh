@@ -86,7 +86,7 @@ except (OSError, ValueError, KeyError) as exc:
 
 for pin in references:
     if pin.get("version") == version:
-        print(f'{pin["image"]}@{pin["digest"]}')
+        print(f'{pin["image"]}@{pin["digest"]}', "native" if pin.get("native_abac") is True else "")
         break
 else:
     pinned = ", ".join(pin.get("version", "?") for pin in references)
@@ -97,7 +97,8 @@ PY
 if [[ "${FGAC_START_REFERENCE:-0}" == "1" ]]; then
   reference_version="${FGAC_REFERENCE_VERSION:-}"
   [[ -n "${reference_version}" ]] || die "FGAC_REFERENCE_VERSION is required with FGAC_START_REFERENCE=1"
-  reference_image="$(pinned_reference "${reference_version}")" || exit 1
+  reference_pin="$(pinned_reference "${reference_version}")" || exit 1
+  read -r reference_image abac_provider <<< "${reference_pin}"
 
   reference_password="${FGAC_REFERENCE_PASSWORD:-${NORNICDB_NEO4J_REFERENCE_PASSWORD:-}}"
   [[ -n "${reference_password}" ]] || die "set FGAC_REFERENCE_PASSWORD for the reference container"
@@ -123,8 +124,8 @@ if [[ "${FGAC_START_REFERENCE:-0}" == "1" ]]; then
   fi
 
   # Current-Enterprise native-tag rules require an explicit ABAC provider.
-  if [[ "${reference_version}" == "2026.10.2" ]]; then
-    published_ports+=(--env NEO4J_dbms_security_abac_authorization__providers=native)
+  if [[ -n "${abac_provider}" ]]; then
+    published_ports+=(--env "NEO4J_dbms_security_abac_authorization__providers=${abac_provider}")
   fi
 
   docker run --detach --rm \
