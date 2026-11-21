@@ -3,15 +3,18 @@
 package cypher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	profile "github.com/google/pprof/profile"
 	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -267,5 +270,135 @@ func TestL2_e20_r1_Cause(t *testing.T) {
 		t.Logf("L2CAUSE E20-R1 W call returned after %v", elapsed)
 	case <-time.After(120 * time.Second):
 		t.Logf("L2CAUSE E20-R1 W call still running after 120 s")
+	}
+}
+
+type l2E20R1ProfileEntry struct {
+	name  string
+	value int64
+}
+
+// l2E20R1ProfileTop aggregates a CPU profile: flat and cumulative time per
+// function, and per "innermost pkg/cypher frame" (the deepest frame of a
+// sample that is in package cypher, with its file:line), which names the
+// executor code that owns the time even when the leaf is in a helper
+// package.
+func l2E20R1ProfileTop(p *profile.Profile) (flat, cumulative, owner []l2E20R1ProfileEntry, total int64) {
+	index := -1
+	for i, kind := range p.SampleType {
+		if kind.Type == "cpu" {
+			index = i
+		}
+	}
+	if index < 0 {
+		index = len(p.SampleType) - 1
+	}
+	flatValues, cumulativeValues, ownerValues := map[string]int64{}, map[string]int64{}, map[string]int64{}
+	for _, sample := range p.Sample {
+		value := sample.Value[index]
+		total += value
+		seen := map[string]bool{}
+		leaf, ownerFound := true, false
+		for _, location := range sample.Location {
+			for _, line := range location.Line {
+				if line.Function == nil {
+					continue
+				}
+				name := line.Function.Name
+				if leaf {
+					flatValues[name] += value
+					leaf = false
+				}
+				if !seen[name] {
+					cumulativeValues[name] += value
+					seen[name] = true
+				}
+				if !ownerFound && strings.Contains(name, "nornicdb/pkg/cypher.") && !strings.Contains(name, "zz_closeout") && !strings.Contains(name, "TestL2_") {
+					file := line.Function.Filename
+					if slash := strings.LastIndex(file, "/pkg/"); slash >= 0 {
+						file = file[slash+1:]
+					}
+					ownerValues[fmt.Sprintf("%s %s:%d", name, file, line.Line)] += value
+					ownerFound = true
+				}
+			}
+		}
+	}
+	top := func(values map[string]int64, n int) []l2E20R1ProfileEntry {
+		entries := make([]l2E20R1ProfileEntry, 0, len(values))
+		for name, value := range values {
+			entries = append(entries, l2E20R1ProfileEntry{name, value})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].value == entries[j].value {
+				return entries[i].name < entries[j].name
+			}
+			return entries[i].value > entries[j].value
+		})
+		return entries[:min(len(entries), n)]
+	}
+	return top(flatValues, 25), top(cumulativeValues, 60), top(ownerValues, 25), total
+}
+
+// TestL2_e20_r1_Cause2 finds where the first full execution's time goes.
+// Part 1: as the Repro, a new executor, call 1 of W with a 100 ms deadline,
+// then call 2 (no deadline) under a CPU profile (runtime/pprof into memory,
+// parsed with github.com/google/pprof/profile, a direct go.mod requirement);
+// logs the top cumulative and flat functions and the innermost pkg/cypher
+// frame (function file:line) with seconds.
+// Part 2 (stage seam): on another new executor, the statement admission
+// alone (validateSyntax, pkg/cypher/executor_query_routing.go:475, the step
+// whose verdict is cached per statement text, which would explain why call 3
+// is fast) is timed twice, then the full Execute of W: if the first
+// validateSyntax takes most of the 14 s and the Execute after it is short,
+// the admission owns the cost. Part 3: the same for R (a RETURN).
+func TestL2_e20_r1_Cause2(t *testing.T) {
+	// Part 1: profile of call 2.
+	exec := l2E20R1Executor(t)
+	ctx1, cancel := context.WithTimeout(WithTransactionControl(context.Background()), 100*time.Millisecond)
+	started := time.Now()
+	_, err := exec.Execute(ctx1, l2E20R1W(), map[string]interface{}{"run": "p-1"})
+	cancel()
+	t.Logf("L2CAUSE E20-R1 profile run: call 1 %v err=%v", time.Since(started), err)
+	var cpu bytes.Buffer
+	if err := pprof.StartCPUProfile(&cpu); err != nil {
+		t.Fatalf("start cpu profile: %v", err)
+	}
+	started = time.Now()
+	_, err = exec.Execute(WithTransactionControl(context.Background()), l2E20R1W(), map[string]interface{}{"run": "p-2"})
+	call2 := time.Since(started)
+	pprof.StopCPUProfile()
+	t.Logf("L2CAUSE E20-R1 profile run: call 2 %v err=%v (profiled)", call2, err)
+	p, perr := profile.ParseData(cpu.Bytes())
+	if perr != nil {
+		t.Fatalf("parse cpu profile: %v", perr)
+	}
+	flat, cumulative, owner, total := l2E20R1ProfileTop(p)
+	t.Logf("L2CAUSE E20-R1 profile total %.2fs CPU over %v wall", float64(total)/1e9, call2)
+	for _, e := range cumulative {
+		t.Logf("L2CAUSE E20-R1 cum %7.2fs %s", float64(e.value)/1e9, e.name)
+	}
+	for _, e := range flat {
+		t.Logf("L2CAUSE E20-R1 flat %7.2fs %s", float64(e.value)/1e9, e.name)
+	}
+	for _, e := range owner {
+		t.Logf("L2CAUSE E20-R1 innermost-cypher %7.2fs %s", float64(e.value)/1e9, e.name)
+	}
+
+	// Parts 2 and 3: the statement admission alone, then the execution.
+	for _, s := range []struct{ label, statement string }{{"W", l2E20R1W()}, {"R", l2E20R1R()}} {
+		fresh := l2E20R1Executor(t)
+		ctx := WithTransactionControl(context.Background())
+		for i := 1; i <= 2; i++ {
+			started := time.Now()
+			verr := fresh.validateSyntax(ctx, s.statement, false, syntaxStatement)
+			t.Logf("L2CAUSE E20-R1 %s validateSyntax #%d on a new executor: %v err=%v", s.label, i, time.Since(started), verr)
+		}
+		started := time.Now()
+		_, xerr := fresh.Execute(ctx, s.statement, map[string]interface{}{"run": "v-" + s.label})
+		t.Logf("L2CAUSE E20-R1 %s Execute after validateSyntax: %v err=%v", s.label, time.Since(started), xerr)
+		started = time.Now()
+		_, xerr = fresh.Execute(ctx, s.statement, map[string]interface{}{"run": "v2-" + s.label})
+		t.Logf("L2CAUSE E20-R1 %s Execute again: %v err=%v", s.label, time.Since(started), xerr)
 	}
 }
