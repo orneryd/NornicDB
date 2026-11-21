@@ -172,6 +172,14 @@ func constraintUnsignedFloatEqual(n uint64, f float64) bool {
 // writeConstraintListNumericKey is the canonical numeric element writer for
 // composite/list index keys. Exact integers must not collapse through float64;
 // an exactly integral Float uses the same text as the Integer it equals.
+//
+// NaN is not written. It is unequal to itself under compareConstraintNumbers,
+// so no text is its equality token: writing "nNaN" filed two lists the
+// constraint equality owner keeps apart under one key, which made the UNIQUE
+// claim cache reject a write the label scan (compareValues) admits and the
+// value cache rebuild then rejected the admitted data (NOR-374). A composite
+// value holding NaN therefore has no key at all, exactly as scalar NaN's key
+// is never found by a lookup.
 func writeConstraintListNumericKey(out *strings.Builder, value interface{}) bool {
 	v := reflect.ValueOf(value)
 	if !v.IsValid() {
@@ -192,6 +200,9 @@ func writeConstraintListNumericKey(out *strings.Builder, value interface{}) bool
 		return false
 	}
 	f := v.Float()
+	if math.IsNaN(f) {
+		return false
+	}
 	out.WriteByte('n')
 	if f >= -0x1p63 && f < 0x1p63 && f == math.Trunc(f) {
 		out.WriteString(strconv.FormatInt(int64(f), 10))
