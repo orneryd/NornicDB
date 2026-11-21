@@ -12,7 +12,7 @@ package server
 //
 //	parser     default parser / ANTLR parser            (Bolt auto-commit)
 //	tx         Bolt auto-commit / Bolt explicit transaction
-//	protocol   Bolt auto-commit / HTTP /tx/commit       (protocol-neutral values)
+//	protocol   Bolt auto-commit / HTTP /tx/commit       (both in one canonical form, zz_hunt_h1_canon_test.go)
 //	cache      query cache on (each read run twice, second answer) / off
 //	index      without / with a range index on every label-property pair the group names
 //	durability durable writes / asynchronous writes
@@ -208,10 +208,23 @@ type huntSide struct {
 	parser  string
 	indexes bool
 	repeat  bool // cache side: reads run twice, the second answer counts
+	canon   bool // protocol pair: values in the canonical form of zz_hunt_h1_canon_test.go
 	server  *huntServer
 	t       *testing.T
 	base    string
 	opened  int
+}
+
+// run executes one statement on this side's route; on the protocol pair both
+// sides return values in the canonical form (hunt DECISIONS item 17).
+func (s *huntSide) run(query string, params map[string]any, timeout time.Duration) differential.Outcome {
+	if !s.canon {
+		return s.server.Run(s.route, query, params, timeout)
+	}
+	if s.route == routeHTTPCommit {
+		return huntCanonHTTPOutcome(s.server.Run(s.route, query, params, timeout))
+	}
+	return huntCanonBoltRun(s.server, query, params, timeout)
 }
 
 func (s *huntSide) open() {
@@ -247,9 +260,9 @@ func (s *huntSide) runGroup(group huntH1Group, timeout time.Duration, selfLead f
 	outcomes := make([]differential.Outcome, len(group.Statements))
 	for i, statement := range group.Statements {
 		params := huntParams(s.server, statement.Params)
-		outcomes[i] = s.server.Run(s.route, statement.Query, params, timeout)
+		outcomes[i] = s.run(statement.Query, params, timeout)
 		if s.repeat && !huntWrites(statement.Query) {
-			second := s.server.Run(s.route, statement.Query, params, timeout)
+			second := s.run(statement.Query, params, timeout)
 			if ok, _ := huntAgree(statement.Query, outcomes[i], second); !ok && selfLead != nil {
 				selfLead(statement, outcomes[i], second)
 			}
@@ -285,6 +298,7 @@ func TestHuntH1PathPairs(t *testing.T) {
 		b.route = routeBoltExplicit
 	case "protocol":
 		b.route = routeHTTPCommit
+		a.canon, b.canon = true, true
 	case "cache":
 		a.repeat = true
 		b.options.QueryCache = false
@@ -444,9 +458,6 @@ func TestHuntH1PathPairs(t *testing.T) {
 			outB, graphB := b.runGroup(group, timeout, nil)
 			for i, statement := range runnable {
 				x, y := outA[i], outB[i]
-				if pair == "protocol" {
-					x = huntNeutralOutcome(x)
-				}
 				compared++
 				if ok, verdict := huntAgree(statement.Query, x, y); !ok {
 					st := statement
