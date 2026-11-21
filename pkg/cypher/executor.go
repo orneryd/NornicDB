@@ -337,7 +337,9 @@ type StorageExecutor struct {
 	// transaction owners run on their own per-session executors, which are
 	// never marked shared.
 	sharedExecutor bool
-	cache          *SmartQueryCache // Query result cache with label-aware invalidation
+	// protocolConclusion applies the wire statement grammar to protocol executors.
+	protocolConclusion bool
+	cache              *SmartQueryCache // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
 	queryCacheMaxEntries         int
 	queryCacheTTL                time.Duration
@@ -622,6 +624,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 	cloned.readScope = e.readScope
 	cloned.txContext = e.txContext
 	cloned.sharedExecutor = e.sharedExecutor
+	cloned.protocolConclusion = e.protocolConclusion
 	cloned.deferFlush = e.deferFlush
 	cloned.inferenceManager = e.inferenceManager
 	cloned.onNodeMutated = e.onNodeMutated
