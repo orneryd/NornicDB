@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -594,4 +595,104 @@ func TestHistoricalReadReturnedPropertiesRemainOwned(t *testing.T) {
 	current, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, "original", current.Properties["nested"].(map[string]interface{})["value"])
+}
+
+func TestHistoricalReadBufferedProjectionAtCommitSequence(t *testing.T) {
+	ctx := t.Context()
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	const id NodeID = "test:buffered-projection"
+	const foreignID NodeID = "other:buffered-projection"
+	foreign, err := engine.BeginTransaction(ctx, OrdinaryBegin)
+	require.NoError(t, err)
+	defer foreign.Rollback()
+	require.NoError(t, foreign.SetNamespace("other"))
+	require.NoError(t, foreign.SetImplicit(true))
+	_, err = foreign.CreateNode(ctx, &Node{ID: foreignID, Labels: []string{"Item"}})
+	require.NoError(t, err)
+	require.NoError(t, foreign.Commit())
+	require.True(t, foreign.AcknowledgedBuffered())
+
+	tx := bufferedWrite(t, engine, func(tx *BadgerTransaction) error {
+		_, err := tx.CreateNode(ctx, &Node{
+			ID: id, Labels: []string{"Item"},
+			Properties:      map[string]any{"nested": map[string]any{"value": "original"}, "omit": true},
+			ChunkEmbeddings: [][]float32{{1, 2}},
+		})
+		return err
+	})
+	require.True(t, tx.AcknowledgedBuffered())
+	version := func() MVCCVersion {
+		engine.writeBehind.mu.RLock()
+		defer engine.writeBehind.mu.RUnlock()
+		commits := engine.writeBehind.active.commits
+		require.Len(t, commits, 2)
+		return commits[1].version
+	}()
+	prior := version
+	require.Positive(t, prior.CommitSequence)
+	prior.CommitSequence--
+
+	store := NewNamespacedEngine(engine, "test")
+	read := func(t *testing.T, at MVCCVersion) Engine {
+		t.Helper()
+		view, err := OpenHistoricalReadAtVersion(ctx, store, at)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, view.Close()) })
+		return view
+	}
+	projection := StreamNodesOptions{Label: "Item", Projection: []string{"nested"}, WithEmbeddings: true}
+	for _, afterFlush := range []bool{false, true} {
+		name := "before_flush"
+		if afterFlush {
+			require.NoError(t, engine.FlushWriteBehind(ctx))
+			name = "after_flush"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, err := read(t, prior).GetNode(ctx, id)
+			require.ErrorIs(t, err, ErrNotFound)
+			view := read(t, version)
+			_, err = view.GetNode(ctx, foreignID)
+			require.ErrorIs(t, err, ErrNotFound)
+			var got []NodeID
+			require.NoError(t, view.StreamNodesWithOptions(ctx, projection, func(node *Node) error {
+				got = append(got, node.ID)
+				require.Equal(t, map[string]any{"nested": map[string]any{"value": "original"}}, node.Properties)
+				require.Empty(t, node.ChunkEmbeddings)
+				node.Properties["nested"].(map[string]any)["value"] = "changed"
+				return nil
+			}))
+			require.Equal(t, []NodeID{id}, got)
+			node, err := view.GetNode(ctx, id)
+			require.NoError(t, err)
+			require.Equal(t, "original", node.Properties["nested"].(map[string]any)["value"])
+		})
+	}
+}
+
+func TestHistoricalReadSnapshotAgreesWithConcurrentDrain(t *testing.T) {
+	ctx := t.Context()
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	for iteration := range 6 {
+		id := NodeID(fmt.Sprintf("test:buffered-drain-%d", iteration))
+		tx := bufferedWrite(t, engine, func(tx *BadgerTransaction) error {
+			_, err := tx.CreateNode(ctx, &Node{ID: id, Labels: []string{"Drained"}})
+			return err
+		})
+		require.True(t, tx.AcknowledgedBuffered())
+		cutoff := time.Now()
+		drained := make(chan error, 1)
+		go func() { drained <- engine.FlushWriteBehind(ctx) }()
+		view, err := OpenHistoricalRead(ctx, engine, cutoff)
+		drainErr := <-drained
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, view.Close()) })
+		require.NoError(t, drainErr)
+		nodes, err := view.GetNodesByLabel(ctx, "Drained")
+		require.NoError(t, err)
+		require.Len(t, nodes, iteration+1, "a captured node is visible exactly once across the drain")
+		node, err := view.GetNode(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, id, node.ID)
+		require.NoError(t, view.Close())
+	}
 }
