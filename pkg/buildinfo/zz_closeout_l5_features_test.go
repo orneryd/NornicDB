@@ -61,7 +61,7 @@ func TestCloseoutL5Ownership(t *testing.T) {
 		}},
 		{"P-N152-124", [][2]string{
 			{"pkg/cypher/merge_node_writes.go", "func withMergeNodeWrites("},
-			{"pkg/storage/merge_key_prepare.go", "func prepareMergeNode("},
+			{"pkg/storage/merge_key_prepare.go", ") prepareMergeNode("},
 		}},
 		{"H-69", [][2]string{
 			{"pkg/cypher/executor_mutations_where_eval.go", ") evaluateWhere("},
@@ -132,9 +132,12 @@ func TestCloseoutL5NamedSurfaces(t *testing.T) {
 			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution|parser.ParseComments)
 			if err != nil {
 				return err
+			}
+			if ast.IsGenerated(f) {
+				return nil
 			}
 			handle := func(name string, position token.Pos) {
 				key := strings.ToLower(name)
