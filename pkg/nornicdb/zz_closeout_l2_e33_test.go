@@ -48,6 +48,12 @@ func l2E33Config() *Config {
 	cfg.Database.WALAutoCompactionEnabled = false
 	cfg.Database.WALSnapshotInterval = time.Hour
 	cfg.Memory.AutoLinksEnabled = false
+	// As the entry's fixture: only `text` feeds the embedding text, labels do
+	// not. Without this every property feeds it (the default policy), so the
+	// timed SET n.flag changes the embedding source and the store correctly
+	// drops the vectors (embedding_text_policy.go; db.go:1127 applies it).
+	cfg.EmbeddingWorker.PropertiesInclude = []string{"text"}
+	cfg.EmbeddingWorker.IncludeLabels = false
 	return cfg
 }
 
@@ -74,10 +80,13 @@ func (s *l2E33Store) close(t *testing.T) {
 		return
 	}
 	s.closed = true
+	// db.Close closes the base storage; DatabaseManager.Close closes the same
+	// engine (m.inner, multidb/manager.go:992), so it runs after the db and its
+	// error (storage already closed) is ignored.
+	require.NoError(t, s.db.Close())
 	if s.manager != nil {
 		_ = s.manager.Close()
 	}
-	require.NoError(t, s.db.Close())
 }
 
 func (s *l2E33Store) run(t *testing.T, query string, params map[string]any) {
@@ -152,6 +161,14 @@ func l2E33AttachVectors(t *testing.T, s *l2E33Store, chunks int) storage.NodeID 
 		"embedding_model":      "synthetic",
 	}
 	require.NoError(t, s.badger.UpdateNodeEmbeddingSidecar(ctx, node))
+	// Precondition: the full node read (BadgerEngine.GetNode loads the chunk
+	// vectors from the sidecar) returns every vector just attached. Without
+	// it the journal figure below would measure a node without vectors.
+	stored, err := s.badger.GetNode(ctx, node.ID)
+	require.NoError(t, err)
+	if len(stored.ChunkEmbeddings) != chunks {
+		t.Fatalf("harness: node has %d chunk vectors right after the attach, want %d (vectors not stored; no L2RESULT)", len(stored.ChunkEmbeddings), chunks)
+	}
 	return node.ID
 }
 
@@ -194,7 +211,13 @@ func TestL2_e33_Repro(t *testing.T) {
 		flagAfter := stored.Properties["flag"]
 
 		ratio := float64(median) / float64(vectorBytes)
-		if median*2 >= vectorBytes {
+		if chunksAfter != l2E33Chunks {
+			// The vectors were present after the attach (checked there) and
+			// are gone after the one-flag SET, which does not touch `text`.
+			t.Logf("L2RESULT E33 DEFECT vectors lost: %d of %d chunk vectors after the one-flag updates; journal growth %v (median %d B) for %d B of vector data; flag after %v",
+				chunksAfter, l2E33Chunks, growth, median, vectorBytes, flagAfter)
+			t.Errorf("node has %d chunk vectors after the update, want %d", chunksAfter, l2E33Chunks)
+		} else if median*2 >= vectorBytes {
 			t.Logf("L2RESULT E33 DEFECT journal growth per one-flag update %v (median %d B) for %d B of vector data (%.3f); chunks after %d, flag after %v",
 				growth, median, vectorBytes, ratio, chunksAfter, flagAfter)
 			t.Errorf("one-property update journaled %d B (median), >= 50%% of the %d B of unchanged chunk vectors", median, vectorBytes)
@@ -203,9 +226,6 @@ func TestL2_e33_Repro(t *testing.T) {
 				growth, median, vectorBytes, ratio, chunksAfter, flagAfter)
 		}
 		// The update itself must be correct either way.
-		if chunksAfter != l2E33Chunks {
-			t.Errorf("node has %d chunk vectors after the update, want %d", chunksAfter, l2E33Chunks)
-		}
 		if flagAfter != int64(l2E33Timed) {
 			t.Errorf("flag after the updates %#v, want %d", flagAfter, l2E33Timed)
 		}
