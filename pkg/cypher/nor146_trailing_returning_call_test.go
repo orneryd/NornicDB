@@ -133,6 +133,27 @@ func TestNor146TrailingReturningCallExecute(t *testing.T) {
 	}
 }
 
+func TestNor146RejectsWriteProcedureBeforeReturningCall(t *testing.T) {
+	const name = "nor146fixture.write"
+	scopeProcedureRegistration(t, name, userProcedureTable)
+	calls := 0
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
+		Name: name, Mode: ProcedureModeWrite,
+		Returns: []ProcedureColumn{{Name: "m", Type: "INTEGER"}},
+	}, func(ctx context.Context, exec *StorageExecutor, _ string, _ []any) (*ExecuteResult, error) {
+		calls++
+		return exec.Execute(ctx, "CREATE (:Nor146Admission) RETURN 0 AS m", nil)
+	}))
+	exec := nor146Executor(t, nor146Modes[0])
+	result, err := exec.Execute(t.Context(), "CALL "+name+"() YIELD m WITH m CALL { UNWIND range(1,3) AS x RETURN x }", nil)
+	require.Nil(t, result)
+	nor146RequireAdmissionSyntaxError(t, err)
+	require.Zero(t, calls)
+	counted, err := exec.Execute(t.Context(), "MATCH (n:Nor146Admission) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{int64(0)}}, counted.Rows)
+}
+
 // TestNor146ResultSchemaMismatchStaysDistinct keeps the diagnostic the ticket
 // reports as its own answer for the case it owns: a statement whose executed
 // result columns genuinely differ from its established schema.

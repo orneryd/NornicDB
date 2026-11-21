@@ -2,3 +2,7 @@
 - [x] Restore numeric input ownership and record the reviewed traversal dependency.
 - [x] Index generic SSA instances for source call attribution.
 - [ ] Verify the release checks and the whole-module capture census.
+- [x] Map the failed release jobs to CALL compatibility, trusted-runner disk exhaustion, and context census findings.
+- [x] Recover trusted-runner disk space and scope release Go scratch files to the job.
+- [x] Preserve the existing context owners for privilege parsing, authentication, and startup.
+- [ ] Verify the integrated context census, affected packages, and exact release candidate.

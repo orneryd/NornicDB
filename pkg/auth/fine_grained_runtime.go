@@ -28,7 +28,7 @@ type FineGrainedRuntime struct {
 	home             func() string
 	databaseOwner    func(string) string
 	nativeABAC       bool
-	authRuleCompiler FineGrainedAuthRuleCompiler
+	authRuleCompiler func(context.Context, string) (FineGrainedAuthRuleCondition, error)
 
 	mu           sync.Mutex
 	revision     string
@@ -88,7 +88,7 @@ func (runtime *FineGrainedRuntime) Admit(ctx context.Context, roles []string) (*
 			runtime.mu.Unlock()
 			return nil, err
 		}
-		authRules, err := runtime.compileAuthRules(catalog.AuthRules)
+		authRules, err := runtime.compileAuthRules(ctx, catalog.AuthRules)
 		if err != nil {
 			runtime.mu.Unlock()
 			return nil, err
@@ -184,7 +184,7 @@ func (runtime *FineGrainedRuntime) Actions() []FineGrainedAction {
 // ReplaceCatalog persists an authorized edit while preserving the built-in
 // administrator's ability to manage the policy.
 func (runtime *FineGrainedRuntime) ReplaceCatalog(ctx context.Context, revision string, catalog FineGrainedCatalog) error {
-	if err := runtime.ValidateAdministrator(catalog); err != nil {
+	if err := runtime.ValidateAdministratorContext(ctx, catalog); err != nil {
 		return err
 	}
 	return runtime.roles.ReplaceFineGrainedCatalog(ctx, revision, runtime.actions, catalog)
@@ -193,7 +193,12 @@ func (runtime *FineGrainedRuntime) ReplaceCatalog(ctx context.Context, revision 
 // ValidateAdministrator checks the policy-management grant on deployments
 // where the policy-management action is registered.
 func (runtime *FineGrainedRuntime) ValidateAdministrator(catalog FineGrainedCatalog) error {
-	if _, err := runtime.compileAuthRules(catalog.AuthRules); err != nil {
+	return runtime.ValidateAdministratorContext(context.Background(), catalog)
+}
+
+// ValidateAdministratorContext validates the administrator policy using ctx.
+func (runtime *FineGrainedRuntime) ValidateAdministratorContext(ctx context.Context, catalog FineGrainedCatalog) error {
+	if _, err := runtime.compileAuthRules(ctx, catalog.AuthRules); err != nil {
 		return err
 	}
 	const manage = "dbms.security.policy.manage"

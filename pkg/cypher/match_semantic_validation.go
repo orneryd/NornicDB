@@ -143,7 +143,7 @@ type subqueryScope struct {
 // bodies conclude as their forms do. It reads the text, so an old-style body
 // (whose walk errors NornicDB's implicit imports keep) is held to it too;
 // EXPLAIN reads it as well. A statement ending with a CALL that returns
-// columns is permitted only by the embedded read-only extension.
+// columns can be used by the embedded CALL extension.
 func validateQueryBodyComposition(ctx context.Context, cypher string) error {
 	return forEachQueryBody(ctx, cypher, queryBodyContainerKeywords[:], func(container string, start, end int) error {
 		if container != "CALL" {

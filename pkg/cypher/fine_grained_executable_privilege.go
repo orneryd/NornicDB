@@ -7,7 +7,7 @@ import (
 
 func parseFineGrainedExecutablePrivilege(ctx context.Context, text string) (fineGrainedPrivilegeCommand, bool, error) {
 	var command fineGrainedPrivilegeCommand
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: text}
+	cursor := fineGrainedPrivilegeCursor{text: text}
 	cursor.skipGap()
 	verb, immutable, found := cursor.readVerb()
 	if !found || !cursor.takeKeyword("EXECUTE") {

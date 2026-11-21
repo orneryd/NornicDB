@@ -63,16 +63,27 @@ func validateFineGrainedAuthRules(rules []FineGrainedAuthRule) error {
 
 // SetAuthRuleCompiler binds the Cypher condition compiler before serving.
 func (runtime *FineGrainedRuntime) SetAuthRuleCompiler(compiler FineGrainedAuthRuleCompiler) {
+	if compiler == nil {
+		runtime.authRuleCompiler = nil
+		return
+	}
+	runtime.SetAuthRuleCompilerContext(func(_ context.Context, condition string) (FineGrainedAuthRuleCondition, error) {
+		return compiler(condition)
+	})
+}
+
+// SetAuthRuleCompilerContext binds a compiler that uses the caller's context.
+func (runtime *FineGrainedRuntime) SetAuthRuleCompilerContext(compiler func(context.Context, string) (FineGrainedAuthRuleCondition, error)) {
 	runtime.authRuleCompiler = compiler
 }
 
-func (runtime *FineGrainedRuntime) compileAuthRules(rules []FineGrainedAuthRule) ([]compiledFineGrainedAuthRule, error) {
+func (runtime *FineGrainedRuntime) compileAuthRules(ctx context.Context, rules []FineGrainedAuthRule) ([]compiledFineGrainedAuthRule, error) {
 	var compiled []compiledFineGrainedAuthRule
 	for _, rule := range rules {
 		if runtime.authRuleCompiler == nil {
 			return nil, fmt.Errorf("%w: authorization rule compiler unavailable", ErrInvalidFineGrainedPolicy)
 		}
-		condition, err := runtime.authRuleCompiler(rule.Condition)
+		condition, err := runtime.authRuleCompiler(ctx, rule.Condition)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidFineGrainedPolicy, err)
 		}

@@ -67,7 +67,7 @@ func isFineGrainedDirectoryStatement(ctx context.Context, query string) bool {
 
 func parseSecurityDirectoryStatement(ctx context.Context, text string) (securityDirectoryStatement, error) {
 	var command securityDirectoryStatement
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: text}
+	cursor := fineGrainedPrivilegeCursor{text: text, params: getParamsFromContext(ctx)}
 	cursor.skipGap()
 	verb, ok := cursor.readName()
 	if !ok {
@@ -563,7 +563,7 @@ func (cursor *fineGrainedPrivilegeCursor) readSecurityString(missing string) (st
 // securityStringParameter returns the string one parameter reference binds to.
 // A name or credential position takes a string value and nothing else.
 func (cursor *fineGrainedPrivilegeCursor) securityStringParameter(name string) (string, error) {
-	value, supplied := getParamsFromContext(cursor.ctx)[name]
+	value, supplied := cursor.params[name]
 	if !supplied {
 		return "", parameterMissingError([]string{name})
 	}

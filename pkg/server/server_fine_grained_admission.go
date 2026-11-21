@@ -32,7 +32,7 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 		id, _ := s.dbManager.DatabaseIdentity(resolved)
 		return id
 	}, s.dbManager.DefaultDatabaseName)
-	runtime.SetAuthRuleCompiler(cypher.CompileFineGrainedAuthRuleCondition)
+	runtime.SetAuthRuleCompilerContext(cypher.CompileFineGrainedAuthRuleConditionContext)
 	if s.processConfig != nil {
 		runtime.SetNativeTagAuthorization(s.processConfig.Auth.FGACNativeTags)
 	}
@@ -46,7 +46,7 @@ func (s *Server) initializeFineGrainedRuntime(ctx context.Context) error {
 	runtime.SetSecurityDirectory(s.auth, auth.RoleMutationStores{
 		Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth,
 	})
-	if err := runtime.ValidateAdministrator(catalog); err != nil {
+	if err := runtime.ValidateAdministratorContext(ctx, catalog); err != nil {
 		return err
 	}
 	s.fineGrainedRuntime = runtime
