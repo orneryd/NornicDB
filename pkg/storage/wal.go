@@ -666,59 +666,81 @@ func (w *WAL) AppendWithDatabase(op OperationType, data interface{}, database st
 // AppendWithDatabaseReturningSeq writes a new entry to the WAL with database/namespace information
 // and returns the assigned sequence number.
 func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{}, database string) (uint64, error) {
-	return w.appendWithDatabase(op, data, database, false)
+	return w.appendWithDatabase(op, data, database, nil)
+}
+
+// walRecordData is one record's recovery data, serialized once by the append
+// that writes it, with the timestamp and checksum its entry carries. data is
+// valid while the buffer that serialized it is held (marshalWALRecoveryPayload).
+type walRecordData struct {
+	data      []byte
+	timestamp time.Time
+	checksum  uint32
 }
 
 // appendDecidingLargeRecord is AppendWithDatabaseReturningSeq with one
 // difference. When the record needs more than one frame, which the record
-// encoder decides (encodeWALEntryPayload, by the check that refuses the
-// record under the standard policy), it first calls decide, with nothing of
-// the record written and the WAL's lock released, and writes the record only
+// encoder decides (layoutNewRecord, by the check that refuses the record
+// under the standard policy), it first calls decide, with nothing of the
+// record written and the WAL's lock released, and writes the record only
 // when decide returns nil. decide's error is returned as a walRecordRejection,
 // as the frame refusal is, and nothing of the record is written. The first
 // attempt reserves no published sequence number. A record that fits one frame
 // is appended at once and decide is not called (NOR-412, commit_admission.go).
+//
+// The record is serialized once, before the question, and the append that
+// follows the decision writes those same bytes, building its frames only
+// after the caller accepts the record.
 func (w *WAL) appendDecidingLargeRecord(op OperationType, data interface{}, database string, decide func() error) (uint64, error) {
-	seq, err := w.appendWithDatabase(op, data, database, true)
-	if !errors.Is(err, errLargeRecordHeld) {
-		return seq, err
-	}
-	if err := decide(); err != nil {
-		return 0, &walRecordRejection{cause: err}
-	}
-	return w.appendWithDatabase(op, data, database, false)
+	return w.appendWithDatabase(op, data, database, decide)
 }
 
-// appendWithDatabase is the append behind both. With holdLarge it returns
-// errLargeRecordHeld, having written nothing of the record, for a record that
-// needs more than one frame.
-func (w *WAL) appendWithDatabase(op OperationType, data interface{}, database string, holdLarge bool) (uint64, error) {
+func (w *WAL) appendWithDatabase(op OperationType, data interface{}, database string, decide func() error) (uint64, error) {
 	if !config.IsWALEnabled() {
-		return 0, nil // WAL disabled, skip
+		return 0, nil
 	}
-
 	if w.work.Closing() {
 		return 0, ErrWALClosed
 	}
 
 	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(dataBuf)
-	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
-	defer walJSONBufPool.Put(entryBuf)
-
-	// Entity-bearing records use their single lossless recovery representation.
 	dataBytes, err := marshalWALRecoveryPayload(dataBuf, data)
 	if err != nil {
 		return 0, &walRecordRejection{cause: fmt.Errorf("wal: failed to marshal data: %w", err)}
 	}
+	serialized := walRecordData{data: dataBytes, timestamp: time.Now(), checksum: crc32Checksum(dataBytes)}
+	seq, err := w.appendSerializedRecord(op, serialized, database, decide != nil)
+	if !errors.Is(err, errLargeRecordHeld) {
+		return seq, err
+	}
+	if err := decide(); err != nil {
+		return 0, &walRecordRejection{cause: err}
+	}
+	if !config.IsWALEnabled() {
+		return 0, nil
+	}
+	return w.appendSerializedRecord(op, serialized, database, false)
+}
 
-	// The entry is created under w.mu, by encodeNextRecordLocked, which gives
-	// it its sequence number. The database name is stored for recovery.
-	timestamp, checksum := time.Now(), crc32Checksum(dataBytes)
+// appendSerializedRecord numbers, frames and writes one record whose recovery
+// data is already serialized.
+//
+// The entry is created under w.mu, by nextEntryLocked, which gives it its
+// sequence number; the database name is stored for recovery. With holdLarge it
+// returns errLargeRecordHeld for a record that needs more than one frame, having
+// cut no frame of it and written nothing of it.
+func (w *WAL) appendSerializedRecord(op OperationType, serialized walRecordData, database string, holdLarge bool) (uint64, error) {
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	defer walJSONBufPool.Put(entryBuf)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	entry, record, err := w.encodeNextRecordLocked(entryBuf, op, dataBytes, checksum, timestamp, database)
+	if w.work.Closing() {
+		return 0, ErrWALClosed
+	}
+	entry := w.nextEntryLocked(op, serialized, database)
+	payload, err := w.layoutNewRecord(entryBuf, &entry)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
@@ -726,8 +748,16 @@ func (w *WAL) appendWithDatabase(op OperationType, data interface{}, database st
 	if err := w.prepareUnboundWALRecordLocked(op); err != nil {
 		return 0, err
 	}
-	if holdLarge && record.parts != nil {
+	if holdLarge && payload.large {
+		// The record spans frames and its caller has not allowed that yet:
+		// nothing of it is written and its number is not published. A caller
+		// that allows it appends the same serialized data again, which is cut
+		// into frames then.
 		return 0, errLargeRecordHeld
+	}
+	record, err := payload.frames(entryBuf, &entry)
+	if err != nil {
+		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
 
 	// Write atomically: each frame in one Write when using bufio so the last record
@@ -1014,16 +1044,23 @@ func (w *WAL) syncLocked() error {
 // retained segment range. Both operations hold w.mu, so no appender can take
 // the same candidate while a record is being prepared and appended.
 func (w *WAL) encodeNextRecordLocked(buf *bytes.Buffer, op OperationType, data []byte, checksum uint32, timestamp time.Time, database string) (WALEntry, walRecordFrames, error) {
-	entry := WALEntry{
-		Sequence:  w.sequence.Load() + 1,
-		Timestamp: timestamp,
-		Operation: op,
-		Data:      data,
-		Checksum:  checksum,
-		Database:  database,
-	}
+	entry := w.nextEntryLocked(op, walRecordData{data: data, timestamp: timestamp, checksum: checksum}, database)
 	record, err := w.encodeNewRecord(buf, &entry)
 	return entry, record, err
+}
+
+// nextEntryLocked is the entry one record is written as, numbered with the
+// candidate number of the next record. See encodeNextRecordLocked for why the
+// number is taken here and not before the caller holds the lock.
+func (w *WAL) nextEntryLocked(op OperationType, serialized walRecordData, database string) WALEntry {
+	return WALEntry{
+		Sequence:  w.sequence.Load() + 1,
+		Timestamp: serialized.timestamp,
+		Operation: op,
+		Data:      serialized.data,
+		Checksum:  serialized.checksum,
+		Database:  database,
+	}
 }
 
 // appendRecordLocked writes a record numbered by encodeNextRecordLocked to the
