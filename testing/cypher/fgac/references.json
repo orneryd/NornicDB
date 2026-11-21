@@ -10,7 +10,8 @@
       "version": "2026.10.2",
       "edition": "enterprise",
       "image": "neo4j:2026.10.2-enterprise",
-      "digest": "sha256:941ba98b5acb7cfd9aa72a0aeebd6ffbefd870a514455620eac9ef0bc67e25a9"
+      "digest": "sha256:941ba98b5acb7cfd9aa72a0aeebd6ffbefd870a514455620eac9ef0bc67e25a9",
+      "native_abac": true
     }
   ]
 }

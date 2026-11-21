@@ -19,10 +19,11 @@ type ReferencePins struct {
 
 // ReferencePin identifies one pinned Neo4j Enterprise image.
 type ReferencePin struct {
-	Version string `json:"version"`
-	Edition string `json:"edition"`
-	Image   string `json:"image"`
-	Digest  string `json:"digest"`
+	Version    string `json:"version"`
+	Edition    string `json:"edition"`
+	Image      string `json:"image"`
+	Digest     string `json:"digest"`
+	NativeABAC bool   `json:"native_abac,omitempty"`
 }
 
 // LoadReferencePins reads and validates the pinned reference list.

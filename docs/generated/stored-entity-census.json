@@ -847,9 +847,9 @@
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_embedding_sidecar.go:207",
-      "func": "pkg/storage.BadgerEngine.persistNodeEmbeddingSidecar$1$3 pkg/storage/badger_embedding_sidecar.go:207",
-      "where": "pkg/storage.BadgerEngine.persistNodeEmbeddingSidecar$1$3 pkg/storage/badger_embedding_sidecar.go:207"
+      "origin": "pkg/storage/badger_embedding_sidecar.go:213",
+      "func": "pkg/storage.BadgerEngine.persistNodeEmbeddingSidecar$1$3 pkg/storage/badger_embedding_sidecar.go:213",
+      "where": "pkg/storage.BadgerEngine.persistNodeEmbeddingSidecar$1$3 pkg/storage/badger_embedding_sidecar.go:213"
     },
     {
       "space": "prefixEdgeBetweenIndex",
@@ -3888,13 +3888,13 @@
       "field": "pkg/storage.historicalReadEngine.active",
       "class": "snapshot readers",
       "func": "pkg/storage.historicalReadEngine.finishRead",
-      "pos": "pkg/storage/historical_read.go:178"
+      "pos": "pkg/storage/historical_read.go:183"
     },
     {
       "field": "pkg/storage.historicalReadEngine.active",
       "class": "snapshot readers",
       "func": "pkg/storage.historicalReadEngine.withTxn",
-      "pos": "pkg/storage/historical_read.go:207"
+      "pos": "pkg/storage/historical_read.go:212"
     },
     {
       "field": "pkg/storage.mvccPrunePass.decided",
@@ -4903,7 +4903,7 @@
     {
       "func": "pkg/adminimport.ImportFull",
       "pos": "pkg/adminimport/importer.go:145",
-      "gates": "pkg/adminimport.ImportFull pkg/adminimport/importer.go:156 -> pkg/search.Service.SetPersistenceEnabled pkg/search/search.go:2263 -> pkg/search.Service.orderWithBuildEnd pkg/search/build_write_queue.go:348 -> pkg/search.Service.readLockOrQueue pkg/search/build_write_queue.go:454 -> pkg/search.Service.queueBuildWrite pkg/search/build_write_queue.go:239 -> pkg/search.Service.admitQueuedNode pkg/search/build_write_queue.go:388 -> pkg/search.Service.shouldIndexNode pkg/search/search.go:3216 -> pkg/storage.NamespacedEngine.IsCurrentTemporalNode pkg/storage/namespaced.go:547 -> internal/testutil/walterminal.Engine.IsCurrentTemporalNodeInNamespace - -> pkg/storage.BadgerEngine.IsCurrentTemporalNodeInNamespace pkg/storage/badger_temporal_index.go:546 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:265 -> pkg/storage.BadgerEngine.transitionNamespaceSchema pkg/storage/badger_schema.go:310 -> pkg/storage.BadgerEngine.bindNamespaceSchema - -> pkg/storage.BadgerEngine.bindNamespaceSchema$2 pkg/storage/badger_schema.go:114 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:33 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:33",
+      "gates": "pkg/adminimport.ImportFull pkg/adminimport/importer.go:156 -> pkg/search.Service.SetPersistenceEnabled pkg/search/search.go:2267 -> pkg/search.Service.orderWithBuildEnd pkg/search/build_write_queue.go:348 -> pkg/search.Service.readLockOrQueue pkg/search/build_write_queue.go:454 -> pkg/search.Service.queueBuildWrite pkg/search/build_write_queue.go:239 -> pkg/search.Service.admitQueuedNode pkg/search/build_write_queue.go:388 -> pkg/search.Service.shouldIndexNode pkg/search/search.go:3220 -> pkg/storage.NamespacedEngine.IsCurrentTemporalNode pkg/storage/namespaced.go:547 -> internal/testutil/walterminal.Engine.IsCurrentTemporalNodeInNamespace - -> pkg/storage.BadgerEngine.IsCurrentTemporalNodeInNamespace pkg/storage/badger_temporal_index.go:546 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:265 -> pkg/storage.BadgerEngine.transitionNamespaceSchema pkg/storage/badger_schema.go:310 -> pkg/storage.BadgerEngine.bindNamespaceSchema - -> pkg/storage.BadgerEngine.bindNamespaceSchema$2 pkg/storage/badger_schema.go:114 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:33 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:33",
       "owners": [
         "pkg/storage.BadgerEngine.evaluateSuppressionInTxn",
         "pkg/storage.BadgerEngine.forgetManualSuppression"
