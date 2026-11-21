@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,10 +23,16 @@ func TestCloseoutRebuildIncludesPostSnapshotBoltWrites(t *testing.T) {
 			if !strict {
 				cfg.Database.WALSyncMode = "batch"
 			}
-			cfg.Database.WALAutoCompactionEnabled = true
+			cfg.Storage.Mode = "low"
 			cfg.Database.WALSnapshotInterval = 200 * time.Millisecond
 			lab := journalOpen(t, root, cfg)
 			lab.mustRun("CREATE (:CloseoutSnapshotSeed {k: 1})", nil)
+			_, err := lab.run("CREATE (:CloseoutRefused {text: $payload})",
+				map[string]any{"payload": strings.Repeat("x", 40<<20)}, false)
+			require.Error(t, err, "the 40 MiB property exceeds the low-memory store limit")
+			require.Equal(t, int64(0), lab.count("MATCH (n:CloseoutRefused) RETURN count(n)", nil))
+			journal := lab.db.GetBaseStorageForManager().(*storage.WALEngine)
+			require.NoError(t, journal.EnableAutoCompaction(filepath.Join(root, "snapshots")))
 			var snapshot string
 			require.Eventually(t, func() bool {
 				files, err := filepath.Glob(filepath.Join(root, "snapshots", "snapshot-*.json"))
@@ -36,7 +43,6 @@ func TestCloseoutRebuildIncludesPostSnapshotBoltWrites(t *testing.T) {
 				return true
 			}, 15*time.Second, 50*time.Millisecond, "automatic compaction must publish a snapshot")
 
-			cfg.Database.WALAutoCompactionEnabled = false
 			lab = lab.reopen(cfg)
 			const size = 1536 << 10
 			raw := make([]byte, size)
