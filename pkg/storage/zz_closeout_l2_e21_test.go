@@ -211,12 +211,19 @@ func l2E21Run(t *testing.T, c l2E21Case, mode EntityCommitMode) l2E21Result {
 	if prepared != nil {
 		receipt, err := NewWALEngine(engine, wal).SubmitEntityCommit(ctx, prepared, nil)
 		r.submitErr = err
-		prepared.Abort() // no-op once submitted
+		// Abort only after the outcome is terminal. The accepted application
+		// runs on its own goroutine and starts the parked commit through the
+		// same once (PreparedEntityCommit.startCommit / Abort,
+		// prepared_entity_commit_prototype.go:102-130): an Abort right after
+		// submission races it, aborts the accepted commit and leaves it
+		// "committed-pending or unknown" for recovery. The in-tree tests
+		// defer it the same way (t.Cleanup(prepared.Abort)).
 		if err == nil && receipt != nil {
 			wctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			r.outcome = receipt.WaitOutcome(wctx)
 			cancel()
 		}
+		prepared.Abort() // no-op once the commit started; releases a frame the submission refused
 	}
 	var accepted *AcceptedCommitError
 	r.pending = (r.outcome.Err != nil && r.outcome.State == CommitRecoveryPending) ||

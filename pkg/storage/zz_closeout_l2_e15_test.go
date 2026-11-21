@@ -103,11 +103,29 @@ func TestL2_e15_Control(t *testing.T) {
 			t.Fatalf("control scan %d returned %v, want [a:03]", scan, ids)
 		}
 	}
-	// Without a filter the label route returns the 12 Doc nodes.
-	if ids := l2E15Scan(t, engine, StreamNodesOptions{Prefix: "a:", Label: "Doc", QueryNodes: true, Projection: []string{"id"}}); len(ids) != 12 {
-		t.Fatalf("unfiltered control scan returned %d nodes, want 12: %v", len(ids), ids)
+	// Without a filter: Label is only an index hint (StreamNodesOptions.Label,
+	// badger_stats.go:824, "Callers still check label membership"), and a
+	// projected scan without a filter does not take the label route
+	// (StreamNodesWithOptions, badger_stats.go:885), so it may return every
+	// a:* node. The control checks what a caller relies on: the 12 Doc nodes
+	// are among the nodes returned.
+	doc := 0
+	var all []string
+	if err := engine.StreamNodesWithOptions(context.Background(), StreamNodesOptions{Prefix: "a:", Label: "Doc", QueryNodes: true, Projection: []string{"id"}}, func(node *Node) error {
+		all = append(all, string(node.ID))
+		for _, label := range node.Labels {
+			if label == "Doc" {
+				doc++
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("unfiltered control scan: %v", err)
 	}
-	t.Logf("L2RESULT E15 CONTROL OK a:03 on %d scans with a name-only filter; 12 Doc nodes unfiltered", l2E15Scans)
+	if doc != 12 {
+		t.Fatalf("unfiltered control scan returned %d Doc nodes, want 12 (of %d returned: %v)", doc, len(all), all)
+	}
+	t.Logf("L2RESULT E15 CONTROL OK a:03 on %d scans with a name-only filter; 12 Doc nodes among the unfiltered scan", l2E15Scans)
 }
 
 // The cause the entry names: the resident-node route settles the filter on a
