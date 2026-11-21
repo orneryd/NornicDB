@@ -1395,51 +1395,6 @@
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKey:1",
-    "file": "value_equivalence.go",
-    "caller": "appendNestedValueKey",
-    "callee": "cypherValueKey",
-    "contract": "contract",
-    "line": 0,
-    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
-  },
-  {
-    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKeyWithNumericPolicy:1",
-    "file": "value_equivalence.go",
-    "caller": "appendNestedValueKey",
-    "callee": "cypherValueKeyWithNumericPolicy",
-    "contract": "contract",
-    "line": 0,
-    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
-  },
-  {
-    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:1",
-    "file": "value_equivalence.go",
-    "caller": "appendValueKey",
-    "callee": "appendNestedValueKey",
-    "contract": "contract",
-    "line": 0,
-    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
-  },
-  {
-    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:2",
-    "file": "value_equivalence.go",
-    "caller": "appendValueKey",
-    "callee": "appendNestedValueKey",
-    "contract": "contract",
-    "line": 0,
-    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
-  },
-  {
-    "id": "value_equivalence.go:appendValueKey:appendNestedValueKey:3",
-    "file": "value_equivalence.go",
-    "caller": "appendValueKey",
-    "callee": "appendNestedValueKey",
-    "contract": "contract",
-    "line": 0,
-    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
-  },
-  {
     "id": "value_equivalence.go:appendValueKey:appendTemporalValueKey:1",
     "file": "value_equivalence.go",
     "caller": "appendValueKey",
@@ -1447,6 +1402,33 @@
     "contract": "already canonical temporal key",
     "line": 0,
     "reason": "Serialize an already constructed typed key; its caller has explicitly selected the contract."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:nestedValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "nestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:nestedValueKey:2",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "nestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:appendValueKey:nestedValueKey:3",
+    "file": "value_equivalence.go",
+    "caller": "appendValueKey",
+    "callee": "nestedValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
     "id": "value_equivalence.go:appendValueKey:temporalIdentityParts:1",
@@ -1516,6 +1498,24 @@
     "file": "value_equivalence.go",
     "caller": "cypherValueKeyWithNumericPolicy",
     "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:nestedValueKey:cypherValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "nestedValueKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:nestedValueKey:cypherValueKeyWithNumericPolicy:1",
+    "file": "value_equivalence.go",
+    "caller": "nestedValueKey",
+    "callee": "cypherValueKeyWithNumericPolicy",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."

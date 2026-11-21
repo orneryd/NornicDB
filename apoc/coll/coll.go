@@ -297,13 +297,13 @@ func ContainsAny(list []interface{}, values []interface{}) bool {
 //	apoc.coll.containsDuplicates([1,2,3,2,4]) => true
 //	apoc.coll.containsDuplicates([1,2,3,4,5]) => false
 func ContainsDuplicates(list []interface{}) bool {
-	seen := make(map[string]bool)
+	seen := make(map[string]struct{})
 	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		if seen[key] {
+		key := convert.ValueEquivalenceKey(item)
+		if _, exists := seen[key]; exists {
 			return true
 		}
-		seen[key] = true
+		seen[key] = struct{}{}
 	}
 	return false
 }
@@ -338,18 +338,17 @@ func ContainsSorted(list []interface{}, value interface{}) bool {
 //
 //	apoc.coll.different([1,2,3,4], [2,4,6]) => [1,3]
 func Different(list1, list2 []interface{}) []interface{} {
-	set2 := make(map[string]bool)
+	excluded := make(map[string]struct{})
 	for _, item := range list2 {
-		set2[fmt.Sprintf("%v", item)] = true
+		excluded[convert.ValueEquivalenceKey(item)] = struct{}{}
 	}
 
 	result := make([]interface{}, 0)
 	for _, item := range list1 {
-		if !set2[fmt.Sprintf("%v", item)] {
+		if _, exists := excluded[convert.ValueEquivalenceKey(item)]; !exists {
 			result = append(result, item)
 		}
 	}
-
 	return result
 }
 
@@ -392,17 +391,15 @@ func Disjunction(list1, list2 []interface{}) []interface{} {
 //
 //	apoc.coll.dropDuplicateNeighbors([1,1,2,2,3,3,2,2]) => [1,2,3,2]
 func DropDuplicateNeighbors(list []interface{}) []interface{} {
-	if len(list) == 0 {
-		return []interface{}{}
-	}
-
-	result := []interface{}{list[0]}
-	for i := 1; i < len(list); i++ {
-		if !reflect.DeepEqual(list[i], list[i-1]) {
-			result = append(result, list[i])
+	result := make([]interface{}, 0)
+	var previous string
+	for i, item := range list {
+		key := convert.ValueEquivalenceKey(item)
+		if i == 0 || key != previous {
+			result = append(result, item)
 		}
+		previous = key
 	}
-
 	return result
 }
 
@@ -412,24 +409,12 @@ func DropDuplicateNeighbors(list []interface{}) []interface{} {
 //
 //	apoc.coll.duplicates([1,2,3,2,4,3,5]) => [2,3]
 func Duplicates(list []interface{}) []interface{} {
-	counts := make(map[string]int)
-	order := make(map[string]interface{})
-
-	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		counts[key]++
-		if counts[key] == 1 {
-			order[key] = item
-		}
-	}
-
 	result := make([]interface{}, 0)
-	for key, count := range counts {
-		if count > 1 {
-			result = append(result, order[key])
+	for _, entry := range groupValues(list, convert.ValueEquivalenceKey) {
+		if entry.count > 1 {
+			result = append(result, entry.item)
 		}
 	}
-
 	return result
 }
 
@@ -440,27 +425,14 @@ func Duplicates(list []interface{}) []interface{} {
 //	apoc.coll.duplicatesWithCount([1,2,3,2,4,3,3])
 //	=> [{item:2,count:2},{item:3,count:3}]
 func DuplicatesWithCount(list []interface{}) []map[string]interface{} {
-	counts := make(map[string]int)
-	order := make(map[string]interface{})
-
-	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		counts[key]++
-		if counts[key] == 1 {
-			order[key] = item
-		}
-	}
-
 	result := make([]map[string]interface{}, 0)
-	for key, count := range counts {
-		if count > 1 {
+	for _, entry := range groupValues(list, convert.ValueEquivalenceKey) {
+		if entry.count > 1 {
 			result = append(result, map[string]interface{}{
-				"item":  order[key],
-				"count": count,
+				"item": entry.item, "count": entry.count,
 			})
 		}
 	}
-
 	return result
 }
 
@@ -510,18 +482,32 @@ func Flatten(list []interface{}, recursive bool) []interface{} {
 //	apoc.coll.frequencies([1,2,2,3,3,3])
 //	=> {1:1, 2:2, 3:3}
 func Frequencies(list []interface{}) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0)
-	positions := make(map[string]int)
-	for _, item := range list {
-		key := frequencyKey(item)
-		if position, seen := positions[key]; seen {
-			result[position]["count"] = result[position]["count"].(int64) + 1
-			continue
-		}
-		positions[key] = len(result)
-		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
+	groups := groupValues(list, frequencyKey)
+	result := make([]map[string]interface{}, 0, len(groups))
+	for _, entry := range groups {
+		result = append(result, map[string]interface{}{"item": entry.item, "count": int64(entry.count)})
 	}
 	return result
+}
+
+type collectionCount struct {
+	item  any
+	count int
+}
+
+func groupValues(list []any, keyOf func(any) string) []collectionCount {
+	groups := make([]collectionCount, 0)
+	positions := make(map[string]int)
+	for _, item := range list {
+		key := keyOf(item)
+		if position, seen := positions[key]; seen {
+			groups[position].count++
+			continue
+		}
+		positions[key] = len(groups)
+		groups = append(groups, collectionCount{item: item, count: 1})
+	}
+	return groups
 }
 
 // FrequenciesAsMap returns each distinct item's count keyed by the item's
@@ -539,13 +525,13 @@ func FrequenciesAsMap(list []interface{}) map[string]interface{} {
 	return result
 }
 
-// frequencyKey groups items as APOC counts them: numbers by value (1 and
-// 1.0 alike), anything else by its type and text.
+// frequencyKey preserves the frequency API's single rendered NaN bucket.
+// Other values group by typed equivalence, including exact large integers.
 func frequencyKey(item interface{}) string {
-	if number, ok := convert.NumericFloat64(item); ok {
-		return fmt.Sprint("n:", number)
+	if number, ok := convert.FloatValue(item); ok && math.IsNaN(number) {
+		return "FNaN"
 	}
-	return fmt.Sprintf("%T:%v", item, item)
+	return convert.ValueEquivalenceKey(item)
 }
 
 // IndexOf returns the index of the first occurrence of a value.
@@ -724,9 +710,10 @@ func Remove(list []interface{}, index int) []interface{} {
 //
 //	apoc.coll.removeAll([1,2,3,2,4,2,5], 2) => [1,3,4,5]
 func RemoveAll(list []interface{}, value interface{}) []interface{} {
+	excluded := convert.ValueEquivalenceKey(value)
 	result := make([]interface{}, 0)
 	for _, item := range list {
-		if !reflect.DeepEqual(item, value) {
+		if convert.ValueEquivalenceKey(item) != excluded {
 			result = append(result, item)
 		}
 	}
