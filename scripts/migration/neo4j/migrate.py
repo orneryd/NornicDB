@@ -3,15 +3,14 @@
 Neo4j → NornicDB migration (Python).
 
 Bolt → Bolt. Reads constraints, indexes, nodes, and relationships from a
-source Neo4j instance and replays them into NornicDB using hot-path
-UNWIND/MERGE shapes from docs/performance/hot-path-query-cookbook.md.
+source Neo4j instance and replays them into NornicDB using shared queries.json
+destination statements and verified applied-row counts.
 
 Phases (always in this order):
   1. Schema  — constraints, then indexes (vector and fulltext last).
   2. Nodes   — UNWIND $rows MERGE by element-id key, set labels, set props.
-                Hits UnwindSimpleMergeBatch.
-  3. Edges   — UNWIND $rows MATCH (a), MATCH (b) CREATE (a)-[:T]->(b).
-                Hits UnwindMultiMatchCreateBatch.
+                Preserves source labels as data for final promotion.
+  3. Edges   — match visible endpoints, MERGE by source ID and SET props.
 
 The element ID from Neo4j is preserved on each node as `_neo4j_id` so the
 edge phase can rebind start/end nodes deterministically.
@@ -35,6 +34,8 @@ Flags:
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 import sys
 import time
 from typing import Iterable
@@ -226,14 +227,19 @@ def stream_nodes(sess: Session, label: str, batch: int) -> Iterable[list[dict]]:
             return
 
 
-# Hot path: UnwindSimpleMergeBatch — single MERGE on a stable key, idempotent.
-# We pin _neo4j_id as the merge key and SET labels/properties from the row.
-NODE_UPSERT_CYPHER = """
-UNWIND $rows AS row
-MERGE (n:_Migrated {_neo4j_id: row.id})
-SET n += row.props
-SET n._neo4j_labels = row.labels
-"""
+# One destination statement owner is shared with the Go and Node clients.
+QUERIES = json.loads(Path(__file__).with_name("queries.json").read_text())
+NODE_UPSERT_CYPHER = QUERIES["nodes"]
+
+
+def apply_batch(dst: Session, query: str, rows: list[dict]) -> int:
+    result = dst.run(query, rows=rows)
+    record = result.single(strict=True)
+    result.consume()
+    applied = record["applied"]
+    if not isinstance(applied, int) or applied != len(rows):
+        raise RuntimeError(f"migration batch incomplete: target applied {applied} of {len(rows)} source rows")
+    return applied
 
 
 def replicate_nodes(
@@ -253,38 +259,13 @@ def replicate_nodes(
             continue  # internal
         moved = 0
         for chunk in stream_nodes(src, label, batch):
-            if not dry_run:
-                dst.run(NODE_UPSERT_CYPHER, rows=chunk).consume()
-            moved += len(chunk)
+            applied = len(chunk) if dry_run else apply_batch(dst, NODE_UPSERT_CYPHER, chunk)
+            moved += applied
             print(f"  · :{label}: {moved}")
-            total += len(chunk)
-    print(f"  total nodes upserted: {total}")
+            total += applied
+    label = "source node rows read (dry run)" if dry_run else "target node rows applied"
+    print(f"  {label}: {total}")
     return total
-
-
-# Apply the original labels back onto the merged nodes in a second pass.
-# Runs once after all node batches; keeps the per-batch hot path narrow.
-APPLY_LABELS_CYPHER = """
-MATCH (n:_Migrated)
-WITH n, n._neo4j_labels AS labels
-CALL apoc.create.addLabels(n, labels) YIELD node
-RETURN count(node)
-"""
-
-
-def apply_labels(dst: Session, dry_run: bool) -> None:
-    print("\n[apply labels]")
-    if dry_run:
-        return
-    # Cypher path that does not depend on apoc: SET label list explicitly via
-    # multiple statements is tricky in pure Cypher because labels can't be
-    # parameterized. We fall back to a plain pass-through: each node already
-    # has its labels stored on _neo4j_labels, and consumers can re-promote
-    # them using a separate Cypher pass tailored to their schema. The
-    # default behavior of this script preserves data, not labels — which is
-    # the right trade-off when labels collide with NornicDB-reserved names.
-    print("  · labels preserved on n._neo4j_labels (apply manually with"
-          " your label policy; pure Cypher cannot parameterize labels)")
 
 
 # --------------------------------------------------------------------------
@@ -329,32 +310,8 @@ def stream_edges(sess: Session, rel_type: str, batch: int) -> Iterable[list[dict
             return
 
 
-def edge_create_cypher(rel_type: str) -> str:
-    """
-    Hot path: UnwindMultiMatchCreateBatch — many MATCHes + CREATE per row,
-    no RETURN/WITH/SET/MERGE. Edge-only variant since both endpoints already
-    exist after the node phase. The relationship type cannot be a parameter
-    in Cypher; templated per type instead.
-    """
-    return (
-        "UNWIND $rows AS row "
-        "MATCH (a:_Migrated {_neo4j_id: row.startId}) "
-        "MATCH (b:_Migrated {_neo4j_id: row.endId}) "
-        f"CREATE (a)-[:`{rel_type}` {{_neo4j_id: row.id}}]->(b)"
-    )
-
-
-def edge_props_cypher(rel_type: str) -> str:
-    """
-    Apply edge properties in a follow-up MATCH that hits the relationship by
-    its preserved Neo4j id. Keeps the create-side on the strict hot path.
-    """
-    return (
-        "UNWIND $rows AS row "
-        f"MATCH (a:_Migrated {{_neo4j_id: row.startId}})-[r:`{rel_type}` "
-        "{_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) "
-        "SET r += row.props"
-    )
+def edge_upsert_cypher(rel_type: str) -> str:
+    return QUERIES["edges"].replace("{{type}}", "`" + rel_type.replace("`", "``") + "`")
 
 
 def replicate_edges(
@@ -371,18 +328,14 @@ def replicate_edges(
         if type_filter and t not in type_filter:
             continue
         moved = 0
-        create_q = edge_create_cypher(t)
-        props_q = edge_props_cypher(t)
+        create_q = edge_upsert_cypher(t)
         for chunk in stream_edges(src, t, batch):
-            if not dry_run:
-                dst.run(create_q, rows=chunk).consume()
-                # Skip props pass when the chunk has no edge properties.
-                if any(row.get("props") for row in chunk):
-                    dst.run(props_q, rows=chunk).consume()
-            moved += len(chunk)
+            applied = len(chunk) if dry_run else apply_batch(dst, create_q, chunk)
+            moved += applied
             print(f"  · :{t}: {moved}")
-            total += len(chunk)
-    print(f"  total edges created: {total}")
+            total += applied
+    label = "source relationship rows read (dry run)" if dry_run else "target relationship rows applied"
+    print(f"  {label}: {total}")
     return total
 
 
@@ -412,7 +365,6 @@ def main() -> int:
         if not args.skip_nodes:
             labels = fetch_node_labels(src)
             replicate_nodes(src, dst, labels, label_filter, args.batch_size, args.dry_run)
-            apply_labels(dst, args.dry_run)
 
         if not args.skip_edges:
             types = fetch_relationship_types(src)

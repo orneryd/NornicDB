@@ -1,0 +1,4 @@
+{
+  "nodes": "UNWIND $rows AS row\nMERGE (n:Neo4jMigrated {_neo4j_id: row.id})\nSET n += row.props\nSET n._neo4j_id = row.id\nSET n._neo4j_labels = row.labels\nRETURN count(n) AS applied",
+  "edges": "UNWIND $rows AS row\nMATCH (a:Neo4jMigrated {_neo4j_id: row.startId})\nMATCH (b:Neo4jMigrated {_neo4j_id: row.endId})\nMERGE (a)-[r:{{type}} {_neo4j_id: row.id}]->(b)\nSET r += row.props\nSET r._neo4j_id = row.id\nRETURN count(r) AS applied"
+}

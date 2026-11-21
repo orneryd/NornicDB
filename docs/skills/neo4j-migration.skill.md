@@ -1,6 +1,6 @@
 ---
 name: nornicdb-neo4j-migration
-description: Migrate from Neo4j 5 to NornicDB end-to-end over Bolt. Covers schema replication (constraints + indexes including fulltext and vector), node and edge replication using hot-path UNWIND/MERGE shapes from the cookbook, label preservation strategy, what does and does not transfer, the cutover playbook. Points to runnable Python/Go/Node migration scripts and ties every batch shape back to a named executor fast path.
+description: Migrate from Neo4j 5 to NornicDB end-to-end over Bolt. Covers schema replication (constraints + indexes including fulltext and vector), node and edge replication using shared idempotent UNWIND/MERGE statements, label preservation strategy, what does and does not transfer, the cutover playbook. Points to runnable Python/Go/Node migration scripts and verifies applied target rows.
 ---
 
 # Migrating from Neo4j to NornicDB
@@ -12,10 +12,10 @@ This skill covers the migration plan and the exact query shapes used. Runnable s
 ## Phase order (do not reorder)
 
 1. **Schema** — constraints, then indexes (vector and fulltext last). Idempotent via `IF NOT EXISTS`.
-2. **Nodes** — `UNWIND $rows MERGE (n:_Migrated {_neo4j_id: row.id}) SET n += row.props` per label, keyset-paginated by `elementId`. Hits [`UnwindSimpleMergeBatch`](cypher-queries.skill.md#7-write-hot-paths).
-3. **Edges** — `UNWIND $rows MATCH (a) MATCH (b) CREATE (a)-[:T]->(b)` per relationship type. Hits [`UnwindMultiMatchCreateBatch`](cypher-queries.skill.md#multi-match-create-bulk-seed-unwindmultimatchcreatebatch).
+2. **Nodes** — `UNWIND` and `MERGE` by source `elementId` under the visible `Neo4jMigrated` label, preserving source labels as data.
+3. **Edges** — match visible endpoints, `MERGE` each relationship by source ID and apply properties in the same statement.
 
-Reordering breaks the edge phase because it depends on `_Migrated` nodes being present.
+Reordering breaks the edge phase because both imported endpoints must exist. All three clients load the same [`queries.json`](https://github.com/orneryd/nornicdb/blob/main/scripts/migration/neo4j/queries.json) destination statements. Keep it beside Python/Node; Go embeds it when built.
 
 ## Schema replication
 
@@ -40,22 +40,20 @@ Each row maps to a target DDL statement that NornicDB's parser accepts:
 
 Indexes that are owned by an existing constraint are skipped — applying the constraint DDL recreates the index. Anything we don't know how to map cleanly is logged and skipped.
 
-## Node replication — hot-path shape
+## Node replication
 
 ```cypher
 UNWIND $rows AS row
-MERGE (n:_Migrated {_neo4j_id: row.id})
+MERGE (n:Neo4jMigrated {_neo4j_id: row.id})
 SET n += row.props
+SET n._neo4j_id = row.id
 SET n._neo4j_labels = row.labels
+RETURN count(n) AS applied
 ```
 
-Why this shape:
+`Neo4jMigrated` is a visible bridge label; underscore-prefixed labels denote internal records and cannot serve ordinary endpoint MATCH. Reserve `_neo4j_id`, `_neo4j_labels` and the bridge label for the migration. Repeating a batch refreshes existing nodes. Source labels remain data until promotion.
 
-- `MERGE` on a stable key (`_neo4j_id`) lands on `UnwindSimpleMergeBatch`. The batch hot path probes the `_neo4j_id` schema lookup once per batch, not per row.
-- Idempotent: re-running the same batch refreshes properties without creating duplicates.
-- Labels stored as data on `_neo4j_labels` because Cypher cannot parameterize labels. A follow-up promotion pass adds them as real labels.
-
-Source-side keyset pagination (do not use `SKIP/LIMIT` — that is the cookbook's anti-pattern #7):
+The scripts keyset-paginate each selected source label by `elementId`, avoiding `SKIP`:
 
 ```cypher
 MATCH (n:`<Label>`) WHERE elementId(n) > $cursor
@@ -64,45 +62,43 @@ ORDER BY elementId(n)
 LIMIT $limit
 ```
 
-## Edge replication — hot-path shape
+## Relationship replication
 
 ```cypher
 UNWIND $rows AS row
-MATCH (a:_Migrated {_neo4j_id: row.startId})
-MATCH (b:_Migrated {_neo4j_id: row.endId})
-CREATE (a)-[:`T` {_neo4j_id: row.id}]->(b)
-```
-
-Why this shape:
-
-- The two MATCHes followed by CREATE with no RETURN/WITH/SET/MERGE is the exact shape `UnwindMultiMatchCreateBatch` recognizes — the bulk-seed edge-only variant.
-- Property values are restricted to `row.<field>` references, so the executor can short-circuit per-row Cypher re-parse.
-
-Edge properties are applied in a follow-up pass only when the chunk has any:
-
-```cypher
-UNWIND $rows AS row
-MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:`T` {_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId})
+MATCH (a:Neo4jMigrated {_neo4j_id: row.startId})
+MATCH (b:Neo4jMigrated {_neo4j_id: row.endId})
+MERGE (a)-[r:`T` {_neo4j_id: row.id}]->(b)
 SET r += row.props
+SET r._neo4j_id = row.id
+RETURN count(r) AS applied
 ```
 
-This keeps the create-side strictly on the bulk-seed hot path and avoids paying SET cost when there's nothing to set.
+The source relationship ID distinguishes parallel relationships with the same type and endpoints. Reruns preserve each relationship and update its properties. Clients consume the returned `applied` count and fail if it differs from the supplied batch size. Missing endpoints therefore produce a visible batch failure, not false success. Earlier batches remain applied and may be rerun.
+
+Reported totals are applied source rows, not newly created or unique entities. Multi-label nodes can appear in several label scans. Dry runs report source rows read without claiming target writes.
 
 ## Label promotion (one Cypher pass per real label)
 
-Cypher cannot parameterize labels. After the script finishes, promote each label with a per-label MATCH:
+After import, add every source label before removing the label-list bookkeeping:
 
 ```cypher
-MATCH (n:_Migrated)
+MATCH (n:Neo4jMigrated)
 WHERE 'Person' IN n._neo4j_labels
 SET n:Person
-REMOVE n:_Migrated
+RETURN count(n) AS promoted;
+```
+
+Repeat for `Employee` and every other source label, including labels carried by nodes selected through a different `--labels` filter. The node's full list stays available throughout promotion. After all labels are promoted and verified, remove only that list:
+
+```cypher
+MATCH (n:Neo4jMigrated)
 REMOVE n._neo4j_labels;
 ```
 
-Run one statement per source label. The `_Migrated` label and the bookkeeping properties drop off as you go.
+Keep `Neo4jMigrated` and `_neo4j_id` on the imported graph for repeatable migration after promotion. A rerun restores `_neo4j_labels`; promote any new source labels before cutover. Removing the bridge or identity metadata ends the rerun contract.
 
-If you don't need the original Neo4j ID afterwards, also remove `_neo4j_id` from nodes and edges. If anything in your application still keys off Neo4j IDs, keep it for compatibility.
+The scripts do not repair hidden `_Migrated` nodes left by an older failed migration. Use a fresh target for the corrected migration or plan separate recovery; rerunning does not reuse or remove those historical hidden records. Preserve the old target until recovery is verified.
 
 ## Batch sizing
 
@@ -111,7 +107,7 @@ If you don't need the original Neo4j ID afterwards, also remove `_neo4j_id` from
 | Nodes | 500 rows / batch | Up to 2000 if rows are small. Keep below 5000 to avoid commit-time write timeout. |
 | Edges | 500 rows / batch | Same range; edge property maps tend to be smaller than node maps so more headroom. |
 
-The `UnwindMultiMatchCreateBatch` hot path scales well from 100 to 2000 rows. The 500 default is a balance between per-batch overhead and commit lifetime.
+The default is 500 rows. Measure batch size against the source/target workload; these counted MERGE statements are not a claim of the former CREATE-only fast-path performance.
 
 ## What does NOT transfer
 
@@ -132,7 +128,7 @@ The `UnwindMultiMatchCreateBatch` hot path scales well from 100 to 2000 rows. Th
 3. **Schema-only pass** (`--skip-nodes --skip-edges`) once. Verify with `SHOW CONSTRAINTS` / `SHOW INDEXES` on NornicDB.
 4. **Cold corpus pass** while Neo4j is still serving. Use `--labels` to chunk the migration if your dataset is large.
 5. **Pause writes** on Neo4j (consumer-side queue drain or read-only mode).
-6. **Top-up pass** to capture any deltas — node phase is idempotent (`MERGE`), edge phase needs `--skip-nodes --skip-edges` then a re-run on just the touched types if you split the migration.
+6. **Top-up pass** to refresh imported nodes and relationships. Both phases use stable source IDs and may be rerun; this is not a deletion/change-data-capture synchronizer.
 7. **Promote labels** with the per-label promotion Cypher above.
 8. **Cut read traffic over to NornicDB.**
 9. **Decommission Neo4j** once you're satisfied; keep it read-only for the rollback window.
@@ -145,11 +141,11 @@ SHOW INDEXES;
 MATCH (n) RETURN labels(n) AS labels, count(n) AS count ORDER BY count DESC LIMIT 20;
 MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count ORDER BY count DESC LIMIT 20;
 
--- Confirm no orphan _Migrated remains after promotion
-MATCH (n:_Migrated) RETURN count(n);
+-- Count imported nodes (bridge intentionally retained for reruns)
+MATCH (n:Neo4jMigrated) RETURN count(n);
 ```
 
-A clean migration ends with `count(n:_Migrated) = 0` once you've run promotion for every label you care about.
+Compare source-labelled node counts, relationship counts, properties and endpoints with the selected source population. A retained bridge count is not a remaining-work count. Zero hidden-label matches or absent bookkeeping does not establish completion.
 
 ## Running the scripts
 

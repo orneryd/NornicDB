@@ -11,22 +11,36 @@ Three runnable migrations to move a full Neo4j database into NornicDB. All three
 All three implement the **same three phases in the same order**:
 
 1. **Schema** — `SHOW CONSTRAINTS` + `SHOW INDEXES` on the source, port to NornicDB DDL with `IF NOT EXISTS`. Constraints first, indexes second (vector and fulltext last).
-2. **Nodes** — `UNWIND $rows AS row MERGE (n:_Migrated {_neo4j_id: row.id}) SET n += row.props` for every label, keyset-paginated by `elementId`. This is the [`UnwindSimpleMergeBatch`](../../../docs/performance/hot-path-query-cookbook.md#73-bulk-ingestion-with-unwind) hot-path shape.
-3. **Edges** — `UNWIND $rows AS row MATCH (a) MATCH (b) CREATE (a)-[:T]->(b)` for every relationship type, also keyset-paginated. This is the [`UnwindMultiMatchCreateBatch`](../../../docs/performance/hot-path-query-cookbook.md#73h-bulk-seed-multi-match-lookups-plus-create-writes-no-return) edge-only variant. After the create, a follow-up MATCH ... SET applies edge properties only when at least one row carries any.
+2. **Nodes** — `UNWIND` and `MERGE` by source `elementId`, using the visible `Neo4jMigrated` bridge label. Store source labels in `_neo4j_labels` for the final promotion step.
+3. **Edges** — match both bridge endpoints, `MERGE` the relationship by source ID and set its properties in the same statement. Reruns refresh the same relationships.
+
+The destination statements have one owner, [`queries.json`](queries.json), shared by all three clients. Keep it beside the Python/Node scripts; Go embeds it at build time (including `go run migrate.go`). Each batch returns an `applied` count. Clients consume the result and stop with an error unless it equals the supplied row count; missing endpoints therefore cannot silently count as copied relationships. Earlier successful batches remain applied and can be rerun safely.
+
+Progress reports **applied source rows**, not newly created or unique entities: a multi-label source node may be visited in more than one label scan. Dry runs explicitly report source rows read and do not claim target writes.
 
 ## How label and ID continuity is preserved
 
-- **Every migrated node carries `_Migrated` plus its preserved `_neo4j_id` (Neo4j's `elementId`).** Edges bind to those IDs, so the source's graph topology is reproduced exactly.
-- **Original labels are stored on `n._neo4j_labels`** as a list. Cypher cannot parameterize labels, so each script preserves them as data and leaves the final label-promotion step to the operator. A typical follow-up:
-  ```cypher
-  MATCH (n:_Migrated)
-  WHERE 'Person' IN n._neo4j_labels
-  SET n:Person
-  REMOVE n:_Migrated
-  REMOVE n._neo4j_labels
-  REMOVE n._neo4j_id;
-  ```
-- The `_Migrated` label is the bridge that makes edge MATCHes deterministic. Once you've promoted real labels, you can `REMOVE n:_Migrated` in the same pass.
+Every imported node keeps `Neo4jMigrated` and `_neo4j_id`; every imported relationship keeps `_neo4j_id`. These are migration-owned identity fields, so reserve them for the scripts. The bridge must be visible: underscore-prefixed labels denote internal records and are hidden from ordinary MATCH.
+
+After importing nodes and edges, add **every** source label in a separate statement. For example:
+
+```cypher
+MATCH (n:Neo4jMigrated)
+WHERE 'Person' IN n._neo4j_labels
+SET n:Person
+RETURN count(n) AS promoted;
+```
+
+Repeat for `Employee` and every other source label, including labels carried by nodes selected through a different `--labels` filter. Do not remove the bridge or label list during these passes: a node may have several source labels. Only after every label has been promoted and verified may you remove the list:
+
+```cypher
+MATCH (n:Neo4jMigrated)
+REMOVE n._neo4j_labels;
+```
+
+Keep `Neo4jMigrated` and `_neo4j_id` on the imported graph to support reruns after promotion. A rerun restores `_neo4j_labels`; promote any newly added source labels before the next cutover. Removing bridge/identity metadata ends the rerun contract.
+
+These scripts do **not** repair hidden `_Migrated` records left by an older failed migration. Start with a fresh target for the corrected migration, or plan a separate recovery of that existing data; rerunning these scripts does not reuse or remove those hidden records. Preserve the old target until recovery is verified.
 
 ## Common flags
 
@@ -65,14 +79,14 @@ Phase output:
   · :User: 1000
   · :Document: 500
   ...
-  total nodes upserted: 38421
+  target node rows applied: 38421
 
 [edges]
   · :KNOWS: 500
   · :KNOWS: 1000
   · :MENTIONED_IN: 500
   ...
-  total edges created: 92117
+  target relationship rows applied: 92117
 
 Done in 41.2s
 ```
@@ -110,7 +124,7 @@ MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count ORDER BY count DESC L
 EOF
 ```
 
-After the run, the only `_Migrated` nodes that still have that label are ones you haven't promoted. Run the label-promotion follow-up Cypher above to remove the bridge label.
+Compare target source-labelled node counts, relationship counts, properties and endpoints with the selected source population after promotion. The retained `Neo4jMigrated` count is the imported-node count, not a remaining-work count; zero is not a completion signal. Label/property checks, not absence of metadata, establish completion.
 
 ## See also
 - [`docs/skills/neo4j-migration.skill.md`](../../../docs/skills/neo4j-migration.skill.md) — the consumer-facing migration skill.
