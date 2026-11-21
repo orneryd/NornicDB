@@ -260,7 +260,17 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	// writes): lock order indexMu -> mu.
 	s.indexMu.RLock()
 	s.mu.RLock()
+	// Poll Err at bounded checkpoints. The read context observes caller
+	// cancellation synchronously even while the Done relay is pending.
+	const cancelPollMask = 127
+	visited := 0
 	for edgeID, props := range s.edgePropVector {
+		if visited&cancelPollMask == 0 {
+			if err = ctx.Err(); err != nil {
+				break
+			}
+		}
+		visited++
 		if spec.Type != "" && s.edgeTypes[edgeID] != spec.Type {
 			continue
 		}
@@ -275,6 +285,12 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	}
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -289,10 +305,10 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 	scored := make([]scoredEdge, 0, len(candidates))
 	for index, cand := range candidates {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		if index&cancelPollMask == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 		}
 		rank := prepared.rank(cand.vec)
 		if math.IsInf(rank, -1) {
@@ -301,6 +317,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		scored = append(scored, scoredEdge{candidate: index, score: rank})
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
@@ -308,6 +327,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	// The hits' exact scores, kept in descending order (an insertion sort:
 	// the ranking left them in order but for near-ties).
 	for i := range scored {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		scored[i].score = prepared.score(candidates[scored[i].candidate].vec)
 		for j := i; j > 0 && scored[j].score > scored[j-1].score; j-- {
 			scored[j], scored[j-1] = scored[j-1], scored[j]
@@ -316,6 +338,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	out := make([]RelationshipVectorQueryHit, 0, len(scored))
 	for _, r := range scored {
 		out = append(out, RelationshipVectorQueryHit{ID: candidates[r.candidate].id, Score: r.score})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
