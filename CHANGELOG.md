@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
 - Keep admitted namespace discovery complete while storage closes.
 
+- Allow exported Go `apoc.Call` to invoke the registered import-result and multi-statement-result signatures, preserving handler results and errors.
+
 ## [1.5.1]
 
 ### Security
