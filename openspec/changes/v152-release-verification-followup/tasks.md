@@ -1,0 +1,4 @@
+- [x] Identify the release job failures and reproduce the numeric ownership failure and lexical inventory difference.
+- [x] Restore numeric input ownership and record the reviewed traversal dependency.
+- [x] Index generic SSA instances for source call attribution.
+- [ ] Verify the release checks and the whole-module capture census.

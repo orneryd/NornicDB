@@ -256,15 +256,28 @@ func (p *Program) SourceReferences(fn *ssa.Function) []ssa.Instruction {
 // Source queries use the same generic origin relation as root reachability.
 // Instances are executable SSA targets, not separate source declarations.
 func (p *Program) sourceInstances(fn *ssa.Function) []*ssa.Function {
-	variants := map[*ssa.Function]bool{fn: true}
-	if fn.Origin() == nil {
+	if fn.Origin() != nil {
+		return []*ssa.Function{fn}
+	}
+	if p.genericInstances == nil {
+		sets := make(map[*ssa.Function]map[*ssa.Function]bool)
 		for _, candidate := range p.Functions {
-			if sourceFunction(candidate) == fn {
-				variants[candidate] = true
+			if origin := candidate.Origin(); origin != nil {
+				if sets[origin] == nil {
+					sets[origin] = map[*ssa.Function]bool{origin: true}
+				}
+				sets[origin][candidate] = true
 			}
 		}
+		p.genericInstances = make(map[*ssa.Function][]*ssa.Function, len(sets))
+		for origin, variants := range sets {
+			p.genericInstances[origin] = sortedFunctions(variants)
+		}
 	}
-	return sortedFunctions(variants)
+	if variants := p.genericInstances[fn]; len(variants) > 0 {
+		return variants
+	}
+	return []*ssa.Function{fn}
 }
 
 func realSourceInstruction(ins ssa.Instruction) bool {

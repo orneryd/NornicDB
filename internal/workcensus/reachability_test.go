@@ -144,6 +144,17 @@ func witnessMethodCarrier() func() { b:=witnessBox[string]{}; return b.Observe }
 		if len(calls) != 2 || calls[0].Pos() == calls[1].Pos() {
 			t.Fatal("generic source origin lost distinct invocation sites", target, calls)
 		}
+		if target.Receiver == "" {
+			for _, instance := range variants.Program.Functions {
+				if instance.Origin() != origin {
+					continue
+				}
+				instanceCalls := variants.Program.SourceCallSites(instance)
+				if len(instanceCalls) != 1 || instanceCalls[0] != calls[0] && instanceCalls[0] != calls[1] {
+					t.Fatal("concrete query must retain only its own source invocation", instance, instanceCalls)
+				}
+			}
+		}
 		if target.Receiver != "" {
 			callers := map[string]bool{}
 			for _, site := range calls {
