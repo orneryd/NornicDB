@@ -159,7 +159,7 @@ func parseFineGrainedPrivilegeCommand(ctx context.Context, text string) (fineGra
 	if err := ctx.Err(); err != nil {
 		return command, false, err
 	}
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: text}
+	cursor := fineGrainedPrivilegeCursor{text: text}
 	cursor.skipGap()
 	verb, immutable, ok := cursor.readVerb()
 	if !ok {
@@ -213,7 +213,7 @@ func parseFineGrainedPrivilegeCommand(ctx context.Context, text string) (fineGra
 	roleKeyword := fineGrainedPrivilegeRolesKeyword(verb)
 	switch scope {
 	case fineGrainedGraphScope:
-		kind, types, predicate, err := cursor.readGraphEntity(action.entity, command.Privilege, roleKeyword)
+		kind, types, predicate, err := cursor.readGraphEntity(ctx, action.entity, command.Privilege, roleKeyword)
 		if err != nil {
 			return command, true, err
 		}
@@ -255,9 +255,9 @@ func fineGrainedPrivilegeSyntaxError(detail string) error {
 // fineGrainedPrivilegeCursor reads one statement's tokens. Every step leaves
 // at on the next token, with the trivia before it consumed.
 type fineGrainedPrivilegeCursor struct {
-	ctx  context.Context
-	text string
-	at   int
+	text   string
+	at     int
+	params map[string]any
 }
 
 // skipGap consumes the whitespace and comments at at.
@@ -438,7 +438,7 @@ func (c *fineGrainedPrivilegeCursor) readNameList(allowWildcard bool, missing, w
 // readGraphEntity reads a graph privilege's element scope: ELEMENTS, NODES,
 // RELATIONSHIPS or a FOR pattern, each with its own names. An omitted element
 // scope is ELEMENTS *.
-func (c *fineGrainedPrivilegeCursor) readGraphEntity(entity fineGrainedPrivilegeEntity, phrase, roleKeyword string) (string, []string, string, error) {
+func (c *fineGrainedPrivilegeCursor) readGraphEntity(ctx context.Context, entity fineGrainedPrivilegeEntity, phrase, roleKeyword string) (string, []string, string, error) {
 	elementWritten := c.wordAt("ELEMENT") || c.wordAt("ELEMENTS") ||
 		c.wordAt("NODE") || c.wordAt("NODES") ||
 		c.wordAt("RELATIONSHIP") || c.wordAt("RELATIONSHIPS") ||
@@ -466,14 +466,14 @@ func (c *fineGrainedPrivilegeCursor) readGraphEntity(entity fineGrainedPrivilege
 	if entity != fineGrainedPatternEntity {
 		return "", nil, "", fineGrainedPrivilegeSyntaxError(phrase + " does not take a FOR pattern")
 	}
-	predicate, kind, err := c.readPattern(roleKeyword)
+	predicate, kind, err := c.readPattern(ctx, roleKeyword)
 	return kind, nil, predicate, err
 }
 
 // readPattern reads FOR, its parenthesized pattern and its optional WHERE
 // clause, and returns that text as written for later typed binding. The
 // pattern and predicate are never evaluated here.
-func (c *fineGrainedPrivilegeCursor) readPattern(roleKeyword string) (string, string, error) {
+func (c *fineGrainedPrivilegeCursor) readPattern(ctx context.Context, roleKeyword string) (string, string, error) {
 	start := c.at
 	if !c.takeKeyword("FOR") {
 		return "", "", fineGrainedPrivilegeSyntaxError("expected FOR")
@@ -493,7 +493,7 @@ func (c *fineGrainedPrivilegeCursor) readPattern(roleKeyword string) (string, st
 		return "", "", fineGrainedPrivilegeSyntaxError("expected a predicate after WHERE")
 	}
 	predicateStart := c.at
-	keyword, ok := c.rolesKeywordAfter(roleKeyword, predicateStart)
+	keyword, ok := c.rolesKeywordAfter(ctx, roleKeyword, predicateStart)
 	if !ok {
 		return "", "", fineGrainedPrivilegeSyntaxError("expected " + roleKeyword + " followed by a role")
 	}
@@ -508,16 +508,16 @@ func (c *fineGrainedPrivilegeCursor) readPattern(roleKeyword string) (string, st
 // expression is not parsed: a role keyword standing in it (a variable named
 // to, a keyword inside a string) is a candidate too, and only the candidate
 // whose role list ends the statement is the statement's own.
-func (c *fineGrainedPrivilegeCursor) rolesKeywordAfter(roleKeyword string, from int) (int, bool) {
-	for pos := fineGrainedRoleKeywordIndex(c.ctx, c.text, roleKeyword, from); pos >= 0; pos = fineGrainedRoleKeywordIndex(c.ctx, c.text, roleKeyword, pos+1) {
-		if c.ctx.Err() != nil {
+func (c *fineGrainedPrivilegeCursor) rolesKeywordAfter(ctx context.Context, roleKeyword string, from int) (int, bool) {
+	for pos := fineGrainedRoleKeywordIndex(ctx, c.text, roleKeyword, from); pos >= 0; pos = fineGrainedRoleKeywordIndex(ctx, c.text, roleKeyword, pos+1) {
+		if ctx.Err() != nil {
 			return 0, false
 		}
 		end := keywordEndAt(c.text, pos, roleKeyword)
 		if end <= pos {
 			continue
 		}
-		if fineGrainedRolesEndStatement(c.ctx, c.text, end) {
+		if fineGrainedRolesEndStatement(ctx, c.text, end) {
 			c.at = pos
 			return pos, true
 		}
@@ -590,7 +590,7 @@ func fineGrainedRoleKeywordIndex(ctx context.Context, text, keyword string, from
 // fineGrainedRolesEndStatement reports whether a role list at at, with the
 // statement's optional terminator after it, ends the statement.
 func fineGrainedRolesEndStatement(ctx context.Context, text string, at int) bool {
-	probe := fineGrainedPrivilegeCursor{ctx: ctx, text: text, at: at}
+	probe := fineGrainedPrivilegeCursor{text: text, at: at}
 	if _, err := probe.readRoleList(); err != nil {
 		return false
 	}

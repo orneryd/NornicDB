@@ -19,7 +19,7 @@ func executeFineGrainedUserTags(ctx context.Context, request *auth.FineGrainedRe
 	if !request.AllowsDBMS("dbms.user.alter", "") || !request.AllowsDBMS("dbms.user.metadata.set", "") {
 		return nil, auth.ErrFineGrainedForbidden
 	}
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: query}
+	cursor := fineGrainedPrivilegeCursor{text: query}
 	cursor.skipGap()
 	cursor.takeKeyword("ALTER")
 	if !cursor.takeKeyword("USERS") {

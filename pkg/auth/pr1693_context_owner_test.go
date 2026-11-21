@@ -9,6 +9,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFineGrainedTokenRefreshUsesRequestContext(t *testing.T) {
+	for _, warm := range []bool{false, true} {
+		name := "uncached"
+		if warm {
+			name = "cached"
+		}
+		t.Run(name, func(t *testing.T) {
+			users, _ := combinedUserFixture(t)
+			token, _, err := users.Authenticate(t.Context(), "worker", "password123", "", "")
+			require.NoError(t, err)
+			if warm {
+				_, _, err := users.ValidateTokenWithFineGrainedProvider(t.Context(), token.AccessToken)
+				require.NoError(t, err)
+			}
+			// Without a revision provider each verification refreshes the directory.
+			users.fgacUsers = &fineGrainedUsers{}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			claims, _, err := users.ValidateTokenWithFineGrainedProvider(ctx, token.AccessToken)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Nil(t, claims)
+
+			claims, _, err = users.ValidateTokenWithFineGrainedProvider(t.Context(), token.AccessToken)
+			require.NoError(t, err)
+			require.Equal(t, []string{string(RoleViewer)}, claims.Roles)
+		})
+	}
+}
+
 // TestCreateUserRefusesCanceledAdmission proves the durable owner's admission
 // ordering: a canceled caller is refused before the user is hashed, stored,
 // published to the live cache or audited, so it cannot report a user that was

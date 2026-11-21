@@ -1850,9 +1850,14 @@ func (s *Session) refreshAuthResult() {
 	if s.authResult == nil || s.server == nil {
 		return
 	}
-	if current, ok := s.server.config.Authenticator.(interface {
+	switch current := s.server.config.Authenticator.(type) {
+	case interface {
+		CurrentAuthResultContext(context.Context, *BoltAuthResult) *BoltAuthResult
+	}:
+		s.authResult = current.CurrentAuthResultContext(s.parentContext(), s.authResult)
+	case interface {
 		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
-	}); ok {
+	}:
 		s.authResult = current.CurrentAuthResult(s.authResult)
 	}
 }

@@ -1265,7 +1265,7 @@ func (a *Authenticator) ValidateTokenWithFineGrainedProvider(ctx context.Context
 
 	if a.tokenCache != nil {
 		if cached, ok := a.tokenCache.get(token); ok {
-			current, err := a.CurrentClaims(cached)
+			current, err := a.CurrentClaimsContext(ctx, cached)
 			return current, nil, err
 		}
 	}
@@ -1277,7 +1277,7 @@ func (a *Authenticator) ValidateTokenWithFineGrainedProvider(ctx context.Context
 	if a.tokenCache != nil {
 		a.tokenCache.set(token, claims)
 	}
-	current, err := a.CurrentClaims(claims)
+	current, err := a.CurrentClaimsContext(ctx, claims)
 	return current, nil, err
 }
 
@@ -1296,6 +1296,11 @@ const clusterSubjectPrefix = "cluster-"
 // user account is a cluster node's token, which keeps its own roles. claims
 // is never changed.
 func (a *Authenticator) CurrentClaims(claims *JWTClaims) (*JWTClaims, error) {
+	return a.CurrentClaimsContext(context.Background(), claims)
+}
+
+// CurrentClaimsContext refreshes the principal using the caller's lifetime.
+func (a *Authenticator) CurrentClaimsContext(ctx context.Context, claims *JWTClaims) (*JWTClaims, error) {
 	if claims == nil {
 		return nil, ErrInvalidToken
 	}
@@ -1303,7 +1308,7 @@ func (a *Authenticator) CurrentClaims(claims *JWTClaims) (*JWTClaims, error) {
 		return claims, nil
 	}
 	if a.fgacUsers != nil {
-		if err := a.refreshFineGrainedUsers(context.Background()); err != nil {
+		if err := a.refreshFineGrainedUsers(ctx); err != nil {
 			return nil, err
 		}
 	}

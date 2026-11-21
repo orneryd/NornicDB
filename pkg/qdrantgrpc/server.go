@@ -870,7 +870,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 			// The cache spares the password check only; the roles are the
 			// account's current ones (auth.CurrentClaims), as for HTTP and
 			// Bolt. A cached account that is gone is checked again in full.
-			if current, err := s.authenticator.CurrentBasicClaims(cached, s.basicAuthCache, generation); err == nil {
+			if current, err := s.authenticator.CurrentBasicClaimsContext(ctx, cached, s.basicAuthCache, generation); err == nil {
 				return current, nil
 			}
 		}
