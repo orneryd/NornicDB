@@ -20,13 +20,6 @@
         "call context.Background (+1 in (*github.com/orneryd/nornicdb/pkg/storage.managedBadgerDB).updateMetadata)"
       ]
     },
-    "(*github.com/orneryd/nornicdb/pkg/bolt.AuthenticatorAdapter).Authenticate": {
-      "Reason": "Bolt HELLO authentication has no request context in the Authenticator interface; the lookup is a bounded independent lifetime.",
-      "Approver": "orneryd (2 November 2026)",
-      "Occurrences": [
-        "call context.Background (+89 in (*github.com/orneryd/nornicdb/pkg/bolt.AuthenticatorAdapter).Authenticate)"
-      ]
-    },
     "github.com/orneryd/nornicdb/pkg/cypher.redactGrammarAccepts": {
       "Reason": "defensive log/error redaction must always complete; making it cancellable could leak unredacted literals.",
       "Approver": "orneryd (2 November 2026)",

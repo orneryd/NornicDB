@@ -598,9 +598,10 @@ type Config struct {
 	ServerAnnouncement string
 
 	// Authentication
-	Authenticator  BoltAuthenticator // Authentication handler (nil = no auth)
-	RequireAuth    bool              // Require authentication for all connections
-	AllowAnonymous bool              // Legacy adapter knob; no-auth Bolt access requires Authenticator=nil
+	Authenticator        BoltAuthenticator // Authentication handler (nil = no auth)
+	requestAuthenticator *AuthenticatorAdapter
+	RequireAuth          bool // Require authentication for all connections
+	AllowAnonymous       bool // Legacy adapter knob; no-auth Bolt access requires Authenticator=nil
 
 	// Logger is the structured-logging entrypoint per D-01. If nil, a
 	// discard-handler fallback (D-01a) is installed at

@@ -246,6 +246,26 @@
       "bytes": 10640
     },
     {
+      "path": "assets/images/fgac/create-role.png",
+      "sha256": "fa40f089f4c4576efdb94c86cbbd97b4e27db77513abf23e1ecfab4dcd7a8963",
+      "bytes": 21096
+    },
+    {
+      "path": "assets/images/fgac/entitlement-editor.png",
+      "sha256": "874beaf5104625586434f7db854944029ebc58876176e8ad00adde0fc46eb252",
+      "bytes": 121626
+    },
+    {
+      "path": "assets/images/fgac/role-entitlements.png",
+      "sha256": "838fd51a2e968cc1fc9ea75c77a8a71e52321025c3feb2bef77484e240c9f66b",
+      "bytes": 138371
+    },
+    {
+      "path": "assets/images/fgac/role-members-mobile.png",
+      "sha256": "f6a683d600fe320a98f16b2fce15dc522cdb405858d3bad7b8b1c4cdedd5bfc0",
+      "bytes": 63676
+    },
+    {
       "path": "assets/images/mimir.png",
       "sha256": "6ed4e9a57ab56bbe2ad2a86d0f164d6a1c883b61f0fc8fb511baaeb0fe86829c",
       "bytes": 385209
@@ -707,13 +727,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "2b36b55f8ddc8a0a23efde023f6084959f1936f8a87624a8f76fa22f7de08032",
-      "bytes": 220495
+      "sha256": "e71695a1775be4064c896e21c1fd5053ad143191803fb9c20cea63652716f04c",
+      "bytes": 220559
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "72c7cd7d8216e434ec2a3ca6f4cc70efde5b51451ad9747a147921a1f2796292",
-      "bytes": 160963
+      "sha256": "8d959244e669e2914f3a9bc89150fc0327d8f5a5d0c968c31b1b4a4aadb22cb0",
+      "bytes": 161027
     },
     {
       "path": "getting-started/README.md",
@@ -802,8 +822,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "d248c76512fbfa172f06ee5b63d499ace2f5abea6cf820c0f9874631dede1838",
-      "bytes": 7313
+      "sha256": "131a8a1c7c63c57b2ddcdc7ea03cdcad516c2b2becb7bff07089949dc01cefc4",
+      "bytes": 7959
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -1537,8 +1557,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "861e163717654168e581d3e2fec3facdb556b5ec28cbe28ba86e8a051c5b9a4b",
-      "bytes": 6440
+      "sha256": "f39dc960567159c9f7cbdbda26ad2e42ecbccbd71d9681b9dc3ba564252ccd3a",
+      "bytes": 9805
     },
     {
       "path": "security/http-security.md",
@@ -1842,8 +1862,8 @@
     },
     {
       "path": "user-guides/visibility-suppression-deindex.md",
-      "sha256": "9579db738c69d92dd1b36bcd5e056d9bf836b3efba68709eff5076ec3e96c299",
-      "bytes": 5064
+      "sha256": "4fbfb48a9558012245a1696ce8670c67739532653e081c1935674df5994f535f",
+      "bytes": 5200
     }
   ],
   "exactDuplicates": []

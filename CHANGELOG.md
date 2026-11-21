@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2]
+
 - Add optional fine-grained access control with scoped role entitlements, Cypher privilege administration, and individual actions for managed embeddings, Heimdall, and knowledge policies.
 
 - Return composite participant access failures from error-returning storage operations instead of reporting incomplete success or missing entities.

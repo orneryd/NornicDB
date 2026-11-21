@@ -900,7 +900,7 @@ func runServe(cmd *cobra.Command, args []string) (runErr error) {
 	if !noAuth && authenticator != nil {
 		boltAuth := bolt.NewAuthenticatorAdapter(authenticator)
 		boltAuth.SetGetEffectivePermissions(httpServer.GetEffectivePermissions)
-		boltConfig.Authenticator = boltAuth
+		boltConfig.SetRequestAuthenticator(boltAuth)
 		boltConfig.RequireAuth = true
 	}
 
