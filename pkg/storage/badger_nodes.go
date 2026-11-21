@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -230,7 +231,7 @@ const (
 // copy shape and whether the decoded node is cached. A nil hitCopy is reserved
 // for a stored existence check: it avoids materializing a cache hit and returns
 // no node image, while preserving the same admission, decode, and error behavior.
-func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode, projection ...[]string) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -242,8 +243,11 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 
 	gen := b.nodeCacheGen.current()
 	var node *Node
+	var bodyVersion uint64
+	currentBody := cacheMode == nodeReadCacheProjection && len(projection) > 0 && projection[0] != nil && !slices.Contains(projection[0], hasEmbeddingProperty)
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		node = nil
+		bodyVersion = 0
 		if w != nil {
 			state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
 			if state.found {
@@ -263,6 +267,10 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 			node = value
 		}
 		b.nodeCacheMu.RUnlock()
+		if !found && currentBody {
+			read := b.readNodeBodyCache(id, 0, projection[0], nodeBodyBorrowed, false, true)
+			node, bodyVersion, found = read.node, read.version, read.complete
+		}
 		return found, nil
 	}
 	// The cached callback resolves the requested buffered key while the owner
@@ -316,6 +324,13 @@ func (b *BadgerEngine) getNodeByID(ctx context.Context, id NodeID, v readVisibil
 		atomic.AddInt64(&b.cacheMisses, 1)
 	} else {
 		atomic.AddInt64(&b.cacheHits, 1)
+	}
+	if currentBody {
+		if loaded {
+			b.markNodeBodyCurrent(id, node.runtime.embeddingRevision.physical, sourceTs, gen)
+		} else if bodyVersion != 0 {
+			b.bindNodeReadSource(node, id, bodyVersion)
+		}
 	}
 	if loaded && cacheMode != nodeReadCacheProjection {
 		b.cacheFillNode(gen, node, cacheMode, sourceTs)
@@ -457,7 +472,7 @@ func (b *BadgerEngine) getNodeProjected(ctx context.Context, id NodeID, properti
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)
-	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection)
+	}, func(node *Node) *Node { return projectCachedNodeForRead(node, properties, true) }, nodeReadCacheProjection, properties)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately

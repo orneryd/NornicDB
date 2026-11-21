@@ -1,0 +1,22 @@
+{
+  "mixed-memory": {
+    "old": {
+      "alloc_bytes": 665722663,
+      "heap_bytes": 549731468
+    },
+    "new": {
+      "alloc_bytes": 580485111,
+      "heap_bytes": 520814722
+    }
+  },
+  "northwind-memory": {
+    "old": {
+      "alloc_bytes": 36603156574,
+      "heap_bytes": 561711902
+    },
+    "new": {
+      "alloc_bytes": 36508759070,
+      "heap_bytes": 565193412
+    }
+  }
+}

@@ -443,7 +443,7 @@ func pipelineConsumersReadWholeVisibleScope(ctx context.Context, expressions []s
 	return false
 }
 
-func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+func parsePipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
 	properties := make([]string, 0, len(inline)+2)
 	seen := make(map[string]struct{}, len(inline)+2)
 	for property := range inline {

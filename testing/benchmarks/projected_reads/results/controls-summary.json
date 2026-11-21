@@ -1,0 +1,86 @@
+{
+  "large-field-cold": {
+    "1": {
+      "old": {
+        "mean_ms": 0.48559541149999996,
+        "p95_ms": 0.5790695,
+        "p99_ms": 0.675581,
+        "queries_second": 1724.9610259628153,
+        "sampled_server_peak_rss_kib": 2449892.0
+      },
+      "new": {
+        "mean_ms": 0.4679143095,
+        "p95_ms": 0.5339625,
+        "p99_ms": 0.618822,
+        "queries_second": 1777.321819559979,
+        "sampled_server_peak_rss_kib": 2438804.0
+      }
+    },
+    "8": {
+      "old": {
+        "mean_ms": 0.823708806375,
+        "p95_ms": 0.9084555,
+        "p99_ms": 1.9262225000000002,
+        "queries_second": 8146.442853414462,
+        "sampled_server_peak_rss_kib": 2450150.0
+      },
+      "new": {
+        "mean_ms": 0.809869768,
+        "p95_ms": 0.8822945,
+        "p99_ms": 1.847649,
+        "queries_second": 8252.52525672158,
+        "sampled_server_peak_rss_kib": 2442938.0
+      }
+    }
+  },
+  "mixed-scaling": {
+    "8": {
+      "old": {
+        "mean_ms": 0.6086941846625,
+        "p95_ms": 0.809564,
+        "p99_ms": 2.0197065,
+        "queries_second": 12697.517403925176,
+        "sampled_server_peak_rss_kib": 2918074.0
+      },
+      "new": {
+        "mean_ms": 0.5971295216833332,
+        "p95_ms": 0.7475590000000001,
+        "p99_ms": 1.6027205,
+        "queries_second": 12990.275651807257,
+        "sampled_server_peak_rss_kib": 2477680.0
+      }
+    },
+    "16": {
+      "old": {
+        "mean_ms": 1.21762706755,
+        "p95_ms": 2.1981755,
+        "p99_ms": 21.558597,
+        "queries_second": 12833.031072674214,
+        "sampled_server_peak_rss_kib": 2936868.0
+      },
+      "new": {
+        "mean_ms": 1.1587031638666667,
+        "p95_ms": 1.9793945000000002,
+        "p99_ms": 21.921152499999998,
+        "queries_second": 13531.45855939193,
+        "sampled_server_peak_rss_kib": 2476290.0
+      }
+    },
+    "32": {
+      "old": {
+        "mean_ms": 2.2438697937333334,
+        "p95_ms": 5.1252949999999995,
+        "p99_ms": 25.773176499999998,
+        "queries_second": 13162.922914654817,
+        "sampled_server_peak_rss_kib": 2937706.0
+      },
+      "new": {
+        "mean_ms": 2.1532585724208335,
+        "p95_ms": 4.9103069999999995,
+        "p99_ms": 26.831635499999997,
+        "queries_second": 13847.710348759541,
+        "sampled_server_peak_rss_kib": 2484962.0
+      }
+    }
+  }
+}

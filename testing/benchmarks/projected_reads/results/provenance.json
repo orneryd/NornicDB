@@ -1,0 +1,25 @@
+{
+  "old_source": "a492f2acd",
+  "new_source": "9653bb773",
+  "go_version": "go version go1.27.3 linux/amd64",
+  "binaries": {
+    "old": {
+      "path": "/projected-api-baseline/nornicdb",
+      "sha256": "1205d20a1dd479af1c0582e9c0b5cf3c3d6a0342da9762384e2fc6d110e52d75",
+      "build_id": "vW6oMnkRvHgpc3rzLKz3/GXr9QmMBHD2F5uwrksED/M-Citsp-DxrNsuNbQvSc/_Mm8peMxZvXjY_CnDej_"
+    },
+    "new": {
+      "path": "/projected-api/nornicdb-default-projections",
+      "sha256": "eeeae3592620c7ac961d074a02f4b4765037e4f60955fd95801f8ea2aef7ad67",
+      "build_id": "1C_gGjE7y5iG4n14fAqx/q_EX5_AgHOvGAqL1Trrw/gIZzKpZpJMUDQZYIRNao/VT2fADssUAy_lvEpu4r9"
+    }
+  },
+  "corpus_source": {
+    "commit": "ddc59dc20",
+    "directory": "docs",
+    "line_endings": "CRLF",
+    "files": 272,
+    "replicas": 16,
+    "sha256": "2e04ed37939d4d34d4d8695f0ddac448bb8a1933a0c6ff46b14d7e5f6d0f9b64"
+  }
+}

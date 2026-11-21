@@ -1,0 +1,33 @@
+File: nornicdb-default-projections
+Build ID: b4b4bf9147d9e657489c604ae6c5b47261052261
+Type: alloc_space
+Time: 2026-11-15 15:14:31 UTC
+Showing nodes accounting for 474075347B, 81.67% of 580485111B total
+Dropped 197 nodes (cum <= 2902425B)
+Showing top 25 nodes out of 179
+      flat  flat%   sum%        cum   cum%
+ 83641523B 14.41% 14.41%  83641523B 14.41%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+ 82873656B 14.28% 28.69%  82873656B 14.28%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+ 82066652B 14.14% 42.82%  82066652B 14.14%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+ 29361472B  5.06% 47.88%  29361472B  5.06%  context.WithValue
+ 15742083B  2.71% 50.59% 319905654B 55.11%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readNodeIndexCandidatePlan
+ 15732120B  2.71% 53.30%  18877904B  3.25%  github.com/orneryd/nornicdb/pkg/bolt.decodePackStreamMap
+ 15205824B  2.62% 55.92%  15205824B  2.62%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).parseReturnItems
+ 13634936B  2.35% 58.27%  13634936B  2.35%  github.com/orneryd/nornicdb/pkg/bolt.(*Session).readWireMessage
+ 13634304B  2.35% 60.62% 459917272B 79.23%  github.com/orneryd/nornicdb/pkg/bolt.(*boltQueryExecutorAdapter).Execute
+ 12065249B  2.08% 62.70%  12065249B  2.08%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+ 11535616B  1.99% 64.69%  11535616B  1.99%  internal/bytealg.MakeNoZero
+ 11011056B  1.90% 66.58%  16254176B  2.80%  go.opentelemetry.io/otel/internal/global.(*tracer).newSpan
+  9963968B  1.72% 68.30%   9963968B  1.72%  github.com/orneryd/nornicdb/pkg/cypher.materializePropertyEntries
+  9438592B  1.63% 69.93%   9438592B  1.63%  github.com/orneryd/nornicdb/pkg/cypher.NewResultStream
+  9438336B  1.63% 71.55%   9438336B  1.63%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+  7865040B  1.35% 72.91%   7865040B  1.35%  github.com/orneryd/nornicdb/pkg/bolt.decodePackStreamString
+  7342272B  1.26% 74.17%   7342272B  1.26%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).withRunningStatement
+  6817136B  1.17% 75.35% 335113422B 57.73%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineStreamedNodeMatchSource.func1.1
+  5768312B  0.99% 76.34%   5768312B  0.99%  github.com/orneryd/nornicdb/pkg/cypher.addPipelinePatternBindings
+  5767856B  0.99% 77.33%  18877096B  3.25%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).cacheStoreNodeBody
+  5767696B  0.99% 78.33%   5767696B  0.99%  github.com/orneryd/nornicdb/internal/cyphertext.ProjectUnicode
+  5243536B   0.9% 79.23%   9963424B  1.72%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+  5243344B   0.9% 80.13% 364476702B 62.79%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+  4719888B  0.81% 80.95%   4719888B  0.81%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+  4194880B  0.72% 81.67%   8914048B  1.54%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode

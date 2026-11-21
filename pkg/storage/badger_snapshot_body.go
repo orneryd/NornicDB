@@ -192,19 +192,44 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess, admitNew ...bool) (*Node, error) {
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}
-	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
-	if !cached {
+	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
+	node := read.node
+	// A label scan whose population exceeds the cache cannot retain its scan
+	// images. It still widens any version-matched entry already held; point
+	// reads retain their usual admission and eviction behavior.
+	admit := len(admitNew) == 0 || admitNew[0] || node != nil
+	if !read.complete {
+		decodeInclude := include
+		if node != nil {
+			decodeInclude = make(map[string]struct{}, len(read.missing))
+			for _, name := range read.missing {
+				decodeInclude[name] = struct{}{}
+			}
+		}
 		err := item.Value(func(value []byte) error {
-			var err error
-			node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
+			if node == nil {
+				var err error
+				node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+				return err
+			}
+			// The version-matched cache supplied the metadata. Only the
+			// missing properties need decoding from this physical image.
+			envelope, err := SplitNodeEnvelope(value)
+			if err != nil {
+				return err
+			}
+			_, err = b.decodeTokenizedPropertiesInto(txn, namespaceForNodeID(id), envelope.properties, decodeInclude, node.Properties)
 			return err
 		})
 		if err != nil {
 			return node, err
+		}
+		if admit {
+			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs(), properties)
 		}
 	}
 	// A projection that names has_embedding gets the node's embedding metadata

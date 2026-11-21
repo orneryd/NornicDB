@@ -337,7 +337,7 @@ func (c *CompositeEngine) GetNodeProjected(ctx context.Context, id NodeID, prope
 	localID := NodeID(local)
 	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
 		func(engine Engine) (*Node, error) {
-			return getNodeProjectedThrough(ctx, engine, localID, properties)
+			return GetNodeProjectedThrough(ctx, engine, localID, properties)
 		},
 		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
 	)

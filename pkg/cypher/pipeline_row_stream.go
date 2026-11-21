@@ -299,15 +299,15 @@ func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSour
 }
 
 type pipelineNodeMatchSourcePlan struct {
-	templates      []*pipelineNodeMatchTemplate
-	supported      bool
-	earlyLimitSafe bool
+	templates            []*pipelineNodeMatchTemplate
+	supported            bool
+	hasRepeatedVariables bool
 }
 
 var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096, boundedCacheStringShardIndex)
 
 func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, clause string) pipelineNodeMatchSourcePlan {
-	plan := pipelineNodeMatchSourcePlan{earlyLimitSafe: true}
+	var plan pipelineNodeMatchSourcePlan
 	body := pipelineClauseBody(clause, "MATCH")
 	if topLevelKeywordIndex(ctx, body, "WHERE") >= 0 {
 		return plan
@@ -332,7 +332,7 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(ctx context.Context, cl
 		}
 		templates[index] = template
 		if _, repeated := variables[template.variable]; repeated {
-			plan.earlyLimitSafe = false
+			plan.hasRepeatedVariables = true
 		}
 		variables[template.variable] = struct{}{}
 	}
@@ -362,12 +362,40 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	if !plan.supported {
 		return nil, false, nil
 	}
-	if !plan.earlyLimitSafe {
+	if plan.hasRepeatedVariables {
 		hint.limit, hint.earlyLimit = -1, -1
 	}
 	templates := plan.templates
 	if hint.streamScan && len(templates) == 1 {
 		return e.pipelineStreamedNodeMatchSource(ctx, inputSource, templates[0], hint), true, nil
+	}
+	// The read tail and each pattern's property names are fixed for this
+	// statement. Resolve projection demand once before visiting input rows;
+	// only the inline property values need evaluation for each row.
+	templateHints := make([]pipelineMatchPhysicalHint, len(templates))
+	for index, template := range templates {
+		templateHints[index] = hint
+		if hint.readTail == nil {
+			continue
+		}
+		inline := make(map[string]interface{}, len(template.properties))
+		for _, property := range template.properties {
+			inline[property.key] = nil
+		}
+		// Later patterns test an already-bound node from this read. Include
+		// their inline keys before narrowing its property image.
+		if plan.hasRepeatedVariables {
+			for _, sibling := range templates[index+1:] {
+				if sibling.variable == template.variable {
+					for _, property := range sibling.properties {
+						inline[property.key] = nil
+					}
+				}
+			}
+		}
+		pattern := nodePatternInfo{variable: template.variable, labels: template.labels, properties: inline}
+		templateHints[index].projection, templateHints[index].projectionSafe = pipelineLabelScanProjection(ctx, pattern, "", hint.readTail)
+		templateHints[index].projectionKnown = true
 	}
 	type candidateCache struct {
 		key          string
@@ -465,7 +493,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 								candidatesBound = true
 							}
 							var err error
-							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
+							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", templateHints[index])
 							if err != nil {
 								recordExpressionFailure(ctx, err)
 								valid = false

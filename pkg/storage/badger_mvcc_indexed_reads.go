@@ -77,8 +77,8 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 }
 
 // getNodeProjectedVisibleAtInTxn is the MVCC node kernel for a projected
-// read. The visibility resolution (MVCC head) is identical; only the body
-// decode and embedding hydration are skipped.
+// read. The visibility resolution (MVCC head) is identical; properties are
+// decoded selectively, and requested embedding metadata uses the same view.
 func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
 	include := propertyProjectionSet(properties)
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
@@ -92,20 +92,12 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				node = decoded
-				return nil
-			}); err != nil {
+			node, err := b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)
+			if err != nil {
 				return nil, err
+			}
+			if node == nil {
+				return nil, ErrNotFound
 			}
 			if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 				return nil, ErrNotFound
@@ -312,6 +304,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	// snapshot answers its range question once instead of paying one missing
 	// sidecar and chunk lookup per hydrated node (snapshotEmbeddingAbsence).
 	var absence snapshotEmbeddingAbsence
+	admitProjectionBodies := true
 	return view(func(txn *badger.Txn) error {
 		// readHydrated reads one candidate with the embedding hydration the
 		// scan asks of it. A row that settles embedding state takes this
@@ -335,7 +328,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
@@ -381,11 +374,13 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if !coversDecided && lookups >= labelScanPointLookups {
 				// Author: storage-format-owners lane (Codex), 1 November 2026.
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {

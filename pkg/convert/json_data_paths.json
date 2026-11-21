@@ -847,5 +847,13 @@
     "calls": {
       "property.Unmarshal": 1
     }
+  },
+  "testing/benchmarks/projected_reads/main.go:run": {
+    "write_domain": "property",
+    "contract": "Encode benchmark graph values for matching result fingerprints and write the timing receipt without losing integer or float identity.",
+    "calls": {
+      "property.Marshal": 3,
+      "property.MarshalIndent": 1
+    }
   }
 }

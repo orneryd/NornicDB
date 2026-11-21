@@ -1,0 +1,33 @@
+File: nornicdb-default-projections
+Build ID: b4b4bf9147d9e657489c604ae6c5b47261052261
+Type: alloc_space
+Time: 2026-11-15 15:16:57 UTC
+Showing nodes accounting for 27129330063B, 74.31% of 36508759070B total
+Dropped 338 nodes (cum <= 182543795B)
+Showing top 25 nodes out of 202
+      flat  flat%   sum%        cum   cum%
+3165368527B  8.67%  8.67% 3374567123B  9.24%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+2325189624B  6.37% 15.04% 2325189624B  6.37%  github.com/dgraph-io/badger/v4/table.(*Table).NewIterator (inline)
+1866913992B  5.11% 20.15% 2869427324B  7.86%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+1846613110B  5.06% 25.21% 1846613110B  5.06%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+1597546336B  4.38% 29.59% 1597546336B  4.38%  github.com/dgraph-io/badger/v4/y.(*Slice).Resize (inline)
+1570318161B  4.30% 33.89% 1570318161B  4.30%  github.com/dgraph-io/badger/v4/y.Copy (inline)
+1455645572B  3.99% 37.87% 8480652731B 23.23%  github.com/dgraph-io/badger/v4.(*Txn).Get
+1194078978B  3.27% 41.15% 27031516228B 74.04%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+1142276222B  3.13% 44.27% 23707866256B 64.94%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+1101142624B  3.02% 47.29% 3693809461B 10.12%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+1074338280B  2.94% 50.23% 1074338280B  2.94%  github.com/vmihailenco/msgpack/v5.(*Decoder).stringWithLen (inline)
+923383873B  2.53% 52.76% 923383873B  2.53%  github.com/orneryd/nornicdb/pkg/storage.(*Node).setRuntimeState
+822133510B  2.25% 55.01% 14362819105B 39.34%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseChainedGraph
+697409442B  1.91% 56.92% 697409442B  1.91%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+673823246B  1.85% 58.77% 673823246B  1.85%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindNode (inline)
+660633656B  1.81% 60.58% 660633656B  1.81%  github.com/dgraph-io/badger/v4/table.(*blockIterator).setIdx
+599867842B  1.64% 62.22% 1107964931B  3.03%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserNode
+593595428B  1.63% 63.85% 593595428B  1.63%  github.com/orneryd/nornicdb/pkg/cypher.(*PathContext).bindRelationship (inline)
+587301120B  1.61% 65.46% 587301120B  1.61%  github.com/dgraph-io/badger/v4/table.NewMergeIterator
+586188860B  1.61% 67.06% 586188860B  1.61%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+585123264B  1.60% 68.67% 585123264B  1.60%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+546228249B  1.50% 70.16% 546228249B  1.50%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphParallel
+527498112B  1.44% 71.61% 527498112B  1.44%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+523282954B  1.43% 73.04% 1669094632B  4.57%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putEdgeLocked
+463429081B  1.27% 74.31% 10499759664B 28.76%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphParallel.func1
