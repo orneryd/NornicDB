@@ -170,7 +170,7 @@ func TestCloseoutL4H423ManualOnlyLifecycle(t *testing.T) {
 	ctx := context.Background()
 	_, err = db.ExecuteCypher(ctx, "CREATE (n:L4Life {v: 1}) SET n.v = 2 SET n.v = 3", nil)
 	require.NoError(t, err)
-	automatic := db.lifecycleManager != nil && db.lifecycleManager.automaticEnabled()
+	automatic := db.lifecycleManager != nil && (db.lifecycleManager.IsLifecycleRunning() || db.lifecycleManager.Status()["automatic"] == true)
 	status, statusErr := db.LifecycleStatus()
 	pruneErr := db.TriggerLifecyclePrune(ctx)
 	l4DBReport(t, "H-423", "manual-only-lifecycle", loaded.Database.MVCCLifecycleCycleInterval == 0 && db.lifecycleManager != nil && !automatic && statusErr == nil && pruneErr == nil,
