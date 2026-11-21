@@ -22,6 +22,12 @@ package server
 //   CS_PROFILE     1: CPU + alloc profiles of the COMMIT only (default 1)
 //   CS_STACKS_MS   goroutine stack sample interval during COMMIT (default 2000, 0 off)
 //   CS_BM25_PROPS  comma list: limit full-text indexing to these properties (default: engine default, all)
+//   CS_FULL        1: full live statement shape (default 1): membership edges MERGEd from every source to
+//                  new record sets, old sets DETACH DELETEd, departed members' properties REMOVEd,
+//                  set_version SET, a few links and run sets; 0: the two SETs and empty record statements
+//   CS_EDGES       with CS_FULL=1: 0 replaces every relationship write by plain SETs of the same node properties
+//   CS_BIG         1: the first source is the largest live one (text 1,488,175, view_text 206,825 chars) (default 1)
+//   CS_KEYS        set_keys entries per source (default 80 = 54,809/688)
 //   HS_MEMLIMIT    Go soft memory limit (default 18 GiB)
 
 import (
@@ -43,6 +49,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+const csMEMBERPROPS = "UNWIND $members AS x MATCH (s:Source {id: x.source_id}) SET s.record_set_id = x.record_set_id, s.set_residual_starts = x.residual_starts, s.set_residual_ends = x.residual_ends, s.set_repeat_starts = x.repeat_starts, s.set_repeat_ends = x.repeat_ends"
 
 func TestCommitSpike(t *testing.T) {
 	if os.Getenv("CS_RUN") != "1" {
@@ -143,8 +151,8 @@ func csAnalyze(label string, prof []byte, base []byte, idxName string, div int64
 }
 
 func csRunOne(t *testing.T, n int) {
-	viewChars := hsEnvI("CS_VIEW_CHARS", 9780)
-	textChars := hsEnvI("CS_TEXT_CHARS", 18504)
+	viewChars := hsEnvI("CS_VIEW_CHARS", 11190)
+	textChars := hsEnvI("CS_TEXT_CHARS", 26495)
 	chunkChars := hsEnvI("CS_CHUNK_CHARS", 512)
 	extra := hsEnvF("CS_EXTRA", 1)
 	smallTx := hsEnvI("CS_SMALLTX", 0)
@@ -155,8 +163,12 @@ func csRunOne(t *testing.T, n int) {
 	doProf := hsEnvI("CS_PROFILE", 1) == 1
 	stacksMS := hsEnvI("CS_STACKS_MS", 2000)
 	nExtra := int(float64(n) * extra)
-	hsLog("CSCONFIG N=%d extra=%d view_chars=%d text_chars=%d chunk_chars=%d dims=%d smallTx=%d mvccRet=%d walSync=%s search=%v include=%q bm25=%q wal_env=%q gomaxprocs=%d",
-		n, nExtra, viewChars, textChars, chunkChars, dims, smallTx, mvccRet, walSync, search, embedInclude(), hsEnvS("CS_BM25_PROPS", ""), os.Getenv("NORNICDB_WAL_ENABLED"), runtime.GOMAXPROCS(0))
+	full := hsEnvI("CS_FULL", 1) == 1
+	edges := hsEnvI("CS_EDGES", 1) == 1
+	big := hsEnvI("CS_BIG", 1) == 1
+	nKeys := hsEnvI("CS_KEYS", 80)
+	hsLog("CSCONFIG N=%d extra=%d view_chars=%d text_chars=%d chunk_chars=%d dims=%d smallTx=%d mvccRet=%d walSync=%s search=%v full=%v edges=%v big=%v keys=%d include=%q bm25=%q wal_env=%q gomaxprocs=%d",
+		n, nExtra, viewChars, textChars, chunkChars, dims, smallTx, mvccRet, walSync, search, full, edges, big, nKeys, embedInclude(), hsEnvS("CS_BM25_PROPS", ""), os.Getenv("NORNICDB_WAL_ENABLED"), runtime.GOMAXPROCS(0))
 
 	emb := &hsEmbedder{dims: dims}
 	server, authenticator := setupTestServerWithDatabaseConfig(t, func(c *nornicdb.Config) {
@@ -195,22 +207,33 @@ func csRunOne(t *testing.T, n int) {
 	totalVectors, updVectors := 0, 0
 	for i := 0; i < n+nExtra; i++ {
 		id := fmt.Sprintf("src-%05d", i)
-		text := vocab.text(r, textChars)
-		view := vocab.text(r, viewChars)
-		nk := min(2000, textChars/160+10)
-		nc := min(68898, textChars/124)
-		ns := textChars/830 + 1
+		tc, vc := textChars, viewChars
+		if big && i == 0 {
+			tc, vc = 1488175, 206825
+		}
+		text := vocab.text(r, tc)
+		view := vocab.text(r, vc)
+		nk := nKeys
+		nc := min(68898, tc/124)
+		ns := tc/830 + 1
 		props := map[string]interface{}{
 			"id": id, "document_id": "doc-" + id, "version_id": "ver-" + id, "text": text, "view_text": view,
-			"view_starts": []interface{}{int64(0)}, "view_ends": []interface{}{int64(viewChars)},
-			"view_source_starts": []interface{}{int64(0)}, "view_source_ends": []interface{}{int64(viewChars)},
+			"view_starts": []interface{}{int64(0)}, "view_ends": []interface{}{int64(vc)},
+			"view_source_starts": []interface{}{int64(0)}, "view_source_ends": []interface{}{int64(vc)},
 			"view_library": []interface{}{"collection-b"}, "view_own": true, "view_basis": "vv|L|L|1|", "view_version": "vv", "read_observation": "obs",
 			"set_keys": hs2Strs("k", nk, r), "set_weights": hs2Floats(nk, r), "set_total": r.Float64(),
 			"set_pool_runs": hs2Strs("p", 5, r), "set_pool_keys": hs2Strs("q", 10, r), "set_pool_records": hs2Strs("w", 10, r),
 			"cell_starts": hsIntList(nc, 124), "cell_ends": hsIntList(nc, 124), "cell_refs": hsIntList(nc, 1),
 			"section_starts": hsIntList(ns, 830), "section_ends": hsIntList(ns, 830),
-			"content_hash": "h" + id, "method": "parse", "page_count": int64(textChars/3000 + 1), "profiled_current": true,
+			"content_hash": "h" + id, "method": "parse", "page_count": int64(tc/3000 + 1), "profiled_current": true,
 			"profiled_run_layout": "L", "run_layout": "L", "record_profiled": int64(1), "search_hidden": false, "tool": "pdf",
+		}
+		if full && edges && i < n {
+			props["record_set_id"] = fmt.Sprintf("old-grp-%04d", i/10)
+			props["set_residual_starts"] = []interface{}{int64(0)}
+			props["set_residual_ends"] = []interface{}{int64(1)}
+			props["set_repeat_starts"] = []interface{}{}
+			props["set_repeat_ends"] = []interface{}{}
 		}
 		var chunks [][]float32
 		for c0 := 0; chunkChars > 0 && c0 < len(view); c0 += chunkChars {
@@ -223,6 +246,17 @@ func csRunOne(t *testing.T, n int) {
 		if i < n {
 			ids = append(ids, id)
 			updVectors += len(chunks)
+			if full && edges {
+				gid := fmt.Sprintf("old-grp-%04d", i/10)
+				if i%10 == 0 {
+					if _, err := store.CreateNode(ctx, &storage.Node{ID: storage.NodeID(gid), Labels: []string{"GraphNode", "RecordSet"}, Properties: map[string]interface{}{"id": gid, "kind": "group", "collection_id": "collection-b", "table_key": "g0"}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := store.CreateEdge(ctx, &storage.Edge{ID: storage.EdgeID("mos:" + id), StartNode: storage.NodeID(id), EndNode: storage.NodeID(gid), Type: "MEMBER_OF_SET", Properties: map[string]interface{}{"records": int64(2), "layout": "L"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 	}
 	if search {
@@ -255,9 +289,29 @@ func csRunOne(t *testing.T, n int) {
 	var liveInTx uint64
 	for b0 := 0; b0 < n; b0 += batch {
 		part := ids[b0:min(n, b0+batch)]
-		var sigs, prof []interface{}
-		for _, id := range part {
-			nk := min(2000, textChars/160+10)
+		var sigs, prof, groups, members, versions, departed, links, runsets []interface{}
+		for j, id := range part {
+			i := b0 + j
+			nk := nKeys
+			if full {
+				gid := fmt.Sprintf("grp-%04d", i/10)
+				if i%10 == 0 {
+					groups = append(groups, map[string]interface{}{"id": gid, "template_digest": "d", "properties": map[string]interface{}{"table_key": "g", "kind": "group", "collection_id": "collection-b"}})
+				}
+				members = append(members, map[string]interface{}{"source_id": id, "record_set_id": gid, "records": int64(3), "layout": "L2",
+					"residual_starts": []interface{}{int64(0)}, "residual_ends": []interface{}{int64(1)}, "repeat_starts": []interface{}{}, "repeat_ends": []interface{}{}})
+				versions = append(versions, map[string]interface{}{"source_id": id, "version": "v2"})
+				if i%20 == 1 {
+					departed = append(departed, map[string]interface{}{"source_id": id, "record_set_id": fmt.Sprintf("old-grp-%04d", i/10)})
+				}
+				if i%20 == 3 {
+					links = append(links, map[string]interface{}{"source_id": id, "record_set_id": gid, "layout": "L2",
+						"runs": []interface{}{map[string]interface{}{"run": int64(1), "records": int64(3), "unit": "row"}}, "run_sets": []interface{}{}})
+				}
+				if i%20 == 5 {
+					runsets = append(runsets, map[string]interface{}{"source_id": id, "sets": []interface{}{map[string]interface{}{"id": id + ":run", "run": int64(1), "properties": map[string]interface{}{"table_key": "tk", "sample": "s", "kind": "run"}}}})
+				}
+			}
 			sigs = append(sigs, map[string]interface{}{"source_id": id, "keys": hs2Strs("k", nk, rr), "weights": hs2Floats(nk, rr), "total": rr.Float64(),
 				"pool_runs": hs2Strs("p", 5, rr), "pool_keys": hs2Strs("q", 10, rr), "pool_records": hs2Strs("w", 10, rr), "current": true})
 			prof = append(prof, map[string]interface{}{"source_id": id, "generation": int64(2), "layout": "L2"})
@@ -271,11 +325,21 @@ func csRunOne(t *testing.T, n int) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d2, _, err := tx.run(hs2GROUPS, map[string]interface{}{"unlinked": []interface{}{}, "departed": []interface{}{}, "groups": []interface{}{}, "members": []interface{}{}, "links": []interface{}{}, "versions": []interface{}{}, "collection": "collection-b"})
+		if full && !edges {
+			// the same node properties without any relationship write
+			if _, _, err := tx.run(csMEMBERPROPS, map[string]interface{}{"members": members}); err != nil {
+				t.Fatal(err)
+			}
+			members, departed, links, runsets = []interface{}{}, []interface{}{}, []interface{}{}, []interface{}{}
+		}
+		if groups == nil {
+			groups, members, versions, departed, links, runsets = []interface{}{}, []interface{}{}, []interface{}{}, []interface{}{}, []interface{}{}, []interface{}{}
+		}
+		d2, _, err := tx.run(hs2GROUPS, map[string]interface{}{"unlinked": []interface{}{}, "departed": departed, "groups": groups, "members": members, "links": links, "versions": versions, "collection": "collection-b"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		d3, _, err := tx.run(hs2RUNSETS, map[string]interface{}{"sources": []interface{}{}})
+		d3, _, err := tx.run(hs2RUNSETS, map[string]interface{}{"sources": runsets})
 		if err != nil {
 			t.Fatal(err)
 		}
