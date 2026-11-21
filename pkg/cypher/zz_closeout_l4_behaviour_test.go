@@ -143,7 +143,7 @@ func TestCloseoutL4H144TextLocateRangeCost(t *testing.T) {
 	}
 	statements := map[string]string{
 		"one-quote-range": "RETURN text.locate($text, 'quoted passage', {from: 0, to: 100000}) AS span",
-		"one-quote-line":  "RETURN text.locate($text, 'quoted passage', {line: 1500, from: 0, to: 100000}) AS span",
+		"one-quote-line":  "RETURN text.locate($text, 'quoted passage', {line: $line, from: 0, to: 100000}) AS span",
 		"30-quotes-param": "UNWIND $quotes AS q RETURN text.locate($text, q, {from: 0, to: 100000}) AS span",
 		"30-quotes-bound": "WITH $text AS t UNWIND $quotes AS q RETURN text.locate(t, q, {from: 0, to: 100000}) AS span",
 	}
@@ -151,7 +151,9 @@ func TestCloseoutL4H144TextLocateRangeCost(t *testing.T) {
 	for name, statement := range statements {
 		times := map[int]float64{}
 		for _, size := range []int{100_000, 500_000} {
-			params := map[string]any{"text": text(size), "quotes": quotes}
+			body := text(size)
+			line := int64(strings.Count(body[:strings.Index(body, "The quoted passage")], "\n") + 1)
+			params := map[string]any{"text": body, "quotes": quotes, "line": line}
 			best := time.Duration(-1)
 			var rows [][]any
 			for run := 0; run < 5; run++ {
