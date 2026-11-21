@@ -47,7 +47,8 @@ func TestCloseoutL5Cypher(t *testing.T) {
 		{"H-215", "apoc.algo.louvain", true, []string{"gds.louvain.stream"}},
 		{"H-253", "apoc.algo.wcc", true, []string{"gds.wcc.stream"}},
 		{"H-177", "db.index.fulltext.querynodes", true, []string{"db.index.containedin"}},
-		{"H-185", "abs", false, []string{"text.key"}},
+		{"H-185", "abs", false, []string{"text.key", "nornicdb.text.key"}},
+		{"H-262", "gds.graph.project", true, []string{"nornicdb.graph.expandreferences"}},
 		{"P-N152-110", "gds.graph.project", true, []string{"gds.graph.project.cypher", "gds.louvain.stream"}},
 	} {
 		t.Run(tc.id, func(t *testing.T) {
