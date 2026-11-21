@@ -23,6 +23,7 @@ type dlqPublicProvider struct {
 	calls    []string
 	calledAt []time.Time
 	poison   bool
+	reject   func(string) bool
 }
 
 func (p *dlqPublicProvider) Model() string   { return "dlq-public" }
@@ -46,7 +47,7 @@ func (p *dlqPublicProvider) EmbedBatch(_ context.Context, texts []string) ([][]f
 	for i, text := range texts {
 		p.calls = append(p.calls, text)
 		p.calledAt = append(p.calledAt, time.Now())
-		if p.poison && strings.Contains(text, "poison") {
+		if (p.poison && strings.Contains(text, "poison")) || (p.reject != nil && p.reject(text)) {
 			return nil, errors.New("permanent poison")
 		}
 		v[i] = []float32{1, 0}

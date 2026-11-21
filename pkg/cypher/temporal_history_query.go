@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -49,7 +50,15 @@ func (e *StorageExecutor) callHistoricalQuery(ctx context.Context, args []interf
 	if err = admitHistoricalStatement(ctx, query); err != nil {
 		return nil, err
 	}
-	view, err := storage.OpenHistoricalRead(ctx, e.storage, at)
+	engine := e.storage
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+		// The authorized history operation opens the raw snapshot, then its
+		// independent executor projects every historical entity before use.
+		if e.fineGrainedSource != nil {
+			engine = e.fineGrainedSource
+		}
+	}
+	view, err := storage.OpenHistoricalRead(ctx, engine, at)
 	if err != nil {
 		return nil, err
 	}

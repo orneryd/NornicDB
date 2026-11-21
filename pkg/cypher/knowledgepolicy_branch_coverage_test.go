@@ -18,11 +18,11 @@ func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, storage.OrdinaryBegin, "lookup")
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
-	_, view, err := executor.knowledgePolicyContext("")
+	_, view, err := executor.knowledgePolicyContext(t.Context(), "")
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
-	_, _, err = wrongNamespace.knowledgePolicyContext("")
+	_, _, err = wrongNamespace.knowledgePolicyContext(t.Context(), "")
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 	for _, procedure := range []func(context.Context) (*ExecuteResult, error){

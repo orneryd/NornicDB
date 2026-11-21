@@ -53,10 +53,10 @@ const (
 )
 
 func Unmarshal(raw []byte, out any, stages ...DecodeStage) error {
-	return unmarshal(raw, out, false, stages...)
+	return unmarshal(raw, out, false, false, stages...)
 }
 
-func unmarshal(raw []byte, out any, numbers bool, stages ...DecodeStage) error {
+func unmarshal(raw []byte, out any, numbers, rejectUnknown bool, stages ...DecodeStage) error {
 	stage := RawInput
 	if len(stages) > 1 {
 		return errors.New("jsontext: multiple input stages")
@@ -79,9 +79,14 @@ func unmarshal(raw []byte, out any, numbers bool, stages ...DecodeStage) error {
 	// Only validated/projected input reaches this opt-in; ordinary upstream
 	// decoders retain standard UTF8 normalization.
 	var err error
-	if numbers {
+	if numbers || rejectUnknown {
 		decoder := alt.NewDecoder(bytes.NewReader(projected))
-		decoder.UseNumber()
+		if numbers {
+			decoder.UseNumber()
+		}
+		if rejectUnknown {
+			decoder.DisallowUnknownFields()
+		}
 		err = decoder.DecodeWithOption(out, alt.DecodePreserveInvalidUTF8())
 	} else {
 		err = alt.UnmarshalWithOption(projected, out, alt.DecodePreserveInvalidUTF8())
@@ -121,7 +126,10 @@ func unmarshal(raw []byte, out any, numbers bool, stages ...DecodeStage) error {
 // Decoder uses the standard parser to frame one original JSON value. Decode
 // preserves first-value stream behavior and leaves trailing-value policy to its
 // caller. Buffered exposes bytes already read beyond the completed value.
-type Decoder struct{ frame *std.Decoder }
+type Decoder struct {
+	frame         *std.Decoder
+	rejectUnknown bool
+}
 
 func NewDecoder(reader io.Reader) *Decoder { return &Decoder{frame: std.NewDecoder(reader)} }
 func (d *Decoder) Decode(out any) error    { return d.decode(out, false) }
@@ -140,8 +148,12 @@ func (d *Decoder) decode(out any, numbers bool) error {
 	if err := d.frame.Decode(&raw); err != nil {
 		return err
 	}
-	return unmarshal(raw, out, numbers)
+	return unmarshal(raw, out, numbers, d.rejectUnknown)
 }
+
+// DisallowUnknownFields rejects object fields absent from a typed destination.
+func (d *Decoder) DisallowUnknownFields() { d.rejectUnknown = true }
+
 func (d *Decoder) Buffered() io.Reader { return d.frame.Buffered() }
 func (d *Decoder) InputOffset() int64  { return d.frame.InputOffset() }
 

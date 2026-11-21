@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -83,6 +84,10 @@ func startsWithClauseKeyword(s string) bool {
 	return false
 }
 
+func startsCypherPreambleBody(s string) bool {
+	return startsWithClauseKeyword(s) || fabric.IsAdministrationCommand(s)
+}
+
 // stripCypherPreamble removes leading CYPHER groups: the keyword CYPHER, an
 // optional version number, and option tokens (ident, ident=value, or a quoted
 // string) until a clause keyword starts the statement. Neo4j accepts any
@@ -150,7 +155,7 @@ func validateCypherPreamble(query string) error {
 		if err := consumeGap(0); err != nil {
 			return err
 		}
-		for rest != "" && !startsWithClauseKeyword(rest) {
+		for rest != "" && !startsCypherPreambleBody(rest) {
 			end := 0
 			end = cyphertext.NamePartEnd(rest, end)
 			name := strings.ToLower(rest[:end])
@@ -223,7 +228,7 @@ func readCypherPreamble(query string) (string, bool, *queryRewrite) {
 		if token, ok := cyphertext.ScanNumber(rest, 0); ok {
 			consume(queryGapEnd(rest, token.TailEnd))
 		}
-		for rest != "" && !startsWithClauseKeyword(rest) {
+		for rest != "" && !startsCypherPreambleBody(rest) {
 			if isCypherStringQuoteByte(rest[0]) {
 				end := skipCypherQuotedText(rest, 0, rest[0])
 				consume(queryGapEnd(rest, end))

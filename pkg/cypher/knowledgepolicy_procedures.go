@@ -15,8 +15,8 @@ import (
 
 // knowledgePolicyContext owns source and transactional schema selection for
 // policy procedures and scalar readers alike.
-func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engine, *storage.SchemaManager, error) {
-	engine := e.storage
+func (e *StorageExecutor) knowledgePolicyContext(ctx context.Context, database string) (storage.Engine, *storage.SchemaManager, error) {
+	engine := e.executionStorage(ctx)
 	if source, ok := engine.(interface {
 		ConstituentStorage(string) (storage.Engine, error)
 	}); ok && database != "" {
@@ -119,7 +119,7 @@ func (e *StorageExecutor) readKnowledgePolicyEdge(ctx context.Context, id storag
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles(ctx context.Context) (*ExecuteResult, error) {
-	_, schema, err := e.knowledgePolicyContext("")
+	_, schema, err := e.knowledgePolicyContext(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles(ctx context.Contex
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies(ctx context.Context) (*ExecuteResult, error) {
-	_, schema, err := e.knowledgePolicyContext("")
+	_, schema, err := e.knowledgePolicyContext(ctx, "")
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,7 @@ export async function fixture(page) {
  const users=[{username:'alex',email:'alex@example.test',roles:['admin'],disabled:false,last_login:'2026-01-01T12:00:00Z'},{username:'sam',email:'sam@example.test',roles:['viewer'],disabled:false}];
  const databases=[{name:'catalog',status:'online',default:true,type:'standard',nodeCount:12840,edgeCount:56210},{name:'research',status:'online',default:false,type:'standard',nodeCount:320,edgeCount:840}];
  const node={id:'record-1',labels:['Document'],properties:{title:'Getting started',published:true,revision:3},created_at:''};
- const state={users,databases,node,configChanges:[],databaseConfigs:{catalog:{'db.nornic.embedding.enabled':'true'},research:{'db.nornic.embedding.enabled':'false'}},failConfig:false,configDelay:0,updates:[],failSave:false,requests:[],queries:[],demoDatabases:new Map(),queryGraph:false,failSeed:false,seedBatches:0,failSeedAfter:Infinity,seedDelay:0,roles:['admin'],tokens:[],operations:[],failOperation:false,denySchema:false,policyWrites:[],failBinding:false,
+ const state={users,databases,node,configChanges:[],databaseConfigs:{catalog:{'db.nornic.embedding.enabled':'true'},research:{'db.nornic.embedding.enabled':'false'}},failConfig:false,configDelay:0,updates:[],failSave:false,requests:[],queries:[],demoDatabases:new Map(),queryGraph:false,failSeed:false,seedBatches:0,failSeedAfter:Infinity,seedDelay:0,fgacEnabled:false,roles:['admin'],tokens:[],operations:[],failOperation:false,denySchema:false,policyWrites:[],failBinding:false,
  schema:{indexes:[{name:'document_title',type:'RANGE',labelsOrTypes:['Document'],properties:['title']}],constraints:[{name:'document_id',type:'UNIQUENESS',labelsOrTypes:['Document'],properties:['id']}]},profiles:[{kind:'bundle',Name:'memory_retention',HalfLifeSeconds:604800,VisibilityThreshold:0.1,ScoreFloor:0,Function:'exponential',Scope:'NODE',DecayEnabled:true,ScoreFrom:'VERSION',Enabled:true}],bindings:[]};
  await page.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),p=url.pathname.replace(/\/$/,'') || '/';
@@ -10,7 +10,7 @@ export async function fixture(page) {
   let data,status=200;
   if(p==='/' && !request.isNavigationRequest())data={default_database:'catalog',bolt_enabled:false};
   else if(p==='/auth/config')data={securityEnabled:true,devLoginEnabled:true,oauthProviders:[]};
-  else if(p==='/auth/me')data={username:'alex',roles:state.roles,email:'alex@example.test',auth_method:'password'};
+  else if(p==='/auth/me')data={username:'alex',roles:state.roles,fgac_enabled:state.fgacEnabled,email:'alex@example.test',auth_method:'password'};
   else if(p==='/auth/api-token'){state.tokens.push(request.postDataJSON());data={token:'fixture-personal-token',subject:request.postDataJSON().subject,roles:state.roles,expires_at:'2027-01-01T00:00:00Z'};}
   else if(p==='/admin/backup'||p==='/admin/restore'){state.operations.push({path:p,body:request.postDataJSON()});if(state.failOperation){status=503;data={message:'Backup storage unavailable'};}else data={status:p.endsWith('restore')?'restore complete':'backup complete',path:request.postDataJSON().path};}
   else if(p==='/auth/roles')data=['admin','editor','viewer'];

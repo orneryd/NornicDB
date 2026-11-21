@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -19,7 +20,11 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommand(cypher), nil)
 	}
 
-	_, schema, err := e.knowledgePolicyContext("")
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil &&
+		!request.AllowsDatabase(knowledgePolicyDDLAction(cmd), e.executionDatabaseName(ctx), "") {
+		return nil, auth.ErrFineGrainedForbidden
+	}
+	_, schema, err := e.knowledgePolicyContext(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -60,6 +65,45 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return e.executeShowKnowledgePromotionPolicies(schema)
 	default:
 		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommandType(fmt.Sprintf("%T", cmd)), nil)
+	}
+}
+
+// knowledgePolicyDDLAction classifies the typed command before touching the
+// schema. Each mutation and each independently readable catalog has its own grant.
+func knowledgePolicyDDLAction(command any) string {
+	switch command.(type) {
+	case *CreateDecayProfileBundleCmd:
+		return "knowledge.decay_profile.create"
+	case *CreateDecayProfileBindingCmd:
+		return "knowledge.decay_profile.bind"
+	case *AlterDecayProfileCmd:
+		return "knowledge.decay_profile.update"
+	case *AlterDecayProfileBindingCmd:
+		return "knowledge.decay_profile.binding.update"
+	case *DropDecayProfileCmd:
+		return "knowledge.decay_profile.delete"
+	case *ShowDecayProfilesCmd:
+		return "knowledge.decay_profile.list"
+	case *CreatePromotionProfileCmd:
+		return "knowledge.promotion_profile.create"
+	case *AlterPromotionProfileCmd:
+		return "knowledge.promotion_profile.update"
+	case *DropPromotionProfileCmd:
+		return "knowledge.promotion_profile.delete"
+	case *ShowPromotionProfilesCmd:
+		return "knowledge.promotion_profile.list"
+	case *CreatePromotionPolicyCmd:
+		return "knowledge.promotion_policy.create"
+	case *AlterPromotionPolicyCmd:
+		return "knowledge.promotion_policy.update"
+	case *AlterPromotionPolicyDefinitionCmd:
+		return "knowledge.promotion_policy.definition.update"
+	case *DropPromotionPolicyCmd:
+		return "knowledge.promotion_policy.delete"
+	case *ShowPromotionPoliciesCmd:
+		return "knowledge.promotion_policy.list"
+	default:
+		return ""
 	}
 }
 

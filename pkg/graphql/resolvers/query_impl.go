@@ -240,6 +240,10 @@ func (r *queryResolver) querySearch(ctx context.Context, query string, options *
 	if err != nil {
 		return nil, err
 	}
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil &&
+		!request.AllowsDatabase("database.search.execute", database, "") {
+		return nil, auth.ErrFineGrainedForbidden
+	}
 	results, err := r.DB.SearchDatabase(ctx, database, engine, query, labels, limit)
 	if err != nil {
 		return nil, err
@@ -286,9 +290,15 @@ func (r *queryResolver) querySimilar(ctx context.Context, nodeID string, limit *
 	}
 	// threshold is ignored - FindSimilar doesn't support it
 
-	_, engine, err := r.readDatabase(ctx)
+	database, engine, err := r.readDatabase(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+		if !request.AllowsDatabase("database.search.execute", database, "") {
+			return nil, auth.ErrFineGrainedForbidden
+		}
+		engine = request.Graph(engine, database)
 	}
 	results, err := r.DB.FindSimilarInDatabase(ctx, engine, nodeID, lim)
 	if err != nil {
@@ -421,7 +431,10 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		typeStats = append(typeStats, &models.RelationshipTypeStats{Type: typ, Count: count})
 	}
 
-	embeddedCount, _, _ := r.DB.GetDatabaseManagedEmbeddingStats(database)
+	embeddedCount := 0
+	if request := auth.FineGrainedRequestFromContext(ctx); request == nil || request.AllowsDatabase("embedding.status.read", database, "") {
+		embeddedCount, _, _ = r.DB.GetDatabaseManagedEmbeddingStats(database)
+	}
 
 	return &models.DatabaseStats{
 		NodeCount:         util.ClampInt64ToInt(stats.NodeCount),

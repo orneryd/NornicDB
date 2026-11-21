@@ -41,9 +41,9 @@ func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
 			var c graphCollection
 			var err error
 			if path {
-				c, err = s.collectLatestPath(context.Background(), engine, "a", "b", 10, newGraphFilterSet(nil, nil))
+				c, err = s.collectLatestPath(context.Background(), directGraphRead(engine), "a", "b", 10, newGraphFilterSet(nil, nil))
 			} else {
-				c, err = s.collectLatestNeighborhood(context.Background(), engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
+				c, err = s.collectLatestNeighborhood(context.Background(), directGraphRead(engine), []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 			}
 			require.NoError(t, err)
 			require.Len(t, c.nodes, 2)
@@ -58,13 +58,13 @@ func TestNormalGraphQueriesProjectSuppressedProperties(t *testing.T) {
 			}
 		})
 	}
-	zero, err := s.collectLatestPath(context.Background(), engine, "a", "a", 10, newGraphFilterSet(nil, nil))
+	zero, err := s.collectLatestPath(context.Background(), directGraphRead(engine), "a", "a", 10, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.NotContains(t, zero.nodes["a"].Properties, "secret")
 	raw, err := engine.GetNode(t.Context(), "a")
 	require.NoError(t, err)
 	require.Equal(t, "hidden", raw.Properties["secret"])
-	history, err := s.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
+	history, err := s.collectLatestInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a", "b"}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, history.nodes["a"].Properties, "secret")
 }

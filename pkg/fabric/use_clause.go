@@ -227,6 +227,8 @@ func IsAdministrationCommand(statement string) bool {
 		switch object[0] {
 		case "DATABASE", "COMPOSITE", "ALIAS", "USER", "ROLE", "SERVER":
 			return true
+		case "USERS":
+			return words[0] == "ALTER"
 		case "CURRENT":
 			return words[0] == "ALTER" && len(object) > 1 && object[1] == "USER"
 		}

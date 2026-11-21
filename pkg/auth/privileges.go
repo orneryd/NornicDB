@@ -52,7 +52,7 @@ func (p *PrivilegesStore) Load(ctx context.Context) error {
 	}
 	defer p.writes.unlock()
 	m := make(map[string]map[string]DbPrivilege)
-	err := storage.StreamNodesWithFallback(ctx, p.storage, 1000, func(n *storage.Node) error {
+	err := p.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: dbPrivPrefix}, func(n *storage.Node) error {
 		for _, l := range n.Labels {
 			if l == dbPrivLabel {
 				role, dbName := roleDbFromNodeID(string(n.ID))

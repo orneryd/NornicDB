@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,6 +87,7 @@ type UserListing struct {
 	Roles                  []string
 	PasswordChangeRequired bool
 	Suspended              bool
+	HomeDatabase           string
 }
 
 // UserListingsFromAuth converts the auth store's users for SHOW USERS; a
@@ -100,7 +102,7 @@ func UserListingsFromAuth(users []*auth.User) []UserListing {
 		for _, role := range user.Roles {
 			roles = append(roles, string(role))
 		}
-		listings = append(listings, UserListing{Name: user.Username, Roles: roles, Suspended: user.Disabled})
+		listings = append(listings, UserListing{Name: user.Username, Roles: roles, PasswordChangeRequired: user.PasswordChangeRequired, Suspended: user.Disabled, HomeDatabase: user.HomeDatabase})
 	}
 	return listings
 }
@@ -133,14 +135,17 @@ func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher
 		return nil, err
 	}
 	defaultColumn := -1
+	selected := "default"
+	if auth.FineGrainedRequestFromContext(ctx) != nil && startsWithKeywords(ctx, cypher, "SHOW", "HOME DATABASE") {
+		selected = "home"
+	}
 	keep := make([]int, 0, len(all.Columns))
 	columns := make([]string, 0, len(all.Columns))
 	for i, column := range all.Columns {
-		switch column {
-		case "default":
+		if column == selected {
 			defaultColumn = i
-		case "home":
-		default:
+		}
+		if column != "default" && column != "home" {
 			keep = append(keep, i)
 			columns = append(columns, column)
 		}
@@ -163,7 +168,7 @@ func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher
 var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "suspended", "home"}
 
 // executeShowUsers lists the user store (SHOW USERS) or the signed-in user
-// (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
+// (SHOW CURRENT USER), including native home and PUBLIC in FGAC mode.
 func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
 	currentOnly := startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER")
@@ -173,17 +178,98 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 	} else if signedIn {
 		users = []UserListing{{Name: current.Name, Roles: current.Roles}}
 	}
+	request := auth.FineGrainedRequestFromContext(ctx)
+	if request != nil && request.Runtime != nil && isShowUsersWithAuth(ctx, cypher) {
+		return executeShowFineGrainedUserProviders(ctx, request)
+	}
+	showTags := request != nil && request.Runtime != nil && cypherVersionFromContext(ctx) == "25" &&
+		request.AllowsDBMS("dbms.user.metadata.show", "")
+	columns := slices.Clone(showUsersColumns)
+	if showTags {
+		columns = append(columns, "tags")
+	}
 	rows := make([][]interface{}, 0, len(users))
 	for _, user := range users {
 		if currentOnly && (!signedIn || user.Name != current.Name) {
 			continue
 		}
 		roles := append(make([]string, 0, len(user.Roles)), user.Roles...)
+		var home any
+		if request != nil {
+			if currentOnly && request.Runtime != nil {
+				roles = request.EffectiveRoles()
+			} else {
+				roles = append(roles, auth.FineGrainedPublicRole)
+			}
+			if user.HomeDatabase != "" {
+				home = user.HomeDatabase
+			}
+		}
 		sort.Strings(roles)
-		rows = append(rows, []interface{}{user.Name, roles, user.PasswordChangeRequired, user.Suspended, nil})
+		row := []any{user.Name, roles, user.PasswordChangeRequired, user.Suspended, home}
+		if showTags {
+			tags := request.Runtime.UserTags(user.Name)
+			if tags == nil {
+				tags = []string{}
+			}
+			row = append(row, tags)
+		}
+		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
-	return &ExecuteResult{Columns: append([]string(nil), showUsersColumns...), Rows: rows}, nil
+	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, showUsersColumns), nil
+}
+
+func isShowUsersWithAuth(ctx context.Context, text string) bool {
+	return startsWithKeywords(ctx, text, "SHOW", "USERS WITH AUTH") ||
+		startsWithKeywords(ctx, text, "SHOW", "USER WITH AUTH")
+}
+
+func executeShowFineGrainedUserProviders(ctx context.Context, request *auth.FineGrainedRequest) (*ExecuteResult, error) {
+	if !request.AllowsDBMS("dbms.user.show", "") {
+		return nil, auth.ErrFineGrainedForbidden
+	}
+	entries, err := request.Runtime.UserProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defaults := append(slices.Clone(showUsersColumns), "provider", "auth")
+	columns := defaults
+	withTags := cypherVersionFromContext(ctx) == "25"
+	showTags := withTags && request.AllowsDBMS("dbms.user.metadata.show", "")
+	if withTags {
+		columns = append(slices.Clone(defaults), "tags")
+	}
+	result := &ExecuteResult{Columns: columns}
+	for _, entry := range entries {
+		roles := make([]string, 0, len(entry.User.Roles)+1)
+		for _, role := range entry.User.Roles {
+			roles = append(roles, string(role))
+		}
+		roles = append(roles, auth.FineGrainedPublicRole)
+		slices.Sort(roles)
+		var home, changeRequired any
+		if entry.User.HomeDatabase != "" {
+			home = entry.User.HomeDatabase
+		}
+		if entry.HasNative {
+			changeRequired = entry.PasswordChangeRequired
+		}
+		metadata := map[string]any{"id": entry.Subject}
+		if entry.Name == "native" {
+			metadata = map[string]any{"password": "***", "changeRequired": entry.PasswordChangeRequired}
+		}
+		row := []any{entry.User.Username, roles, changeRequired, entry.User.Disabled, home, entry.Name, metadata}
+		if withTags {
+			var tags any
+			if showTags {
+				tags = append([]string{}, request.Runtime.UserTags(entry.User.Username)...)
+			}
+			row = append(row, tags)
+		}
+		result.Rows = append(result.Rows, row)
+	}
+	return withShowDefaultColumns(result, defaults), nil
 }
 
 // unsupportedAdministrationCommandError is Neo4j Community's error for an
@@ -382,6 +468,10 @@ func (r *runningTransactionRegistry) terminate(ctx context.Context, id string) (
 	target := tx
 	if owner := r.owners[tx]; owner != nil {
 		target = owner
+	}
+	if !fineGrainedTransactionAccess(ctx, target, "database.transaction.terminate") {
+		r.mu.RUnlock()
+		return nil, false
 	}
 	target.mu.Lock()
 	claimed := target.markTerminatedLocked(false)
@@ -721,6 +811,9 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 	sort.Slice(transactions, func(i, j int) bool { return transactions[i].started.Before(transactions[j].started) })
 	rows := make([][]interface{}, 0, len(transactions))
 	for _, tx := range transactions {
+		if !fineGrainedTransactionAccess(ctx, tx, "database.transaction.show") {
+			continue
+		}
 		id := tx.id()
 		if _, ok := wanted[id]; filtered && !ok {
 			continue
@@ -875,4 +968,15 @@ func invalidTransactionIDError(message localization.Message) error {
 func durationFromGo(d time.Duration) *CypherDuration {
 	seconds := int64(d / time.Second)
 	return &CypherDuration{Seconds: seconds, Nanos: int64(d % time.Second)}
+}
+
+func fineGrainedTransactionAccess(ctx context.Context, transaction *runningTransaction, action string) bool {
+	request := auth.FineGrainedRequestFromContext(ctx)
+	if request == nil {
+		return true
+	}
+	if identity := requestIdentityFromContext(ctx); identity != nil && identity.User != nil && identity.User.Name == transaction.username {
+		return true
+	}
+	return request.AllowsDatabase(action, transaction.database, transaction.username)
 }

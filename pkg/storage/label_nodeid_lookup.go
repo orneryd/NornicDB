@@ -79,3 +79,15 @@ func NodeIDsByLabel(ctx context.Context, engine Engine, label string, limit int)
 	}
 	return ids, nil
 }
+
+// FirstNodeResult selects the first already filtered node from a label lookup.
+// An empty successful selection has the same result as a missing node.
+func FirstNodeResult(nodes []*Node, err error) (*Node, error) {
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, ErrNotFound
+	}
+	return nodes[0], nil
+}

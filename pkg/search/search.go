@@ -110,6 +110,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -844,6 +845,9 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
+	fineGrainedOwner       *auth.FineGrainedRequest
+	fineGrainedVersion     uint64
+	fineGrainedVersions    graphMutationVersionProvider
 	fulltextDocumentsMu    sync.Mutex
 	fulltextDocuments      *fulltextDocumentOwner
 	memoryPolicy           *memory.Policy
@@ -5127,6 +5131,14 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	if principal := s.requestedFineGrainedView(ctx); principal != nil {
+		view, err := s.fineGrainedView(ctx, principal)
+		if err != nil {
+			return nil, err
+		}
+		defer view.Close()
+		return view.Search(ctx, query, embedding, opts)
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err

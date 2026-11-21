@@ -44,6 +44,11 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 		fmt.Printf("⚠️ Failed to embed node %s: %s\n", node.ID, compactWorkerError(err, 300))
 		return ew.failNodeEmbedding(node, err)
 	}
+	propertyProvider, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
+	if err := ew.revalidateEmbeddingResult(node, usesProperties && propertyProvider.UsesDocumentProperties()); err != nil {
+		ew.recordEmbeddingRefusal(node, err)
+		return true
+	}
 	chunks, embeddings, providerMeta := result.chunks, result.vectors, result.metadata
 	embeddingutil.ApplyManagedEmbedding(node, embeddings, provider.Model(), dimensions, time.Now())
 	if spaceProvider, ok := provider.(embed.EmbeddingSpaceProvider); ok {
@@ -54,6 +59,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 	for key, value := range providerMeta {
 		node.EmbedMeta[key] = value
 	}
+	delete(node.EmbedMeta, storage.EmbeddingCallerPendingKey)
 	// Bind the provider's consumed inputs to the text policy used to build this
 	// request. Carry this record unchanged through retries and storage.
 	consumed, present, _ := embeddingsource.Read(providerMeta)

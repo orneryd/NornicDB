@@ -13,6 +13,8 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -20,6 +22,11 @@ import (
 
 var errGraphForbidden = fmt.Errorf("graph access forbidden")
 var errGraphPathLimitExceeded = fmt.Errorf("path search limit exceeded before target was found")
+
+// errGraphRemoteProjectionUnavailable reports a graph read of a remote
+// constituent that the authorized view cannot serve: a remote engine supplies
+// no local entity provenance, so the endpoint fails instead of reading it.
+var errGraphRemoteProjectionUnavailable = errors.New("fine-grained access control cannot authorize remote graph reads")
 
 const maxGraphTemporalDiffNodeIDs = 200
 
@@ -165,8 +172,71 @@ func normalizeGraphNodeIDs(ids []string) []string {
 	return out
 }
 
+// graphRead is one graph request's resolved read target.
+//
+// engine is the database engine the request's database resolves to: the
+// response projection (property visibility and decay) and its reveal scope are
+// acquired on it. view is the engine every entity read uses: the principal's
+// authorized graph view when fine-grained access control admitted the request,
+// else engine itself. authorized records that a fine-grained view governs the
+// request, so a capability only the database engine has cannot be used. target
+// is the canonical database the graph data is in.
+type graphRead struct {
+	name       string
+	target     string
+	engine     storage.Engine
+	view       storage.Engine
+	authorized bool
+}
+
+// authorizeGraphRead refuses, before any data handling, a graph request whose
+// principal may not use the request's database: the admitted fine-grained
+// request's graph access when one is bound to the request, else the database
+// read privilege (authorizeDatabaseRead). A request without a database name is
+// left to resolution, which reports the missing parameter.
+func (s *Server) authorizeGraphRead(w http.ResponseWriter, r *http.Request) bool {
+	dbName := strings.TrimSpace(r.PathValue("database"))
+	if dbName == "" {
+		return true
+	}
+	request := auth.FineGrainedRequestFromContext(r.Context())
+	if request == nil {
+		return s.authorizeDatabaseRead(w, r, dbName)
+	}
+	if _, _, allowed := s.graphSelectionTarget(dbName, request); !allowed {
+		s.writeNeo4jInsufficientPermissions(w, r)
+		return false
+	}
+	return true
+}
+
+// authorizeGraphHistory requires the fine-grained database.history.read
+// entitlement for a historical graph read (pkg/cypher maps db.temporal.asOf to
+// the same action). A request without an admitted principal keeps the coarse
+// database read admission.
+func (s *Server) authorizeGraphHistory(w http.ResponseWriter, r *http.Request, database string) bool {
+	request := auth.FineGrainedRequestFromContext(r.Context())
+	if request == nil || request.AllowsDatabase("database.history.read", database, "") {
+		return true
+	}
+	s.writeNeo4jInsufficientPermissions(w, r)
+	return false
+}
+
+// graphSelectionTarget resolves a graph name for a fine-grained request with
+// cypher.GraphAccessTarget, the owner of graph selection: the database the data
+// is in, whether that target is a remote constituent, and whether the principal
+// may use the graph.
+func (s *Server) graphSelectionTarget(graph string, request *auth.FineGrainedRequest) (target string, remote, allowed bool) {
+	var manager cypher.GraphDatabaseResolver
+	if s.dbManager != nil {
+		manager = s.dbManager
+	}
+	return cypher.GraphAccessTarget(manager, graph, request.CanAccessDatabase)
+}
+
 func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+	if !s.authorizeGraphRead(w, r) {
 		return
 	}
 
@@ -202,20 +272,20 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes).withFilters(req.IncludeNames, req.ExcludeNames, req.IncludeProperties, req.ExcludeProperties, req.ExcludeLabels, req.ExcludeRelationshipTypes)
-	dbName, engine, err := s.resolveGraphStorage(r)
+	resolved, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
-	collection, err := s.collectLatestNeighborhood(r.Context(), engine, req.NodeIDs, req.Depth, req.Limit, direction, filterSet)
+	collection, err := s.collectLatestNeighborhood(r.Context(), resolved, req.NodeIDs, req.Depth, req.Limit, direction, filterSet)
 	if err != nil {
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 		return
 	}
 
 	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
-		Database:      dbName,
+		Database:      resolved.name,
 		GeneratedFrom: "node",
 		Depth:         req.Depth,
 	}))
@@ -226,7 +296,7 @@ func (s *Server) handleGraphExpand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+	if !s.authorizeGraphRead(w, r) {
 		return
 	}
 
@@ -250,13 +320,13 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
-	dbName, engine, err := s.resolveGraphStorage(r)
+	resolved, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
-	collection, err := s.collectLatestPath(r.Context(), engine, req.SourceNodeID, req.TargetNodeID, req.Limit, filterSet)
+	collection, err := s.collectLatestPath(r.Context(), resolved, req.SourceNodeID, req.TargetNodeID, req.Limit, filterSet)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if err == storage.ErrNotFound {
@@ -269,13 +339,13 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
-		Database:      dbName,
+		Database:      resolved.name,
 		GeneratedFrom: "query",
 	}))
 }
 
 func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+	if !s.authorizeGraphRead(w, r) {
 		return
 	}
 
@@ -305,31 +375,31 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
-	dbName, engine, err := s.resolveGraphStorage(r)
+	resolved, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
 		return
 	}
 
-	collection, err := s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, version, filterSet)
+	if !s.authorizeGraphHistory(w, r, resolved.target) {
+		return
+	}
+
+	collection, err := s.collectSnapshotInducedSubgraph(r.Context(), resolved, req.NodeIDs, version, filterSet)
 	if err != nil {
-		if err == storage.ErrNotImplemented {
-			s.writeTemporalGraphReconstructionUnsupported(w, r, err)
-			return
-		}
-		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+		s.writeGraphSnapshotError(w, r, err, s.writeTemporalGraphReconstructionUnsupported)
 		return
 	}
 
 	httpresponse.WritePropertyJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
-		Database:      dbName,
+		Database:      resolved.name,
 		GeneratedFrom: "node",
 		AsOf:          version.CommitTimestamp.UTC().Format(time.RFC3339Nano),
 	}))
 }
 
 func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+	if !s.authorizeGraphRead(w, r) {
 		return
 	}
 
@@ -364,9 +434,13 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterSet := newGraphFilterSet(req.Labels, req.RelationshipTypes)
-	dbName, engine, err := s.resolveGraphStorage(r)
+	resolved, err := s.resolveGraphStorage(r)
 	if err != nil {
 		s.writeGraphResolveError(w, r, err)
+		return
+	}
+
+	if !s.authorizeGraphHistory(w, r, resolved.target) {
 		return
 	}
 
@@ -379,71 +453,83 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 			s.writeBoundaryError(w, r, http.StatusBadRequest, versionErr, ErrBadRequest)
 			return
 		}
-		baseline, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, baselineVersion, filterSet)
+		baseline, err = s.collectSnapshotInducedSubgraph(r.Context(), resolved, req.NodeIDs, baselineVersion, filterSet)
 		if err != nil {
-			if err == storage.ErrNotImplemented {
-				s.writeTemporalGraphDiffUnsupported(w, r, err)
-				return
-			}
-			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			s.writeGraphSnapshotError(w, r, err, s.writeTemporalGraphDiffUnsupported)
 			return
 		}
 		compareLabel = baselineVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano)
 
-		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), resolved, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
-			if err == storage.ErrNotImplemented {
-				s.writeTemporalGraphDiffUnsupported(w, r, err)
-				return
-			}
-			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			s.writeGraphSnapshotError(w, r, err, s.writeTemporalGraphDiffUnsupported)
 			return
 		}
 	} else {
-		baseline, err = s.collectLatestInducedSubgraph(r.Context(), engine, req.NodeIDs, filterSet)
+		baseline, err = s.collectLatestInducedSubgraph(r.Context(), resolved, req.NodeIDs, filterSet)
 		if err != nil {
 			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 			return
 		}
 
-		target, err = s.collectSnapshotInducedSubgraph(r.Context(), engine, req.NodeIDs, targetVersion, filterSet)
+		target, err = s.collectSnapshotInducedSubgraph(r.Context(), resolved, req.NodeIDs, targetVersion, filterSet)
 		if err != nil {
-			if err == storage.ErrNotImplemented {
-				s.writeTemporalGraphDiffUnsupported(w, r, err)
-				return
-			}
-			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			s.writeGraphSnapshotError(w, r, err, s.writeTemporalGraphDiffUnsupported)
 			return
 		}
 	}
 
 	diff := diffGraphCollections(baseline, target)
 	httpresponse.WritePropertyJSON(w, http.StatusOK, diff.payload(graphMetaPayload{
-		Database:      dbName,
+		Database:      resolved.name,
 		GeneratedFrom: "diff",
 		AsOf:          targetVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano),
 		CompareTo:     compareLabel,
 	}))
 }
 
-func (s *Server) resolveGraphStorage(r *http.Request) (string, storage.Engine, error) {
+// resolveGraphStorage resolves one graph request's target: its database name,
+// the database engine the target resolves to, and the engine its entity reads
+// use. A fine-grained principal's admitted request reads through that request's
+// authorized graph view, so neighborhood, expansion, path and the current side
+// of a diff see only what the principal may traverse and read. Every other
+// request reads the database engine directly.
+func (s *Server) resolveGraphStorage(r *http.Request) (graphRead, error) {
 	dbName := strings.TrimSpace(r.PathValue("database"))
 	if dbName == "" {
-		return "", nil, fmt.Errorf("database path parameter is required")
+		return graphRead{}, fmt.Errorf("database path parameter is required")
 	}
 
-	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
-		return "", nil, errGraphForbidden
+	request := auth.FineGrainedRequestFromContext(r.Context())
+	target := dbName
+	if request == nil {
+		if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+			return graphRead{}, errGraphForbidden
+		}
+	} else {
+		resolvedTarget, remote, allowed := s.graphSelectionTarget(dbName, request)
+		if !allowed {
+			return graphRead{}, errGraphForbidden
+		}
+		if remote {
+			return graphRead{}, fmt.Errorf("%w: %s", errGraphRemoteProjectionUnavailable, dbName)
+		}
+		target = resolvedTarget
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
-		return "", nil, fmt.Errorf("graph endpoints on composite database '%s' are not supported; target a constituent database explicitly", dbName)
+		return graphRead{}, fmt.Errorf("graph endpoints on composite database '%s' are not supported; target a constituent database explicitly", dbName)
 	}
 
 	engine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		return "", nil, err
+		return graphRead{}, err
 	}
-	return dbName, engine, nil
+	read := graphRead{name: dbName, target: target, engine: engine, view: engine}
+	if request != nil {
+		read.view = request.Graph(engine, target)
+		read.authorized = true
+	}
+	return read, nil
 }
 
 func (s *Server) writeGraphResolveError(w http.ResponseWriter, r *http.Request, err error) {
@@ -454,6 +540,10 @@ func (s *Server) writeGraphResolveError(w http.ResponseWriter, r *http.Request, 
 		s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.GraphDatabaseAccessDenied())
 		return
 	}
+	if errors.Is(err, errGraphRemoteProjectionUnavailable) {
+		s.writeError(w, http.StatusNotImplemented, err.Error(), err)
+		return
+	}
 	message := err.Error()
 	status := http.StatusBadRequest
 	if errors.Is(err, multidb.ErrDatabaseNotFound) {
@@ -462,6 +552,16 @@ func (s *Server) writeGraphResolveError(w http.ResponseWriter, r *http.Request, 
 		status = http.StatusServiceUnavailable
 	}
 	s.writeError(w, status, message, err)
+}
+
+// writeGraphSnapshotError preserves the unsupported-storage status and the
+// canonical storage error for a failed snapshot read.
+func (s *Server) writeGraphSnapshotError(w http.ResponseWriter, r *http.Request, err error, unsupported func(http.ResponseWriter, *http.Request, error)) {
+	if errors.Is(err, storage.ErrNotImplemented) {
+		unsupported(w, r, err)
+		return
+	}
+	s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
 }
 
 func newGraphFilterSet(labels, relationshipTypes []string) graphFilterSet {
@@ -946,11 +1046,11 @@ func (c graphCollection) components() []graphPayload {
 	return result
 }
 
-func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestNeighborhood(ctx context.Context, source graphRead, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
 	// The request owns this projection scope: it is acquired with ctx, so a
 	// cancelled request stops waiting instead of blocking behind an unrelated
 	// exclusive REVEAL scope, and it reads nothing once that scope is refused.
-	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, engine)
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, source.engine)
 	defer releaseProjection()
 	collection := newGraphCollection()
 	if err := ctx.Err(); err != nil {
@@ -979,7 +1079,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			collection.truncated = true
 			continue
 		}
-		node, err := engine.GetNode(ctx, storage.NodeID(seedID))
+		node, err := source.view.GetNode(ctx, storage.NodeID(seedID))
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return collection, err
 		}
@@ -1004,7 +1104,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			continue
 		}
 
-		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current.nodeID), direction)
+		edges, err := graphEdgesForNode(ctx, source.view, storage.NodeID(current.nodeID), direction)
 		if err != nil {
 			return collection, err
 		}
@@ -1022,7 +1122,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			if otherID == current.nodeID {
 				otherID = string(edge.EndNode)
 			}
-			neighbor, err := engine.GetNode(ctx, storage.NodeID(otherID))
+			neighbor, err := source.view.GetNode(ctx, storage.NodeID(otherID))
 			if err != nil && !errors.Is(err, storage.ErrNotFound) {
 				return collection, err
 			}
@@ -1056,18 +1156,18 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 	return collection, nil
 }
 
-func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, sourceID, targetID string, limit int, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestPath(ctx context.Context, source graphRead, sourceID, targetID string, limit int, filters graphFilterSet) (graphCollection, error) {
 	// The request owns this projection scope: it is acquired with ctx, so a
 	// cancelled request stops waiting instead of blocking behind an unrelated
 	// exclusive REVEAL scope, and it reads nothing once that scope is refused.
-	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, engine)
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, source.engine)
 	defer releaseProjection()
 	if err := ctx.Err(); err != nil {
 		return graphCollection{}, err
 	}
 	if sourceID == targetID {
 		collection := newGraphCollection()
-		node, err := engine.GetNode(ctx, storage.NodeID(sourceID))
+		node, err := source.view.GetNode(ctx, storage.NodeID(sourceID))
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return collection, err
 		}
@@ -1103,7 +1203,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 		current := queue[0]
 		queue = queue[1:]
 
-		edges, err := graphEdgesForNode(ctx, engine, storage.NodeID(current), "both")
+		edges, err := graphEdgesForNode(ctx, source.view, storage.NodeID(current), "both")
 		if err != nil {
 			return graphCollection{}, err
 		}
@@ -1121,7 +1221,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 			if nextID == current {
 				nextID = string(edge.EndNode)
 			}
-			node, err := engine.GetNode(ctx, storage.NodeID(nextID))
+			node, err := source.view.GetNode(ctx, storage.NodeID(nextID))
 			if err != nil && !errors.Is(err, storage.ErrNotFound) {
 				return graphCollection{}, err
 			}
@@ -1159,7 +1259,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	collection := newGraphCollection()
 	current := targetID
 	for {
-		node, err := engine.GetNode(ctx, storage.NodeID(current))
+		node, err := source.view.GetNode(ctx, storage.NodeID(current))
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return graphCollection{}, err
 		}
@@ -1181,11 +1281,11 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	return collection, nil
 }
 
-func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
+func (s *Server) collectLatestInducedSubgraph(ctx context.Context, source graphRead, nodeIDs []string, filters graphFilterSet) (graphCollection, error) {
 	collection := newGraphCollection()
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
-		node, err := engine.GetNode(ctx, storage.NodeID(nodeID))
+		node, err := source.view.GetNode(ctx, storage.NodeID(nodeID))
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return collection, err
 		}
@@ -1201,7 +1301,7 @@ func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storag
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
 	for _, startID := range resolvedIDs {
-		edges, err := engine.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: storage.NodeID(startID)})
+		edges, err := source.view.ReadAdjacentEdges(ctx, storage.AdjacentEdgeRead{Node: storage.NodeID(startID)})
 		if err != nil {
 			return collection, err
 		}
@@ -1224,19 +1324,37 @@ func (s *Server) collectLatestInducedSubgraph(ctx context.Context, engine storag
 	return collection, nil
 }
 
-func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
-	provider, ok := engine.(storage.MVCCVisibilityEngine)
-	if !ok {
-		return graphCollection{}, storage.ErrNotImplemented
-	}
-	indexed, ok := engine.(storage.MVCCIndexedVisibilityEngine)
-	if !ok {
-		return graphCollection{}, storage.ErrNotImplemented
+func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, source graphRead, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
+	var readNode func(context.Context, storage.NodeID) (*storage.Node, error)
+	var readEdges func(context.Context, string) ([]*storage.Edge, error)
+	if principal := auth.FineGrainedRequestFromContext(ctx); source.authorized && principal != nil {
+		snapshot, err := storage.OpenHistoricalReadAtVersion(ctx, source.engine, version)
+		if err != nil {
+			return graphCollection{}, err
+		}
+		defer snapshot.Close()
+		view := storage.NewNamespacedEngine(snapshot, source.target)
+		scoped := principal.Graph(view, source.target)
+		readNode, readEdges = scoped.GetNode, scoped.GetEdgesByType
+	} else if source.authorized {
+		return graphCollection{}, auth.ErrFineGrainedForbidden
+	} else {
+		provider, hasVisibility := source.view.(storage.MVCCVisibilityEngine)
+		indexed, hasIndexes := source.view.(storage.MVCCIndexedVisibilityEngine)
+		if !hasVisibility || !hasIndexes {
+			return graphCollection{}, storage.ErrNotImplemented
+		}
+		readNode = func(ctx context.Context, id storage.NodeID) (*storage.Node, error) {
+			return provider.GetNodeVisibleAt(ctx, id, version)
+		}
+		readEdges = func(ctx context.Context, typ string) ([]*storage.Edge, error) {
+			return indexed.GetEdgesByTypeVisibleAt(ctx, typ, version)
+		}
 	}
 
 	collection := newGraphCollection()
 	for _, nodeID := range normalizeNodeIDs(nodeIDs) {
-		node, err := provider.GetNodeVisibleAt(ctx, storage.NodeID(nodeID), version)
+		node, err := readNode(ctx, storage.NodeID(nodeID))
 		if err != nil && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, storage.ErrNotVisibleAtSnapshot) {
 			return graphCollection{}, err
 		}
@@ -1254,7 +1372,7 @@ func (s *Server) collectSnapshotInducedSubgraph(ctx context.Context, engine stor
 	for _, id := range resolvedIDs {
 		resolvedSet[storage.NodeID(id)] = struct{}{}
 	}
-	edges, err := indexed.GetEdgesByTypeVisibleAt(ctx, "", version)
+	edges, err := readEdges(ctx, "")
 	if err != nil {
 		return collection, err
 	}

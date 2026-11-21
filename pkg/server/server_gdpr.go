@@ -33,7 +33,12 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 
 	// User can only export own data unless admin
 	claims := getClaims(r)
-	if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		if !s.fineGrainedGDPRAllowed(r, request, req.UserID, "export") {
+			s.writeGDPROwnDataExportOnly(w, r)
+			return
+		}
+	} else if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
 		s.writeGDPROwnDataExportOnly(w, r)
 		return
 	}
@@ -41,7 +46,7 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 	if s.dbManager != nil {
 		defaultDatabase = s.dbManager.DefaultDatabaseName()
 	}
-	if !s.authorizeDatabaseRead(w, r, defaultDatabase) {
+	if auth.FineGrainedRequestFromContext(r.Context()) == nil && !s.authorizeDatabaseRead(w, r, defaultDatabase) {
 		return
 	}
 
@@ -65,7 +70,7 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite) {
+	if auth.FineGrainedRequestFromContext(r.Context()) == nil && !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite) {
 		return
 	}
 
@@ -92,7 +97,12 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 
 	// User can only delete own data unless admin
 	claims := getClaims(r)
-	if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		if !s.fineGrainedGDPRAllowed(r, request, req.UserID, "delete") {
+			s.writeGDPROwnDataDeleteOnly(w, r)
+			return
+		}
+	} else if claims != nil && claims.Sub != req.UserID && !hasPermission(s, claims.Roles, auth.PermAdmin) {
 		s.writeGDPROwnDataDeleteOnly(w, r)
 		return
 	}
@@ -137,4 +147,18 @@ func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 		"status":  action,
 		"user_id": req.UserID,
 	})
+}
+
+func (s *Server) fineGrainedGDPRAllowed(r *http.Request, request *auth.FineGrainedRequest, subject, operation string) bool {
+	if !request.CanAccessDatabase(s.dbManager.DefaultDatabaseName()) {
+		return false
+	}
+	claims := getClaims(r)
+	if claims == nil || subject == "" {
+		return false
+	}
+	if !request.AllowsDBMS("dbms.gdpr.user."+operation, "") {
+		return claims.Sub == subject && request.AllowsDBMS("dbms.gdpr.self."+operation, "")
+	}
+	return true
 }

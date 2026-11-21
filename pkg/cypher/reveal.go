@@ -18,6 +18,15 @@ type executionReadScope struct {
 	reveal bool
 }
 
+// revealScopeStorage selects the lease owner without unwrapping the graph
+// decorator for any data access.
+func (e *StorageExecutor) revealScopeStorage() storage.Engine {
+	if e.fineGrainedSource != nil {
+		return e.fineGrainedSource
+	}
+	return e.storage
+}
+
 func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
 	scope := e.readScope
 	if scope == nil {
@@ -25,20 +34,27 @@ func (e *StorageExecutor) executionReadScopeOf() *executionReadScope {
 			scope = wrapper.readScope.Load()
 		}
 	}
-	if scope != nil && scope.engine == e.propertyDecayEngine {
-		return scope
+	if scope != nil {
+		engine := e.propertyDecayEngine
+		if e.fineGrainedSource != nil {
+			engine = unwrapBadgerEngine(e.fineGrainedSource)
+		}
+		if scope.engine == engine {
+			return scope
+		}
 	}
 	return nil
 }
 
 func (e *StorageExecutor) bindExecutionReadScope(ctx context.Context) (*StorageExecutor, func()) {
 	scopes := storage.QueryRevealScopes(ctx)
-	reveal, owned := scopes.Mode(e.storage)
+	leaseStorage := e.revealScopeStorage()
+	reveal, owned := scopes.Mode(leaseStorage)
 	if !owned {
 		return e, func() {}
 	}
 	bound := e.cloneWithStorage(e.storage)
-	bound.readScope = &executionReadScope{scopes: scopes, engine: unwrapBadgerEngine(e.storage), reveal: reveal}
+	bound.readScope = &executionReadScope{scopes: scopes, engine: unwrapBadgerEngine(leaseStorage), reveal: reveal}
 	if wrapper, ok := bound.storage.(*transactionStorageWrapper); ok {
 		previous := wrapper.readScope.Swap(bound.readScope)
 		return bound, func() { wrapper.readScope.Store(previous) }

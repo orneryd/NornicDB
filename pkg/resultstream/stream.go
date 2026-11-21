@@ -52,3 +52,10 @@ type RetainedBytesGrowthGuard interface {
 type ValidityChecker interface {
 	CheckValid() error
 }
+
+// BindRetainedBytesGrowthGuard forwards growth accounting through a decorator.
+func BindRetainedBytesGrowthGuard(stream Stream, guard func() bool) {
+	if guarded, ok := stream.(RetainedBytesGrowthGuard); ok {
+		guarded.SetRetainedBytesGrowthGuard(guard)
+	}
+}

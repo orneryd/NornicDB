@@ -1194,6 +1194,9 @@ func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *
 			node.SetRuntimeMetadata(metadata)
 		}
 		chunkCount := chunkCountFromMeta(sidecarMeta)
+		if callerPending, _ := sidecarMeta[EmbeddingCallerPendingKey].(bool); callerPending && chunkCount == 0 {
+			node.ChunkEmbeddings = nil
+		}
 		if !vectors {
 			if chunkCount > 0 {
 				node.ChunkEmbeddings = nil

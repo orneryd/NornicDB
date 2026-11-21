@@ -18,6 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// directGraphRead is the read a graph request without an admitted fine-grained
+// principal uses: one database engine answers both the response projection and
+// the entity reads.
+func directGraphRead(engine storage.Engine) graphRead {
+	return graphRead{engine: engine, view: engine}
+}
+
 type graphOutgoingErrorEngine struct {
 	storage.Engine
 }
@@ -839,31 +846,33 @@ func TestResolveGraphStorage_Branches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	_, _, err := server.resolveGraphStorage(req)
+	_, err := server.resolveGraphStorage(req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "database path parameter is required")
 
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "nornic")
-	_, _, err = server.resolveGraphStorage(req)
+	_, err = server.resolveGraphStorage(req)
 	require.ErrorIs(t, err, errGraphForbidden)
 
 	server.auth = nil
 	req = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Roles: []string{"unknown"}}))
 	req.SetPathValue("database", "nornic")
-	_, _, err = server.resolveGraphStorage(req)
+	_, err = server.resolveGraphStorage(req)
 	require.NoError(t, err)
 
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "nornic")
-	dbName, engine, err := server.resolveGraphStorage(req)
+	resolved, err := server.resolveGraphStorage(req)
 	require.NoError(t, err)
-	require.Equal(t, "nornic", dbName)
-	require.NotNil(t, engine)
+	require.Equal(t, "nornic", resolved.name)
+	require.NotNil(t, resolved.view)
+	require.Same(t, resolved.engine, resolved.view, "a request without a fine-grained principal reads the database engine itself")
+	require.False(t, resolved.authorized)
 
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "missing")
-	_, _, err = server.resolveGraphStorage(req)
+	_, err = server.resolveGraphStorage(req)
 	require.ErrorIs(t, err, multidb.ErrDatabaseNotFound)
 
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_graph_resolve", []multidb.ConstituentRef{{
@@ -874,7 +883,7 @@ func TestResolveGraphStorage_Branches(t *testing.T) {
 	}}))
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "cmp_graph_resolve")
-	_, _, err = server.resolveGraphStorage(req)
+	_, err = server.resolveGraphStorage(req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "graph endpoints on composite database")
 }
@@ -1016,7 +1025,7 @@ func TestCollectLatestNeighborhood_CanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestNeighborhood(ctx, directGraphRead(engine), []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -1044,7 +1053,7 @@ func TestCollectLatestNeighborhood_SeedAndFilterBranches(t *testing.T) {
 
 	collection, err := server.collectLatestNeighborhood(
 		context.Background(),
-		engine,
+		directGraphRead(engine),
 		[]string{"", "seed", "seed", "missing-seed"},
 		1,
 		0, "both", newGraphFilterSet([]string{"Person"}, []string{"KNOWS"}),
@@ -1074,7 +1083,7 @@ func TestCollectLatestNeighborhood_TruncatesSeedListAndPropagatesEdgeError(t *te
 			"b": {ID: "b", Labels: []string{"Node"}},
 		},
 	}
-	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a", "b"}, 1, 1, "both", newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestNeighborhood(context.Background(), directGraphRead(engine), []string{"a", "b"}, 1, 1, "both", newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.True(t, collection.truncated)
 	require.Contains(t, collection.nodes, "a")
@@ -1085,7 +1094,7 @@ func TestCollectLatestNeighborhood_TruncatesSeedListAndPropagatesEdgeError(t *te
 		graphEdgesStubEngine: &graphEdgesStubEngine{Engine: base, outErr: wantErr},
 		nodes:                map[storage.NodeID]*storage.Node{"a": {ID: "a", Labels: []string{"Node"}}},
 	}
-	_, err = server.collectLatestNeighborhood(context.Background(), errorEngine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestNeighborhood(context.Background(), directGraphRead(errorEngine), []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, wantErr)
 }
 
@@ -1093,12 +1102,12 @@ func TestCollectLatestPath_SourceEqualsTargetBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	engine := getDefaultStorage(t, server)
 
-	_, err := server.collectLatestPath(context.Background(), engine, "missing", "missing", 0, newGraphFilterSet(nil, nil))
+	_, err := server.collectLatestPath(context.Background(), directGraphRead(engine), "missing", "missing", 0, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "a", Labels: []string{"Node"}})
 	require.NoError(t, err)
-	collection, err := server.collectLatestPath(context.Background(), engine, "a", "a", 0, newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestPath(context.Background(), directGraphRead(engine), "a", "a", 0, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Len(t, collection.nodes, 1)
 }
@@ -1111,7 +1120,7 @@ func TestCollectLatestInducedSubgraph_PropagatesOutgoingError(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := &graphOutgoingErrorEngine{Engine: base}
-	_, err = server.collectLatestInducedSubgraph(context.Background(), engine, []string{"nornic:a"}, newGraphFilterSet(nil, nil))
+	_, err = server.collectLatestInducedSubgraph(context.Background(), directGraphRead(engine), []string{"nornic:a"}, newGraphFilterSet(nil, nil))
 	require.EqualError(t, err, "boom")
 }
 
@@ -1121,7 +1130,7 @@ func TestCollectSnapshotInducedSubgraph_RequiresMVCCInterfaces(t *testing.T) {
 	defer func() { _ = base.Close() }()
 
 	engine := &graphNoMVCCEngine{Engine: base}
-	_, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err := server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 }
 
@@ -1146,7 +1155,7 @@ func TestCollectSnapshotInducedSubgraph_UsesSingleVisibleEdgeScan(t *testing.T) 
 	}
 	version := storage.MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: ^uint64(0)}
 
-	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a", "b", "c"}, version, newGraphFilterSet(nil, []string{"LINKS"}))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a", "b", "c"}, version, newGraphFilterSet(nil, []string{"LINKS"}))
 	require.NoError(t, err)
 	require.Equal(t, 1, engine.getEdgesByTypeCalls)
 	require.Equal(t, 0, engine.getEdgesBetweenCalls)
@@ -1272,56 +1281,53 @@ func TestWriteGraphResolveError_NilNoWrite(t *testing.T) {
 	require.Equal(t, "", rec.Body.String())
 }
 
-func TestCollectLatestNeighborhood_CancelledDuringEdgeIteration(t *testing.T) {
+func TestCollectLatestGraphCancellation(t *testing.T) {
 	server := &Server{}
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	engine := &graphNeighborhoodStubEngine{
-		graphEdgesStubEngine: &graphEdgesStubEngine{
-			Engine: base,
-			outgoing: []*storage.Edge{
-				{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"},
-			},
-			cancel: cancel,
-		},
-		nodes: map[storage.NodeID]*storage.Node{
-			"a": {ID: "a", Labels: []string{"Node"}},
-			"b": {ID: "b", Labels: []string{"Node"}},
-		},
+	filters := newGraphFilterSet(nil, nil)
+	neighborhood := func(ctx context.Context, source graphRead) error {
+		_, err := server.collectLatestNeighborhood(ctx, source, []string{"a"}, 1, 10, "both", filters)
+		return err
 	}
-
-	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-func TestCollectLatestPath_CanceledContextBranches(t *testing.T) {
-	server := &Server{}
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := server.collectLatestPath(ctx, base, "a", "b", 10, newGraphFilterSet(nil, nil))
-	require.ErrorIs(t, err, context.Canceled)
-
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	engine := &graphNeighborhoodStubEngine{
-		graphEdgesStubEngine: &graphEdgesStubEngine{
-			Engine: base,
-			outgoing: []*storage.Edge{
-				{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"},
-			},
-			cancel: cancel2,
-		},
-		nodes: map[storage.NodeID]*storage.Node{
-			"a": {ID: "a", Labels: []string{"Node"}},
-			"b": {ID: "b", Labels: []string{"Node"}},
-		},
+	path := func(ctx context.Context, source graphRead) error {
+		_, err := server.collectLatestPath(ctx, source, "a", "b", 10, filters)
+		return err
 	}
-	_, err = server.collectLatestPath(ctx2, engine, "a", "b", 10, newGraphFilterSet(nil, nil))
-	require.ErrorIs(t, err, context.Canceled)
+	for _, test := range []struct {
+		name       string
+		collect    func(context.Context, graphRead) error
+		cancelWhen string
+	}{
+		{"neighborhood during outgoing read", neighborhood, "outgoing"},
+		{"neighborhood during incoming read", neighborhood, "incoming"},
+		{"path at entry", path, "start"},
+		{"path during outgoing read", path, "outgoing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			edges := &graphEdgesStubEngine{
+				Engine:   base,
+				outgoing: []*storage.Edge{{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"}},
+			}
+			switch test.cancelWhen {
+			case "start":
+				cancel()
+			case "outgoing":
+				edges.cancel = cancel
+			case "incoming":
+				edges.cancelIn = cancel
+			}
+			engine := &graphNeighborhoodStubEngine{
+				graphEdgesStubEngine: edges,
+				nodes: map[storage.NodeID]*storage.Node{
+					"a": {ID: "a", Labels: []string{"Node"}},
+					"b": {ID: "b", Labels: []string{"Node"}},
+				},
+			}
+			require.ErrorIs(t, test.collect(ctx, directGraphRead(engine)), context.Canceled)
+		})
+	}
 }
 
 func TestCollectLatestInducedSubgraph_SkipsSelfAndOutsideEdges(t *testing.T) {
@@ -1339,7 +1345,7 @@ func TestCollectLatestInducedSubgraph_SkipsSelfAndOutsideEdges(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"}))
 	require.NoError(t, engine.CreateEdge(t.Context(), &storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "REL"}))
 
-	collection, err := server.collectLatestInducedSubgraph(context.Background(), engine, []string{"a", "b"}, newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a", "b"}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, collection.edges, "ab")
 	require.NotContains(t, collection.edges, "self")
@@ -1355,7 +1361,7 @@ func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 		Engine: base,
 		nodes:  map[storage.NodeID]*storage.Node{"a": {ID: "a", Labels: []string{"Node"}}},
 	}
-	_, err := server.collectSnapshotInducedSubgraph(context.Background(), visibilityOnly, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err := server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(visibilityOnly), []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 
 	errEngine := &graphSnapshotIndexedErrorEngine{
@@ -1367,7 +1373,7 @@ func TestCollectSnapshotInducedSubgraph_AdditionalErrorBranches(t *testing.T) {
 		},
 		err: fmt.Errorf("indexed edge scan failed"),
 	}
-	_, err = server.collectSnapshotInducedSubgraph(context.Background(), errEngine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	_, err = server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(errEngine), []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.EqualError(t, err, "indexed edge scan failed")
 }
 
@@ -1385,7 +1391,7 @@ func TestCollectSnapshotInducedSubgraph_EmptyResolvedNodesReturnsEarly(t *testin
 			{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"},
 		},
 	}
-	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet([]string{"Topic"}, nil))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a"}, storage.MVCCVersion{}, newGraphFilterSet([]string{"Topic"}, nil))
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes)
 	require.Empty(t, collection.edges)
@@ -1448,7 +1454,7 @@ func TestCollectLatestNeighborhood_TruncatesWhenNewNeighborExceedsLimit(t *testi
 			"b": {ID: "b", Labels: []string{"Node"}},
 		},
 	}
-	collection, err := server.collectLatestNeighborhood(context.Background(), engine, []string{"a"}, 1, 1, "both", newGraphFilterSet(nil, nil))
+	collection, err := server.collectLatestNeighborhood(context.Background(), directGraphRead(engine), []string{"a"}, 1, 1, "both", newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.True(t, collection.truncated)
 	require.Contains(t, collection.nodes, "a")
@@ -1470,7 +1476,7 @@ func TestCollectLatestPath_SkipsMissingOrFilteredNeighborBranches(t *testing.T) 
 		},
 	}
 
-	_, err := server.collectLatestPath(context.Background(), engine, "a", "b", 10, newGraphFilterSet([]string{"Target"}, nil))
+	_, err := server.collectLatestPath(context.Background(), directGraphRead(engine), "a", "b", 10, newGraphFilterSet([]string{"Target"}, nil))
 	require.ErrorIs(t, err, storage.ErrNotFound)
 }
 
@@ -1492,7 +1498,7 @@ func TestCollectSnapshotInducedSubgraph_SkipsEdgesOutsideResolvedSet(t *testing.
 		},
 	}
 
-	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), engine, []string{"a", "b"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
+	collection, err := server.collectSnapshotInducedSubgraph(context.Background(), directGraphRead(engine), []string{"a", "b"}, storage.MVCCVersion{}, newGraphFilterSet(nil, nil))
 	require.NoError(t, err)
 	require.Contains(t, collection.edges, "ab")
 	require.NotContains(t, collection.edges, "ac")
@@ -1557,29 +1563,4 @@ func TestGraphHandlers_ResolveAndCollectionErrorBranches(t *testing.T) {
 	nbRec := httptest.NewRecorder()
 	server.handleGraphNeighborhood(nbRec, nbReq)
 	require.Equal(t, http.StatusInternalServerError, nbRec.Code)
-}
-
-func TestCollectLatestNeighborhood_CanceledInsideEdgeLoop(t *testing.T) {
-	server := &Server{}
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	defer func() { _ = base.Close() }()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	engine := &graphNeighborhoodStubEngine{
-		graphEdgesStubEngine: &graphEdgesStubEngine{
-			Engine: base,
-			outgoing: []*storage.Edge{
-				{ID: "ab", StartNode: "a", EndNode: "b", Type: "REL"},
-			},
-			incoming: []*storage.Edge{},
-			cancelIn: cancel,
-		},
-		nodes: map[storage.NodeID]*storage.Node{
-			"a": {ID: "a", Labels: []string{"Node"}},
-			"b": {ID: "b", Labels: []string{"Node"}},
-		},
-	}
-
-	_, err := server.collectLatestNeighborhood(ctx, engine, []string{"a"}, 1, 10, "both", newGraphFilterSet(nil, nil))
-	require.ErrorIs(t, err, context.Canceled)
 }
