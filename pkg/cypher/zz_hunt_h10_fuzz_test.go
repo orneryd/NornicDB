@@ -114,8 +114,7 @@ func huntH10BoundedPanics(t *testing.T, limit time.Duration, input string, fn fu
 	if known != nil && known(panicked, stack) {
 		return
 	}
-	t.Fatalf("panic: %v (input %q)
-%s", panicked, input, stack)
+	t.Fatalf("panic: %v (input %q)\n%s", panicked, input, stack)
 }
 
 // L-H10-004: opensSubquery slicing q[-1:-1] (label_expression_rewrite.go:1510).
@@ -139,8 +138,7 @@ func huntH10ExecCount(known bool) {
 		return
 	}
 	_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("FuzzHuntH10Execute.known-%d", os.Getpid())),
-		[]byte(fmt.Sprintf("inputs=%d known_L-H10-004=%d
-", huntH10ExecInputs, huntH10ExecKnown)), 0o644)
+		[]byte(fmt.Sprintf("inputs=%d known_L-H10-004=%d\n", huntH10ExecInputs, huntH10ExecKnown)), 0o644)
 }
 
 func FuzzHuntH10NornicParse(f *testing.F) {
