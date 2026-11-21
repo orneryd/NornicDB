@@ -192,6 +192,33 @@ func (w *WriteBehindBuffer) commitsAfterBegin(ctx context.Context, begin *transa
 	return ctx.Err()
 }
 
+// visitPinnedCommits reads the acknowledged prefix in publication order. The
+// pinned active slice and retired generations remain immutable during the walk.
+func (presence *transactionBeginPresence) visitPinnedCommits(ctx context.Context, visit func(*bufferedCommit) error) error {
+	presence.mu.RLock()
+	defer presence.mu.RUnlock()
+	if presence.released {
+		return ErrStorageClosed
+	}
+	walk := func(commits []bufferedCommit) error {
+		for i := range commits {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := visit(&commits[i]); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	}
+	for i := len(presence.draining) - 1; i >= 0; i-- {
+		if err := walk(presence.draining[i].commits); err != nil {
+			return err
+		}
+	}
+	return walk(presence.commits)
+}
+
 // readBufferedBeginPresence projects physical existence at an immutable BEGIN
 // cut. It deliberately uses stored visibility: a hidden entity still existed
 // for missing-write conflict classification. Only presence facts escape this
