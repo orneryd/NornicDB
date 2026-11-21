@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/adminimport"
@@ -32,6 +33,8 @@ type verifyH2Case struct {
 	name  string
 	role  string // "fail" or "control"
 	setup []string
+	// params, when set, is passed to every setup statement (the parameter route).
+	params map[string]any
 }
 
 func verifyH2Store(t *testing.T, namespace string) (storage.Engine, storage.Engine) {
@@ -77,33 +80,38 @@ func verifyH2Emit(t *testing.T, fields map[string]any) {
 func TestVerifyH2CSVRoundTrip(t *testing.T) {
 	cases := []verifyH2Case{
 		// L-H2-001: ';' inside a string-list element.
-		{"L-H2-001", "node-list-element-with-semicolon", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['a;b', 'c']})"}},
-		{"L-H2-001", "rel-list-element-with-semicolon", "fail", []string{"CREATE (:Item {uid: 'n1'})-[:R {uid: 'e1', w: ['a;b']}]->(:Item {uid: 'n2'})"}},
-		{"L-H2-001", "control-list-without-semicolon", "control", []string{"CREATE (:Item {uid: 'n1', tags: ['a', 'c']})-[:R {uid: 'e1', w: ['ab']}]->(:Item {uid: 'n2'})"}},
+		{"L-H2-001", "node-list-element-with-semicolon", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['a;b', 'c']})"}, nil},
+		{"L-H2-001", "rel-list-element-with-semicolon", "fail", []string{"CREATE (:Item {uid: 'n1'})-[:R {uid: 'e1', w: ['a;b']}]->(:Item {uid: 'n2'})"}, nil},
+		{"L-H2-001", "control-list-without-semicolon", "control", []string{"CREATE (:Item {uid: 'n1', tags: ['a', 'c']})-[:R {uid: 'e1', w: ['ab']}]->(:Item {uid: 'n2'})"}, nil},
 		// L-H2-002: ';' inside a label.
-		{"L-H2-002", "label-with-semicolon", "fail", []string{"CREATE (:`A;B` {uid: 'n1'})"}},
-		{"L-H2-002", "control-label-with-comma", "control", []string{"CREATE (:`A,B` {uid: 'n1'})"}},
+		{"L-H2-002", "label-with-semicolon", "fail", []string{"CREATE (:`A;B` {uid: 'n1'})"}, nil},
+		{"L-H2-002", "control-label-with-comma", "control", []string{"CREATE (:`A,B` {uid: 'n1'})"}, nil},
 		// L-H2-003: one key, different types on different nodes.
-		{"L-H2-003", "same-key-int-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', code: 7}), (:Item {uid: 'n2', code: '007'})"}},
-		{"L-H2-003", "same-key-bool-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', flag: true}), (:Item {uid: 'n2', flag: 'yes'})"}},
-		{"L-H2-003", "same-key-string-and-list", "fail", []string{"CREATE (:Item {uid: 'n1', v: 'x'}), (:Item {uid: 'n2', v: ['x', 'y']})"}},
-		{"L-H2-003", "control-same-key-same-type", "control", []string{"CREATE (:Item {uid: 'n1', code: 7}), (:Item {uid: 'n2', code: 8})"}},
+		{"L-H2-003", "same-key-int-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', code: 7}), (:Item {uid: 'n2', code: '007'})"}, nil},
+		{"L-H2-003", "same-key-bool-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', flag: true}), (:Item {uid: 'n2', flag: 'yes'})"}, nil},
+		{"L-H2-003", "same-key-string-and-list", "fail", []string{"CREATE (:Item {uid: 'n1', v: 'x'}), (:Item {uid: 'n2', v: ['x', 'y']})"}, nil},
+		{"L-H2-003", "control-same-key-same-type", "control", []string{"CREATE (:Item {uid: 'n1', code: 7}), (:Item {uid: 'n2', code: 8})"}, nil},
 		// L-H2-004: empty lists and empty list elements.
-		{"L-H2-004", "list-with-empty-element", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['', 'x']})"}},
-		{"L-H2-004", "list-single-empty-element", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['']})"}},
-		{"L-H2-004", "empty-list", "fail", []string{"CREATE (:Item {uid: 'n1', tags: []})"}},
-		{"L-H2-004", "control-non-empty-list", "control", []string{"CREATE (:Item {uid: 'n1', tags: ['x']})"}},
+		{"L-H2-004", "list-with-empty-element", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['', 'x']})"}, nil},
+		{"L-H2-004", "list-single-empty-element", "fail", []string{"CREATE (:Item {uid: 'n1', tags: ['']})"}, nil},
+		{"L-H2-004", "empty-list", "fail", []string{"CREATE (:Item {uid: 'n1', tags: []})"}, nil},
+		{"L-H2-004", "control-non-empty-list", "control", []string{"CREATE (:Item {uid: 'n1', tags: ['x']})"}, nil},
 		// L-H2-005: datetime values.
-		{"L-H2-005", "datetime-utc", "fail", []string{"CREATE (:Item {uid: 'n1', at: datetime('2026-11-20T09:30:00.123456789Z')})"}},
-		{"L-H2-005", "datetime-offset", "fail", []string{"CREATE (:Item {uid: 'n1', at: datetime('2026-11-20T10:30:00.123456789+01:00')})"}},
-		{"L-H2-005", "control-string-property", "control", []string{"CREATE (:Item {uid: 'n1', at: '2026-11-20T09:30:00Z'})"}},
+		{"L-H2-005", "datetime-utc", "fail", []string{"CREATE (:Item {uid: 'n1', at: datetime('2026-11-20T09:30:00.123456789Z')})"}, nil},
+		{"L-H2-005", "datetime-offset", "fail", []string{"CREATE (:Item {uid: 'n1', at: datetime('2026-11-20T10:30:00.123456789+01:00')})"}, nil},
+		{"L-H2-005", "control-string-property", "control", []string{"CREATE (:Item {uid: 'n1', at: '2026-11-20T09:30:00Z'})"}, nil},
 		// L-H2-008: mixed-type lists.
-		{"L-H2-008", "list-int-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', xs: [1, 'a']})"}},
-		{"L-H2-008", "list-int-and-float", "fail", []string{"CREATE (:Item {uid: 'n1', xs: [1, 2.5]})"}},
-		{"L-H2-008", "control-int-list", "control", []string{"CREATE (:Item {uid: 'n1', xs: [1, 2]})"}},
+		{"L-H2-008", "list-int-and-string", "fail", []string{"CREATE (:Item {uid: 'n1', xs: [1, 'a']})"}, nil},
+		{"L-H2-008", "list-int-and-float", "fail", []string{"CREATE (:Item {uid: 'n1', xs: [1, 2.5]})"}, nil},
+		{"L-H2-008", "control-int-list", "control", []string{"CREATE (:Item {uid: 'n1', xs: [1, 2]})"}, nil},
 		// L-H2-009: property key with ':'.
-		{"L-H2-009", "key-with-colon", "fail", []string{"CREATE (:Item {uid: 'n1', `a:b`: 'v'})"}},
-		{"L-H2-009", "control-key-with-underscore", "control", []string{"CREATE (:Item {uid: 'n1', a_b: 'v'})"}},
+		{"L-H2-009", "key-with-colon", "fail", []string{"CREATE (:Item {uid: 'n1', `a:b`: 'v'})"}, nil},
+		{"L-H2-009", "control-key-with-underscore", "control", []string{"CREATE (:Item {uid: 'n1', a_b: 'v'})"}, nil},
+		// Submission 2: parameter route (premise of L-H2-008 and L-H2-005).
+		{"L-H2-008", "param-list-int-and-string-create", "fail", []string{"CREATE (:Item {uid: 'n1', xs: $xs})"}, map[string]any{"xs": []any{int64(1), "a"}}},
+		{"L-H2-008", "param-list-int-and-string-set", "fail", []string{"CREATE (n:Item {uid: 'n1'}) SET n.xs = $xs"}, map[string]any{"xs": []any{int64(1), "a"}}},
+		{"L-H2-008", "param-list-int-and-float-set", "fail", []string{"CREATE (n:Item {uid: 'n1'}) SET n.xs = $xs"}, map[string]any{"xs": []any{int64(1), 2.5}}},
+		{"L-H2-005", "datetime-go-time-param", "fail", []string{"CREATE (:Item {uid: 'n1', at: $at})"}, map[string]any{"at": time.Date(2026, 11, 20, 10, 30, 0, 123456789, time.FixedZone("", 3600))}},
 	}
 
 	for _, tc := range cases {
@@ -112,11 +120,11 @@ func TestVerifyH2CSVRoundTrip(t *testing.T) {
 			ctx := context.Background()
 			_, source := verifyH2Store(t, "source")
 			exec := cypher.NewStorageExecutor(source)
-			fields := map[string]any{"lead": tc.lead, "case": tc.name, "role": tc.role, "setup": tc.setup}
+			fields := map[string]any{"lead": tc.lead, "case": tc.name, "role": tc.role, "setup": tc.setup, "params": fmt.Sprintf("%#v", tc.params)}
 
 			// Premise: Cypher stores the shape.
 			for _, stmt := range tc.setup {
-				if _, err := exec.Execute(ctx, stmt, nil); err != nil {
+				if _, err := exec.Execute(ctx, stmt, tc.params); err != nil {
 					fields["premise"] = "cypher-refused"
 					fields["premise_error"] = err.Error()
 					verifyH2Emit(t, fields)
