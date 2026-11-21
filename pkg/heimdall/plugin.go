@@ -79,6 +79,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -1906,14 +1907,18 @@ func CallPreExecuteHooks(ctx *PreExecuteContext) PreExecuteResult {
 // Plugins that don't implement the hook are silently skipped.
 // This is fire-and-forget - runs asynchronously using a bounded worker pool.
 func CallPostExecuteHooks(ctx *PostExecuteContext) {
+	enqueuePostExecuteHooks(ctx, false)
+}
+
+func enqueuePostExecuteHooks(ctx *PostExecuteContext, trackCompletion bool) <-chan struct{} {
 	workCtx, release, accepted := GetSubsystemManager().acquireWork(ctx.Context)
 	if !accepted {
-		return
+		return nil
 	}
 	defer release()
 	if !HeimdallPluginsInitialized() {
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute hooks skipped: plugins not initialized (request=%s action=%s)", ctx.RequestID, ctx.Action)
-		return
+		return nil
 	}
 
 	plugins := ListHeimdallPlugins()
@@ -1924,6 +1929,7 @@ func CallPostExecuteHooks(ctx *PostExecuteContext) {
 		}
 	}
 	logHeimdallPrintf(slog.LevelInfo, "[Heimdall] PostExecute hooks: request=%s action=%s plugins=%d hooks=%d", ctx.RequestID, ctx.Action, len(plugins), hookCount)
+	var completion *postExecuteCompletion
 	for _, p := range plugins {
 		// Check if plugin implements PostExecuteHook
 		if hook, ok := p.Plugin.(PostExecuteHook); ok {
@@ -1931,13 +1937,38 @@ func CallPostExecuteHooks(ctx *PostExecuteContext) {
 			if !accepted {
 				continue
 			}
+			if trackCompletion {
+				if completion == nil {
+					completion = &postExecuteCompletion{done: make(chan struct{})}
+					// Reserve one count until all jobs have been submitted.
+					completion.remaining.Store(1)
+				}
+				completion.remaining.Add(1)
+			}
 			postExecutePool().enqueue(postExecuteJob{
 				pluginName: p.Plugin.Name(),
 				hook:       hook,
 				ctx:        ctx.WithContext(callbackCtx),
 				release:    release,
+				completion: completion,
 			})
 		}
+	}
+	if completion == nil {
+		return nil
+	}
+	completion.finish()
+	return completion.done
+}
+
+type postExecuteCompletion struct {
+	remaining atomic.Int32
+	done      chan struct{}
+}
+
+func (c *postExecuteCompletion) finish() {
+	if c.remaining.Add(-1) == 0 {
+		close(c.done)
 	}
 }
 
@@ -1946,6 +1977,16 @@ type postExecuteJob struct {
 	pluginName string
 	hook       PostExecuteHook
 	ctx        *PostExecuteContext
+	completion *postExecuteCompletion
+}
+
+func (j postExecuteJob) finish() {
+	if j.release != nil {
+		j.release()
+	}
+	if j.completion != nil {
+		j.completion.finish()
+	}
 }
 
 type postExecuteWorkerPool struct {
@@ -1975,9 +2016,7 @@ func (p *postExecuteWorkerPool) start() {
 		go func() {
 			for job := range p.jobs {
 				func() {
-					if job.release != nil {
-						defer job.release()
-					}
+					defer job.finish()
 					defer func() {
 						if r := recover(); r != nil {
 							logHeimdallPrintf(slog.LevelError, "[Heimdall] PostExecute panic in %s: %v", job.pluginName, r)
@@ -1997,9 +2036,7 @@ func (p *postExecuteWorkerPool) enqueue(job postExecuteJob) {
 	select {
 	case p.jobs <- job:
 	default:
-		if job.release != nil {
-			job.release()
-		}
+		job.finish()
 		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] PostExecute queue full, dropping job from %s", job.pluginName)
 	}
 }

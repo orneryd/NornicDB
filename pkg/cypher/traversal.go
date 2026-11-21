@@ -8,6 +8,7 @@ import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -445,11 +446,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// answered. An empty answer means no path starts anywhere; scanning the
 	// start label again would only find the same nothing.
 	startDecided := false
-	// A bound end node with an unbound start is where a non-chained pattern
-	// starts (traverseFromEndSeeds): searching the start side first, for
+	// A bound end with an unbound start is the traversal seed when the
+	// pattern can run backwards (traverseFromEndSeeds): searching the start side first, for
 	// instance for every node whose property the WHERE requires to be non-null,
 	// only finds a population the bound end reaches by its own relationships.
-	endBound := len(seedNodes) == 0 && len(endSeedNodes) > 0 && !matches.IsChained
+	endBound := len(seedNodes) == 0 && len(endSeedNodes) > 0 && matches.canSeedEnd()
 	// Inline preparation without WHERE must not hydrate a common posting
 	// merely to discard it after choosing the opposite endpoint. Existing
 	// posting counts can prove a zero/single candidate seek before reading it.
@@ -866,7 +867,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 	return false
 }
 
-// traverseFromEndSeeds walks a non-chained pattern backwards from nodes
+// traverseFromEndSeeds walks a pattern backwards from nodes
 // already bound to its end variable, when no start-side seed exists. Rather
 // than expanding the pattern over every relationship in the store and joining
 // the bound value afterward (O(|E|)), it reverses the pattern, traverses from
@@ -877,7 +878,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 // properties and node visibility the end pattern requires are the ones a
 // start-side scan applies, including for a seed an index seek returned.
 func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
-	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
+	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 {
 		return nil, false
 	}
 	reversed := reverseTraversalMatch(matches)
@@ -885,9 +886,15 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 		return nil, false
 	}
 	paths = make([]PathResult, 0, util.SafePreallocCap(len(endSeedNodes)))
-	for _, endNode := range endSeedNodes {
-		for _, reversedPath := range e.traverseFromNode(ctx, endNode, reversed) {
-			paths = append(paths, reversePathResult(reversedPath))
+	if reversed.IsChained {
+		for _, path := range e.traverseChainedGraph(ctx, reversed, endSeedNodes) {
+			paths = append(paths, reversePathResult(path))
+		}
+	} else {
+		for _, endNode := range endSeedNodes {
+			for _, path := range e.traverseFromNode(ctx, endNode, reversed) {
+				paths = append(paths, reversePathResult(path))
+			}
 		}
 	}
 	if whereClause != "" {
@@ -896,26 +903,51 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 	return paths, true
 }
 
+// canSeedEnd retains the single-segment contract and admits fixed chains
+// whose segment topology can be reversed without changing their quantifiers.
+func (match *TraversalMatch) canSeedEnd() bool {
+	if match == nil {
+		return false
+	}
+	if !match.IsChained {
+		return true
+	}
+	if len(match.Segments) < 2 {
+		return false
+	}
+	for _, segment := range match.Segments {
+		relationship := segment.Relationship
+		if relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
+			return false
+		}
+	}
+	return true
+}
+
 func reverseTraversalMatch(match *TraversalMatch) *TraversalMatch {
-	if match == nil || match.IsChained {
+	if !match.canSeedEnd() {
 		return nil
 	}
 	reversed := *match
-	reversed.StartNode = match.EndNode
-	reversed.EndNode = match.StartNode
-	reversed.Relationship = match.Relationship
-	// The read tail's endpoint projection names the original end node's
-	// properties; the reversed walk loads the original start node as its end,
-	// so it loads complete endpoints.
+	reversed.StartNode, reversed.EndNode = match.EndNode, match.StartNode
+	// The tail's endpoint projection names the original end. A reversed
+	// walk loads the original start as its end and needs complete entities.
 	reversed.endpointProperties = nil
-	switch match.Relationship.Direction {
-	case "outgoing":
-		reversed.Relationship.Direction = "incoming"
-	case "incoming":
-		reversed.Relationship.Direction = "outgoing"
-	default:
-		reversed.Relationship.Direction = match.Relationship.Direction
+	if !match.IsChained {
+		reversed.Relationship.Direction = reverseDirection(match.Relationship.Direction)
+		return &reversed
 	}
+
+	reversed.Segments = slices.Clone(match.Segments)
+	slices.Reverse(reversed.Segments)
+	for i := range reversed.Segments {
+		segment := &reversed.Segments[i]
+		segment.FromNode, segment.ToNode = segment.ToNode, segment.FromNode
+		segment.Relationship.Direction = reverseDirection(segment.Relationship.Direction)
+	}
+	reversed.Relationship = reversed.Segments[0].Relationship
+	reversed.IntermediateNodes = slices.Clone(match.IntermediateNodes)
+	slices.Reverse(reversed.IntermediateNodes)
 	return &reversed
 }
 
@@ -928,7 +960,9 @@ func reversePathResult(path PathResult) PathResult {
 	for i := range path.Relationships {
 		reversedEdges[len(path.Relationships)-1-i] = path.Relationships[i]
 	}
-	return PathResult{Nodes: reversedNodes, Relationships: reversedEdges, Length: path.Length}
+	reversedLengths := slices.Clone(path.SegmentLengths)
+	slices.Reverse(reversedLengths)
+	return PathResult{Nodes: reversedNodes, Relationships: reversedEdges, Length: path.Length, SegmentLengths: reversedLengths}
 }
 
 func topKSeedLimit(limit int) int {

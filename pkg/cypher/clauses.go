@@ -2326,19 +2326,6 @@ func shouldReplaceIdentifierToken(input string, tokenStart int, tokenEnd int) bo
 }
 
 func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {
-	if m, ok := value.(map[string]interface{}); ok {
-		return storage.PublicRemoteMap(m), true
-	}
-	if m, ok := value.(map[interface{}]interface{}); ok {
-		out := make(map[string]interface{}, len(m))
-		for k, v := range m {
-			ks, ok := k.(string)
-			if !ok {
-				return nil, false
-			}
-			out[ks] = v
-		}
-		return storage.PublicRemoteMap(out), true
-	}
-	return nil, false
+	fields, ok := valueconvert.StringKeyedMap(value)
+	return storage.PublicRemoteMap(fields), ok
 }

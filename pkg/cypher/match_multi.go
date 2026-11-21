@@ -188,6 +188,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				} else {
 					paths = e.traverseFromNode(rowCtx, boundStartNode, matches)
 				}
+			} else if boundEndNode != nil && matches.IsChained && matches.canSeedEnd() {
+				paths, _ = e.traverseFromEndSeeds(rowCtx, matches, nil, []*storage.Node{boundEndNode}, "")
 			} else {
 				paths = e.traverseGraph(rowCtx, matches)
 			}
