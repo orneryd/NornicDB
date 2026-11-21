@@ -182,19 +182,23 @@ func TestUnionNarrowRequired(t *testing.T) {
 }
 
 func BenchmarkUnionNarrowNoUnion(b *testing.B) {
-	for _, item := range []struct{ name, query string }{
-		{"return", "RETURN 'row' AS value"},
-		{"with", "WITH 'row' AS value RETURN value"},
-		{"call", "WITH 'row' AS value CALL (value) { RETURN value AS tag } RETURN value, tag"},
-		{"optional", "WITH 'row' AS value OPTIONAL CALL (value) { RETURN value AS tag } RETURN value, tag"},
-		{"optional_empty", "WITH 'row' AS value OPTIONAL CALL (value) { UNWIND [] AS hidden RETURN hidden AS tag } RETURN value, tag"},
-		{"unit_empty", "UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *"},
+	for _, item := range []struct {
+		name, query string
+		rows        int
+	}{
+		{"return", "RETURN 'row' AS value", 1},
+		{"with", "WITH 'row' AS value RETURN value", 1},
+		{"call", "WITH 'row' AS value CALL (value) { RETURN value AS tag } RETURN value, tag", 1},
+		{"optional", "WITH 'row' AS value OPTIONAL CALL (value) { RETURN value AS tag } RETURN value, tag", 1},
+		{"optional_empty", "WITH 'row' AS value OPTIONAL CALL (value) { UNWIND [] AS hidden RETURN hidden AS tag } RETURN value, tag", 1},
+		{"unit_empty", "UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } FINISH } RETURN *", 0},
 	} {
 		b.Run(item.name, func(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
 			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
-			_, err := exec.Execute(context.Background(), item.query, nil)
+			result, err := exec.Execute(context.Background(), item.query, nil)
 			require.NoError(b, err)
+			require.Len(b, result.Rows, item.rows)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

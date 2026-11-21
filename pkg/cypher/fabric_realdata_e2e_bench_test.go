@@ -16,16 +16,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type staticBenchmarkEmbedder struct {
-	vec []float32
-}
-
-func (s staticBenchmarkEmbedder) Embed(context.Context, string) ([]float32, error) {
-	out := make([]float32, len(s.vec))
-	copy(out, s.vec)
-	return out, nil
-}
-
 const realDataUnionQueryTemplate = `
 MATCH (p:SystemPrompt)
 WITH p, %d AS __cache_bust
@@ -280,7 +270,7 @@ func BenchmarkRealData_LocalCorrelatedJoin_CacheMiss(b *testing.B) {
 func BenchmarkRealData_VectorUnionPrompt_CacheMiss(b *testing.B) {
 	exec, cleanup := openRealDataBenchmarkExecutor(b, "caremark_translation")
 	defer cleanup()
-	exec.SetEmbedder(staticBenchmarkEmbedder{vec: []float32{1.0, 0.0, 0.0}})
+	exec.SetEmbedder(fixedBenchmarkQueryEmbedder{vec: []float32{1.0, 0.0, 0.0}})
 
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
