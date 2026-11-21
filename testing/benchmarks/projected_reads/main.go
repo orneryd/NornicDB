@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/testing/benchmarks/projected_reads/corpus"
 )
 
@@ -124,7 +124,7 @@ func run() error {
 		}
 		expected := make(map[string]string, len(records))
 		for _, record := range records {
-			encoded, err := json.Marshal([]any{record.ID, record.Properties["path"], record.Properties["body"], record.Properties["noise"], record.Properties["metrics"], record.Properties["status"]})
+			encoded, err := convert.PropertyJSON.Marshal([]any{record.ID, record.Properties["path"], record.Properties["body"], record.Properties["noise"], record.Properties["metrics"], record.Properties["status"]})
 			if err != nil {
 				return err
 			}
@@ -138,7 +138,7 @@ func run() error {
 			if !ok {
 				return fmt.Errorf("non-string document key")
 			}
-			encoded, err := json.Marshal(row)
+			encoded, err := convert.PropertyJSON.Marshal(row)
 			if err != nil {
 				return err
 			}
@@ -251,7 +251,7 @@ func run() error {
 					}
 					// Result order is not a Cypher guarantee without ORDER BY.
 					sort.Slice(rows, func(a, b int) bool { return fmt.Sprint(rows[a][0]) < fmt.Sprint(rows[b][0]) })
-					encoded, e := json.Marshal(rows)
+					encoded, e := convert.PropertyJSON.Marshal(rows)
 					if e != nil {
 						failures <- e
 						return
@@ -291,7 +291,7 @@ func run() error {
 		fmt.Println(kind, "queries", *count, "p95 ms", float64(samples[len(samples)*95/100])/1e6, "RSS KiB", peak)
 	}
 	result := map[string]any{"corpus_sha256": digest, "documents": len(records), "northwind_nodes": 97440, "northwind_relationships": 312050, "query_cache_enabled": false, "server_start_rss_kib": startRSS, "phases": phases, "sampling_interval_ms": 10}
-	data, err := json.MarshalIndent(result, "", "  ")
+	data, err := convert.PropertyJSON.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
 	}
