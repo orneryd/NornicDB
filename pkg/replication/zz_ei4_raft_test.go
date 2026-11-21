@@ -182,3 +182,10 @@ func TestEI4RaftRaceControlOrdinaryTransactionWithoutRefusal(t *testing.T) {
 	}
 }
 
+func TestCloseoutRaftPairShutdown(t *testing.T) {
+	for _, timing := range []ei4ctlTimings{ei4ctlH2, ei4ctlH3} {
+		t.Run(timing.name, func(t *testing.T) {
+			ei4ctlStartRaftPair(t, timing)
+		})
+	}
+}

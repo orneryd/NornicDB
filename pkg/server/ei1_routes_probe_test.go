@@ -25,8 +25,8 @@ func TestEI1RoutesDottedConstraint(t *testing.T) {
 		}
 		_, err = run("CREATE (:EIDot {`external.id`:'dup'})", nil)
 		t.Logf("second create err=%v", err)
-		if err == nil {
-			t.Errorf("L500 EXISTS: duplicate committed")
+		if err == nil || !strings.Contains(err.Error(), "ConstraintValidationFailed") {
+			t.Errorf("expected ConstraintValidationFailed, got %v", err)
 		}
 		rows, _ = run("MATCH (n:EIDot) RETURN count(n) AS c", nil)
 		t.Logf("count: %s", ei1Rows(rows))
