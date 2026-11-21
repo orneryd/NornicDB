@@ -143,7 +143,7 @@ type subqueryScope struct {
 // bodies conclude as their forms do. It reads the text, so an old-style body
 // (whose walk errors NornicDB's implicit imports keep) is held to it too;
 // EXPLAIN reads it as well. A statement ending with a CALL that returns
-// columns stays NornicDB's extension.
+// columns is permitted only by the embedded read-only extension.
 func validateQueryBodyComposition(ctx context.Context, cypher string) error {
 	return forEachQueryBody(ctx, cypher, queryBodyContainerKeywords[:], func(container string, start, end int) error {
 		if container != "CALL" {
@@ -158,15 +158,19 @@ func validateQueryBodyComposition(ctx context.Context, cypher string) error {
 		}
 		for _, branch := range readQueryBody(ctx, cypher, start, end).branches {
 			if keyword := unconcludedClause(ctx, cypher, branch); keyword != "" {
-				return &classifiedCypherError{
-					cause:  localizedError(localization.CypherMatchingQueryCannotConclude(keyword), nil),
-					code:   "Neo.ClientError.Statement.SyntaxError",
-					detail: "InvalidClauseComposition",
-				}
+				return queryCannotConcludeError(keyword)
 			}
 		}
 		return nil
 	})
+}
+
+func queryCannotConcludeError(keyword string) error {
+	return &classifiedCypherError{
+		cause:  localizedError(localization.CypherMatchingQueryCannotConclude(keyword), nil),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "InvalidClauseComposition",
+	}
 }
 
 // expressionBodyUpdatesMessages is the error for an update in each

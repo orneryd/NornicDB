@@ -61,6 +61,7 @@ func NewDatabaseScopedExecutor(options DatabaseScopedExecutorOptions) (*StorageE
 	} else {
 		executor = NewStorageExecutor(engine)
 	}
+	executor.protocolConclusion = true
 	if options.StatementCacheManager != nil {
 		if err := executor.UseDatabaseStatementCaches(options.StatementCacheManager, options.Name); err != nil {
 			return nil, err

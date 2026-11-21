@@ -94,6 +94,16 @@ func (e *StorageExecutor) admitStatement(ctx context.Context, source string, fab
 	if !query.ChildRule(cypherantlr.CypherParserRULE_regularQuery).Valid() && !query.ChildRule(cypherantlr.CypherParserRULE_standaloneCall).Valid() {
 		return boundScopeAdmission{command: true}, nil
 	}
+	// Protocol clients use Neo4j's conclusion rule. The embedded executor
+	// retains its read-only extension, but an incomplete update may never
+	// reach execution and report a schema error after writing.
+	if strings.ContainsRune(source, '}') && (e.protocolConclusion || syntax.Effects().Writes()) {
+		for _, branch := range queryBodyFromSyntax(query).branches {
+			if unconcludedClause(ctx, source, branch) == "CALL" {
+				return boundScopeAdmission{}, queryCannotConcludeError("CALL")
+			}
+		}
+	}
 	incoming := make([]string, 0, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
 	for name := range e.fabricRecordBindings {
 		incoming = append(incoming, name)
