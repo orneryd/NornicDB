@@ -624,7 +624,7 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 	leftNumber, leftIsNumber := strictNumericValue(left)
 	rightNumber, rightIsNumber := strictNumericValue(right)
 	if leftIsNumber || rightIsNumber {
-		if !leftIsNumber || !rightIsNumber {
+		if !leftIsNumber || !rightIsNumber || math.IsNaN(leftNumber) || math.IsNaN(rightNumber) {
 			return 0, false
 		}
 		switch {
