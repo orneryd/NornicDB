@@ -6,7 +6,9 @@ import (
 	"context"
 	"reflect"
 
+	apoccypher "github.com/orneryd/nornicdb/apoc/cypher"
 	apocexport "github.com/orneryd/nornicdb/apoc/export"
+	apocimport "github.com/orneryd/nornicdb/apoc/import"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
@@ -61,6 +63,16 @@ var apocArgumentPlans = map[reflect.Type][]argumentBinding{
 	reflect.TypeOf((func(context.Context, []*apocexport.Node, []*apocexport.Relationship, string) error)(nil)): {declaredArgument, declaredArgument, declaredArgument, declaredArgument},
 	reflect.TypeOf((func(context.Context, []*apocexport.Node, string) error)(nil)):                             {declaredArgument, declaredArgument, declaredArgument},
 	reflect.TypeOf((func(context.Context, string, string) error)(nil)):                                         {declaredArgument, declaredArgument, declaredArgument},
+	// The import readers and the dynamic-Cypher runners registered by apoc/apoc.go
+	// declare one shape per family: the source text or path first, then the
+	// caller's parameter map. Both arguments arrive bound to their declared Go
+	// types -- the source stays text, so root APOC keeps the strict text rule the
+	// other string declarations use, and the parameters stay a string-keyed map,
+	// so no positional value can stand in for it. Each handler owns its own
+	// result: the import readers report an import summary and the Cypher runners
+	// a result per statement, and their errors reach the caller unchanged.
+	reflect.TypeOf((func(string, map[string]interface{}) (*apocimport.ImportResult, error))(nil)): {stringArgument, declaredArgument},
+	reflect.TypeOf((func(string, map[string]interface{}) ([]*apoccypher.Result, error))(nil)):     {stringArgument, declaredArgument},
 }
 
 var cypherArgumentPlans = map[reflect.Type][]argumentBinding{
