@@ -26,29 +26,47 @@ func TestMVCCBootstrapTime_Priority(t *testing.T) {
 	require.Equal(t, time.UTC, got.Location())
 }
 
-func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := newTestMemoryEngine(t)
-
-	id := NodeID("test:fresh-1")
-	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		v, err := be.allocateMVCCVersion(txn, "test", time.Now().UTC())
-		require.NoError(t, err)
-		// Allocate a numID via the public head-key resolver so the head
-		// write below has a numeric mapping to point at.
-		if _, err := be.mvccNodeHeadKeyString(txn, id); err != nil {
-			return err
-		}
-		require.NoError(t, be.writeNodeMVCCHeadForFreshCreateInTxn(txn, id, v))
-
-		head, err := be.loadNodeMVCCHeadInTxn(txn, id)
-		require.NoError(t, err)
-		require.Equal(t, 0, head.Version.Compare(v),
-			"persisted Version must equal the allocated version")
-		require.Equal(t, 0, head.FloorVersion.Compare(v),
-			"FloorVersion must equal Version on a fresh-create write")
-		require.False(t, head.Tombstoned)
-		return nil
-	}))
+func TestWriteMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
+	cases := []struct {
+		name         string
+		writeAndRead func(*MemoryEngine, *badger.Txn, MVCCVersion) (MVCCHead, error)
+	}{
+		{"node", func(be *MemoryEngine, txn *badger.Txn, version MVCCVersion) (MVCCHead, error) {
+			id := NodeID("test:fresh-node")
+			if _, err := be.mvccNodeHeadKeyString(txn, id); err != nil {
+				return MVCCHead{}, err
+			}
+			if err := be.writeNodeMVCCHeadForFreshCreateInTxn(txn, id, version); err != nil {
+				return MVCCHead{}, err
+			}
+			return be.loadNodeMVCCHeadInTxn(txn, id)
+		}},
+		{"edge", func(be *MemoryEngine, txn *badger.Txn, version MVCCVersion) (MVCCHead, error) {
+			id := EdgeID("test:fresh-edge")
+			if _, err := be.mvccEdgeHeadKeyString(txn, id); err != nil {
+				return MVCCHead{}, err
+			}
+			if err := be.writeEdgeMVCCHeadForFreshCreateInTxn(txn, id, version); err != nil {
+				return MVCCHead{}, err
+			}
+			return be.loadEdgeMVCCHeadInTxn(txn, id)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			be := newTestMemoryEngine(t)
+			require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
+				version, err := be.allocateMVCCVersion(t.Context(), txn, "test", time.Now().UTC())
+				require.NoError(t, err)
+				head, err := tc.writeAndRead(be, txn, version)
+				require.NoError(t, err)
+				require.Equal(t, 0, head.Version.Compare(version))
+				require.Equal(t, 0, head.FloorVersion.Compare(version))
+				require.False(t, head.Tombstoned)
+				return nil
+			}))
+		})
+	}
 }
 
 func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t *testing.T) {
@@ -60,44 +78,17 @@ func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t
 	base := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	state.highWaterNanos.Store(base.UnixNano())
 
-	var version MVCCVersion
-	err = be.db.Update(func(txn *badger.Txn) error {
-		var allocErr error
-		version, allocErr = be.allocateMVCCVersion(txn, "test", base.Add(-time.Hour))
-		return allocErr
-	})
-	require.NoError(t, err)
+	version := allocateMVCCVersionInTestUpdate(t, be, base.Add(-time.Hour))
 	require.Equal(t, maxMVCCCommitSequence, version.CommitSequence)
 	require.Equal(t, base.Add(time.Nanosecond), version.CommitTimestamp,
 		"saturated allocator should fall back to a strictly increasing high-water timestamp")
 	require.Equal(t, maxMVCCCommitSequence, state.seq.Load(), "allocator must not wrap back to zero on exhaustion")
 
-	// Per-namespace fallback must not rewrite the namespace's persisted
-	// sequence key (the saturation branch only bumps the high-water mark).
+	// Per-namespace fallback must reserve the maximum sequence before
+	// using the timestamp-only fallback.
 	persistedSeq, loadErr := be.loadPersistedNamespaceSequence("test")
 	require.NoError(t, loadErr)
-	require.Equal(t, uint64(0), persistedSeq, "timestamp-only fallback must not rewrite the persisted sequence key")
-}
-
-func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := newTestMemoryEngine(t)
-
-	id := EdgeID("test:fresh-edge-1")
-	require.NoError(t, be.db.Update(func(txn *badger.Txn) error {
-		v, err := be.allocateMVCCVersion(txn, "test", time.Now().UTC())
-		require.NoError(t, err)
-		if _, err := be.mvccEdgeHeadKeyString(txn, id); err != nil {
-			return err
-		}
-		require.NoError(t, be.writeEdgeMVCCHeadForFreshCreateInTxn(txn, id, v))
-
-		head, err := be.loadEdgeMVCCHeadInTxn(txn, id)
-		require.NoError(t, err)
-		require.Equal(t, 0, head.Version.Compare(v))
-		require.Equal(t, 0, head.FloorVersion.Compare(v))
-		require.False(t, head.Tombstoned)
-		return nil
-	}))
+	require.Equal(t, maxMVCCCommitSequence, persistedSeq)
 }
 
 // bootstrapNodeMVCCInUpdateTxn runs the node bootstrap pass in its own update

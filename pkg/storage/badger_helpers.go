@@ -24,14 +24,14 @@ func edgeKey(id EdgeID) []byte {
 }
 
 // mvccSequenceKey returns the legacy engine-global MVCC sequence key.
-// New commits write per-namespace keys via mvccNamespaceSequenceKey; the
+// Sequence reservations use per-namespace keys; the
 // legacy key is read once on open as a migration seed.
 func mvccSequenceKey() []byte {
 	return []byte{prefixMVCCMeta, 0x01}
 }
 
 // mvccNamespaceSequenceKey returns the on-disk key for one namespace's
-// committed MVCC sequence. The namespace is appended as a length-bounded
+// reserved MVCC sequence ceiling. The namespace is appended as a length-bounded
 // trailing segment so distinct namespaces hash to distinct keys.
 func mvccNamespaceSequenceKey(namespace string) []byte {
 	out := []byte{prefixMVCCMeta, prefixMVCCMetaNamespaceSeq}

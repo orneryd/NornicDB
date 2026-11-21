@@ -380,7 +380,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			return err
 		}
 		defer tx.endChangeCaptureLocked(false)
-		version, err = tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now())
+		version, err = tx.engine.allocateMVCCVersion(ctx, tx.badgerTx, tx.namespace, time.Now())
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return fmt.Errorf("allocating mvcc commit version: %w", err)
@@ -607,14 +607,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	}
 	tx.releaseEdgeTypeCountLockLocked()
 
-	// Persist the namespace's MVCC sequence and the staged ID
-	// counters in separate Badger transactions so those high-frequency
-	// shared keys do not participate in the user transaction's
-	// conflict-detection set. Concurrent commits in the same namespace
-	// must not race on these writes — see allocateMVCCVersion's doc.
-	if tx.namespace != "" && !tx.CommitVersion.IsZero() {
-		tx.engine.persistMVCCSequence(tx.namespace)
-	}
+	// Keep ID counters outside the user transaction conflict set.
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
 	// Cache, index, unique-value and logical revision publication completed in

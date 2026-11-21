@@ -28,7 +28,7 @@ func TestPerNamespaceMVCC_IndependentSequences(t *testing.T) {
 	// of unrelated tenant_b activity.
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		for i := 0; i < 3; i++ {
-			_, err := engine.allocateMVCCVersion(txn, "tenant_a", time.Now())
+			_, err := engine.allocateMVCCVersion(t.Context(), txn, "tenant_a", time.Now())
 			if err != nil {
 				return err
 			}
@@ -47,7 +47,7 @@ func TestPerNamespaceMVCC_IndependentSequences(t *testing.T) {
 
 	// One commit in tenant_b moves only tenant_b's counter.
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
-		_, err := engine.allocateMVCCVersion(txn, "tenant_b", time.Now())
+		_, err := engine.allocateMVCCVersion(t.Context(), txn, "tenant_b", time.Now())
 		return err
 	}))
 	require.Equal(t, uint64(1), stateB.seq.Load(), "tenant_b sequence after 1 commit must be 1")
@@ -70,7 +70,7 @@ func TestPerNamespaceMVCC_ConcurrentTenantsDoNotInterleave(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < allocsPerTenant; i++ {
 				err := engine.db.Update(func(txn *badger.Txn) error {
-					_, err := engine.allocateMVCCVersion(txn, ns, time.Now())
+					_, err := engine.allocateMVCCVersion(t.Context(), txn, ns, time.Now())
 					return err
 				})
 				require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestPerNamespaceMVCC_SaturationFallbackIsPerNamespace(t *testing.T) {
 	var saturated MVCCVersion
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		var allocErr error
-		saturated, allocErr = engine.allocateMVCCVersion(txn, "tenant_a", base.Add(-time.Hour))
+		saturated, allocErr = engine.allocateMVCCVersion(t.Context(), txn, "tenant_a", base.Add(-time.Hour))
 		return allocErr
 	}))
 	require.Equal(t, maxMVCCCommitSequence, saturated.CommitSequence,
@@ -170,12 +170,12 @@ func TestPerNamespaceMVCC_SaturationFallbackIsPerNamespace(t *testing.T) {
 	require.Equal(t, base.Add(time.Nanosecond), saturated.CommitTimestamp,
 		"saturated tenant_a must advance the high-water by 1ns rather than wrap")
 
-	// The persisted per-namespace key must NOT have been rewritten
-	// (saturation path skips persistence).
+	// The timestamp fallback must first make the maximum sequence durable
+	// if it was not already reserved.
 	persistedA, err := engine.loadPersistedNamespaceSequence("tenant_a")
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), persistedA,
-		"saturated allocator must not rewrite tenant_a's persisted sequence")
+	require.Equal(t, maxMVCCCommitSequence, persistedA,
+		"saturated allocator must durably reserve the maximum sequence")
 
 	// tenant_b still uses sequence ordering: its first commit increments
 	// from 0 to 1 (or higher if seeded by the legacy global key — for a
@@ -183,7 +183,7 @@ func TestPerNamespaceMVCC_SaturationFallbackIsPerNamespace(t *testing.T) {
 	var fresh MVCCVersion
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		var allocErr error
-		fresh, allocErr = engine.allocateMVCCVersion(txn, "tenant_b", time.Now())
+		fresh, allocErr = engine.allocateMVCCVersion(t.Context(), txn, "tenant_b", time.Now())
 		return allocErr
 	}))
 	require.Equal(t, uint64(1), fresh.CommitSequence,
@@ -212,7 +212,7 @@ func TestPerNamespaceMVCC_LegacyGlobalCounterSeedsNewNamespace(t *testing.T) {
 	var v MVCCVersion
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
 		var allocErr error
-		v, allocErr = engine.allocateMVCCVersion(txn, "fresh_namespace", time.Now())
+		v, allocErr = engine.allocateMVCCVersion(t.Context(), txn, "fresh_namespace", time.Now())
 		return allocErr
 	}))
 	require.Equal(t, legacy+1, v.CommitSequence,
@@ -232,9 +232,13 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 
 	persistedBeforeClose, err := engine.loadPersistedNamespaceSequence("nornic")
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), persistedBeforeClose,
-		"non-transactional writes do not persist the namespace sequence, so reopen must recover from MVCC heads")
+	require.Equal(t, uint64(mvccSequenceBlockSize), persistedBeforeClose,
+		"direct writes reserve a durable block too")
 
+	// Simulate a legacy direct write whose head was durable without a key.
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete(mvccNamespaceSequenceKey("nornic"))
+	}))
 	require.NoError(t, engine.Close())
 
 	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -245,14 +249,14 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 
 	persistedAfterEnsure, err := reopened.loadPersistedNamespaceSequence("nornic")
 	require.NoError(t, err)
-	require.Equal(t, uint64(1), persistedAfterEnsure,
-		"EnsureNamespaceMVCC must persist the recovered namespace floor so later restarts do not fall back to seq=0")
+	require.Equal(t, uint64(0), persistedAfterEnsure,
+		"opening a namespace does not reserve another block")
 
 	tx, err := reopened.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
 	require.Equal(t, uint64(1), tx.readTS.CommitSequence,
-		"transaction snapshot must bind to the recovered namespace sequence instead of seq=0")
+		"transaction snapshot must bind to the recovered legacy head")
 
 	node, err := tx.GetNode(t.Context(), NodeID("nornic:node-1"))
 	require.NoError(t, err)
