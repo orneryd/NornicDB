@@ -85,8 +85,7 @@ func closeoutL3RCRunWalkers(t *testing.T, code, label string) closeoutL3RCUIResu
 		}
 	}
 	if runErr != nil {
-		t.Logf("CLOSEOUT_L3_RC_UI stripped code:
-%s", stripped)
+		t.Logf("CLOSEOUT_L3_RC_UI stripped code:\n%s", stripped)
 		version, _ := exec.Command(node, "--version").CombinedOutput()
 		t.Fatalf("PRECONDITION: node %s could not run the extracted TypeScript: %v", strings.TrimSpace(string(version)), runErr)
 	}
