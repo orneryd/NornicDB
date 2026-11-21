@@ -1,0 +1,4 @@
+- [x] Reproduce the diagnostic race through public Execute on the release branch.
+- [x] Capture the rejection count under the admission mutex.
+- [ ] Verify public admission with the race detector and check rejection, release, and unlimited controls.
+- [ ] Complete release verification and duplicate review.
