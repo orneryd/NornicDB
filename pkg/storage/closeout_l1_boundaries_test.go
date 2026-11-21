@@ -64,10 +64,10 @@ func TestCloseoutStandardJournalRejectsOversizedAppendForms(t *testing.T) {
 			case "batch", "batch_second":
 				batch := wal.NewBatch()
 				if form == "batch_second" {
-					require.NoError(t, batch.append(OpCheckpoint, map[string]any{"control": "batch prefix"}))
+					require.NoError(t, batch.append(OpCheckpoint, map[string]any{"control": "batch prefix"}, ""))
 					expected++
 				}
-				require.NoError(t, batch.append(OpEntityCommit, large))
+				require.NoError(t, batch.append(OpEntityCommit, large, "test"))
 				_, _, err = batch.CommitWithSeq()
 			case "buffered":
 				data := make([]byte, 17<<20)
