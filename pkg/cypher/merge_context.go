@@ -662,7 +662,7 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 // several SET clauses (a SET b). It returns the number of properties written
 // by Neo4j's properties_set rule (setWrites), or an error for a value Cypher
 // cannot store (replacing with a non-map, a map or entity as a property value).
-func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, observe ...*setEntityState) (int, error) {
 	if edge == nil || varName == "" {
 		return 0, nil
 	}
@@ -673,6 +673,9 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 	fullRelContext[varName] = edge
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
+	if len(observe) > 0 {
+		writes.intent = observe[0]
+	}
 	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		run.applyToRelationship(edge, &writes)
@@ -748,7 +751,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 // properties_set rule (setWrites), or an error for a value Cypher cannot
 // store (replacing with a non-map, a map or entity as a property value);
 // assignments are validated statically by validatePipelineSetAssignments.
-func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, observe ...*setEntityState) (int, error) {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -757,6 +760,9 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	fullContext[varName] = node
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
+	if len(observe) > 0 {
+		writes.intent = observe[0]
+	}
 	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(ctx, setClause, 0); ok; segment, next, ok = nextChainedSetClause(ctx, setClause, next) {
 		writes.endRun()

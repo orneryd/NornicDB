@@ -44,9 +44,9 @@ func nativeHandleEntries(engine *BadgerEngine) map[string]func() error {
 			return err
 		},
 		"clearBadgerPrefix": func() error { return engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead) },
-		"persistMVCCSequence": func() error {
-			engine.persistMVCCSequence("test")
-			return nil
+		"allocateMVCCVersion": func() error {
+			_, err := engine.allocateMVCCVersion(context.Background(), nil, "test", time.Now())
+			return err
 		},
 		"CreateEdge": func() error {
 			return engine.CreateEdge(context.Background(), &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "T"})
@@ -60,7 +60,7 @@ func TestNativeHandleEntriesAreRefusedAfterClose(t *testing.T) {
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
-	valueless := map[string]bool{"Size": true, "EstimateSize": true, "persistMVCCSequence": true}
+	valueless := map[string]bool{"Size": true, "EstimateSize": true}
 	for name, entry := range nativeHandleEntries(engine) {
 		t.Run(name, func(t *testing.T) {
 			require.NotPanics(t, func() {

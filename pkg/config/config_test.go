@@ -11,6 +11,16 @@ import (
 )
 
 // TestLoadFromEnv_Defaults tests default values are loaded correctly.
+func TestQueryAPICompatibilityConfiguration(t *testing.T) {
+	t.Setenv("NORNICDB_QUERY_API_COMPATIBILITY", QueryAPICompatibilityCurrent)
+	current := LoadFromEnv()
+	require.Equal(t, QueryAPICompatibilityCurrent, current.Server.QueryAPICompatibility)
+	require.NoError(t, current.Validate())
+
+	current.Server.QueryAPICompatibility = "unknown"
+	require.ErrorContains(t, current.Validate(), "server.query_api_compatibility")
+}
+
 func TestLoadFromEnv_Defaults(t *testing.T) {
 	// Clear any existing env vars
 	clearEnvVars(t)

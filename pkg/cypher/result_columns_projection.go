@@ -305,46 +305,6 @@ func pipelineScopeFailure(ctx context.Context) error {
 	return err
 }
 
-// returnShapeItems returns the trimmed projection items of query's RETURN clause
-// with the trailing ORDER BY / SKIP / LIMIT clauses removed. It is the single
-// owner of that RETURN-location, trailing-clause trimming and comma-splitting
-// step for the narrow optimized return shapes below; each shape keeps its own
-// arity and expression grammar on top of the returned items.
-//
-// query is the canonical statement text supplied to pattern detection. The RETURN
-// offset is kept on its own so only the clause body below it is trimmed.
-func returnShapeItems(ctx context.Context, query string) []string {
-	returnAt := findKeywordIndex(ctx, query, "RETURN")
-	if returnAt < 0 {
-		return nil
-	}
-	returnPart := strings.TrimSpace(query[returnAt+len("RETURN"):])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(ctx, returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return nil
-	}
-
-	return splitTopLevelComma(returnPart)
-}
-
-// trimReturnItemAlias strips the established space-delimited "AS" alias from one RETURN item. The
-// surrounding spaces are part of the match, as before canonicalization.
-func trimReturnItemAlias(item string) string {
-	item = strings.TrimSpace(item)
-	if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
-		item = strings.TrimSpace(item[:asIdx])
-	}
-	return item
-}
-
 // restoreResultColumns preserves final RETURN spelling after quoted variables
 // have executed with internal identities. Parsed aliases are already decoded.
 func (names *quotedVariableNames) restoreResultColumns(ctx context.Context, result *ExecuteResult, parseItems func(string) []returnItem) {

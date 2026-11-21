@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -837,7 +838,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// end in UNWIND when the surrounding statement continues in another
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
-	if !finishTerminated {
+	if !finishTerminated && (auth.FineGrainedRequestFromContext(ctx) == nil || !isMetadataCommand(ctx, cypher, metadataCatalogExecution)) {
 		last := lastTopLevelClauseWord(ctx, cypher)
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt
@@ -1038,6 +1039,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			ctx = withFinishedStatement(ctx, innerQuery)
 		}
 		if mode == ModeExplain {
+			if scoped, err := e.bindFineGrainedGraph(ctx, innerQuery); err != nil {
+				return nil, err
+			} else if scoped != nil {
+				e = scoped
+			}
 			return e.executeExplain(ctx, innerQuery)
 		}
 		if mode == ModeProfile {

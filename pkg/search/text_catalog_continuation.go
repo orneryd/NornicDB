@@ -519,15 +519,22 @@ func searchResultFromContinuationNode(node *storage.Node, projection resultPrope
 	return result
 }
 
+func checkContinuationGraphVersion(provider graphMutationVersionProvider, expected uint64) error {
+	version, supported := provider.GraphMutationVersion()
+	if !supported || version != expected {
+		return resultstream.ErrInvalidated
+	}
+	return nil
+}
+
 // CheckValid is shared by pulls and registry cleanup of abandoned cursors.
 func (s *catalogContinuationStream) CheckValid() error {
 	provider, ok := s.engine.(graphMutationVersionProvider)
 	if !ok {
 		return resultstream.ErrInvalidated
 	}
-	version, supported := provider.GraphMutationVersion()
-	if !supported || version != s.version {
-		return resultstream.ErrInvalidated
+	if err := checkContinuationGraphVersion(provider, s.version); err != nil {
+		return err
 	}
 	if s.policy == nil || s.policy.Load() != s.policyID {
 		return resultstream.ErrInvalidated

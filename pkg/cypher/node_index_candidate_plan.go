@@ -119,6 +119,11 @@ func (p nodeIndexCandidatePlan) candidateCount() int {
 // route's own empty answer, not an estimate: the caller still reads the plan to
 // report it, and that read reads no node.
 func (e *StorageExecutor) planPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
+	if e.fineGrainedGraph != nil {
+		// Stored property postings cannot answer a predicate over a projected
+		// property image. Use the regular row filter for this request.
+		return nodeIndexCandidatePlan{}, false, nil
+	}
 	params := getParamsFromContext(ctx)
 	// The pattern, WHERE and parameters are the resolved inputs the read
 	// applies; they are read once, here, as the dispatch read them.

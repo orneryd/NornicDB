@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -35,7 +36,7 @@ func isMetadataCommand(ctx context.Context, cypher string, purpose metadataComma
 		startsWithKeywords(ctx, cypher, "SHOW", "DATABASES") ||
 		startsWithKeywords(ctx, cypher, "ALTER", "COMPOSITE DATABASE") ||
 		startsWithKeywords(ctx, cypher, "ALTER", "DATABASE") ||
-		isPrivilegeAdministrationCommand(ctx, cypher) {
+		isPrivilegeAdministrationCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher) {
 		return true
 	}
 	if purpose != metadataCreateAdmission {
@@ -85,6 +86,38 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
+	if scoped, scopeErr := e.bindFineGrainedGraph(ctx, cypher); scopeErr != nil {
+		return nil, scopeErr
+	} else if scoped != nil {
+		e = scoped
+	}
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil && request.Runtime != nil {
+		if isFineGrainedDatabaseStatus(ctx, cypher) {
+			return e.executeFineGrainedDatabaseStatus(ctx, request, cypher)
+		}
+		if isFineGrainedTagStatement(ctx, cypher) {
+			return executeFineGrainedUserTags(ctx, request, cypher)
+		}
+		if isFineGrainedAuthRuleStatement(ctx, cypher) {
+			return e.executeFineGrainedAuthRuleStatement(ctx, request, cypher)
+		}
+		if isFineGrainedDirectoryStatement(ctx, cypher) {
+			return e.executeSecurityDirectoryStatement(ctx, request, cypher)
+		}
+		if command, handled, parseErr := parseFineGrainedExecutablePrivilege(ctx, cypher); handled {
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			return e.executeFineGrainedPrivilege(ctx, request, command)
+		}
+		command, handled, parseErr := parseFineGrainedPrivilegeCommand(ctx, cypher)
+		if handled || parseErr != nil {
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			return e.executeFineGrainedPrivilege(ctx, request, command)
+		}
+	}
 	reveal := hasRevealCall(cypher)
 	if scope := e.executionReadScopeOf(); scope != nil {
 		if reveal && !scope.reveal {
@@ -93,7 +126,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		ctx = storage.InheritQueryRevealScopes(ctx, scope.scopes)
 		reveal = reveal || scope.reveal
 	}
-	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, reveal)
+	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.revealScopeStorage(), reveal)
 	defer cleanupReveal()
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)
@@ -686,7 +719,7 @@ func isNornicExtensionStatement(ctx context.Context, cypher string) bool {
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(ctx, cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(ctx, cypher) || isDropRoleCommand(ctx, cypher) ||
+		isPrivilegeAdministrationCommand(ctx, cypher) || isDropRoleCommand(ctx, cypher) || isFineGrainedRoleListing(ctx, cypher) || isFineGrainedTagStatement(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher) ||
 		startsWithKeywords(ctx, cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(ctx, cypher, "ALTER", "DATABASE") && (findKeywordIndex(ctx, cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(ctx, cypher, "SET OPTION") >= 0 || findKeywordIndex(ctx, cypher, "REMOVE OPTION") >= 0)) ||
@@ -919,7 +952,7 @@ func hasValidStartKeyword(ctx context.Context, cypher string) bool {
 			return true
 		}
 	}
-	return isPrivilegeCommandShaped(ctx, cypher)
+	return isPrivilegeCommandShaped(ctx, cypher) || isFineGrainedDirectoryStatement(ctx, cypher) || isFineGrainedDatabaseStatus(ctx, cypher) || isFineGrainedAuthRuleStatement(ctx, cypher)
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -1103,8 +1136,12 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		startsWithKeywords(ctx, cypher, "SHOW", "HOME DATABASE"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
 		return result, true, err
+	case isShowUserPrivileges(ctx, cypher):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
+		return result, true, err
 	case startsWithKeywords(ctx, cypher, "SHOW", "USERS"),
-		startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER"):
+		startsWithKeywords(ctx, cypher, "SHOW", "CURRENT USER"),
+		auth.FineGrainedRequestFromContext(ctx) != nil && isShowUsersWithAuth(ctx, cypher):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
 		return result, true, err
 	case startsWithKeywords(ctx, cypher, "SHOW", "TRANSACTIONS"),
@@ -1117,6 +1154,9 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		return result, true, err
 	case isShowPrivilegesCommand(ctx, cypher):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
+		return result, true, err
+	case auth.FineGrainedRequestFromContext(ctx) != nil && startsWithKeywords(ctx, cypher, "SHOW", "ROLES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowFineGrainedRoles)
 		return result, true, err
 	case startsWithKeywords(ctx, cypher, "SHOW", "ROLES"),
 		startsWithKeywords(ctx, cypher, "SHOW", "ROLE"),

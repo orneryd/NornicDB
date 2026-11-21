@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +34,12 @@ import (
 
 // handleDecay returns memory decay information (NornicDB-specific)
 func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseRead(w, r, s.dbManager.DefaultDatabaseName()) {
+	database := s.dbManager.DefaultDatabaseName()
+	if auth.FineGrainedRequestFromContext(r.Context()) != nil {
+		if !s.authorizeFineGrainedDatabaseOperation(w, r, database, "knowledge.decay.info") {
+			return
+		}
+	} else if !s.authorizeDatabaseRead(w, r, database) {
 		return
 	}
 
@@ -61,11 +65,15 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	if !regenerate {
 		database = ""
 	}
+	action := "embedding.trigger"
+	if regenerate {
+		action = "embedding.regenerate"
+	}
+	if !s.authorizeFineGrainedDatabaseOperation(w, r, database, action, auth.PermRead, auth.PermWrite) {
+		return
+	}
 	var scopedStorage storage.Engine
 	if database != "" {
-		if !s.authorizeDatabaseOperation(w, r, database, auth.PermRead, auth.PermWrite) {
-			return
-		}
 		if s.dbManager.IsCompositeDatabase(database) {
 			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported", "Embedding regeneration requires a concrete database; select a constituent database.")
 			return
@@ -76,8 +84,6 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, database)
 			return
 		}
-	} else if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
-		return
 	}
 
 	if r.Method != http.MethodPost {
@@ -93,6 +99,10 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 	// Check if regenerate=true to clear existing embeddings first
 	if regenerate {
+		if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+			s.regenerateEmbeddingsForCaller(w, r, database, principal)
+			return
+		}
 		// Regenerating clears embeddings, which /nornicdb/embed/clear reserves for admins;
 		// the route only requires write (enough to wake the worker), so check here.
 		if s.isRBACEnforced() {
@@ -192,7 +202,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 // handleEmbedStats returns embedding worker statistics.
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
+	if !s.authorizeFineGrainedDatabaseOperation(w, r, "", "embedding.status.read", auth.PermRead) {
 		return
 	}
 
@@ -258,19 +268,23 @@ const (
 	embeddingFailureRetry
 )
 
-// handleEmbeddingFailures owns all-database admission and durable terminal
-// failure operations. Retry accepts an empty body or list to retry all failures.
+// handleEmbeddingFailures owns durable terminal failure operations. The list
+// covers every database. Retry accepts an empty body or list to retry all
+// failures; a retry that names entities is authorized for the databases that
+// own them instead of for the whole population.
 func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request, operation embeddingFailureOperation) {
 	required := [2]auth.Permission{auth.PermRead, auth.PermWrite}
 	permissions := required[:1]
+	action := "embedding.failures.list"
 	if operation == embeddingFailureRetry {
 		permissions = required[:]
-	}
-	if !s.authorizeAllDatabaseOperation(w, r, permissions...) {
-		return
+		action = "embedding.failures.retry"
 	}
 	switch operation {
 	case embeddingFailureList:
+		if !s.authorizeFineGrainedDatabaseOperation(w, r, "", action, permissions...) {
+			return
+		}
 		if r.Method != http.MethodGet {
 			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
 			return
@@ -299,14 +313,27 @@ func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request,
 			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
-		var request struct {
+		var retryRequest struct {
 			NodeIDs []storage.NodeID `json:"node_ids"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&retryRequest); err != nil && !errors.Is(err, io.EOF) {
 			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "invalid retry request")
 			return
 		}
-		retried, err := s.db.RetryEmbeddingFailures(r.Context(), request.NodeIDs)
+		// Named entities are authorized in the database that owns each one; an
+		// unnamed retry still targets the whole parked population.
+		if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil && len(retryRequest.NodeIDs) > 0 {
+			if !s.authorizeFineGrainedEmbeddingTargets(w, r, action, retryRequest.NodeIDs) {
+				return
+			}
+		} else if !s.authorizeFineGrainedDatabaseOperation(w, r, "", action, permissions...) {
+			return
+		}
+		ctx := r.Context()
+		if authority := s.embeddingJobAuthority(r, action); authority != nil {
+			ctx = nornicdb.WithEmbeddingJobAuthority(ctx, authority)
+		}
+		retried, err := s.db.RetryEmbeddingFailures(ctx, retryRequest.NodeIDs)
 		if err != nil {
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
 			return
@@ -317,10 +344,132 @@ func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// authorizeFineGrainedEmbeddingTargets admits a caller operation that names
+// specific stored entities. Every named parked failure is checked in the
+// database that owns it, so a database-scoped grant is usable and no entity
+// outside the caller's scope is requeued. The whole operation is refused when
+// one named entity is not admitted; nothing is requeued before that decision.
+func (s *Server) authorizeFineGrainedEmbeddingTargets(w http.ResponseWriter, r *http.Request, action string, ids []storage.NodeID) bool {
+	principal := auth.FineGrainedRequestFromContext(r.Context())
+	if principal == nil {
+		return true
+	}
+	failures, err := s.db.EmbeddingFailures(r.Context(), 0)
+	if err != nil {
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+		return false
+	}
+	parked := make(map[storage.NodeID]struct{}, len(failures))
+	for _, failure := range failures {
+		parked[failure.NodeID] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, named := parked[id]; !named {
+			// Not a target of this operation: the retry does not touch it.
+			continue
+		}
+		database, ok := s.db.EmbeddingDatabaseOfNodeID(id)
+		if !ok || !principal.CanAccessDatabase(database) || !principal.AllowsDatabase(action, database, "") {
+			s.writeNeo4jInsufficientPermissions(w, r)
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) regenerateEmbeddingsForCaller(w http.ResponseWriter, r *http.Request, database string, principal *auth.FineGrainedRequest) {
+	selected := database
+	if selected == "" {
+		selected = s.dbManager.DefaultDatabaseName()
+	}
+	resolved, err := s.dbManager.ResolveDatabase(selected)
+	if err != nil {
+		s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, selected)
+		return
+	}
+	authority := s.embeddingJobAuthority(r, "embedding.regenerate")
+	authority.targetDatabaseID = principal.DatabaseID(resolved)
+	if !s.runBackground(r.Context(), func(ctx context.Context) {
+		queued, err := s.db.RegenerateDatabaseEmbeddingsForCaller(ctx, resolved, authority)
+		if err != nil {
+			s.logEvent(ctx, slog.LevelError, localization.ServerEmbedClearFailedEvent(err))
+			return
+		}
+		s.logEvent(ctx, slog.LevelInfo, localization.ServerEmbedClearedEvent(queued))
+	}) {
+		s.writeInternalServerError(w, r)
+		return
+	}
+	response := map[string]any{
+		"accepted": true, "regenerate": true,
+		"message": s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
+	}
+	if database != "" {
+		response["database"] = database
+	}
+	httpresponse.WritePropertyJSON(w, http.StatusAccepted, response)
+}
+
+// embeddingJobAuthority returns the authority that a caller-caused embedding
+// requeue records with the queue. The worker consults it immediately before the
+// provider request, so a caller operation whose policy, role membership or
+// database access changed while its work was queued submits nothing.
+func (s *Server) embeddingJobAuthority(r *http.Request, action string) *embeddingJobAuthority {
+	principal := auth.FineGrainedRequestFromContext(r.Context())
+	if principal == nil || s.fineGrainedRuntime == nil {
+		return nil
+	}
+	if getClaims(r) == nil {
+		return nil
+	}
+	return &embeddingJobAuthority{
+		principal: principal,
+		identity:  auth.RequestIdentityFromContext(r.Context()),
+		action:    action,
+		database:  s.db.EmbeddingDatabaseOfNodeID,
+	}
+}
+
+// embeddingJobAuthority revalidates a caller-caused embedding operation at the
+// provider submission boundary. It reuses the request admission owner: the
+// principal is revalidated for its current directory roles and every named target must
+// still be admitted in its own database.
+type embeddingJobAuthority struct {
+	principal        *auth.FineGrainedRequest
+	identity         auth.RequestIdentity
+	action           string
+	database         func(storage.NodeID) (string, bool)
+	targetDatabaseID string
+}
+
+// RevalidateEmbeddingJob refuses the batch unless the recorded operation still
+// admits every entity in it. It never mutates queue state.
+func (a *embeddingJobAuthority) RevalidateEmbeddingJob(ctx context.Context, nodes []*storage.Node) error {
+	if a.principal == nil || a.principal.Revalidate(ctx, a.identity) != nil {
+		return nornicdb.ErrEmbeddingSubmissionRefused
+	}
+	input, providerSubmission := nornicdb.EmbeddingJobInputsFromContext(ctx)
+	for _, node := range nodes {
+		database, ok := a.database(node.ID)
+		if !ok || !a.principal.CanAccessDatabase(database) || !a.principal.AllowsDatabase(a.action, database, "") ||
+			(a.targetDatabaseID != "" && a.principal.DatabaseID(database) != a.targetDatabaseID) {
+			return nornicdb.ErrEmbeddingSubmissionRefused
+		}
+		if providerSubmission && !a.principal.AllowsManagedEmbedding(database, node, input.Text, input.AllProperties) {
+			return nornicdb.ErrEmbeddingSubmissionRefused
+		}
+	}
+	return nil
+}
+
 // handleEmbedClear clears all embeddings from nodes (admin only).
 // This allows regeneration with a new model or fixing corrupted embeddings.
 func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		if !s.authorizeFineGrainedDatabaseOperation(w, r, "", "embedding.clear") {
+			return
+		}
+	} else if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
 		return
 	}
 
@@ -365,7 +514,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.authorizeDatabaseOperation(w, r, dbName, auth.PermRead, auth.PermWrite) {
+	if !s.authorizeFineGrainedDatabaseOperation(w, r, dbName, "database.search.rebuild", auth.PermRead, auth.PermWrite) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -488,6 +637,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// Per-database RBAC: the principal must be allowed to use and to read
 	// this database (Neo4j-aligned).
 	if !s.authorizeDatabaseRead(w, r, dbName) {
+		return
+	}
+	if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil &&
+		!principal.AllowsDatabase("database.search.execute", dbName, "") {
+		s.writeNeo4jInsufficientPermissions(w, r)
 		return
 	}
 	if req.Discard && req.QID != "" {
@@ -911,6 +1065,11 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
+	if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil &&
+		!principal.AllowsDatabase("database.search.execute", dbName, "") {
+		s.writeNeo4jInsufficientPermissions(w, r)
+		return
+	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
 		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
 			fmt.Sprintf("Vector similarity on composite database '%s' is not supported; target a constituent database explicitly.", dbName))
@@ -922,6 +1081,10 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, dbName)
 		return
+	}
+
+	if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+		storageEngine = principal.Graph(storageEngine, dbName)
 	}
 
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(r.Context(), storageEngine)

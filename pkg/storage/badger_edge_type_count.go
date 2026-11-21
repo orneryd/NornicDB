@@ -369,6 +369,10 @@ func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(ctx context.Context, snap *
 // against the edge primary keys and rebuilds them on drift. It runs once at
 // engine open, behind the ready marker (same shape as ensureLabelCounts).
 func (b *BadgerEngine) ensureEdgeTypeCounts(ctx context.Context) error {
+	return b.ensureEdgeTypeCountsOnOpen(ctx, false)
+}
+
+func (b *BadgerEngine) ensureEdgeTypeCountsOnOpen(ctx context.Context, clean bool) error {
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
@@ -376,6 +380,15 @@ func (b *BadgerEngine) ensureEdgeTypeCounts(ctx context.Context) error {
 	// base keys again before verification compares them.
 	if err := b.foldAllEdgeTypeCountDeltas(ctx); err != nil {
 		return err
+	}
+	if clean {
+		ready, err := b.edgeTypeCountReady()
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
 	}
 	// Verification and rebuild rewrite the base keys: they hold the count
 	// lock, as every rewrite of them does (rebuildAuthoritativeEdgeTypeCountsLocked).

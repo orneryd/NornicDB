@@ -15,6 +15,7 @@ type RoleMutationStores struct {
 	Privileges   *PrivilegesStore
 	Entitlements *RoleEntitlementsStore
 	Users        *Authenticator
+	fineGrained  bool
 }
 
 // RenameRoleWithUsers retains the caller's loaded allowlist and user caches.
@@ -76,8 +77,12 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 	var stagedPrivileges *PrivilegesStore
 	var stagedEntitlements *RoleEntitlementsStore
 	var stagedUsers map[string]*User
+	runStoreTransaction := WithStoreTransaction
+	if stores.fineGrained {
+		runStoreTransaction = withFineGrainedStoreTransaction
+	}
 	transaction := func(ctx context.Context) error {
-		return WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+		return runStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
 			stagedRoles = NewRoleStore(view)
 			if err := stagedRoles.Load(ctx); err != nil {
 				return err
@@ -107,6 +112,11 @@ func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, rem
 			stagedUsers, err = applyRoleRecords(ctx, view, records, oldName, newName, remove)
 			if err != nil {
 				return err
+			}
+			if stores.fineGrained {
+				if err := changeFineGrainedRole(ctx, view, oldName, newName, remove); err != nil {
+					return err
+				}
 			}
 			delete(stagedRoles.roles, oldName)
 			if !remove {

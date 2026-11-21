@@ -1297,6 +1297,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
+		procedureCtx, procedureExec = procedureExec.bindBoostedFineGrainedProcedure(procedureCtx, procName)
 		if proc.Spec.OwnsTransactions {
 			if err := procedureExec.checkPeriodicTransactionScope(procedureCtx, procName); err != nil {
 				return nil, err
@@ -1652,7 +1653,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo(ctx context.Context) (
 
 	var decayProfiles, decayBindings int
 	var promotionProfiles, promotionPolicies int
-	_, schema, err := e.knowledgePolicyContext("")
+	_, schema, err := e.knowledgePolicyContext(ctx, "")
 	if err != nil {
 		return nil, err
 	}

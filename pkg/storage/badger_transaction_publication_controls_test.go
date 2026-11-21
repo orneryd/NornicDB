@@ -68,7 +68,7 @@ func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
 	require.NoError(t, peer.validateSnapshotIsolationConflicts(t.Context()))
-	version, err := peer.engine.allocateMVCCVersion(peer.badgerTx, peer.namespace, time.Now())
+	version, err := peer.engine.allocateMVCCVersion(t.Context(), peer.badgerTx, peer.namespace, time.Now())
 	require.NoError(t, err)
 	peer.CommitVersion = version
 	require.NoError(t, peer.engine.materializeMVCCCommit(t.Context(), mvccCommitMaterialization{writer: singleBatchWriter(peer.badgerTx), version: version, frame: mustCommitFrame(t, peer.operations)}))

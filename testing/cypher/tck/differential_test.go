@@ -806,9 +806,12 @@ func resetDifferentialBackend(t *testing.T, ctx context.Context, backend *BoltBa
 	if err := backend.Reset(ctx); err != nil {
 		t.Fatalf("reset %s: %v", name, err)
 	}
+	// As in the HTTP reset, do not expose a newly created but still populating
+	// reference lookup index to the corpus statement that follows the reset.
 	for _, query := range []string{
 		"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
 		"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+		"CALL db.awaitIndexes(10)",
 	} {
 		if _, err := backend.Execute(ctx, query, nil); err != nil {
 			t.Fatalf("restore default %s lookup indexes: %v", name, err)

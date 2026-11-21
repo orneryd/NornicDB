@@ -104,6 +104,18 @@ nornicdb-admin database export neo4j-csv mydb \
 
 When schema exists, the export also writes `schema.cypher` alongside the CSV files.
 
+A label cannot contain the selected `--array-delimiter` (default `;`). Export
+rejects such a label with exit code 6 before creating or replacing package
+files. Choose a delimiter absent from every label and pass it to both export
+and import, for example `--array-delimiter='|'` for a graph containing `A;B`
+when no label contains `|`.
+
+Empty labels and labels with surrounding whitespace are also rejected because
+label import would drop or trim them. Interior spaces and newlines, quotes,
+commas and Unicode retain their values when they do not contain the selected
+array delimiter. This validation does not introduce a label escape encoding.
+
+
 Export preserves absent properties as bare empty CSV cells and present empty
 strings as quoted empty cells (`""`). Import keeps that distinction;
 `--ignore-empty-strings` discards quoted empty strings too. Ordinary float64 lists

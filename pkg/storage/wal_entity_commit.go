@@ -142,16 +142,27 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	}
 	// The native application and its join are accepted work of the engine's
 	// lifecycle owner, entered before launch and left when the goroutine
-	// returns; a closing engine leaves the record to recovery.
+	// returns; a closing engine leaves the record to recovery. The join ends
+	// that enrolment before it notifies this receipt's settlement owner, so a
+	// settlement observer may re-enter Close, which joins this work.
 	work := &prepared.engine.work
 	if !work.Enter() {
 		handle.Settle(resolve, ErrStorageClosed)
 		return receipt, nil
 	}
 	go func() {
-		defer work.Leave()
+		// Delivery and deferred cleanup call this only on this goroutine.
+		// Late native observers retain the receipt, never this release guard.
+		released := false
+		release := func() {
+			if !released {
+				released = true
+				work.Leave()
+			}
+		}
+		defer release()
 		ctx := work.Context()
-		handle.JoinContext(ctx, resolve, handle.ApplyContext(ctx, payload))
+		handle.JoinContextWithRelease(ctx, resolve, handle.ApplyContext(ctx, payload), release)
 	}()
 	return receipt, nil
 }

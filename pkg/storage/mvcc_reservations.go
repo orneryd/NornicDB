@@ -129,9 +129,12 @@ func (c *mvccCut) release() {
 // timestamp is floored at the latest cut's wall clock and the namespace's
 // high-water mark, so the version compares newer than every cut already
 // taken. txn may be nil for a version its owner publishes by value (publish).
-func (r *mvccReservations) reserve(txn *badger.Txn, namespace string, state *namespaceMVCCState, commitTime time.Time, historical bool) (MVCCVersion, error) {
+func (r *mvccReservations) reserve(txn *badger.Txn, namespace string, state *namespaceMVCCState, commitTime time.Time, historical bool) (MVCCVersion, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if state.sequenceBlockExhausted() {
+		return MVCCVersion{}, false, nil
+	}
 	sequence, saturated := state.nextSequence()
 	commitTime = commitTime.UTC()
 	if !historical {
@@ -146,10 +149,10 @@ func (r *mvccReservations) reserve(txn *badger.Txn, namespace string, state *nam
 	commitStamp, err := state.reserveCommitTimestamp(commitTime, saturated)
 	if err != nil {
 		// The advanced sequence is never published: no head carries it.
-		return MVCCVersion{}, err
+		return MVCCVersion{}, true, err
 	}
 	r.enterLocked(txn, namespace, sequence)
-	return MVCCVersion{CommitTimestamp: commitStamp, CommitSequence: sequence}, nil
+	return MVCCVersion{CommitTimestamp: commitStamp, CommitSequence: sequence}, true, nil
 }
 
 func (r *mvccReservations) enterLocked(txn *badger.Txn, namespace string, sequence uint64) {

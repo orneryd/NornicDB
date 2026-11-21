@@ -319,9 +319,10 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 	// Check concurrent query limit
 	if queryLimits.MaxConcurrentQueries > 0 {
 		c.activeQueriesMu.Lock()
-		if c.activeQueries >= queryLimits.MaxConcurrentQueries {
+		active := c.activeQueries
+		if active >= queryLimits.MaxConcurrentQueries {
 			c.activeQueriesMu.Unlock()
-			return nil, nil, localizedError(localization.MultidbMaxConcurrentQueriesReached(c.databaseName, c.activeQueries, queryLimits.MaxConcurrentQueries), ErrQueryLimitExceeded)
+			return nil, nil, localizedError(localization.MultidbMaxConcurrentQueriesReached(c.databaseName, active, queryLimits.MaxConcurrentQueries), ErrQueryLimitExceeded)
 		}
 		c.activeQueries++
 		c.activeQueriesMu.Unlock()

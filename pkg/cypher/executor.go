@@ -126,6 +126,7 @@ import (
 	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/apocio"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -313,8 +314,10 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser  *Parser
-	storage storage.Engine
+	parser            *Parser
+	storage           storage.Engine
+	fineGrainedGraph  *auth.FineGrainedRequest
+	fineGrainedSource storage.Engine
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -334,7 +337,9 @@ type StorageExecutor struct {
 	// transaction owners run on their own per-session executors, which are
 	// never marked shared.
 	sharedExecutor bool
-	cache          *SmartQueryCache // Query result cache with label-aware invalidation
+	// protocolConclusion applies the wire statement grammar to protocol executors.
+	protocolConclusion bool
+	cache              *SmartQueryCache // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
 	queryCacheMaxEntries         int
 	queryCacheTTL                time.Duration
@@ -613,10 +618,13 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 		cloned.searchResolver = nil
 	}
 	cloned.graphIdentityScope = e.graphIdentityScope
+	cloned.fineGrainedGraph = e.fineGrainedGraph
+	cloned.fineGrainedSource = e.fineGrainedSource
 	cloned.resolvedMode = e.resolvedMode
 	cloned.readScope = e.readScope
 	cloned.txContext = e.txContext
 	cloned.sharedExecutor = e.sharedExecutor
+	cloned.protocolConclusion = e.protocolConclusion
 	cloned.deferFlush = e.deferFlush
 	cloned.inferenceManager = e.inferenceManager
 	cloned.onNodeMutated = e.onNodeMutated
@@ -1484,7 +1492,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// A public procedure callback may re-enter Execute with the statement's
 	// transaction in its executor, context, or both. Reuse that owner rather
 	// than committing a nested implicit transaction independently.
-	if statementStorage, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+	if statementStorage, ok := e.executionStorage(ctx).(*transactionStorageWrapper); ok {
 		statementExec := e
 		if e.storage != statementStorage {
 			statementExec = e.cloneWithStorage(statementStorage)
@@ -1923,6 +1931,20 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
+	engine := e.executionStorage(ctx)
+	if request := e.fineGrainedGraph; request != nil {
+		database := e.executionDatabaseName(ctx)
+		if request.GraphMatches(e.storage, engine, database) {
+			return e.storage
+		}
+		return request.Graph(engine, database)
+	}
+	return engine
+}
+
+// executionStorage is the transaction and routing owner. Data operations use
+// getStorage, which adds the request's graph policy to this snapshot.
+func (e *StorageExecutor) executionStorage(ctx context.Context) storage.Engine {
 	if member := e.membership(ctx); member.storage != nil {
 		return member.storage
 	}

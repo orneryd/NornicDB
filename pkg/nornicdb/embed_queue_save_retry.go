@@ -99,6 +99,7 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 		if err != nil || node == nil {
 			if nodeGone(node, err) {
 				ew.dropNodeEmbeddingRetryLocked(id)
+				ew.dropCallerAuthorityLocked(string(id))
 				if attempt := ew.claimedNodes[string(id)]; attempt != nil {
 					attempt.invalidated = true
 				}
@@ -210,6 +211,9 @@ func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
 		ew.addNodeToPendingEmbeddings(id)
 	}
 	ew.nodeRetries = nil
+	// Resets retire active caller bindings. Durable markers keep those
+	// attempts parked until a caller authorizes another retry.
+	ew.clearCallerAuthoritiesLocked()
 }
 
 // nextEmbeddingNodeID runs under claimMu. Storage markers for DLQ IDs are

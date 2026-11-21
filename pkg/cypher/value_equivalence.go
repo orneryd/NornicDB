@@ -2,8 +2,6 @@ package cypher
 
 import (
 	"encoding/binary"
-	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -93,34 +91,7 @@ func cypherValueKeyWithNumericPolicy(value interface{}, numericPolicy cypherNume
 // A key starts with one letter naming its kind; a list or map element's key
 // is preceded by its length, so a composite key has one reading.
 func appendValueKey(key *strings.Builder, value interface{}, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) {
-	switch typed := value.(type) {
-	case bool:
-		if typed {
-			key.WriteString("Bt")
-		} else {
-			key.WriteString("Bf")
-		}
-		return
-	case []byte:
-		key.WriteByte('X')
-		key.Write(typed)
-		return
-	}
-	if signed, ok := cypherSignedInteger(value); ok {
-		key.WriteByte('I')
-		key.WriteString(strconv.FormatInt(signed, 10))
-		return
-	}
-	if unsigned, ok := cypherUnsignedInteger(value); ok {
-		key.WriteByte('I')
-		key.WriteString(strconv.FormatUint(unsigned, 10))
-		return
-	}
-	if number, ok := cypherFloatValue(value); ok {
-		if _, floatKind := value.(float64); floatKind && numericPolicy == cypherNumericKinds {
-			key.WriteString("F64:")
-		}
-		appendFloatEquivalenceKey(key, number)
+	if convert.AppendScalarEquivalenceKey(key, value, numericPolicy == cypherNumericKinds) {
 		return
 	}
 	if cypherValueKindOf(value) == valueKindPath {
@@ -128,42 +99,28 @@ func appendValueKey(key *strings.Builder, value interface{}, numericPolicy cyphe
 			key.WriteByte('P')
 			key.WriteString(strconv.Itoa(len(elements)))
 			for _, entity := range elements {
-				appendNestedValueKey(key, entity, numericPolicy, contract)
+				convert.AppendFramedEquivalenceKey(key, nestedValueKey(entity, numericPolicy, contract))
 			}
 			return
 		}
 	}
 	if list, ok := cypherListValue(value); ok {
-		key.WriteByte('L')
-		key.WriteString(strconv.Itoa(len(list)))
-		for _, item := range list {
-			appendNestedValueKey(key, item, numericPolicy, contract)
-		}
+		convert.AppendListEquivalenceKey(key, list, func(item any) string {
+			return nestedValueKey(item, numericPolicy, contract)
+		})
 		return
 	}
 	if fields, ok := toStringAnyMap(value); ok {
-		names := make([]string, 0, len(fields))
-		for name := range fields {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		key.WriteByte('M')
-		key.WriteString(strconv.Itoa(len(names)))
-		for _, name := range names {
-			key.WriteByte('|')
-			key.WriteString(strconv.Itoa(len(name)))
-			key.WriteByte(':')
-			key.WriteString(name)
-			appendNestedValueKey(key, fields[name], numericPolicy, contract)
-		}
+		convert.AppendMapEquivalenceKey(key, fields, func(item any) string {
+			return nestedValueKey(item, numericPolicy, contract)
+		})
 		return
 	}
 	if parts, temporal := temporalIdentityParts(value, contract); temporal {
 		appendTemporalValueKey(key, parts)
 		return
 	}
-	key.WriteByte('T')
-	key.WriteString(fmt.Sprintf("%T:%#v", value, value))
+	convert.AppendTypedEquivalenceKey(key, value)
 }
 
 // Encoded keys are needed by older grouping paths and nested encoded values.
@@ -180,26 +137,12 @@ func appendTemporalValueKey(key *strings.Builder, parts temporalValueKey) {
 	key.WriteString(parts.zone)
 }
 
-// appendNestedValueKey writes a list or map element's key preceded by
-// its length.
-func appendNestedValueKey(key *strings.Builder, value interface{}, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) {
-	var nested string
+// nestedValueKey retains the numeric and comparison contracts of the container.
+func nestedValueKey(value any, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) string {
 	if numericPolicy == cypherNumericKinds {
-		nested = cypherValueKeyWithNumericPolicy(value, numericPolicy, contract)
-	} else {
-		nested = cypherValueKey(value, contract)
+		return cypherValueKeyWithNumericPolicy(value, numericPolicy, contract)
 	}
-	key.WriteByte('|')
-	key.WriteString(strconv.Itoa(len(nested)))
-	key.WriteByte(':')
-	key.WriteString(nested)
-}
-
-// appendFloatEquivalenceKey writes a float's key
-// (convert.AppendFloatEquivalenceKey).
-func appendFloatEquivalenceKey(key *strings.Builder, number float64) {
-	var buffer [32]byte
-	key.Write(convert.AppendFloatEquivalenceKey(buffer[:0], number))
+	return cypherValueKey(value, contract)
 }
 
 // cypherValueSet stores values under each operation's explicit contract,

@@ -229,7 +229,8 @@ body {
 
 .workspace-prototype .text-frost-ice { color: #85beff; }
 
-.workspace-prototype .workspace-header button:first-child { background: transparent; border-color: #2a3247; color: #c6cbd5; }
+.assistant-header-launcher { border-radius: 3px; }
+.assistant-header-launcher:disabled, .assistant-app-launcher:disabled { color: #9ca3af; background: transparent; border-color: #2a3247; opacity: .6; cursor: not-allowed; }
 @media(max-width:767px) {
  .workspace-inspector:not(.hidden) { position: fixed; z-index: 40; bottom: 0; left: 0; right: 0; max-height: 72dvh; overflow-y: auto; background: #101522; box-shadow: 0 -16px 48px #0008; border-top: 2px solid #2a3247; }
  .workspace-inspector > .inspector-caption { padding: 10px 16px; }

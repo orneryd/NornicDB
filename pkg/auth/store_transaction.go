@@ -11,6 +11,16 @@ import (
 // existing view; otherwise this function owns begin, commit and rollback.
 // Callers publish their in-memory state only after this function succeeds.
 func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate func(storage.Engine) error) error {
+	return withStoreTransaction(ctx, engine, mutate, false)
+}
+
+// withFineGrainedStoreTransaction commits in the existing journal or
+// replication owner when the system database is backed by one.
+func withFineGrainedStoreTransaction(ctx context.Context, engine storage.Engine, mutate func(storage.Engine) error) error {
+	return withStoreTransaction(ctx, engine, mutate, true)
+}
+
+func withStoreTransaction(ctx context.Context, engine storage.Engine, mutate func(storage.Engine) error, fineGrained bool) error {
 	if runner, ok := engine.(interface {
 		WithStoreTransaction(context.Context, func(storage.Engine) error) error
 	}); ok {
@@ -63,6 +73,27 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 	}
 	if err := mutate(scoped); err != nil {
 		return err
+	}
+	if fineGrained && tx.HasPendingNodeMutations() {
+		if route, ok := storage.EntityCommitSubmitterFor(engine); ok && route.RequiresSubmission {
+			if route.CheckAdmission != nil {
+				if err := route.CheckAdmission(); err != nil {
+					return err
+				}
+			}
+			prepared, err := tx.PrepareEntityCommit(ctx, storage.EntityCommitRequest{LogicalID: tx.ID})
+			if err != nil {
+				return err
+			}
+			defer prepared.Abort()
+			receipt, err := route.Submitter.SubmitEntityCommit(ctx, prepared, nil)
+			if err != nil {
+				return err
+			}
+			// After acceptance the transaction can publish independently.
+			// Wait for settlement before releasing the directory write order.
+			return receipt.Wait(context.WithoutCancel(ctx))
+		}
 	}
 	return tx.CommitContext(ctx)
 }

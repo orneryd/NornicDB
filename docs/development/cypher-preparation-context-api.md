@@ -59,7 +59,6 @@ func ExtractLimit(context.Context, string) (int, bool, error)
 func ExtractSkip(context.Context, string) (int, bool, error)
 func ExtractLimitString(context.Context, string) (string, error)
 func ExtractSkipString(context.Context, string) (string, error)
-func DetectQueryPattern(context.Context, string) (PatternInfo, error)
 ```
 
 `GetAST` propagates construction errors instead of discarding them. Failed or

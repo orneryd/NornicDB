@@ -48,7 +48,7 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 
 	persistedSeq, err := engine.loadPersistedNamespaceSequence("nornic")
 	require.NoError(t, err)
-	require.Equal(t, tx1.CommitVersion.CommitSequence, persistedSeq)
+	require.Equal(t, uint64(mvccSequenceBlockSize), persistedSeq)
 
 	tx2, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 
 	persistedAfterEmpty, err := engine.loadPersistedNamespaceSequence("nornic")
 	require.NoError(t, err)
-	require.Equal(t, tx2.CommitVersion.CommitSequence, persistedAfterEmpty)
+	require.Equal(t, persistedSeq, persistedAfterEmpty)
 
 	require.NoError(t, engine.Close())
 
@@ -75,12 +75,12 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 
 	reopenedSeq, err := reopened.loadPersistedNamespaceSequence("nornic")
 	require.NoError(t, err)
-	require.Equal(t, tx2.CommitVersion.CommitSequence, reopenedSeq)
+	require.Equal(t, persistedSeq, reopenedSeq)
 
 	tx4, err := reopened.BeginTransaction(t.Context(), OrdinaryBegin)
 	require.NoError(t, err)
 	_, err = tx4.CreateNode(t.Context(), &Node{ID: NodeID("nornic:node-3"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	require.NoError(t, tx4.Commit())
-	require.Equal(t, tx2.CommitVersion.CommitSequence+1, tx4.CommitVersion.CommitSequence)
+	require.Equal(t, reopenedSeq+1, tx4.CommitVersion.CommitSequence)
 }

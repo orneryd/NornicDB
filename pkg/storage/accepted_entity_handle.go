@@ -224,23 +224,54 @@ func (h *AcceptedEntityCommitHandle) Settle(outer CommitReceiptOwner, transportE
 // no locks: the same recording, with the native join run inline and bounded by
 // ctx (the caller's work context). When ctx ends first, the outer receipt is
 // left pending and settles from the native owner's terminal callback.
+//
+// The caller keeps its own join lifetime, so this entrypoint has no enrolment
+// for the join to end; it is the released three-argument Go API. A transport
+// whose inline join runs inside its own accepted work calls
+// JoinContextWithRelease instead.
 func (h *AcceptedEntityCommitHandle) JoinContext(ctx context.Context, outer CommitReceiptOwner, transportErr error) {
+	h.JoinContextWithRelease(ctx, outer, transportErr, nil)
+}
+
+// JoinContextWithRelease is JoinContext for a caller whose inline join runs
+// inside its own accepted work enrolment: release ends that enrolment and is
+// idempotent, and the join runs it exactly once before it notifies the outer
+// settlement owner, because that observer may re-enter Close or Shutdown, which
+// joins that enrolment. When ctx ends first, the outer receipt is left pending
+// and settles from the native owner's terminal callback.
+//
+// For example, a transport worker defers its idempotent release for early exits,
+// then lets the inline join release before notifying its settlement observer:
+//
+//	defer release()
+//	handle.JoinContextWithRelease(work.Context(), owner, transportErr, release)
+func (h *AcceptedEntityCommitHandle) JoinContextWithRelease(ctx context.Context, outer CommitReceiptOwner, transportErr error, release func()) {
 	h.record(outer, transportErr)
-	h.join(ctx, outer, transportErr, h.pendingSeq.Add(1))
+	h.join(ctx, outer, transportErr, h.pendingSeq.Add(1), release)
 }
 
 // launchJoin runs the join as accepted work of the engine's lifecycle owner
 // (AcceptedWork): entered before launch, cancelled and joined by engine Close.
 // A closing engine admits no work; the record then stays pending for
-// recovery, which settles it at the next open.
+// recovery, which settles it at the next open. This enrolment ends before the
+// join notifies the outer settlement owner, which may re-enter Close.
 // Author: NOR-288 lane (Claude), 2026-10-30.
 func (h *AcceptedEntityCommitHandle) launchJoin(outer CommitReceiptOwner, transportErr error) {
 	seq := h.pendingSeq.Add(1)
 	work := &h.work.work
 	if work.Enter() {
 		go func() {
-			defer work.Leave()
-			h.join(work.Context(), outer, transportErr, seq)
+			// Delivery and deferred cleanup call this only on this goroutine.
+			// Late native observers retain the receipt, never this release guard.
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					work.Leave()
+				}
+			}
+			defer release()
+			h.join(work.Context(), outer, transportErr, seq, release)
 		}()
 		return
 	}
@@ -283,17 +314,32 @@ func (h *AcceptedEntityCommitHandle) NativeFrameRetained() bool {
 
 // Reject discards a command its outer log never recorded. A command already
 // applying or parked is accepted work and is settled instead.
+//
+// The definite branch retires this command's native frame and accepted authority
+// before Reject returns. Only the terminal notification leaves that frame: the
+// settlement observer may re-enter the transport's Shutdown. A transport can end
+// its own work enrolment before calling Reject, so transport quiescence is not
+// a delivered-receipt signal. Done closes only after the observer returns.
 func (h *AcceptedEntityCommitHandle) Reject(outer CommitReceiptOwner, err error) {
 	if !h.begin() {
 		h.Settle(outer, err)
 		return
 	}
-	if p := h.prepared.Load(); p != nil {
+	if p := h.prepared.Swap(nil); p != nil {
 		p.Abort()
 	}
-	h.physical = CommitOutcome{State: CommitDiscarded, Err: err}
+	h.release()
+	outcome := CommitOutcome{State: CommitDiscarded, Err: err}
+	h.physical = outcome
 	h.finishInitial()
-	_ = outer.Resolve(h.physical)
+	// The receipt records this decision here, in the deciding frame, so a
+	// transport waiter leaves on it; only its settlement delivery runs in a frame
+	// of the receipt's own, because that observer may re-enter the Shutdown that
+	// joins this frame. Both halves are the receipt owner's one protocol.
+	settle, decided, _ := outer.claim(outcome)
+	if decided {
+		go outer.deliverTerminal(settle, outcome)
+	}
 }
 
 // ObservePending reports accepted uncertainty to the outer receipt without
@@ -316,7 +362,22 @@ func (h *AcceptedEntityCommitHandle) publishPending(outer CommitReceiptOwner, er
 
 // join resolves the outer receipt from the native terminal, including a later
 // in-process recovery of a pending command.
-func (h *AcceptedEntityCommitHandle) join(ctx context.Context, outer CommitReceiptOwner, transportErr error, seq uint64) {
+//
+// release ends this join's accepted work enrolment. Every settlement
+// notification runs after it, because the outer settle callback and an
+// OnSettled registration that delivers at once are foreign observers: they may
+// re-enter Close or Shutdown, which joins the work this join holds while it
+// computes the outcome. Native retirement callbacks still precede caller observers.
+func (h *AcceptedEntityCommitHandle) join(ctx context.Context, outer CommitReceiptOwner, transportErr error, seq uint64, release func()) {
+	if release == nil {
+		release = func() {}
+	}
+	// deliver retires this join's engine-owned work, then hands the outcome to
+	// its settlement owner.
+	deliver := func(notify func()) {
+		release()
+		notify()
+	}
 	if !h.started.Load() {
 		// A successful acknowledgement without a local application parks too;
 		// only recovery of the record may apply it.
@@ -326,7 +387,7 @@ func (h *AcceptedEntityCommitHandle) join(ctx context.Context, outer CommitRecei
 	}
 	h.waitInitial()
 	if h.native == nil {
-		_ = outer.Resolve(h.physical) // rejected before any record
+		deliver(func() { _ = outer.Resolve(h.physical) }) // rejected before any record
 		return
 	}
 	outcome := h.native.WaitOutcome(ctx)
@@ -351,10 +412,10 @@ func (h *AcceptedEntityCommitHandle) join(ctx context.Context, outer CommitRecei
 			outcome.Err = AcceptedOutcome(CommitRecoveryPending, h.logicalID, transportErr)
 		}
 		h.publishPending(outer, outcome.Err, seq)
-		h.native.OnSettled(func(final CommitOutcome) { _ = outer.Resolve(final) })
+		deliver(func() { h.native.OnSettled(func(final CommitOutcome) { _ = outer.Resolve(final) }) })
 		return
 	}
-	_ = outer.Resolve(outcome)
+	deliver(func() { _ = outer.Resolve(outcome) })
 }
 
 func (h *AcceptedEntityCommitHandle) markRecoveryPending() {

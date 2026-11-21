@@ -1,3 +1,4 @@
+import type { FgacEffectiveRules } from "./fgacEffectiveRules";
 import {extractNodeFromResult} from "./nodeUtils";
 import {parseMetrics,type MetricsSnapshot} from './monitoring';
 // NornicDB API Client
@@ -126,6 +127,19 @@ export interface ConstituentInfo {
   uri?: string; // only for remote constituents
 }
 
+/** Read the active mode and grants for the signed-in account. */
+export async function loadFgacEffectiveRules(): Promise<FgacEffectiveRules> {
+  const response = await fetch(joinBasePath(BASE_PATH, "/auth/fgac/effective"), { credentials: "include" });
+  if (response.status === 403) {
+    const denial = await response.json().catch(() => null);
+    if (denial?.errors?.[0]?.code === "Neo.ClientError.Security.CredentialsExpired") {
+      return { enforced: true, rules: null };
+    }
+  }
+  if (!response.ok) throw new Error("Failed to load effective access");
+  return await response.json() as FgacEffectiveRules;
+}
+
 export interface DatabaseInfo {
   name: string;
   status: string;
@@ -145,6 +159,12 @@ export interface DatabaseInfo {
   searchTotal?: number;
   searchRate?: number;
   searchEtaSeconds?: number;
+}
+
+/** Stable database identity reported by SHOW DATABASES. */
+export interface DatabaseIdentity {
+  name: string;
+  databaseID: string;
 }
 
 export interface DatabaseRow {
@@ -410,6 +430,20 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+// copyConvertedEntries rebuilds a plain object from obj's own enumerable
+// entries, converting each value through convert. Object.fromEntries defines
+// own data properties instead of assigning them, so a `__proto__` key stays a
+// key; plain assignment would swap the result's prototype and drop the key.
+function copyConvertedEntries(
+  obj: Record<string, unknown>,
+  convert: (value: unknown) => unknown,
+): Record<string, unknown> {
+  const entries = Object.entries(obj).map(
+    ([key, value]): [string, unknown] => [key, convert(value)],
+  );
+  return Object.fromEntries(entries);
+}
+
 // neo4jValueToPlain unwraps Bolt-typed values into the UI's entity shape.
 // Transaction HTTP rows instead contain properties with separate metadata.
 // The neo4j-driver-lite ships its own
@@ -487,12 +521,10 @@ function neo4jValueToPlain(v: unknown): unknown {
     return v.map(neo4jValueToPlain);
   }
   if (typeof v === "object") {
-    const obj = v as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(obj)) {
-      out[k] = neo4jValueToPlain(val);
-    }
-    return out;
+    return copyConvertedEntries(
+      v as Record<string, unknown>,
+      neo4jValueToPlain,
+    );
   }
   return v;
 }
@@ -636,11 +668,7 @@ function txRowToBoltShape(
           cursor++;
           return toEntity(value as Record<string, unknown>, m);
         }
-        const out: Record<string, unknown> = {};
-        for (const [key, nested] of Object.entries(value)) {
-          out[key] = walk(nested);
-        }
-        return out;
+        return copyConvertedEntries(value as Record<string, unknown>, walk);
       }
       cursor++;
       return value;
@@ -1414,13 +1442,18 @@ class NornicDBClient {
     }
   }
 
-  async listDatabases(): Promise<DatabaseInfo[]> {
-    const resp = await this.executeSystemCypher("SHOW DATABASES");
+  /** Reads the database catalog with the columns required by the caller. */
+  private async showDatabaseRows(includeIdentity = false): Promise<DatabaseRow[]> {
+    const statement = includeIdentity ? "SHOW DATABASES YIELD name, databaseID" : "SHOW DATABASES";
+    const resp = await this.executeSystemCypher(statement);
     if (resp.errors && resp.errors.length > 0) {
       throw new Error(resp.errors.map((e) => e.message).join("; "));
     }
+    return this.parseCypherRows<DatabaseRow>(resp);
+  }
 
-    const rows = this.parseCypherRows<DatabaseRow>(resp);
+  async listDatabases(): Promise<DatabaseInfo[]> {
+    const rows = await this.showDatabaseRows();
     const names = rows
       .map((r) => (typeof r.name === "string" ? r.name : ""))
       .filter((n) => n && n !== "system");
@@ -1436,6 +1469,21 @@ class NornicDBClient {
     );
 
     return infos.filter((x): x is DatabaseInfo => Boolean(x));
+  }
+
+  /**
+   * Returns each database's name with the persisted ID SHOW DATABASES reports,
+   * including the system database. Fine-grained entitlement scopes must
+   * reference these stable IDs instead of names or list positions.
+   */
+  async listDatabaseIdentities(): Promise<DatabaseIdentity[]> {
+    const rows = await this.showDatabaseRows(true);
+    return rows
+      .map((row) => ({
+        name: typeof row.name === "string" ? row.name : "",
+        databaseID: typeof row.databaseID === "string" ? row.databaseID : "",
+      }))
+      .filter((database) => database.name !== "" && database.databaseID !== "");
   }
 
   /** Returns database names for the query dropdown (user-visible DBs, excludes system). */

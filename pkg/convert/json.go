@@ -33,6 +33,12 @@ func newJSONDecoder[domain jsonDecodeDomain](reader io.Reader) *jsonDecoder[doma
 	return &jsonDecoder[domain]{decoder: *jsontext.NewNumberDecoder(reader)}
 }
 
+// DisallowUnknownFields applies strict field checking to typed documents
+// without changing the numeric or string policy of the decoder.
+func (decoder *jsonDecoder[domain]) DisallowUnknownFields() {
+	decoder.decoder.DisallowUnknownFields()
+}
+
 func (decoder *jsonDecoder[domain]) Decode(target interface{}) error {
 	if err := decoder.decoder.Decode(target); err != nil {
 		return err

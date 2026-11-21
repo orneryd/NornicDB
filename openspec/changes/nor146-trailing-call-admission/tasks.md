@@ -1,0 +1,4 @@
+- [x] Reproduce a rejected autocommit statement leaving a write on the release branch.
+- [x] Apply the canonical conclusion rule before execution.
+- [x] Verify Execute, HTTP, and Bolt in both parser modes and transaction modes.
+- [ ] Complete duplicate review and release verification.

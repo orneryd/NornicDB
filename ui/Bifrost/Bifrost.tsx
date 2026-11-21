@@ -10,6 +10,7 @@ import {api,type DatabaseInfo} from '../src/utils/api';
 import {chatClient,sendChat,type ChatWorkspace,type ChatThread,type ChatMessage,type AssistantStatus,type ChatSource,type ChatStreamEvent,type ChatToolTrace,type ChatAttachment} from './client';
 import {AttachmentLimits,AttachmentThread,DraftAttachment,MessageAttachments,privateAttachmentAdapter} from './Attachments';
 import {ContextUsage} from './ContextUsage';
+import {useAssistantAvailability} from '../src/components/common/AssistantAvailability';
 import './Bifrost.css';
 
 interface BifrostProps{isOpen:boolean;onClose:()=>void;modelName?:string;apiEndpoint?:string;onActivityChange?:(count:number)=>void}
@@ -54,7 +55,8 @@ export const Bifrost:React.FC<BifrostProps>=({isOpen,onClose,modelName,apiEndpoi
  const [workspace,setWorkspace]=useState<ChatWorkspace|null>(null),[verified,setVerified]=useState(false),[databaseName,setDatabaseName]=useState('');
  const [threads,setThreads]=useState<ChatThread[]>([]),[messages,setMessages]=useState<Record<string,ChatMessage[]>>({}),[runs,setRuns]=useState<Record<string,Run>>({});
  const [draftFiles,setDraftFiles]=useState<Record<string,File[]>>({});
- const [drafts,setDrafts]=useState<Record<string,string>>({}),[status,setStatus]=useState<AssistantStatus|null>(null),[modelError,setModelError]=useState('');
+ const [drafts,setDrafts]=useState<Record<string,string>>({});
+ const {status,error:modelError}=useAssistantAvailability();
  const [databases,setDatabases]=useState<DatabaseInfo[]>([]),[newSource,setNewSource]=useState<string|null>(null),[sources,setSources]=useState<ChatSource[]>([]);
  const [error,setError]=useState(''),[loading,setLoading]=useState(false),[creating,setCreating]=useState(false),[deleteTarget,setDeleteTarget]=useState<ChatThread|null>(null);
  const controllers=useRef(new Map<string,AbortController>()),identity=useRef(''),verification=useRef(0),activeRef=useRef(active);activeRef.current=active;
@@ -68,7 +70,6 @@ export const Bifrost:React.FC<BifrostProps>=({isOpen,onClose,modelName,apiEndpoi
   }catch(failure){if(attempt===verification.current){setWorkspace(null);setError(failure instanceof Error?failure.message:'Could not load your chat workspace.');}}finally{if(attempt===verification.current)setLoading(false);}
  };
  useEffect(()=>{if(isOpen)void verify();},[isOpen]);
- useEffect(()=>{if(!isOpen)return;let live=true;const refresh=async()=>{try{const current=await chatClient.status();if(live){setStatus(current);setModelError('');}}catch(failure){if(live){setStatus(null);setModelError(failure instanceof Error?failure.message:'Assistant unavailable');}}};void refresh();const timer=setInterval(()=>void refresh(),15000);return()=>{live=false;clearInterval(timer)};},[isOpen]);
  useEffect(()=>()=>{controllers.current.forEach(controller=>controller.abort());},[]);
  useEffect(()=>{if(!verified||!workspace?.configured)return;let live=true;setLoading(true);chatClient.list(view==='archived').then(list=>{if(live)setThreads(previous=>{const selected=previous.find(thread=>thread.id===activeRef.current);return selected&&!list.some(thread=>thread.id===selected.id)?[selected,...list]:list;});}).catch(failure=>{if(live)setError(failure.message)}).finally(()=>{if(live)setLoading(false)});return()=>{live=false};},[verified,workspace?.database,view]);
  useEffect(()=>{if(!verified||!workspace?.configured)return;void api.listDatabases().then(list=>setDatabases(list.filter(db=>db.name!=='system'&&db.name!==workspace.database&&db.type!=='composite'))).catch(failure=>setError(failure.message));},[verified,workspace?.database]);

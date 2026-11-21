@@ -28,21 +28,13 @@ func statusText(err error) string {
 	return code + ": " + message
 }
 
-func newClassificationExecutor(t *testing.T) *StorageExecutor {
-	t.Helper()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	_, err := exec.Execute(context.Background(), "CREATE (:A {v: 1, f: 1.5, s: 'x', b: true, l: [1], ls: ['a']})-[:R]->(:B)", nil)
-	require.NoError(t, err)
-	return exec
-}
-
 // TestCompileTimeTypeErrorsMatchNeo4j covers the #657 section on type errors:
 // an argument or operand whose type is known when the statement is compiled
 // (a literal, a node / relationship / path variable, a WITH / UNWIND literal
 // alias, a function result, a parameter) is a SyntaxError "Type mismatch",
 // wherever it is. Messages are Neo4j 5.26's.
 func TestCompileTimeTypeErrorsMatchNeo4j(t *testing.T) {
-	exec := newClassificationExecutor(t)
+	exec := newStatementExecutor(t, "test", "CREATE (:A {v: 1, f: 1.5, s: 'x', b: true, l: [1], ls: ['a']})-[:R]->(:B)")
 	const syntax = "Neo.ClientError.Statement.SyntaxError"
 	for query, message := range map[string]string{
 		"MATCH (n:A) RETURN toInteger(n) AS y":                "Type mismatch: expected Boolean, Float, Integer or String but was Node",
@@ -111,7 +103,7 @@ func TestCompileTimeTypeErrorsMatchNeo4j(t *testing.T) {
 // type is only known from the data is a TypeError worded by the operator
 // (before, most of these returned null or the expression text).
 func TestRuntimeTypeErrorsMatchNeo4j(t *testing.T) {
-	exec := newClassificationExecutor(t)
+	exec := newStatementExecutor(t, "test", "CREATE (:A {v: 1, f: 1.5, s: 'x', b: true, l: [1], ls: ['a']})-[:R]->(:B)")
 	const typeError = "Neo.ClientError.Statement.TypeError"
 	for query, message := range map[string]string{
 		"MATCH (n:A) RETURN n.v + {a: 1} AS y":    "Cannot add `Long` and `Map`",
@@ -277,7 +269,7 @@ func TestMergeUniqueConflictIsRetrySafe(t *testing.T) {
 // comprehensions and ORDER BY; missing parameters; unknown and failing
 // procedures.
 func TestErrorClassesMatchNeo4j(t *testing.T) {
-	exec := newClassificationExecutor(t)
+	exec := newStatementExecutor(t, "test", "CREATE (:A {v: 1, f: 1.5, s: 'x', b: true, l: [1], ls: ['a']})-[:R]->(:B)")
 	const arithmetic = "Neo.ClientError.Statement.ArithmeticError"
 	for _, query := range []string{
 		"UNWIND [1, 0] AS d RETURN 1 / d AS x",

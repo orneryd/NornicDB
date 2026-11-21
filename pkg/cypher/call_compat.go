@@ -410,9 +410,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 	similarityFunc = vectorIdx.SimilarityFunc
 
 	svc := e.search()
-	served, err := e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(queryVector), vectorReadWarm)
-	if err != nil {
-		return nil, err
+	served := false
+	if e.fineGrainedGraph == nil {
+		var err error
+		served, err = e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(queryVector), vectorReadWarm)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if served {
 		hits, err := svc.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
@@ -430,12 +434,18 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 			counter = queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, "")
 		}
 		for _, hit := range hits {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			edge, err := e.storage.GetEdge(ctx, storage.EdgeID(hit.ID))
 			queryprofile.EntityReadResult(counter, edge, err)
 			if err != nil {
 				continue
 			}
 			result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(edge), hit.Score})
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		return result, nil
 	}
@@ -820,7 +830,7 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []int
 		if !supported {
 			return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
 		}
-	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+	} else if wrapper, ok := e.executionStorage(ctx).(*transactionStorageWrapper); ok {
 		tx = wrapper.tx
 	}
 	if tx == nil {

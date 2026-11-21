@@ -3,7 +3,6 @@
 package server
 
 import (
-	"encoding/json"
 	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"log/slog"
@@ -43,7 +42,12 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		permissions = append(permissions, auth.PermWrite)
 	}
-	if !s.authorizeDatabaseOperation(w, r, dbName, permissions...) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		if len(parts) != 2 || !request.CanAccessDatabase(dbName) {
+			s.writeNeo4jInsufficientPermissions(w, r)
+			return
+		}
+	} else if !s.authorizeDatabaseOperation(w, r, dbName, permissions...) {
 		return
 	}
 	if dbName == "system" {
@@ -74,6 +78,16 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request, dbName string, suffix string) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		operation := strings.TrimPrefix(suffix, "mvcc/")
+		if operation == "mvcc" {
+			operation = "status"
+		}
+		if !request.AllowsDatabase("database.mvcc."+operation, dbName, "") {
+			s.writeNeo4jInsufficientPermissions(w, r)
+			return
+		}
+	}
 	if s.dbManager == nil {
 		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.DatabaseManagerUnavailable())
 		return
@@ -138,7 +152,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 		var body struct {
 			Interval string `json:"interval"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := valueconvert.CypherInputJSON.NewDecoder(r.Body).Decode(&body); err != nil {
 			s.writeNeo4jInvalidJSONBody(w, r)
 			return
 		}
@@ -192,6 +206,7 @@ func (s *Server) handleDbLifecyclePrefix(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName string) {
+	request := auth.FineGrainedRequestFromContext(r.Context())
 	if r.Method == http.MethodGet {
 		overrides := s.dbConfigStore.GetOverrides(dbName)
 		if overrides == nil {
@@ -199,6 +214,14 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		}
 		resolved := dbconfig.Resolve(s.processConfig, overrides)
 		effective, pendingRestart := s.databaseConfigRuntimeState(dbName, resolved)
+		if request != nil {
+			if !request.AllowsDatabase("database.config.read", dbName, "") && !request.AllowsDatabase("embedding.config.read", dbName, "") {
+				s.writeNeo4jInsufficientPermissions(w, r)
+				return
+			}
+			overrides = filterFineGrainedDatabaseConfig(request, dbName, overrides)
+			effective = filterFineGrainedDatabaseConfig(request, dbName, effective)
+		}
 		writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, nil)
 		return
 	}
@@ -217,6 +240,12 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		body.Overrides = make(map[string]string)
 	}
 	body.Overrides = dbconfig.CanonicalizeOverrides(body.Overrides)
+	if request != nil {
+		// Check the changes against the same previous overrides this editor
+		// will replace, including resets caused by keys omitted from a PUT.
+		s.fgacDBConfigWriteMu.Lock()
+		defer s.fgacDBConfigWriteMu.Unlock()
+	}
 	previousOverrides := s.dbConfigStore.GetOverrides(dbName)
 	if r.Method == http.MethodPatch {
 		merged := cloneStringMap(previousOverrides)
@@ -252,11 +281,16 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 	}
 	changedDefinitions := make([]dbconfig.SettingDefinition, 0)
 	for _, definition := range dbconfig.Settings() {
+		previous, previouslySet := previousOverrides[definition.Name]
+		next, nextSet := body.Overrides[definition.Name]
+		changed := previouslySet != nextSet || previous != next
+		if request != nil && changed && !request.AllowsDatabase(fineGrainedDatabaseSettingAction(definition), dbName, definition.Name) {
+			s.writeNeo4jInsufficientPermissions(w, r)
+			return
+		}
 		if definition.HotReload == dbconfig.HotReloadTransactionMemory {
-			previous, previouslySet := previousOverrides[definition.Name]
-			next, nextSet := body.Overrides[definition.Name]
 			// Equal effective values can still add or remove inheritance.
-			hasTransactionMemoryChange = hasTransactionMemoryChange || previouslySet != nextSet || previous != next
+			hasTransactionMemoryChange = hasTransactionMemoryChange || changed
 		}
 		if previousResolved.Effective[definition.Name] == nextResolved.Effective[definition.Name] {
 			continue
@@ -308,6 +342,10 @@ func (s *Server) handleDbConfig(w http.ResponseWriter, r *http.Request, dbName s
 		overrides = make(map[string]string)
 	}
 	effective, pendingRestart := s.updateDatabaseConfigRuntimeState(dbName, previousResolved, nextResolved, changedDefinitions)
+	if request != nil {
+		overrides = filterFineGrainedDatabaseConfig(request, dbName, overrides)
+		effective = filterFineGrainedDatabaseConfig(request, dbName, effective)
+	}
 	writeDatabaseConfigResponse(w, overrides, effective, pendingRestart, &rebuildTriggered)
 }
 

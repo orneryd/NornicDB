@@ -181,3 +181,11 @@ func combineAdjacentEdgeHalves(ctx context.Context, nodeID NodeID, outgoing, inc
 	}
 	return edges, nil
 }
+
+// CountAdjacentEdges counts the selection admitted by the supplied view.
+func CountAdjacentEdges(ctx context.Context, engine interface {
+	ReadAdjacentEdges(context.Context, AdjacentEdgeRead) ([]*Edge, error)
+}, selection AdjacentEdgeRead) (int, error) {
+	edges, err := engine.ReadAdjacentEdges(ctx, selection)
+	return len(edges), err
+}

@@ -175,12 +175,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 
 		// Validate the JWT token using the shared authenticator
 		// The token was generated with the same JWT secret
-		claims, err := a.auth.ValidateToken(credentials)
+		claims, provider, err := a.auth.ValidateTokenWithFineGrainedProvider(context.Background(), credentials)
 		if err != nil {
 			return nil, fmt.Errorf("invalid bearer token: %w", err)
 		}
 
-		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles}
+		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles, providerSession: provider}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(claims.Roles)
 		}
@@ -191,12 +191,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// This supports Neo4j drivers that only support basic auth:
 	// When principal is empty and credentials looks like a JWT, treat as bearer
 	if scheme == "basic" && principal == "" && looksLikeJWT(credentials) {
-		claims, err := a.auth.ValidateToken(credentials)
+		claims, provider, err := a.auth.ValidateTokenWithFineGrainedProvider(context.Background(), credentials)
 		if err != nil {
 			return nil, fmt.Errorf("invalid bearer token: %w", err)
 		}
 
-		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles}
+		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles, providerSession: provider}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(claims.Roles)
 		}
@@ -209,11 +209,11 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	}
 
 	if a.basicAuthCache != nil {
-		if cached, ok := a.basicAuthCache.Get(principal, credentials); ok {
+		if cached, generation, ok := a.basicAuthCache.GetWithGeneration(principal, credentials); ok {
 			// The cache spares the password check, not the current roles. A
 			// cached account that is gone (deleted, disabled, replaced) is
 			// checked again in full below.
-			if current, err := a.auth.CurrentClaims(cached); err == nil {
+			if current, err := a.auth.CurrentBasicClaims(cached, a.basicAuthCache, generation); err == nil {
 				result := &BoltAuthResult{
 					Authenticated: true,
 					Username:      current.Username,

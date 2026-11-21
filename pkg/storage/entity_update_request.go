@@ -1,5 +1,13 @@
 package storage
 
+// PropertyWriteIntent records caller-authored keys even when the projected
+// before and after images are identical. A true key value also requires the
+// property token to exist or be creatable. Replace includes omitted keys.
+type PropertyWriteIntent struct {
+	Keys    map[string]bool
+	Replace bool
+}
+
 // NodeUpdateRequest carries one node mutation and its image interpretation.
 // Before, when supplied, is the immutable image the caller actually observed;
 // keep it unchanged until the transaction terminates. A nil Before deliberately
@@ -10,6 +18,8 @@ type NodeUpdateRequest struct {
 	Before *Node
 	After  *Node
 	Policy EntityImagePolicy
+	// PropertyWrites is consumed by the authorization view before storage.
+	PropertyWrites PropertyWriteIntent
 }
 
 // EdgeUpdateRequest carries a relationship mutation. Before is the immutable
@@ -18,6 +28,8 @@ type NodeUpdateRequest struct {
 type EdgeUpdateRequest struct {
 	Before *Edge
 	After  *Edge
+	// PropertyWrites has the same meaning as in NodeUpdateRequest.
+	PropertyWrites PropertyWriteIntent
 }
 
 // Operation projects client mutation input for a managed coordinator. Native

@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -51,6 +52,20 @@ func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query s
 			word = "BEGIN"
 		}
 		return true, e.checkTransactionControl(ctx, word)
+	}
+	if auth.FineGrainedRequestFromContext(ctx).IsImpersonated() {
+		_, body := parseExecutionMode(query)
+		if startsWithUseClause(body) {
+			if _, remaining, ok, err := parseLeadingUseClause(ctx, body, AcceptedSource); err != nil {
+				return false, err
+			} else if ok {
+				body = remaining
+			}
+		}
+		if !startsWithKeywordFold(strings.TrimSpace(body), "SHOW") &&
+			(fabric.IsAdministrationCommand(body) || isFineGrainedAuthRuleStatement(ctx, body)) {
+			return false, auth.ErrFineGrainedImpersonatedAdministration
+		}
 	}
 	tx := e.txContext
 	if tx == nil || !tx.active {
