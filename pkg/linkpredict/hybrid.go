@@ -222,6 +222,7 @@ func (h *HybridScorer) SetSemanticScorer(fn SemanticScorerFunc) {
 //
 // Returns:
 //   - Sorted list of predictions with hybrid scores
+//   - Nil when the request is canceled during prediction
 //
 // Example:
 //
@@ -234,6 +235,9 @@ func (h *HybridScorer) SetSemanticScorer(fn SemanticScorerFunc) {
 //			pred.Metadata["semantic_score"])
 //	}
 func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.NodeID, topK int) []HybridPrediction {
+	if ctx.Err() != nil {
+		return nil
+	}
 	// Get topological predictions
 	var topologyPreds []Prediction
 
@@ -256,6 +260,9 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 	hybridPreds := make([]HybridPrediction, 0, len(topologyPreds))
 
 	for _, topoPred := range topologyPreds {
+		if ctx.Err() != nil {
+			return nil
+		}
 		semanticScore := 0.0
 		if h.semanticScorer != nil {
 			semanticScore = h.semanticScorer(ctx, source, topoPred.TargetID)
@@ -278,6 +285,9 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 			TopologyMethod: topoPred.Algorithm,
 			Reason:         h.explainPrediction(topoPred.Score, semanticScore),
 		})
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 
 	// Sort by hybrid score
