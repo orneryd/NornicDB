@@ -91,7 +91,7 @@ func (a *Authenticator) validateFineGrainedProviderToken(ctx context.Context, to
 	if err := session.validate(ctx, a); err != nil {
 		return nil, nil, err
 	}
-	current, err := a.CurrentClaims(&claims.JWTClaims)
+	current, err := a.CurrentClaimsContext(ctx, &claims.JWTClaims)
 	if err != nil {
 		return nil, nil, err
 	}

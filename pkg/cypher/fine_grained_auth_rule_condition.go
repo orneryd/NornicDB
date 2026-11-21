@@ -31,8 +31,13 @@ type authRuleProviders struct {
 // graph queries. The input exposes identity attributes and time, with no graph
 // or procedure execution capabilities.
 func CompileFineGrainedAuthRuleCondition(condition string) (auth.FineGrainedAuthRuleCondition, error) {
+	return CompileFineGrainedAuthRuleConditionContext(context.Background(), condition)
+}
+
+// CompileFineGrainedAuthRuleConditionContext compiles a condition using ctx.
+func CompileFineGrainedAuthRuleConditionContext(ctx context.Context, condition string) (auth.FineGrainedAuthRuleCondition, error) {
 	providers := authRuleProviders{}
-	ctx := context.WithValue(context.Background(), authRuleProvidersKey{}, &providers)
+	ctx = context.WithValue(ctx, authRuleProvidersKey{}, &providers)
 	value, err := compileAuthRuleValue(ctx, StripComments(condition), nil, 0)
 	if err != nil {
 		return nil, err

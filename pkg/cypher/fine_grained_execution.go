@@ -166,7 +166,7 @@ func isFineGrainedDatabaseStatus(ctx context.Context, query string) bool {
 // executeFineGrainedDatabaseStatus applies the scoped lifecycle privilege to
 // the catalog's actual target, including aliases and offline databases.
 func (e *StorageExecutor) executeFineGrainedDatabaseStatus(ctx context.Context, request *auth.FineGrainedRequest, query string) (*ExecuteResult, error) {
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: query}
+	cursor := fineGrainedPrivilegeCursor{text: query}
 	cursor.skipGap()
 	action, status := "database.stop", "offline"
 	if cursor.takeKeyword("START") {

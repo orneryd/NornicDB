@@ -312,7 +312,7 @@ func (e *StorageExecutor) executeShowFineGrainedPrivileges(ctx context.Context, 
 }
 
 func fineGrainedPrivilegeUsers(ctx context.Context, head string, canInspectOthers bool) ([]string, error) {
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: head}
+	cursor := fineGrainedPrivilegeCursor{text: head}
 	cursor.skipGap()
 	cursor.takeKeyword("SHOW")
 	if !cursor.takeKeyword("USERS") {

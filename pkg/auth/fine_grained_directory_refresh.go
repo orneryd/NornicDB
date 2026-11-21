@@ -116,7 +116,12 @@ func (runtime *FineGrainedRuntime) refreshFineGrainedRoles(ctx context.Context) 
 // refreshed directory. If refresh invalidated the cache, the caller checks
 // the credentials again through Authenticate.
 func (a *Authenticator) CurrentBasicClaims(claims *JWTClaims, cache *BasicAuthCache, generation uint64) (*JWTClaims, error) {
-	current, err := a.CurrentClaims(claims)
+	return a.CurrentBasicClaimsContext(context.Background(), claims, cache, generation)
+}
+
+// CurrentBasicClaimsContext verifies cached Basic claims with the caller's lifetime.
+func (a *Authenticator) CurrentBasicClaimsContext(ctx context.Context, claims *JWTClaims, cache *BasicAuthCache, generation uint64) (*JWTClaims, error) {
+	current, err := a.CurrentClaimsContext(ctx, claims)
 	if err != nil {
 		return nil, err
 	}
