@@ -385,7 +385,7 @@ func (h *historicalReadEngine) historicalNodeAtInTxn(ctx context.Context, txn *b
 	}
 	var node *Node
 	if projection != nil {
-		node, err = h.engine.getNodeProjectedVisibleAtInTxn(txn, id, h.version, projection)
+		node, err = h.engine.getNodeProjectedAtInTxn(txn, id, h.version, projectedNodeRead{properties: projection, visibility: visibleRead})
 	} else {
 		node, err = h.engine.getNodeAtInTxn(txn, id, h.version, mvccEntityRead{vectors: false, visibility: visibleRead})
 	}

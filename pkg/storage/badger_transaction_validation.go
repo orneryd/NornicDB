@@ -1498,6 +1498,28 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 				continue
 			}
 
+			// Check policy constraints.
+			constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type}, ConstraintPolicy)
+			if err != nil {
+				return err
+			}
+			var allowedPolicies []Constraint
+			var disallowedPolicies []Constraint
+			for _, c := range constraints {
+				if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
+					continue
+				}
+				if c.PolicyMode == "ALLOWED" {
+					allowedPolicies = append(allowedPolicies, c)
+				} else if c.PolicyMode == "DISALLOWED" {
+					disallowedPolicies = append(disallowedPolicies, c)
+				}
+			}
+
+			if len(allowedPolicies) == 0 && len(disallowedPolicies) == 0 {
+				continue
+			}
+
 			// Get the other node's labels.
 			var otherNodeID NodeID
 			if isOutgoing {
@@ -1520,28 +1542,6 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 			} else {
 				srcLabels = otherLabels
 				tgtLabels = node.Labels
-			}
-
-			// Check policy constraints.
-			constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
-			if err != nil {
-				return err
-			}
-			var allowedPolicies []Constraint
-			var disallowedPolicies []Constraint
-			for _, c := range constraints {
-				if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
-					continue
-				}
-				if c.PolicyMode == "ALLOWED" {
-					allowedPolicies = append(allowedPolicies, c)
-				} else if c.PolicyMode == "DISALLOWED" {
-					disallowedPolicies = append(disallowedPolicies, c)
-				}
-			}
-
-			if len(allowedPolicies) == 0 && len(disallowedPolicies) == 0 {
-				continue
 			}
 
 			for _, c := range disallowedPolicies {
@@ -1573,23 +1573,8 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 // getNodeLabels returns labels for a node, checking pending nodes first for read-your-writes.
 // Storage failures are preserved for fail-closed policy validation.
 func (tx *BadgerTransaction) getNodeLabels(ctx context.Context, nodeID NodeID) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, nil
-	}
-	if pending, exists := tx.pendingNodes[nodeID]; exists {
-		return pending.Labels, nil
-	}
-	node, err := tx.getCommittedNodeLocked(ctx, nodeID)
-	if errors.Is(err, ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return node.Labels, nil
+	labels, _, err := tx.visibleNodeLabelsLocked(ctx, nodeID)
+	return labels, err
 }
 
 // Helper: check if node has label

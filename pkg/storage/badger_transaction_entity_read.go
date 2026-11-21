@@ -89,7 +89,7 @@ func cloneTransactionNode(node *Node, policy transactionNodeRead) *Node {
 }
 func loadTransactionNode(ctx context.Context, tx *BadgerTransaction, id NodeID, policy transactionNodeRead) (*Node, error) {
 	if policy.projected {
-		return tx.getCommittedNodeProjectedLocked(ctx, id, policy.properties)
+		return tx.getCommittedNodeProjectedLocked(ctx, id, projectedNodeRead{properties: policy.properties, visibility: policy.visibility})
 	}
 	return tx.getCommittedNodeReadLocked(ctx, id, policy.vectors, policy.visibility)
 }
