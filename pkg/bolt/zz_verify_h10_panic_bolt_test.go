@@ -7,6 +7,7 @@ package bolt
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -44,9 +45,13 @@ func TestVerifyH10ExtraParenBolt(t *testing.T) {
 	}{{"autocommit", boltIntegrationAutocommit}, {"explicit-tx", boltIntegrationExplicitTx}} {
 		mode := mode
 		t.Run("L-H10-004/"+mode.name, func(t *testing.T) {
-			store := storage.NewMemoryEngine()
-			t.Cleanup(func() { _ = store.Close() })
+			base := storage.NewMemoryEngine()
+			t.Cleanup(func() { _ = base.Close() })
+			store := storage.NewNamespacedEngine(base, "test")
 			_, port := startBoltIntegrationServer(t, store, mode.mode)
+
+			// Baseline (before any bad statement): a new connection writes and reads.
+			verifyH10BoltWriteRead(t, port, mode.name, "baseline-write-read", 1)
 
 			for _, stmt := range []string{") {}", "MATCH (n) CALL (n)) { RETURN 1 AS y } RETURN y"} {
 				conn := openBoltTestConn(t, port)
@@ -78,11 +83,37 @@ func TestVerifyH10ExtraParenBolt(t *testing.T) {
 				t.Errorf("control: expected a syntax error, got %v", ctl)
 			}
 
-			// Control: a new connection still writes and reads.
-			conn2 := openBoltTestConn(t, port)
-			runBoltQueryWithParams(t, conn2, "CREATE (:VerifyH10 {k: 1})", nil)
-			rows := runBoltQueryWithParams(t, conn2, "MATCH (n:VerifyH10) RETURN count(n) AS c", nil)
-			verifyH10BoltEmit(t, map[string]any{"lead": "L-H10-004", "route": "bolt", "mode": mode.name, "role": "control", "step": "new-connection-write-read", "rows": rows})
+			// After the bad statements: a new connection still writes and reads.
+			verifyH10BoltWriteRead(t, port, mode.name, "after-write-read", 2)
 		})
 	}
+}
+
+// verifyH10BoltWriteRead opens a new connection, creates one node and counts
+// them; it reports the replies instead of failing on the first FAILURE.
+func verifyH10BoltWriteRead(t *testing.T, port int, mode, step string, want int64) {
+	t.Helper()
+	conn := openBoltTestConn(t, port)
+	fields := map[string]any{"lead": "L-H10-004", "route": "bolt", "mode": mode, "role": "control", "step": step}
+	requireNoError(t, SendRun(t, conn, "CREATE (:VerifyH10 {k: 1})", nil, nil))
+	fields["create_run_reply"] = verifyH10BoltObserve(conn)
+	requireNoError(t, SendPull(t, conn, nil))
+	fields["create_pull_reply"] = verifyH10BoltObserve(conn)
+	requireNoError(t, SendRun(t, conn, "MATCH (n:VerifyH10) RETURN count(n) AS c", nil, nil))
+	fields["count_run_reply"] = verifyH10BoltObserve(conn)
+	requireNoError(t, SendPull(t, conn, nil))
+	msgType, data, err := ReadMessage(conn)
+	if err == nil && msgType == MsgRecord {
+		rec, _, derr := decodePackStreamList(data, 0)
+		if derr == nil {
+			fields["count"] = rec
+			if len(rec) != 1 || fmt.Sprint(rec[0]) != fmt.Sprint(want) {
+				t.Errorf("control %s %s: count %v, want %d", mode, step, rec, want)
+			}
+		}
+	} else {
+		fields["count_read"] = fmt.Sprintf("type 0x%02X err %v", msgType, err)
+		t.Errorf("control %s %s: no count record: %v", mode, step, fields)
+	}
+	verifyH10BoltEmit(t, fields)
 }
