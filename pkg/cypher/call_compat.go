@@ -434,12 +434,18 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 			counter = queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, "")
 		}
 		for _, hit := range hits {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			edge, err := e.storage.GetEdge(ctx, storage.EdgeID(hit.ID))
 			queryprofile.EntityReadResult(counter, edge, err)
 			if err != nil {
 				continue
 			}
 			result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(edge), hit.Score})
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		return result, nil
 	}
