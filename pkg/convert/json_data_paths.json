@@ -1,8 +1,13 @@
 {
+  "pkg/heimdall/handler.go:Handler.sendStreamNotifications": {
+    "write_domain": "property",
+    "contract": "Typed plugin notification SSE chunks retain the existing payload and framing.",
+    "calls": {"property.Marshal": 1}
+  },
   "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
     "write_domain": "property",
     "contract": "Serialize scoped OpenAI-compatible streaming chunks without changing result number widths.",
-    "calls": {"property.Marshal": 8}
+    "calls": {"property.Marshal": 7}
   },
   "pkg/server/server_query_api.go:Server.handleQueryAPITransaction": {
     "read_domain": "input",
@@ -727,7 +732,7 @@
     "write_domain": "property",
     "contract": "Successful/error conversation HTTP and SSE envelopes; strings and typed control fields retain their prior bytes.",
     "calls": {
-      "property.Marshal": 2,
+      "property.Marshal": 3,
       "property.NewEncoder": 3
     }
   },

@@ -655,10 +655,6 @@
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "fa9efb931fa5d55249a5bd0a7c65290fa657997bb1249dc0f3837167c20d330e"
   },
-  "pkg/heimdall/handler.go:Handler.sendStreamNotifications": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "164d38d1c6d7ebed47ce6968ed82c84ee74d4a571cef58a3f8c70c3dfab57a90"
-  },
   "pkg/heimdall/plugin.go:FormatActionResultForModel": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "d070ce373170928808c2affbdbd298e55e1d68560dab01c59f2d26ded551c647"
