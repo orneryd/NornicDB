@@ -125,19 +125,17 @@ type Transaction = BadgerTransaction
 // transactions to preserve state for rollback, by the exported CopyNode, and by
 // a query read whose delivered node belongs to the caller.
 func copyNode(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
-	if nodeCopy == nil {
+	if node == nil {
 		return nil
 	}
+	return copyNodeWithChunks(node, copyChunkVectors(node.ChunkEmbeddings))
+}
 
-	if len(node.ChunkEmbeddings) > 0 {
-		nodeCopy.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
-		for i, emb := range node.ChunkEmbeddings {
-			nodeCopy.ChunkEmbeddings[i] = make([]float32, len(emb))
-			copy(nodeCopy.ChunkEmbeddings[i], emb)
-		}
-	}
-
+// copyNodeWithChunks detaches the body and named vectors. The caller supplies
+// chunk vectors it owns or can safely share between immutable stored images.
+func copyNodeWithChunks(node *Node, chunks [][]float32) *Node {
+	nodeCopy := copyNodeWithoutEmbeddings(node)
+	nodeCopy.ChunkEmbeddings = chunks
 	if node.NamedEmbeddings != nil {
 		nodeCopy.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
 		for name, emb := range node.NamedEmbeddings {
@@ -146,8 +144,19 @@ func copyNode(node *Node) *Node {
 			nodeCopy.NamedEmbeddings[name] = embCopy
 		}
 	}
-
 	return nodeCopy
+}
+
+func copyChunkVectors(chunks [][]float32) [][]float32 {
+	if len(chunks) == 0 {
+		return nil
+	}
+	result := make([][]float32, len(chunks))
+	for i, vector := range chunks {
+		result[i] = make([]float32, len(vector))
+		copy(result[i], vector)
+	}
+	return result
 }
 
 // copyNodeWithoutEmbeddings copies the body image of node. A copy holds the
