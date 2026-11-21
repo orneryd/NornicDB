@@ -110,7 +110,7 @@ func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, iden
 	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
 		return labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(ctx, identifier)
+	node, err := tx.getCommittedNodeProjectedLocked(ctx, identifier, projectedNodeRead{properties: []string{}, visibility: storedRead})
 	if err != nil {
 		return nil, err
 	}

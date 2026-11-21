@@ -53,12 +53,12 @@ func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID
 // getCommittedNodeProjectedLocked is getCommittedNodeLocked for a projected
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
-func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
+func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, projection projectedNodeRead) (*Node, error) {
 	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsNodeLastCommittedLocked(nodeID)) {
-		return tx.engine.GetNodeProjected(ctx, nodeID, properties)
+		return tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
-		return projectCachedNodeForRead(node, properties, true), nil
+		return projectCachedNodeForRead(node, projection.properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		// Like the prefix cache, a node with worker-sidecar embeddings is
@@ -74,23 +74,23 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 			return nil, sidecarErr
 		}
 		if !sidecar {
-			return projectCachedNodeForRead(node, properties, true), nil
+			return projectCachedNodeForRead(node, projection.properties, true), nil
 		}
 	}
 	if tx.readTS.IsZero() {
-		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
 	}
-	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, properties, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedVisibleAtInTxn)
+	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, projection, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
 		}
 		return nil, ErrNotFound
 	}
 	if err == ErrNotFound {
-		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
 		if fallbackErr == nil {
 			return fallbackNode, nil
 		}
@@ -98,7 +98,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 			return nil, fallbackErr
 		}
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
 		}
