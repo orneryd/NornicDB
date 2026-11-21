@@ -215,7 +215,7 @@ func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
 	node.Properties = result.Properties
 	node.ChunkEmbeddings = nil
 	node.NamedEmbeddings = nil
-	return &node
+	return storage.CopyNode(&node)
 }
 
 func (result SearchResult) nodeMetadataBytes() int64 {
