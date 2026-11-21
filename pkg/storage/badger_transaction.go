@@ -1080,7 +1080,9 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 	anchorEligible := false
 	createOpIdx := -1
 	if pending, exists := tx.pendingNodes[node.ID]; exists {
-		oldNode = copyNode(pending)
+		// Pending images already belong to the transaction. Later writes
+		// replace the image, so earlier operations may keep it as-is.
+		oldNode = pending
 		createOpIdx = tx.pendingCreateNodeOperationIndexLocked(node.ID)
 	} else {
 		var err error
@@ -1132,11 +1134,11 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		}
 	}
 
-	var suppliedNewVectors bool
+	var suppliedNewVectors, carriedVectors bool
 	body := node
 	var err error
 	if !committedImage {
-		body, suppliedNewVectors, err = tx.reconcileManagedEmbeddingsLocked(ctx, oldNode, node)
+		body, suppliedNewVectors, carriedVectors, err = tx.reconcileManagedEmbeddingsLocked(ctx, oldNode, node)
 		if err != nil {
 			return err
 		}
@@ -1201,7 +1203,12 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 	// relationships stored at it then.
 
 	// Track for read-your-writes
-	nodeCopy := copyNode(node)
+	var nodeCopy *Node
+	if carriedVectors {
+		nodeCopy = copyNodeWithChunks(node, oldNode.ChunkEmbeddings)
+	} else {
+		nodeCopy = copyNode(node)
+	}
 	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
@@ -1218,13 +1225,20 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		return nil
 	}
 
+	// The claim validator reads only labels and properties from the caller's
+	// immutable observation. Retaining its whole image keeps a separate
+	// caller-owned vector copy alive for every statement.
+	var observed *Node
+	if before := updateRequest.Before; before != nil {
+		observed = &Node{ID: before.ID, Labels: before.Labels, Properties: before.Properties}
+	}
 	tx.operations = append(tx.operations, Operation{
 		Type:               OpUpdateNode,
 		Timestamp:          time.Now(),
 		NodeID:             node.ID,
 		Node:               nodeCopy,
 		OldNode:            oldNode,
-		nodeObservedBefore: updateRequest.Before,
+		nodeObservedBefore: observed,
 		nodeAnchorEligible: anchorEligible,
 	})
 
@@ -1246,7 +1260,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 // Embeddings the caller set on node itself (different vectors) are kept as
 // written. The second result reports that replacement so staging can remove
 // obsolete chunk keys without comparing the same vectors a second time.
-func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Context, oldNode, node *Node) (*Node, bool, error) {
+func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Context, oldNode, node *Node) (_ *Node, suppliedNewVectors, carriedVectors bool, _ error) {
 	if len(oldNode.ChunkEmbeddings) == 0 && oldNode.EmbedMeta == nil {
 		// Embeddings this transaction already invalidated, carried back by a
 		// copy of the node read before (REMOVE n:Embedded, n.text SET n.x =
@@ -1255,20 +1269,25 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Contex
 			node.ChunkEmbeddings = nil
 			node.EmbedMeta = nil
 		}
-		return node, false, nil
+		return node, false, false, nil
 	}
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
-		return node, true, nil
+		return node, true, false, nil
 	}
 	meta, sidecar, err := tx.retainedSidecarMetadataLocked(oldNode)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	if canCarryManagedEmbeddings(tx.engine, oldNode, node) {
-		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
-		node.EmbedMeta = oldNode.EmbedMeta
+		// Keep the caller's image detached from the immutable predecessor
+		// and the pending images that share its chunk storage.
+		node.ChunkEmbeddings = copyChunkVectors(oldNode.ChunkEmbeddings)
+		node.EmbedMeta = nil
+		if oldNode.EmbedMeta != nil {
+			node.EmbedMeta = ownedEntries(nil, oldNode.EmbedMeta)
+		}
 		if !sidecar {
-			return node, false, nil
+			return node, false, true, nil
 		}
 		// An unrelated user mutation advances the body version without
 		// changing the embedded source. Publish the retained sidecar's new
@@ -1277,14 +1296,14 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Contex
 			meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
 			data, err := encodeValue(meta)
 			if err != nil {
-				return nil, false, err
+				return nil, false, false, err
 			}
 			tx.bufferSet(embeddingMetaKey(node.ID), data)
 		}
 		body := *node
 		body.ChunkEmbeddings = nil
 		body.EmbedMeta = nil
-		return &body, false, nil
+		return &body, false, true, nil
 	}
 	if tx.droppedEmbeddings == nil {
 		tx.droppedEmbeddings = make(map[NodeID]*Node)
@@ -1296,9 +1315,9 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(ctx context.Contex
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	return node, false, nil
+	return node, false, false, nil
 }
 
 // carriesDroppedEmbeddings reports whether node carries the embeddings an

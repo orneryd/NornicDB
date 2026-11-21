@@ -1077,8 +1077,9 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 		bytes += int64(len(key) + 48)
 	}
 	nodes := make(map[*Node]struct{}, len(tx.pendingNodes))
+	countedChunks := make(map[*[]float32]struct{})
 	for _, node := range tx.pendingNodes {
-		bytes += estimateRetainedNodeBytes(node)
+		bytes += estimateRetainedNodeBytes(node, countedChunks)
 		nodes[node] = struct{}{}
 	}
 	edges := make(map[*Edge]struct{}, len(tx.pendingEdges))
@@ -1092,7 +1093,7 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 				continue
 			}
 			if _, counted := nodes[node]; !counted {
-				bytes += estimateRetainedNodeBytes(node)
+				bytes += estimateRetainedNodeBytes(node, countedChunks)
 				nodes[node] = struct{}{}
 			}
 		}
@@ -1115,13 +1116,20 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 	return bytes
 }
 
-func estimateRetainedNodeBytes(node *Node) int64 {
+func estimateRetainedNodeBytes(node *Node, countedChunks map[*[]float32]struct{}) int64 {
 	if node == nil {
 		return 0
 	}
 	bytes := estimateNodeBodyCacheBytes(node)
 	for _, vector := range node.NamedEmbeddings {
 		bytes += int64(32 + 4*len(vector))
+	}
+	if len(node.ChunkEmbeddings) > 0 && countedChunks != nil {
+		chunks := &node.ChunkEmbeddings[0]
+		if _, counted := countedChunks[chunks]; counted {
+			return bytes
+		}
+		countedChunks[chunks] = struct{}{}
 	}
 	for _, vector := range node.ChunkEmbeddings {
 		bytes += int64(24 + 4*len(vector))

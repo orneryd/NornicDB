@@ -61,7 +61,7 @@ func estimateBufferedPayloadBytes(namespace, txID string, ops []Operation, write
 		bytes += estimateAffectedFactsBytes(op.DeletedEdgeFacts)
 		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
 		for _, node := range [2]*Node{op.Node, op.OldNode} {
-			bytes += estimateRetainedNodeBytes(node)
+			bytes += estimateRetainedNodeBytes(node, nil)
 		}
 		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
 			bytes += estimateRetainedEdgeBytes(edge)
