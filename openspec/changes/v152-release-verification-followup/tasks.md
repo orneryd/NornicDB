@@ -6,3 +6,7 @@
 - [x] Recover trusted-runner disk space and scope release Go scratch files to the job.
 - [x] Preserve the existing context owners for privilege parsing, authentication, and startup.
 - [ ] Verify the integrated context census, affected packages, and exact release candidate.
+- [x] Reproduce stale stored-entity locations and the retired Bolt adapter boundary on the current release head.
+- [x] Refresh the reports and use the request-scoped native Bolt adapter in production. Verify the stored-entity and nil-context censuses and focused Bolt behavior.
+- [x] Set the release build metadata and move the changelog entries under 1.5.2.
+- [ ] Verify all release shards after reconciling the final release head with main.

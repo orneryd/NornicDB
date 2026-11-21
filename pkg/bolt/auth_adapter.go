@@ -117,6 +117,21 @@ func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *Au
 	return adapter
 }
 
+// SetRequestAuthenticator configures the native adapter for request-scoped
+// authentication. Custom servers can continue using Config.Authenticator.
+func (c *Config) SetRequestAuthenticator(adapter *AuthenticatorAdapter) {
+	c.requestAuthenticator = adapter
+}
+
+// authenticationProvider supplies the selected authenticator's optional
+// identity and configuration capabilities.
+func (c *Config) authenticationProvider() any {
+	if c.requestAuthenticator != nil {
+		return c.requestAuthenticator
+	}
+	return c.Authenticator
+}
+
 // SetGetEffectivePermissions sets the callback used to resolve roles to effective permission IDs.
 // When set, BoltAuthResult.Permissions is filled so HasPermission uses stored role entitlements.
 func (a *AuthenticatorAdapter) SetGetEffectivePermissions(fn func(roles []string) []string) {

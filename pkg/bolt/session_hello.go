@@ -76,7 +76,7 @@ func (s *Session) handleHello(data []byte) error {
 	}
 
 	// Check if authentication is required
-	if s.server != nil && s.server.config.Authenticator != nil {
+	if s.server != nil && s.server.config.authenticationProvider() != nil {
 		scheme := authParams["scheme"]
 		principal := authParams["principal"]
 		credentials := authParams["credentials"]
@@ -343,6 +343,9 @@ func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
 }
 
 func (s *Session) authenticateHello(scheme, principal, credentials string) (*BoltAuthResult, error) {
+	if adapter := s.server.config.requestAuthenticator; adapter != nil {
+		return adapter.AuthenticateContext(s.parentContext(), scheme, principal, credentials)
+	}
 	authenticator := s.server.config.Authenticator
 	if contextual, ok := authenticator.(interface {
 		AuthenticateContext(context.Context, string, string, string) (*BoltAuthResult, error)

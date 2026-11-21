@@ -1850,6 +1850,10 @@ func (s *Session) refreshAuthResult() {
 	if s.authResult == nil || s.server == nil {
 		return
 	}
+	if adapter := s.server.config.requestAuthenticator; adapter != nil {
+		s.authResult = adapter.CurrentAuthResultContext(s.parentContext(), s.authResult)
+		return
+	}
 	switch current := s.server.config.Authenticator.(type) {
 	case interface {
 		CurrentAuthResultContext(context.Context, *BoltAuthResult) *BoltAuthResult
@@ -1914,10 +1918,10 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 // authenticationDisabled is auth.AuthenticationDisabled for the session: no
 // authenticator configured, or one whose user store has security disabled.
 func (s *Session) authenticationDisabled() bool {
-	if s.server == nil || s.server.config.Authenticator == nil {
+	if s.server == nil || s.server.config.authenticationProvider() == nil {
 		return true
 	}
-	if authenticator, ok := s.server.config.Authenticator.(interface{ AuthenticationDisabled() bool }); ok {
+	if authenticator, ok := s.server.config.authenticationProvider().(interface{ AuthenticationDisabled() bool }); ok {
 		return authenticator.AuthenticationDisabled()
 	}
 	return false
@@ -1940,7 +1944,7 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 		identity.Connection.Address = s.conn.RemoteAddr().String()
 	}
 	if s.server != nil && s.server.config != nil {
-		if lister, ok := s.server.config.Authenticator.(interface{ UserListings() []cypher.UserListing }); ok {
+		if lister, ok := s.server.config.authenticationProvider().(interface{ UserListings() []cypher.UserListing }); ok {
 			identity.Users = lister.UserListings
 		}
 	}
