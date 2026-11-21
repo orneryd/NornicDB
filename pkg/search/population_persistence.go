@@ -214,7 +214,7 @@ func (s *Service) beginPopulationPersistence() error {
 	record, exists, err := readPopulationRecord(w.record)
 	if err != nil {
 		if !isRejectedCheckpoint(err) {
-			return err
+			return s.populationDestinationError(w, w.record, err)
 		}
 		w.restart = true
 	} else {
@@ -223,7 +223,26 @@ func (s *Service) beginPopulationPersistence() error {
 	}
 	// The previous files remain untouched. This completion record makes an
 	// interrupted replacement inadmissible even when its files are nonempty.
-	return writeMsgpackSnapshot(w.record, &populationRecord{})
+	return s.populationDestinationError(w, w.record, writeMsgpackSnapshot(w.record, &populationRecord{}))
+}
+
+// populationDestinationError records a failed explicit-disk admission when the
+// build cannot prepare the vector destination and has no open store to report.
+// A separate fulltext or HNSW destination still reports through build status.
+// Callers hold buildMu so live writes cannot replace the store during this check.
+func (s *Service) populationDestinationError(w *populationArtifacts, path string, err error) error {
+	vectorPath := w.canonical[1]
+	if err == nil || s.vectorStorageMode != "disk" || !s.vectorEnabled.Load() ||
+		vectorPath == "" || filepath.Dir(path) != filepath.Dir(vectorPath) {
+		return err
+	}
+	s.mu.RLock()
+	hasVectorStore := s.vectorFileStore != nil
+	s.mu.RUnlock()
+	if !hasVectorStore {
+		s.vectorStorageTransition("error", err.Error())
+	}
+	return err
 }
 
 func (s *Service) resetIncompletePopulation() {
@@ -268,12 +287,12 @@ func (s *Service) preparePopulationArtifacts() error {
 		dir := parents[parent]
 		if dir == "" {
 			if err := security.EnsureRootedParent(p, 0o755); err != nil {
-				return err
+				return s.populationDestinationError(w, p, err)
 			}
 			var err error
 			dir, err = os.MkdirTemp(parent, ".search-population-")
 			if err != nil {
-				return err
+				return s.populationDestinationError(w, p, err)
 			}
 			parents[parent] = dir
 			w.dirs = append(w.dirs, dir)
