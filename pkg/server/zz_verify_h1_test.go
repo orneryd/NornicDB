@@ -482,3 +482,34 @@ func TestVerifyH1_005_Control_CDCAfterReopen(t *testing.T) {
 	t.Logf("VERIFY_H1 source after reopen: CALL db.cdc.current(): %s", out)
 	assert.Empty(t, out.Err)
 }
+
+// L-H1-004 narrowing (submission 2): which part of the lead's query loses the
+// row with asynchronous writes. Each shape is read at once and 2 s later, 30
+// times, on one server; the count of reads that returned the expected rows is
+// logged. Only the lead's own query is asserted.
+func TestVerifyH1_004b_AsyncSelfLoopShapes(t *testing.T) {
+	const n = 30
+	shapes := []struct{ query string; want int }{
+		{"MATCH (:A)<--() RETURN 1", 1},
+		{"MATCH p2 = (:A)<--() RETURN p2", 1},
+		{"MATCH (a:A)-[r]->(b) RETURN id(a) = id(b)", 1},
+		{"MATCH p1 = (:A)-->() MATCH p2 = (:A)<--() RETURN 1", 1},
+		{"MATCH p1 = (:A)-->() MATCH p2 = (:A)-->() RETURN p1 = p2", 1},
+		{"MATCH p1 = (:A)-->() WITH p1 MATCH p2 = (:A)<--() RETURN p1 = p2", 1},
+		{"MATCH (a:A) RETURN size([(a)<--() | 1])", 1},
+		{"MATCH (a:A)<-[r]-(b) RETURN type(r)", 1},
+		{verifyH1PathQuery, 1},
+	}
+	var lead int
+	for _, s := range shapes {
+		immediate, settled := verifyH1LoopRuns(t, true, "CREATE (n:A)-[:LOOP]->(n)", s.query, n, 2*time.Second, s.want)
+		t.Logf("VERIFY_H1 004b shape %q: immediate %d/%d settled %d/%d", s.query, immediate, n, settled, n)
+		if s.query == verifyH1PathQuery {
+			lead = immediate
+		}
+	}
+	// Incoming direction over a non-loop relationship.
+	plainIn, plainInSettled := verifyH1LoopRuns(t, true, "CREATE (:B)-[:R]->(:A)", "MATCH (:A)<--() RETURN 1", n, 2*time.Second, 1)
+	t.Logf("VERIFY_H1 004b non-loop incoming: immediate %d/%d settled %d/%d", plainIn, n, plainInSettled, n)
+	assert.Equal(t, n, lead, "async: lead query")
+}
