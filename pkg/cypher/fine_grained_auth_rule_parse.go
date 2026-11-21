@@ -262,7 +262,7 @@ func (c *fineGrainedPrivilegeCursor) takeAuthRuleHead() bool {
 	if !probe.takeKeyword("RULE") && !probe.takeKeyword("RULES") {
 		return false
 	}
-	*c = probe
+	c.at = probe.at
 	return true
 }
 
@@ -276,7 +276,7 @@ func (c *fineGrainedPrivilegeCursor) takeShowAsCommands() bool {
 	if !probe.takeKeyword("COMMAND") && !probe.takeKeyword("COMMANDS") {
 		return false
 	}
-	*c = probe
+	c.at = probe.at
 	return true
 }
 
@@ -286,7 +286,7 @@ func (c *fineGrainedPrivilegeCursor) takeIfExists() bool {
 	if !probe.takeKeyword("IF") || !probe.takeKeyword("EXISTS") {
 		return false
 	}
-	*c = probe
+	c.at = probe.at
 	return true
 }
 
@@ -296,7 +296,7 @@ func (c *fineGrainedPrivilegeCursor) takeIfNotExists() bool {
 	if !probe.takeKeyword("IF") || !probe.takeKeyword("NOT") || !probe.takeKeyword("EXISTS") {
 		return false
 	}
-	*c = probe
+	c.at = probe.at
 	return true
 }
 
@@ -311,7 +311,7 @@ func (c *fineGrainedPrivilegeCursor) readAuthRuleSetClauses(requireCondition boo
 		if err != nil {
 			return "", nil, err
 		}
-		*c, condition = probe, expression
+		c.at, condition = probe.at, expression
 	} else if requireCondition {
 		return "", nil, fineGrainedAuthRuleSyntaxError("expected SET CONDITION")
 	}
@@ -321,7 +321,7 @@ func (c *fineGrainedPrivilegeCursor) readAuthRuleSetClauses(requireCondition boo
 		if err != nil {
 			return "", nil, err
 		}
-		*c, enabled = probe, value
+		c.at, enabled = probe.at, value
 	}
 	if condition == "" && enabled == nil {
 		return "", nil, fineGrainedAuthRuleSyntaxError("expected SET CONDITION or SET ENABLED")

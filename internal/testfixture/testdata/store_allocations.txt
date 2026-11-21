@@ -79,13 +79,15 @@ github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction
 github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction
 github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction calls=1
+github.com/orneryd/nornicdb/pkg/server.*Server.handleQueryAPITransaction
+github.com/orneryd/nornicdb/pkg/server.*Server.handleQueryAPITransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleImplicitTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.handleTransactionEndpoint -> github.com/orneryd/nornicdb/pkg/server.*Server.handleOpenTransaction calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction
 github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenRequestForOwner calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes
-github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.registerAuthRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=3
 github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerGraphQLRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=2
 github.com/orneryd/nornicdb/pkg/server.*Server.registerHealthRoutes
@@ -95,6 +97,7 @@ github.com/orneryd/nornicdb/pkg/server.*Server.registerHeimdallRoutes -> github.
 github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerMCPRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=8
 github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes
+github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.registerNeo4jRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.withAuth calls=1
 github.com/orneryd/nornicdb/pkg/server.*Server.registerProductRoutes
 github.com/orneryd/nornicdb/pkg/server.*Server.registerProductRoutes -> github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable calls=1
@@ -103,7 +106,8 @@ github.com/orneryd/nornicdb/pkg/server.*Server.registerRouteTable -> github.com/
 github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction
 github.com/orneryd/nornicdb/pkg/server.*Server.runOneShotTransaction -> github.com/orneryd/nornicdb/pkg/server.*Server.openRequestTransaction calls=2
 github.com/orneryd/nornicdb/pkg/server.*Server.withAuth
-github.com/orneryd/nornicdb/pkg/server.*Server.withAuth -> github.com/orneryd/nornicdb/pkg/server.*Server.handleDatabaseEndpoint calls=2
+github.com/orneryd/nornicdb/pkg/server.*Server.withAuth -> github.com/orneryd/nornicdb/pkg/server.*Server.handleDatabaseEndpoint calls=3
+github.com/orneryd/nornicdb/pkg/server.*Server.withAuth -> github.com/orneryd/nornicdb/pkg/server.*Server.handleQueryAPITransaction calls=3
 github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction
 github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
 github.com/orneryd/nornicdb/pkg/storage.MigrateBadgerToMsgpack
