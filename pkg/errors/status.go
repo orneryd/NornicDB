@@ -197,7 +197,12 @@ func neo4jStatusPlain(err error) (code, message string, classified bool) {
 	if transientCode, ok := transientTransactionStatus(err); ok {
 		return transientCode, message, true
 	}
-	if stderrors.Is(err, storage.ErrStorageRestoring) {
+	// A store that cannot serve the statement is server-side unavailability,
+	// not a statement error: while Restore replaces the store
+	// (ErrStorageRestoring) and after it closed (ErrStorageClosed), a client
+	// gets the retryable status its driver retries (NOR-358, NOR-293 comment
+	// e2b952ca), with the store cause still visible in the message.
+	if stderrors.Is(err, storage.ErrStorageRestoring) || stderrors.Is(err, storage.ErrStorageClosed) {
 		return TransientDatabaseUnavailable, message, true
 	}
 	if storage.IsTransactionTooBig(err) {
