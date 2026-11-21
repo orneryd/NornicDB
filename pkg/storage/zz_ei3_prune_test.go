@@ -73,7 +73,7 @@ func TestEI3L538MidBatchRegistration(t *testing.T) {
 			require.NoError(t, err)
 			head, err := b.GetNodeCurrentHead(t.Context(), id)
 			require.NoError(t, err)
-			tx, err := b.BeginTransaction(t.Context(), BeginRequest{})
+			tx, err := b.BeginTransaction(t.Context(), OrdinaryBegin)
 			require.NoError(t, err)
 			defer func() { _ = tx.Rollback() }()
 			for v := 1; v <= 6; v++ {
