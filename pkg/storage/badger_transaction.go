@@ -1225,12 +1225,13 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 		return nil
 	}
 
-	// The claim validator reads only labels and properties from the caller's
-	// immutable observation. Retaining its whole image keeps a separate
-	// caller-owned vector copy alive for every statement.
+	// Predecessor validation reads labels and properties from the caller's
+	// immutable observation. Keep its provenance without retaining the
+	// caller's vectors or embedding publication state.
 	var observed *Node
 	if before := updateRequest.Before; before != nil {
 		observed = &Node{ID: before.ID, Labels: before.Labels, Properties: before.Properties}
+		observed.SetRuntimeMetadata(before.RuntimeMetadata())
 	}
 	tx.operations = append(tx.operations, Operation{
 		Type:               OpUpdateNode,
