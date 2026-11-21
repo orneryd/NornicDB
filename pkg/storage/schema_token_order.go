@@ -192,3 +192,13 @@ func (sm *SchemaManager) OrderTokens(names []string, relationships bool) []strin
 	})
 	return ordered
 }
+
+// KnowsGraphTokens reports whether the committed token catalog contains all
+// supplied node labels and relationship types.
+func (sm *SchemaManager) KnowsGraphTokens(labels, relationshipTypes []string) bool {
+	if len(labels) == 0 && len(relationshipTypes) == 0 {
+		return true
+	}
+	snapshot := sm.tokenSnapshot.Load()
+	return snapshot != nil && snapshot.knows(labels, relationshipTypes) && sm.tokenSnapshot.Load() == snapshot
+}

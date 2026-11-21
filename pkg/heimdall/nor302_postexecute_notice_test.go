@@ -19,11 +19,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,10 +47,8 @@ func (nor302MemoryFailingRouter) Query(context.Context, string, string, map[stri
 // running, and then release the hook so it can report the database outcome.
 type nor302ProbePlugin struct {
 	*MockHeimdallPlugin
-	started  chan struct{}
-	release  chan struct{}
+	gate     *testfixture.PauseGate
 	finished chan struct{}
-	relOne   sync.Once
 }
 
 func (p *nor302ProbePlugin) Actions() map[string]ActionFunc {
@@ -68,8 +66,9 @@ func (p *nor302ProbePlugin) Actions() map[string]ActionFunc {
 // PostExecute performs the late session-memory write. Its outcome is reported
 // through the existing post-execute notification queue.
 func (p *nor302ProbePlugin) PostExecute(ctx *PostExecuteContext) {
-	close(p.started)
-	<-p.release
+	if !p.gate.Pause(p.gate.Armed, p.gate.Entered) {
+		panic("NOR-302 probe hook called more than once")
+	}
 
 	database := p.ctx.Database
 	_, failure := database.Query(ctx.Context, database.DefaultDatabaseName(),
@@ -85,14 +84,10 @@ func (p *nor302ProbePlugin) PostExecute(ctx *PostExecuteContext) {
 func (p *nor302ProbePlugin) waitStarted(t *testing.T) {
 	t.Helper()
 	select {
-	case <-p.started:
+	case <-p.gate.Entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("post-execute hook did not start")
 	}
-}
-
-func (p *nor302ProbePlugin) releaseHook() {
-	p.relOne.Do(func() { close(p.release) })
 }
 
 func (p *nor302ProbePlugin) waitFinished(t *testing.T) {
@@ -113,10 +108,10 @@ func newNOR302Probe(t *testing.T) *nor302ProbePlugin {
 
 	plugin := &nor302ProbePlugin{
 		MockHeimdallPlugin: NewMockPlugin(nor302ProbePluginName),
-		started:            make(chan struct{}),
-		release:            make(chan struct{}),
+		gate:               testfixture.NewPauseGate(),
 		finished:           make(chan struct{}),
 	}
+	plugin.gate.Armed.Store(true)
 	GetSubsystemManager().SetHostContext(SubsystemHost{
 		Config:   DefaultConfig(),
 		Database: &nor302MemoryFailingRouter{},
@@ -124,7 +119,7 @@ func newNOR302Probe(t *testing.T) *nor302ProbePlugin {
 	})
 	require.NoError(t, GetSubsystemManager().RegisterPlugin(plugin, "", true))
 	t.Cleanup(func() {
-		plugin.releaseHook()
+		plugin.gate.ReleaseWrites()
 		plugin.waitFinished(t)
 	})
 	return plugin
@@ -276,7 +271,7 @@ func TestNOR302PostExecuteFailureNoticeReachesBothParsers(t *testing.T) {
 			require.NoError(t, reader.Err(), "received stream lines: %q", events)
 			require.Contains(t, reply.String(), tc.wantReply, "the action must reply while the hook is still blocked")
 
-			plugin.releaseHook()
+			plugin.gate.ReleaseWrites()
 			for reader.Scan() {
 				events = append(events, reader.Text())
 			}
@@ -312,6 +307,6 @@ func TestNOR302DisconnectStopsWaitingForPostExecute(t *testing.T) {
 	case <-time.After(time.Second * 5):
 		t.Fatal("closing the client did not release the response handler")
 	}
-	plugin.releaseHook()
+	plugin.gate.ReleaseWrites()
 	plugin.waitFinished(t)
 }

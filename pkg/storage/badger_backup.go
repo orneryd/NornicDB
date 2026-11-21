@@ -549,6 +549,13 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 	}
 	if wholeNamespace {
 		b.transitionNamespaceSchema(namespace, schemaNamespaceRetire, nil)
+		// The drop deleted the persisted ceiling. Keep the live ordering
+		// boundary, but require the next write to reserve a new block.
+		b.mvccByNamespaceMu.RLock()
+		if state := b.mvccByNamespace[namespace]; state != nil {
+			state.reservedThrough.Store(0)
+		}
+		b.mvccByNamespaceMu.RUnlock()
 		b.propKeyDict.mu.Lock()
 		b.propKeyDict.walBindingDomain++
 		b.propKeyDict.walBindingRevision++

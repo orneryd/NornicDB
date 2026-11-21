@@ -42,6 +42,11 @@ func (a *ExecutionCatalog) SetDatabaseOption(ctx context.Context, name, key, val
 	return a.Manager.SetDatabaseOption(ctx, name, key, value)
 }
 
+// SetDatabaseStatus changes the native database lifecycle state.
+func (a *ExecutionCatalog) SetDatabaseStatus(ctx context.Context, name, status string) error {
+	return a.Manager.SetDatabaseStatus(ctx, name, status)
+}
+
 // StatementCacheScope returns the named database's statement-cache scope.
 func (a *ExecutionCatalog) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
 	return a.Manager.StatementCacheScope(name)

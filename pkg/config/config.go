@@ -248,6 +248,10 @@ type EmbeddingExplicitSettings struct {
 type AuthConfig struct {
 	// Enabled controls whether authentication is required
 	Enabled bool
+	// FGACEnabled selects fine-grained entitlements for authenticated requests.
+	FGACEnabled bool
+	// FGACNativeTags enables native tag predicates in Cypher 25 policy.
+	FGACNativeTags bool
 	// InitialUsername is the default admin username
 	InitialUsername string
 	// InitialPassword is the default admin password
@@ -505,6 +509,13 @@ type DatabaseConfig struct {
 	PersistSearchIndexes bool
 }
 
+const (
+	// QueryAPICompatibilityLTS selects Neo4j 5.26 response behavior.
+	QueryAPICompatibilityLTS = "5.26"
+	// QueryAPICompatibilityCurrent selects Neo4j 2026.10 response behavior.
+	QueryAPICompatibilityCurrent = "2026.10"
+)
+
 // ServerConfig holds server settings.
 type ServerConfig struct {
 	// BoltEnabled controls Bolt protocol server
@@ -575,6 +586,9 @@ type ServerConfig struct {
 	HTTPEnabled bool
 	// HTTPPort for HTTP connections (default 7474)
 	HTTPPort int
+	// QueryAPICompatibility selects the Query API response contract.
+	// The zero value uses Neo4j 5.26 behavior.
+	QueryAPICompatibility string
 	// HTTPAddress to bind to
 	HTTPAddress string
 	// HTTPTrustedProxies contains IP addresses or CIDR ranges for reverse
@@ -1473,6 +1487,11 @@ func (c *Config) Validate() error {
 	if c.Server.HTTPEnabled && c.Server.HTTPPort <= 0 {
 		return fmt.Errorf("invalid http port: %d", c.Server.HTTPPort)
 	}
+	switch c.Server.QueryAPICompatibility {
+	case "", QueryAPICompatibilityLTS, QueryAPICompatibilityCurrent:
+	default:
+		return fmt.Errorf("server.query_api_compatibility must be %q or %q", QueryAPICompatibilityLTS, QueryAPICompatibilityCurrent)
+	}
 
 	if c.Memory.EmbeddingDimensions <= 0 {
 		return fmt.Errorf("invalid embedding dimensions: %d", c.Memory.EmbeddingDimensions)
@@ -1597,6 +1616,7 @@ type YAMLConfig struct {
 		HTTPPort               int      `yaml:"http_port"`
 		HTTPAddress            string   `yaml:"http_address"`
 		HTTPTrustedProxies     []string `yaml:"http_trusted_proxies"`
+		QueryAPICompatibility  string   `yaml:"query_api_compatibility"`
 		Port                   int      `yaml:"port"`                     // Alias for bolt_port
 		Host                   string   `yaml:"host"`                     // Bind address
 		Address                string   `yaml:"address"`                  // Alias for host
@@ -1725,6 +1745,8 @@ type YAMLConfig struct {
 	// Authentication configuration
 	Auth struct {
 		Enabled           *bool  `yaml:"enabled"`
+		FGACEnabled       *bool  `yaml:"fgac_enabled"`
+		FGACNativeTags    *bool  `yaml:"fgac_native_tags"`
 		Username          string `yaml:"username"`
 		Password          string `yaml:"password"`
 		MinPasswordLength int    `yaml:"min_password_length"`
@@ -2292,6 +2314,8 @@ func LoadDefaults() *Config {
 // Environment variables take precedence over config file values.
 func applyEnvVars(config *Config) error {
 	// Authentication - supports both "username:password" and "username/password" formats
+	config.Auth.FGACEnabled = getEnvBool("NORNICDB_FGAC_ENABLED", config.Auth.FGACEnabled)
+	config.Auth.FGACNativeTags = getEnvBool("NORNICDB_FGAC_NATIVE_TAGS", config.Auth.FGACNativeTags)
 	authStr := getEnv("NORNICDB_AUTH", "")
 	// Backward compatibility: allow Neo4j env var
 	if authStr == "" {
@@ -2520,6 +2544,7 @@ func applyEnvVars(config *Config) error {
 	}
 
 	// Server settings - HTTP
+	config.Server.QueryAPICompatibility = getEnv("NORNICDB_QUERY_API_COMPATIBILITY", config.Server.QueryAPICompatibility)
 	if getEnv("NORNICDB_HTTP_ENABLED", "") == "false" {
 		config.Server.HTTPEnabled = false
 	}
@@ -3407,6 +3432,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Server.HTTPAddress != "" {
 		config.Server.HTTPAddress = yamlCfg.Server.HTTPAddress
 	}
+	if yamlCfg.Server.QueryAPICompatibility != "" {
+		config.Server.QueryAPICompatibility = yamlCfg.Server.QueryAPICompatibility
+	}
 	if yamlCfg.Server.BoltServerAnnouncement != "" {
 		config.Server.BoltServerAnnouncement = yamlCfg.Server.BoltServerAnnouncement
 	}
@@ -3741,6 +3769,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 	// Also support dedicated auth section
 	if yamlCfg.Auth.Enabled != nil {
 		config.Auth.Enabled = *yamlCfg.Auth.Enabled
+	}
+	if yamlCfg.Auth.FGACEnabled != nil {
+		config.Auth.FGACEnabled = *yamlCfg.Auth.FGACEnabled
+	}
+	if yamlCfg.Auth.FGACNativeTags != nil {
+		config.Auth.FGACNativeTags = *yamlCfg.Auth.FGACNativeTags
 	}
 	if yamlCfg.Auth.Username != "" {
 		config.Auth.InitialUsername = yamlCfg.Auth.Username

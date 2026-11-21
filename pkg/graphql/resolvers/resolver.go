@@ -232,6 +232,17 @@ func (r *Resolver) authorizeDirectOperation(ctx context.Context, permissions ...
 func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context, regenerate bool) error {
 	// Regeneration clears stored embeddings before starting the worker. Like
 	// the HTTP regenerate operation, this destructive branch requires admin.
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+		action := "embedding.trigger"
+		if regenerate {
+			action = "embedding.regenerate"
+		}
+		if !request.Access.AllowsAllDatabases(action) {
+			return auth.ErrFineGrainedForbidden
+		}
+		return nil
+	}
+
 	if regenerate {
 		if err := r.authorizeDirectOperation(ctx, auth.PermAdmin); err != nil {
 			return err

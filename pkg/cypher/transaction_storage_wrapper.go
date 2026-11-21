@@ -650,14 +650,7 @@ func copyNodeWithoutEmbeddingVectors(node *storage.Node) *storage.Node {
 }
 
 func (w *transactionStorageWrapper) GetFirstNodeByLabel(ctx context.Context, label string) (*storage.Node, error) {
-	nodes, err := w.GetNodesByLabel(ctx, label)
-	if err != nil {
-		return nil, err
-	}
-	if len(nodes) == 0 {
-		return nil, storage.ErrNotFound
-	}
-	return nodes[0], nil
+	return storage.FirstNodeResult(w.GetNodesByLabel(ctx, label))
 }
 
 func (w *transactionStorageWrapper) ForEachNodeIDByLabel(ctx context.Context, label string, visit func(storage.NodeID) bool) error {

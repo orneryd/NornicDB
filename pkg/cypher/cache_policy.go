@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
 )
 
 // The write effect read here is the statement-effect owner's answer
@@ -56,7 +58,7 @@ func (e *StorageExecutor) invalidateCachesForQuery(ctx context.Context, info *Qu
 // runtime work is admitted only when the resolved text is deterministic, and a
 // nested write or unknown text refuses it there.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
-	return !e.inTransaction(ctx) && info.readResult() && e.StatementCacheSelectionValid() && e.cache != nil &&
+	return auth.FineGrainedRequestFromContext(ctx) == nil && !e.inTransaction(ctx) && info.readResult() && e.StatementCacheSelectionValid() && e.cache != nil &&
 		info.deterministicExecution(ctx, cypher) && !profileExecutionBypassesCache(ctx) && !e.queryPropertyDecayEnabled()
 }
 

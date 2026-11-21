@@ -725,7 +725,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		Context:       r.Context(),
 		RequestID:     requestID,
 		RequestTime:   time.Now(),
-		ActionPrompt:  ActionPrompt(), // IMMUTABLE - always first
+		ActionPrompt:  ActionPromptForRequest(r.Context(), ""), // IMMUTABLE - always first
 		UserMessage:   userMessage,
 		Messages:      req.Messages,
 		ExternalTools: chatRequestToolsToMCPTools(req.Tools),
@@ -909,7 +909,7 @@ func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []
 				},
 			},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(lifecycle.StreamWriter, "data: %s\n\n", data)
 		lifecycle.StreamFlusher.Flush()
 	}
@@ -919,9 +919,13 @@ func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []
 // For tool-capable providers (OpenAI/Ollama) uses GenerateWithTools; for local GGUF uses prompt-based multi-round.
 // When inMemoryRunner is set (e.g. MCP server), its tools (store, recall, discover, etc.) are included so the LLM can manage memories in process.
 func (h *Handler) runAgenticLoop(ctx context.Context, lifecycle *requestLifecycle, systemPrompt, userMessage string, params GenerateParams) (finalResponse string, err error) {
-	tools := mergeMCPTools(ActionsAsMCPTools(), lifecycle.promptCtx.ExternalTools)
+	var database string
+	if lifecycle.database != nil {
+		database = lifecycle.database.DefaultDatabaseName()
+	}
+	tools := mergeMCPTools(mcpToolsForActionCatalog(ActionCatalogForRequest(ctx, database)), lifecycle.promptCtx.ExternalTools)
 	if h.inMemoryRunner != nil {
-		tools = mergeMCPTools(tools, h.inMemoryRunner.ToolDefinitions())
+		tools = mergeMCPTools(tools, fineGrainedMemoryTools(ctx, h.inMemoryRunner.ToolDefinitions(), database))
 	}
 	if h.manager.SupportsTools() && len(tools) > 0 {
 		return h.runAgenticLoopWithTools(ctx, lifecycle, systemPrompt, userMessage, tools, params)
@@ -1007,7 +1011,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 			var toolContent string
 			if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), tc.Name) {
 				dbName := lifecycle.database.DefaultDatabaseName()
-				raw, execErr := h.inMemoryRunner.CallTool(ctx, tc.Name, paramsMap, dbName)
+				raw, execErr := h.callInMemoryTool(ctx, tc.Name, paramsMap, dbName)
 				lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 				toolContent = FormatInMemoryToolResult(raw, execErr)
 				execDuration := time.Since(startTime)
@@ -1176,7 +1180,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 		var resultStr string
 		if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
 			dbName := lifecycle.database.DefaultDatabaseName()
-			raw, execErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, paramsToUse, dbName)
+			raw, execErr := h.callInMemoryTool(ctx, parsedAction.Action, paramsToUse, dbName)
 			lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 			resultStr = FormatInMemoryToolResult(raw, execErr)
 			execDuration := time.Since(startTime)
@@ -1429,7 +1433,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(notifChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1469,7 +1473,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				Delta: &ChatMessage{Content: response},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1492,7 +1496,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						FinishReason: "tool_calls",
 					}},
 				}
-				data, _ := json.Marshal(chunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -1549,7 +1553,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(cancelChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(cancelChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1584,7 +1588,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						},
 					},
 				}
-				data, _ := json.Marshal(notifChunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 			}
@@ -1604,7 +1608,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				var err error
 				if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
 					dbName := lifecycle.database.DefaultDatabaseName()
-					raw, callErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, parsedAction.Params, dbName)
+					raw, callErr := h.callInMemoryTool(ctx, parsedAction.Action, parsedAction.Params, dbName)
 					err = callErr
 					execDuration = time.Since(startTime)
 					if err != nil {
@@ -1690,7 +1694,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(resultChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(resultChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1712,7 +1716,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 			},
 		},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	// OpenAI sends [DONE] to signal stream end
 	fmt.Fprintf(w, "data: [DONE]\n\n")

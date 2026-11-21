@@ -55,22 +55,20 @@ Suppression is **not** deletion:
 
 ### Using `reveal()`
 
-The `reveal()` Cypher function bypasses visibility suppression for a specific entity:
+A Cypher statement containing `reveal()` can read entities hidden by decay suppression. The function returns its entity argument, so you can return it or project a field.
 
 ```cypher
--- See a specific suppressed node (use reveal() in the predicate to bypass suppression)
+// Look up a document by ID, even if it is suppressed.
 MATCH (n:Document {id: $id})
-WHERE reveal(n)
-RETURN n, decayScore(n)
+RETURN reveal(n) AS document, decayScore(n) AS score
 
--- List all suppressed documents
+// Inspect document IDs and their scores, including suppressed documents.
 MATCH (n:Document)
-WHERE reveal(n) AND n.suppressed = true
-RETURN n.id, decayScore(n), n.suppressed_at
-ORDER BY decayScore(n)
+RETURN reveal(n).id AS id, decayScore(n) AS score
+ORDER BY score
 ```
 
-`reveal()` is a query-time bypass — it does not change the entity's suppression status. The entity remains suppressed for all other queries.
+Suppression state stays in place for ordinary reads. With FGAC enabled, the caller also needs `database.reveal` for the target database. Graph traversal and property permissions still apply to the revealed results.
 
 ### Inspecting Suppression with Cypher
 

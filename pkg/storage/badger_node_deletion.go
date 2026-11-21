@@ -29,7 +29,7 @@ func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id N
 	raw := kvWriterTxn(w)
 	var version MVCCVersion
 	if !isStaged {
-		version, err = b.allocateMVCCVersion(raw, namespaceForNodeID(id), time.Now())
+		version, err = b.allocateMVCCVersion(ctx, raw, namespaceForNodeID(id), time.Now())
 		if err != nil {
 			return r, err
 		}

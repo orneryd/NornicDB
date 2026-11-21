@@ -23,13 +23,23 @@ import (
 // Each explicit transaction gets its own executor instance.
 type ExecutorFactory func(dbName string) (*cypher.StorageExecutor, error)
 
+// ClientPolicyBinding pins an explicit request transaction to its executing
+// identity and authorization revision. The request lease owns this metadata.
+type ClientPolicyBinding struct {
+	Principal   string
+	Username    string
+	Fingerprint string
+	ReadOnly    bool
+}
+
 // Session stores explicit transaction state shared across transports.
 type Session struct {
-	ID       string
-	Database string
-	Owner    string
-	Executor *cypher.StorageExecutor
-	Expires  time.Time
+	ID           string
+	Database     string
+	Owner        string
+	Executor     *cypher.StorageExecutor
+	Expires      time.Time
+	ClientPolicy ClientPolicyBinding
 
 	mu               sync.Mutex
 	requestMu        sync.Mutex

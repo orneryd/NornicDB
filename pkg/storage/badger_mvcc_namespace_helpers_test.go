@@ -46,17 +46,16 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 	engine := newTestEngine(t)
 	ns := "tenant"
 
-	state, err := engine.namespaceMVCC(ns)
-	require.NoError(t, err)
-	state.seq.Store(0)
-	state.highWaterNanos.Store(0)
-
-	// Persisted namespace sequence floor.
+	// Seed a legacy sequence before first opening the namespace.
 	require.NoError(t, engine.withUpdate(context.Background(), updateRequest{}, func(txn *badger.Txn) error {
 		buf := make([]byte, 8)
 		binary.BigEndian.PutUint64(buf, 7)
 		return txn.Set(mvccNamespaceSequenceKey(ns), buf)
 	}))
+
+	state, err := engine.namespaceMVCC(ns)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), state.seq.Load())
 
 	// Recovered floor from existing node MVCC head.
 	n := &Node{ID: NodeID("tenant:n1"), Labels: []string{"L"}, Properties: map[string]any{"k": "v"}}
@@ -74,7 +73,7 @@ func TestEnsureNamespaceMVCC_WarmsColdStateWithPersistedAndRecoveredFloors(t *te
 
 	recoveredState, err := engine.namespaceMVCC(ns)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, recoveredState.seq.Load(), uint64(7))
+	require.Equal(t, uint64(9), recoveredState.seq.Load())
 	require.Greater(t, recoveredState.highWaterNanos.Load(), int64(0))
 }
 

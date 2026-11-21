@@ -7,12 +7,14 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -1041,7 +1043,11 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 		if !catalogDatabaseVisible(ctx, db.Name()) {
 			continue
 		}
-		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
+		row := showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt())
+		if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+			row[slices.Index(showDatabasesColumns, "home")] = db.Name() == request.HomeDatabaseName
+		}
+		rows = append(rows, row)
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{

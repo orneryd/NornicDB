@@ -32,7 +32,7 @@ func isOrdinarySchemaDDL(ctx context.Context, query string) bool {
 // (a storage engine that cannot stage schema changes) the live schema manager
 // keeps its existing direct behavior.
 func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
-	wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper)
+	wrapper, ok := e.executionStorage(ctx).(*transactionStorageWrapper)
 	if !ok {
 		return nil
 	}
@@ -73,7 +73,7 @@ func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*stora
 	if err := mutation(schema); err != nil {
 		return err
 	}
-	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+	if wrapper, ok := e.executionStorage(ctx).(*transactionStorageWrapper); ok {
 		return wrapper.tx.StageSchemaChanges()
 	}
 	return nil

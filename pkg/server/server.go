@@ -646,14 +646,15 @@ func DefaultConfig() *Config {
 //	defer cancel()
 //	server.Stop(ctx)
 type Server struct {
-	shutdown        serverShutdown
-	pendingListener net.Listener // owned until transferred to http.Server.Serve
-	listenNative    func(string, string) (net.Listener, error)
-	config          *Config
-	db              *nornicdb.DB
-	dbManager       *multidb.DatabaseManager // Manages multiple databases
-	auth            *auth.Authenticator
-	audit           *audit.Logger
+	shutdown               serverShutdown
+	pendingListener        net.Listener // owned until transferred to http.Server.Serve
+	listenNative           func(string, string) (net.Listener, error)
+	config                 *Config
+	queryAPICurrentSummary bool
+	db                     *nornicdb.DB
+	dbManager              *multidb.DatabaseManager // Manages multiple databases
+	auth                   *auth.Authenticator
+	audit                  *audit.Logger
 
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
@@ -772,6 +773,8 @@ type Server struct {
 	processConfig         *nornicConfig.Config
 	memoryPolicy          *memory.Policy
 	dbConfigStateMu       sync.RWMutex
+	fgacDBConfigWriteMu   sync.Mutex
+	fineGrainedRuntime    *auth.FineGrainedRuntime
 	dbConfigActive        map[string]map[string]string
 	dbConfigPending       map[string]map[string]struct{}
 	// perDBYAMLOverrides carries the `databases:` map from nornicdb.yaml,
@@ -1125,6 +1128,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	if globalConfig == nil {
 		globalConfig = nornicConfig.LoadFromEnv()
 	}
+	s.queryAPICurrentSummary = globalConfig.Server.QueryAPICompatibility == nornicConfig.QueryAPICompatibilityCurrent
 
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server
@@ -1777,6 +1781,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
 		} else {
 			s.roleEntitlementsStore = roleEntitlementsStore
+		}
+		if globalConfig.Auth.FGACEnabled {
+			if err := s.initializeFineGrainedRuntime(ctx); err != nil {
+				return nil, err
+			}
 		}
 		dbConfigStore := dbconfig.NewStore(systemStorage)
 		// Seed yaml-declared per-DB overrides on first boot. After the

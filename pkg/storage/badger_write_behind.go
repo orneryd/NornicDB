@@ -195,7 +195,7 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 	// sequence counter pins the commit's place in history, so the flusher
 	// materializes heads that are already ordered against every later
 	// transaction's snapshot — no backdating or flush-time ordering games.
-	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now()); err != nil {
+	if version, err := tx.engine.allocateMVCCVersion(preparationContext, tx.badgerTx, tx.namespace, time.Now()); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return publication, err
 	} else {
@@ -479,7 +479,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		cw.discard()
 		return err
 	}
-	versions := make(map[string]MVCCVersion, 1)
+
 	var maxNode, maxEdge uint64
 	anyCounters := false
 	labelDeltas := make(map[namespaceLabel]int64)
@@ -584,19 +584,31 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		constraints[c.namespace] = &view
 	}
 
-	for commitIndex := range commits {
-		c := &commits[commitIndex]
-		// The commit's MVCC version was allocated at ACK time; the flusher
-		// only materializes it, so head order matches commit order.
-		v := c.version
-		if v.IsZero() {
-			var err error
-			v, err = b.allocateMVCCVersion(txn, c.namespace, time.Now())
-			if err != nil {
+	// Reserve legacy replay versions before the writer can take the exclusive
+	// commit gate. A block refill itself uses the exclusive commit gate.
+	for _, commit := range commits {
+		if commit.recovered && commit.namespace != "" && !commit.version.IsZero() {
+			if err := b.prepareRecoveredMVCCVersion(accepted, commit.namespace, commit.version); err != nil {
 				return abort(err)
 			}
 		}
-		versions[c.namespace] = v
+	}
+	var legacyVersions map[int]MVCCVersion
+	for i, commit := range commits {
+		if !commit.version.IsZero() {
+			continue
+		}
+		version, err := b.allocateMVCCVersion(accepted, txn, commit.namespace, time.Now())
+		if err != nil {
+			return abort(err)
+		}
+		if legacyVersions == nil {
+			legacyVersions = make(map[int]MVCCVersion)
+		}
+		legacyVersions[i] = version
+	}
+	for commitIndex := range commits {
+		c := &commits[commitIndex]
 		if c.hasCounters && !c.recovered {
 			anyCounters = true
 			if c.counterNodeMax > maxNode {
@@ -636,7 +648,11 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		if err != nil {
 			return abort(err)
 		}
-		materialization := mvccCommitMaterialization{writer: w, version: versions[c.namespace], frame: frame, staged: true}
+		version := c.version
+		if version.IsZero() {
+			version = legacyVersions[commitIndex]
+		}
+		materialization := mvccCommitMaterialization{writer: w, version: version, frame: frame, staged: true}
 		if err := b.materializeMVCCCommit(accepted, materialization); err != nil {
 			return abort(err)
 		}
@@ -741,9 +757,6 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	}
 
 	// Commit tail: durability bookkeeping, derived counts, caches, callbacks.
-	for ns := range versions {
-		b.persistMVCCSequence(ns)
-	}
 	if anyCounters {
 		b.idDict.persistCounters(b.db, maxNode, maxEdge)
 	}

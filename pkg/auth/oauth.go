@@ -83,10 +83,11 @@ type OAuthTokenData struct {
 
 // OAuthUserInfo represents user information from OAuth provider.
 type OAuthUserInfo struct {
-	Sub               string   `json:"sub"`
-	Email             string   `json:"email"`
-	PreferredUsername string   `json:"preferred_username"`
-	Roles             []string `json:"roles"`
+	Sub                string   `json:"sub"`
+	Email              string   `json:"email"`
+	PreferredUsername  string   `json:"preferred_username"`
+	Roles              []string `json:"roles"`
+	providerAttributes map[string]any
 }
 
 // NewOAuthManager creates a new OAuth manager.
@@ -230,7 +231,11 @@ func (m *OAuthManager) ExchangeCode(code string) (_ *OAuthTokenData, err error) 
 }
 
 // GetUserInfo retrieves user information from the OAuth provider.
-func (m *OAuthManager) GetUserInfo(accessToken string) (_ *OAuthUserInfo, err error) {
+func (m *OAuthManager) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
+	return m.getOAuthUserInfo(accessToken, nil)
+}
+
+func (m *OAuthManager) getOAuthUserInfo(accessToken string, attributeNames []string) (_ *OAuthUserInfo, err error) {
 	config := GetOAuthConfig()
 	defer func() {
 		err = observability.RedactClientError(err, config.Issuer, config.ClientSecret, accessToken)
@@ -265,8 +270,30 @@ func (m *OAuthManager) GetUserInfo(accessToken string) (_ *OAuthUserInfo, err er
 	}
 
 	var userInfo OAuthUserInfo
-	if err := json.NewDecoder(userinfoResp.Body).Decode(&userInfo); err != nil {
+	decoder := json.NewDecoder(userinfoResp.Body)
+	if len(attributeNames) == 0 {
+		if err := decoder.Decode(&userInfo); err != nil {
+			return nil, fmt.Errorf("failed to parse userinfo: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
+		}
+		return &userInfo, nil
+	}
+	var profile json.RawMessage
+	if err := decoder.Decode(&profile); err != nil {
 		return nil, fmt.Errorf("failed to parse userinfo: %w", observability.RedactError(err, observability.ClientCredentials(config.Issuer, config.ClientSecret, accessToken)...))
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(profile, &userInfo); err != nil || json.Unmarshal(profile, &values) != nil {
+		return nil, fmt.Errorf("invalid userinfo profile")
+	}
+	userInfo.providerAttributes = make(map[string]any)
+	for _, name := range attributeNames {
+		if raw, ok := values[name]; ok {
+			var value any
+			if json.Unmarshal(raw, &value) != nil {
+				return nil, fmt.Errorf("invalid userinfo attribute")
+			}
+			userInfo.providerAttributes[name] = value
+		}
 	}
 
 	return &userInfo, nil
@@ -299,6 +326,10 @@ func (m *OAuthManager) HandleCallback(ctx context.Context, code, state string) (
 	} else {
 		// Default to 1 hour if not specified
 		oauthTokenExpiry = oauthTokenExpiry.Add(1 * time.Hour)
+	}
+
+	if m.authenticator.fgacUsers != nil && strings.EqualFold(os.Getenv("NORNICDB_FGAC_REQUIRE_LOCAL_USER"), "true") {
+		return m.admitLinkedOAuthUser(ctx, tokenData.AccessToken, oauthTokenExpiry)
 	}
 
 	// Get user info from OAuth provider
@@ -371,6 +402,35 @@ func (m *OAuthManager) HandleCallback(ctx context.Context, code, state string) (
 	}
 
 	return user, token, oauthTokenExpiry, nil
+}
+
+func (m *OAuthManager) admitLinkedOAuthUser(ctx context.Context, accessToken string, expiry time.Time) (*User, string, time.Time, error) {
+	provider := strings.TrimSpace(os.Getenv("NORNICDB_FGAC_OIDC_PROVIDER"))
+	if provider == "" {
+		provider = "oidc"
+	}
+	var attributes []string
+	for _, name := range strings.Split(os.Getenv("NORNICDB_FGAC_OIDC_ATTRIBUTES"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			attributes = append(attributes, name)
+		}
+	}
+	profile, err := m.getOAuthUserInfo(accessToken, attributes)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	user, err := m.authenticator.fineGrainedUserForProvider(ctx, provider, profile.Sub)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if limit := time.Now().Add(24 * time.Hour); expiry.After(limit) {
+		expiry = limit
+	}
+	token, err := m.authenticator.issueFineGrainedProviderToken(user, provider, profile.Sub, profile.providerAttributes, expiry)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	return user, token, expiry, nil
 }
 
 // ValidateOAuthToken validates that an OAuth user's OAuth access token is still valid

@@ -433,6 +433,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.fineGrainedRuntime != nil {
+		response["fgac_enabled"] = true
+	}
 	response["auth_method"] = authMethod
 	if authMethod == "oauth" {
 		if issuer := os.Getenv("NORNICDB_OAUTH_ISSUER"); issuer != "" {
@@ -715,7 +718,11 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	if collection {
 		if r.Method == http.MethodGet {
-			httpresponse.WritePropertyJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
+			roles := auth.ReadRoleCatalog(s.roleStore, nil).RoleNames
+			if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+				roles = principal.Runtime.RoleNames()
+			}
+			httpresponse.WritePropertyJSON(w, http.StatusOK, roles)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -742,13 +749,26 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	stores := auth.RoleMutationStores{Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth}
+	if s.fineGrainedRuntime != nil &&
+		(auth.NormalizeRoleName(name) == auth.FineGrainedPublicRole || auth.NormalizeRoleName(roleName) == auth.FineGrainedPublicRole) {
+		s.writeRoleRecordError(w, r, auth.ErrCannotDeleteBuiltinRole)
+		return
+	}
 	var err error
 	switch r.Method {
 	case http.MethodPost:
 		err = s.roleStore.CreateRole(r.Context(), body.Name)
 	case http.MethodPatch:
+		if s.fineGrainedRuntime != nil {
+			err = s.fineGrainedRuntime.RenameRole(r.Context(), roleName, name)
+			break
+		}
 		err = s.roleStore.RenameRoleWithStores(r.Context(), roleName, name, stores)
 	case http.MethodDelete:
+		if s.fineGrainedRuntime != nil {
+			err = s.fineGrainedRuntime.DropRole(r.Context(), roleName)
+			break
+		}
 		err = s.roleStore.DeleteRoleWithStores(r.Context(), roleName, stores)
 	}
 	if err != nil {

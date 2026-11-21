@@ -253,6 +253,7 @@ type Server struct {
 	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	// Resolver for per-DB read/write (Phase 4). When set, used for mutation write check.
 	resolvedAccessResolver    func(roles []string, dbName string) auth.ResolvedAccess
+	fineGrainedAdmission      func(context.Context, []string) (*auth.FineGrainedRequest, error)
 	procedureGrantResolver    func(roles []string) func(procedure string) bool
 	databaseConnectionResolve func(databaseName string) (string, error)
 	databaseConnectionAdmit   func(databaseName string) error
@@ -426,6 +427,7 @@ type resultStream struct {
 	index    int
 	isWrite  bool
 	database string
+	fgac     fineGrainedResultScope
 	// lazy produces the rows after result's when the statement is still
 	// running (#939); nil once it has finished.
 	lazy *lazyResult
@@ -525,11 +527,12 @@ type BoltAuthenticator interface {
 
 // BoltAuthResult contains the result of Bolt authentication.
 type BoltAuthResult struct {
-	Authenticated bool     // Whether authentication succeeded
-	Username      string   // Authenticated username
-	PrincipalID   string   // Stable identity derived from validated authentication
-	Roles         []string // User roles (admin, editor, viewer, etc.)
-	Permissions   []string // Effective entitlement IDs (when set, used by HasPermission; else fallback to rolePerms)
+	Authenticated   bool     // Whether authentication succeeded
+	Username        string   // Authenticated username
+	PrincipalID     string   // Stable identity derived from validated authentication
+	Roles           []string // User roles (admin, editor, viewer, etc.)
+	Permissions     []string // Effective entitlement IDs (when set, used by HasPermission; else fallback to rolePerms)
+	providerSession *auth.FineGrainedProviderSession
 }
 
 // HasRole checks if the auth result has a specific role.
@@ -1632,6 +1635,7 @@ type Session struct {
 	inTransaction                   bool
 	txMetadata                      map[string]any // Transaction metadata from BEGIN
 	txDatabase                      string
+	txFineGrainedFingerprint        string
 	txAccessMode                    requestedAccessMode // BEGIN's requested access mode
 	txHasMerge                      bool
 	txHasNonMergeWrite              bool
@@ -1645,6 +1649,7 @@ type Session struct {
 
 	// Query result state (for streaming with PULL)
 	lastResult            *QueryResult
+	lastResultFGAC        fineGrainedResultScope
 	lastResultMemoryLease *memory.Lease
 	resultMemoryLeases    map[int64]*memory.Lease
 	resultIndex           int
@@ -2083,6 +2088,17 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			break
 		}
 
+		principal, impersonated, fgacErr := s.fineGrainedPrincipal(s.parentContext(), metadata)
+		if fgacErr != nil {
+			err = s.sendTransactionControlError(fgacErr)
+			break
+		}
+
+		if principal != nil && principal.PasswordChangeRequired {
+			err = s.sendTransactionControlError(&auth.FineGrainedCredentialsExpired{})
+			break
+		}
+
 		// Pin every explicit transaction provider to the BEGIN database, not only
 		// database-manager adapters. Factory and single-connection raw executors are
 		// session-scoped rather than database-resolving, so a later RUN naming a
@@ -2091,14 +2107,17 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		if metadataDB, ok := databaseFromMetadata(metadata); ok {
 			txDatabase = metadataDB
 		}
+		if txDatabase == "" && principal != nil {
+			txDatabase = principal.HomeDatabaseName
+		}
 		if txDatabase == "" {
 			txDatabase = "nornic"
+			if s.server != nil && s.server.dbManager != nil {
+				txDatabase = s.server.dbManager.DefaultDatabaseName()
+			}
 		}
 		if s.server != nil && s.server.dbManager != nil {
 			dbName := txDatabase
-			if _, explicitlyNamed := databaseFromMetadata(metadata); !explicitlyNamed && s.database == "" {
-				dbName = s.server.dbManager.DefaultDatabaseName()
-			}
 			txExec, beginErr := s.getExecutorForDatabase(dbName, true)
 			if beginErr != nil {
 				err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, beginErr)))
@@ -2107,6 +2126,11 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 			s.executor = txExec
 			txDatabase = dbName
 		}
+		if principal != nil && !s.fineGrainedAccess(principal).Allows(txDatabase, "access") {
+			err = s.sendTransactionControlError(auth.ErrFineGrainedForbidden)
+			break
+		}
+		s.auditFineGrainedImpersonation(s.parentContext(), impersonated, "BEGIN")
 		if beginErr := s.bindDatabaseConnection(txDatabase); beginErr != nil {
 			err = s.sendTransactionControlError(nornicerrors.WithStatus(beginErr, "Neo.TransientError.General.DatabaseUnavailable", localization.ExternalDiagnostic(beginErr)))
 			break
@@ -2120,6 +2144,9 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		// The transaction is the session's: SHOW TRANSACTIONS lists it with the
 		// session's connection and user from BEGIN on.
 		txParent = s.withSessionIdentity(txParent)
+		if principal != nil {
+			txParent = s.withFineGrainedIdentity(txParent, principal, impersonated)
+		}
 		// A client's tx_timeout, zero included, replaces the server's
 		// transaction timeout for the transaction, as in Neo4j (NOR-284).
 		if clientTimeout {
@@ -2164,6 +2191,9 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 		s.inTransaction = true
 		s.txMetadata = metadata
 		s.txDatabase = txDatabase
+		if principal != nil {
+			s.txFineGrainedFingerprint = principal.Fingerprint
+		}
 		s.txAccessMode = requestedMode
 		s.txHasMerge = false
 		s.txHasNonMergeWrite = false
