@@ -83,7 +83,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			// in full.
 			if s.basicAuthCache != nil {
 				if cached, generation, ok := s.basicAuthCache.GetFromHeaderWithGeneration(authHeader); ok {
-					if claims, err = s.auth.CurrentBasicClaims(cached, s.basicAuthCache, generation); err == nil {
+					if claims, err = s.auth.CurrentBasicClaimsContext(r.Context(), cached, s.basicAuthCache, generation); err == nil {
 						if traceAuth && r.URL.Path == "/graphql" {
 							s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth_cache", time.Since(start), err))
 						}

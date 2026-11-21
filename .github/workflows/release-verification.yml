@@ -152,6 +152,16 @@ jobs:
           cmp lib/llama/CPU_IMAGE_DIGEST /opt/nornic-llama/CPU_IMAGE_DIGEST
           cp /opt/nornic-llama/libllama_linux_amd64.a lib/llama/
           cp -a /opt/nornic-llama/include/. lib/llama/
+      - name: Scope trusted-runner Go files to the job
+        if: ${{ matrix.item == 'cypher' || matrix.item == 'storagecensus' }}
+        run: |
+          set -euo pipefail
+          # The runner cleans RUNNER_TEMP between jobs, including interrupted jobs.
+          mkdir -p "$RUNNER_TEMP/nornic-go/cache" "$RUNNER_TEMP/nornic-go/tmp"
+          {
+            printf 'GOCACHE=%s/nornic-go/cache\n' "$RUNNER_TEMP"
+            printf 'TMPDIR=%s/nornic-go/tmp\n' "$RUNNER_TEMP"
+          } >> "$GITHUB_ENV"
       - name: Run coverage group
         if: ${{ matrix.kind == 'coverage' }}
         env:

@@ -94,14 +94,14 @@ func parseFineGrainedAuthRuleCommand(ctx context.Context, text string) (fineGrai
 	if err := ctx.Err(); err != nil {
 		return command, false, err
 	}
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: text}
+	cursor := fineGrainedPrivilegeCursor{text: text}
 	cursor.skipGap()
 	verb, ok := cursor.readAuthRuleVerb()
 	if !ok {
 		return command, false, nil
 	}
 	command.Verb = verb
-	command, ok, err := parseFineGrainedAuthRuleClause(cursor, command)
+	command, ok, err := parseFineGrainedAuthRuleClause(ctx, cursor, command)
 	if err != nil && ctx.Err() != nil {
 		// An interrupted structural reader has no complete statement verdict.
 		return command, false, err
@@ -139,7 +139,7 @@ func (c *fineGrainedPrivilegeCursor) readAuthRuleVerb() (string, bool) {
 }
 
 // parseFineGrainedAuthRuleClause reads the statement after its verb.
-func parseFineGrainedAuthRuleClause(cursor fineGrainedPrivilegeCursor, command fineGrainedAuthRuleCommand) (fineGrainedAuthRuleCommand, bool, error) {
+func parseFineGrainedAuthRuleClause(ctx context.Context, cursor fineGrainedPrivilegeCursor, command fineGrainedAuthRuleCommand) (fineGrainedAuthRuleCommand, bool, error) {
 	switch command.Verb {
 	case fineGrainedAuthRuleGrantVerb, fineGrainedAuthRuleRevokeVerb:
 		return parseFineGrainedAuthRuleRoleAssignment(cursor, command)
@@ -168,14 +168,14 @@ func parseFineGrainedAuthRuleClause(cursor fineGrainedPrivilegeCursor, command f
 		if command.Replace && command.IfNotExists {
 			return command, true, fineGrainedAuthRuleSyntaxError("OR REPLACE and IF NOT EXISTS cannot be combined")
 		}
-		condition, enabled, err := cursor.readAuthRuleSetClauses(true)
+		condition, enabled, err := cursor.readAuthRuleSetClauses(ctx, true)
 		command.Condition, command.Enabled = condition, enabled
 		if err != nil {
 			return command, true, err
 		}
 	case fineGrainedAuthRuleAlterVerb:
 		command.IfExists = cursor.takeIfExists()
-		condition, enabled, err := cursor.readAuthRuleSetClauses(false)
+		condition, enabled, err := cursor.readAuthRuleSetClauses(ctx, false)
 		command.Condition, command.Enabled = condition, enabled
 		if err != nil {
 			return command, true, err
@@ -304,10 +304,10 @@ func (c *fineGrainedPrivilegeCursor) takeIfNotExists() bool {
 // follow a rule name: SET CONDITION conditionExpression [SET ENABLED
 // {true | false}], where CREATE requires the condition and ALTER makes each
 // clause optional but requires at least one.
-func (c *fineGrainedPrivilegeCursor) readAuthRuleSetClauses(requireCondition bool) (string, *bool, error) {
+func (c *fineGrainedPrivilegeCursor) readAuthRuleSetClauses(ctx context.Context, requireCondition bool) (string, *bool, error) {
 	var condition string
 	if probe := *c; probe.takeKeyword("SET") && probe.takeKeyword("CONDITION") {
-		expression, err := probe.readAuthRuleCondition()
+		expression, err := probe.readAuthRuleCondition(ctx)
 		if err != nil {
 			return "", nil, err
 		}
@@ -348,16 +348,16 @@ func (c *fineGrainedPrivilegeCursor) readAuthRuleEnabled() (*bool, error) {
 // statement, or to the SET clause that follows it, and the established
 // top-level lexer keeps a SET, WHERE or AND inside quoted text, a comment or a
 // nested (), [] or {} group out of that boundary.
-func (c *fineGrainedPrivilegeCursor) readAuthRuleCondition() (string, error) {
+func (c *fineGrainedPrivilegeCursor) readAuthRuleCondition(ctx context.Context) (string, error) {
 	start := c.at
-	end := c.authRuleClauseIndex(start)
+	end := c.authRuleClauseIndex(ctx, start)
 	if end < 0 {
 		end = len(c.text)
 		if terminator := findTopLevelOperator(c.text[start:end], ";", false, true); terminator >= 0 {
 			end = start + terminator
 		}
 	}
-	if err := c.ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	expression := strings.TrimSpace(c.text[start:end])
@@ -373,7 +373,7 @@ func (c *fineGrainedPrivilegeCursor) readAuthRuleCondition() (string, error) {
 // SET ENABLED, or -1. The condition is kept as text, so its expression is not
 // parsed: a SET standing in it is a candidate too, and only the candidate that
 // opens a clause is the statement's own.
-func (c *fineGrainedPrivilegeCursor) authRuleClauseIndex(from int) int {
+func (c *fineGrainedPrivilegeCursor) authRuleClauseIndex(ctx context.Context, from int) int {
 	opts := keywordScanOpts{
 		SkipParens:    true,
 		SkipBrackets:  true,
@@ -383,11 +383,11 @@ func (c *fineGrainedPrivilegeCursor) authRuleClauseIndex(from int) int {
 		SkipComments:  true,
 		Boundary:      keywordBoundaryWord,
 	}
-	for pos := keywordIndexFrom(c.ctx, c.text, "SET", from, opts); pos >= 0; pos = keywordIndexFrom(c.ctx, c.text, "SET", pos+1, opts) {
-		if c.ctx.Err() != nil {
+	for pos := keywordIndexFrom(ctx, c.text, "SET", from, opts); pos >= 0; pos = keywordIndexFrom(ctx, c.text, "SET", pos+1, opts) {
+		if ctx.Err() != nil {
 			return -1
 		}
-		probe := fineGrainedPrivilegeCursor{ctx: c.ctx, text: c.text, at: keywordEndAt(c.text, pos, "SET")}
+		probe := fineGrainedPrivilegeCursor{text: c.text, at: keywordEndAt(c.text, pos, "SET")}
 		probe.skipGap()
 		if probe.wordAt("CONDITION") || probe.wordAt("ENABLED") {
 			return pos

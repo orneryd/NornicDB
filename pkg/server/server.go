@@ -1375,7 +1375,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	})
 	if featuresConfig.HeimdallEnabled {
 		s.logEvent(context.Background(), slog.LevelInfo, localization.ServerHeimdallInitializingEvent())
-		s.runBackground(context.Background(), func(initCtx context.Context) {
+		s.runBackground(dbCtx, func(initCtx context.Context) {
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
 			heimdallCfg := heimdall.ConfigFromFeatureFlags(featuresConfig)
@@ -1486,7 +1486,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 					"search_rerank", "local", modelPath,
 					"server starts immediately; reranking available after model loads"))
 
-			s.runBackground(context.Background(), func(initCtx context.Context) {
+			s.runBackground(dbCtx, func(initCtx context.Context) {
 				opts := localllm.DefaultRerankerOptions(modelPath)
 				opts.GPULayers = -1
 				// Apply rerank context features from config
@@ -1705,7 +1705,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	// DB.Open() warms namespaces present in storage; this loop ensures known DB metadata
 	// also gets initialized, and keeps doing so without requiring first-search triggers.
 	s.ensureSearchBuildStartedForKnownDatabases()
-	s.runBackground(context.Background(), func(context.Context) {
+	s.runBackground(dbCtx, func(context.Context) {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -1747,7 +1747,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	// Load RBAC stores from system DB when available so roles/allowlist/privileges/entitlements APIs
 	// work even with --no-auth (e.g. fetch roles, configure RBAC before enabling auth).
 	if systemStorage, err := dbManager.GetStorage("system"); err == nil {
-		ctx := context.Background()
+		ctx := dbCtx
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRolesLoadFailedEvent(loadErr))

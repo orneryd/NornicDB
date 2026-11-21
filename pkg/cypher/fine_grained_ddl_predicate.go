@@ -9,7 +9,7 @@ import (
 )
 
 func parseFineGrainedPredicate(ctx context.Context, source string) ([]string, *auth.FineGrainedPredicate, error) {
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: source}
+	cursor := fineGrainedPrivilegeCursor{text: source}
 	if !cursor.takeKeyword("FOR") || cursor.at >= len(source) || source[cursor.at] != '(' {
 		return nil, nil, fineGrainedPrivilegeSyntaxError("expected a FOR node pattern")
 	}
@@ -17,7 +17,7 @@ func parseFineGrainedPredicate(ctx context.Context, source string) ([]string, *a
 	if err != nil {
 		return nil, nil, err
 	}
-	pattern := fineGrainedPrivilegeCursor{ctx: ctx, text: body}
+	pattern := fineGrainedPrivilegeCursor{text: body}
 	pattern.skipGap()
 	variable, _ := pattern.readName()
 	pattern.skipGap()
@@ -46,7 +46,7 @@ func parseFineGrainedPredicate(ctx context.Context, source string) ([]string, *a
 			return nil, nil, fineGrainedPrivilegeSyntaxError("expected one literal property rule in the FOR pattern")
 		}
 		body := expression[1 : len(expression)-1]
-		key := fineGrainedPrivilegeCursor{ctx: ctx, text: body}
+		key := fineGrainedPrivilegeCursor{text: body}
 		key.skipGap()
 		property, found := key.readName()
 		key.skipGap()
@@ -142,7 +142,7 @@ func bindFineGrainedPredicate(ctx context.Context, variable, expression string) 
 }
 
 func fineGrainedRuleProperty(ctx context.Context, variable, text string) (string, bool) {
-	cursor := fineGrainedPrivilegeCursor{ctx: ctx, text: text}
+	cursor := fineGrainedPrivilegeCursor{text: text}
 	cursor.skipGap()
 	name, found := cursor.readName()
 	cursor.skipGap()

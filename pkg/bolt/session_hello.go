@@ -94,7 +94,7 @@ func (s *Session) handleHello(data []byte) error {
 				localization.BoltHelloSchemeNoneEvent(s.implicitBearer != "", s.server.config.AllowAnonymous))
 			cookieAuthed := false
 			if s.implicitBearer != "" {
-				result, err := s.server.config.Authenticator.Authenticate("bearer", "", s.implicitBearer)
+				result, err := s.authenticateHello("bearer", "", s.implicitBearer)
 				if err == nil {
 					s.authenticated = true
 					s.authResult = result
@@ -118,7 +118,7 @@ func (s *Session) handleHello(data []byte) error {
 			}
 		} else if scheme == "basic" {
 			// Authenticate with provided credentials
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
+			result, err := s.authenticateHello(scheme, principal, credentials)
 			if err != nil {
 				remoteAddr := "unknown"
 				if s.conn != nil {
@@ -133,7 +133,7 @@ func (s *Session) handleHello(data []byte) error {
 			s.forwardedAuthHeader = ""
 		} else if scheme == "bearer" {
 			// JWT token authentication - used for cluster inter-node auth
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
+			result, err := s.authenticateHello(scheme, principal, credentials)
 			if err != nil {
 				remoteAddr := "unknown"
 				if s.conn != nil {
@@ -340,4 +340,14 @@ func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func (s *Session) authenticateHello(scheme, principal, credentials string) (*BoltAuthResult, error) {
+	authenticator := s.server.config.Authenticator
+	if contextual, ok := authenticator.(interface {
+		AuthenticateContext(context.Context, string, string, string) (*BoltAuthResult, error)
+	}); ok {
+		return contextual.AuthenticateContext(s.parentContext(), scheme, principal, credentials)
+	}
+	return authenticator.Authenticate(scheme, principal, credentials)
 }
