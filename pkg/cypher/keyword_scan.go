@@ -1037,6 +1037,9 @@ type queryRewrite struct {
 	// The label-expression rewrite inserts predicates, in which a short
 	// column name (r) can occur last (#860).
 	verbatimColumns bool
+	// preserveColumnIdentity keeps admitted symbolic names when projecting
+	// lexical source edits back onto anonymous expression headings.
+	preserveColumnIdentity bool
 
 	// Admission is a fact of exact source text, retained by its existing rewrite.
 	commentsAdmitted bool

@@ -16,7 +16,7 @@ func sourceQueryRewrite(source *cyphertext.Source) *queryRewrite {
 	if len(source.Edits) == 0 {
 		return nil
 	}
-	rewrite := &queryRewrite{Source: *source}
+	rewrite := &queryRewrite{Source: *source, preserveColumnIdentity: true}
 	return rewrite
 }
 

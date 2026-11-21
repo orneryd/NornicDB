@@ -30,12 +30,7 @@ func (restoration resultRestoration) restore(ctx context.Context, result *Execut
 			columns = make([]string, len(result.Columns))
 		}
 		for index, column := range result.Columns {
-			var original string
-			if restoration.names != nil {
-				original = restoration.names.restoreColumn(column)
-			} else {
-				original = restoration.source.originalText(column)
-			}
+			original := restoration.column(ctx, result.Columns, index)
 			if original == column && restoration.names == nil {
 				continue
 			}
@@ -105,6 +100,22 @@ func (restoration resultRestoration) restore(ctx context.Context, result *Execut
 		err = nornicerrors.ProjectTerminalOutcomeMessages(err, project)
 	}
 	return result, err
+}
+
+// column is one result column's client text. Quoted columns use the quoted-name
+// projection owner; under a source rewrite only an expression column is source
+// text, because a column the statement names (an alias or a bare variable) is a
+// decoded identity that the accepted statement already carries.
+func (restoration resultRestoration) column(ctx context.Context, columns []string, index int) string {
+	column := columns[index]
+	if restoration.names != nil {
+		return restoration.names.restoreColumn(column)
+	}
+	original := restoration.source.originalText(column)
+	if restoration.source.preserveColumnIdentity && original != column && statementNamesColumn(ctx, restoration.source.Text, len(columns), index) {
+		return column
+	}
+	return original
 }
 
 func (restoration resultRestoration) value(value any, purpose sourceRestorationPurpose) (any, bool) {

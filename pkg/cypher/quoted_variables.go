@@ -500,14 +500,15 @@ func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableN
 	return names
 }
 
-// finalReturnBody locates the body of text's last top-level RETURN (after
-// the keyword).
-func finalReturnBody(ctx context.Context, text string) (int, int, bool) {
+// columnReturnBody locates the RETURN whose items name the result columns: the
+// first top-level one. A UNION takes its columns from its first branch, and
+// the projection owner reads that branch from the clause the body starts.
+func columnReturnBody(ctx context.Context, text string) (int, int, bool) {
 	positions := findAllTopLevelPipelineKeywordPositions(ctx, text, "RETURN")
 	if len(positions) == 0 {
 		return 0, 0, false
 	}
-	return positions[len(positions)-1] + len("RETURN"), len(text), true
+	return positions[0] + len("RETURN"), len(text), true
 }
 
 // restoreProjection names the result columns from the client's final RETURN

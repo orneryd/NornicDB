@@ -85,6 +85,7 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 		target.addProjection(itemSource.expression, itemSource.alias)
 		projection := &target.projections[len(target.projections)-1]
 		projection.variable, projection.direct, projection.grouped = projectionVariableFromSyntax(expression)
+		projection.named = projectionNamesColumn(definition.Valid(), projection.direct, projection.grouped)
 		for _, visit := range expressions {
 			visit(expression)
 		}
@@ -101,6 +102,23 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode, expressions ...func
 	}
 	plan.valid = plan.star || len(plan.projections) > 0
 	return plan
+}
+
+// projectionNamesColumn reports whether a projection item's column is a name:
+// an explicit AS alias or a bare variable identity. Any other item's column is
+// its expression text as written, which a source rewrite maps back.
+func projectionNamesColumn(aliased, variable, grouped bool) bool {
+	return aliased || variable && !grouped
+}
+
+// projectionItemNamesColumn reads the same fact from one retained projection
+// item, for plan builders that hold the item rather than its analysis.
+func projectionItemNamesColumn(item cypherantlr.SyntaxNode) bool {
+	if !item.Valid() {
+		return false
+	}
+	_, variable, grouped := projectionVariableFromSyntax(item.ChildRule(cypherantlr.CypherParserRULE_expression))
+	return projectionNamesColumn(item.ChildRule(cypherantlr.CypherParserRULE_symbol).Valid(), variable, grouped)
 }
 
 // A bare variable's column is its decoded identity. Other unaliased columns
