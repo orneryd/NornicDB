@@ -41,6 +41,8 @@ type huntOptions struct {
 	QueryCache  bool
 	// TxMemoryMax is db.memory.transaction.max in bytes (0 = unlimited).
 	TxMemoryMax int64
+	// NodeCacheMaxEntries overrides the Badger node cache cap (0 = default).
+	NodeCacheMaxEntries int
 }
 
 // huntServer is one whole server over dir.
@@ -77,6 +79,9 @@ func huntOpenErr(t testing.TB, dir string, options huntOptions) (*huntServer, er
 	config.Memory.QueryCacheEnabled = options.QueryCache
 	config.Database.AsyncWritesEnabled = options.AsyncWrites
 	config.Memory.TransactionMax = options.TxMemoryMax
+	if options.NodeCacheMaxEntries > 0 {
+		config.Database.BadgerNodeCacheMaxEntries = options.NodeCacheMaxEntries
+	}
 	db, err := nornicdb.Open(dir, config)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", dir, err)
