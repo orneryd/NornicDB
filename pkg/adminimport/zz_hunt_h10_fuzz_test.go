@@ -14,6 +14,7 @@ package adminimport
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,20 +24,55 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func huntH10NodeSet(t *testing.T, engine storage.Engine) []string {
+// huntH10NodeSet returns the nodes as sorted JSON and how many had their `id`
+// property masked. DECISIONS 18: the known dropped-`id` difference (L-H10-001:
+// the export leaves out a property `id` whose string value equals the node ID,
+// adminimport/neo4j_csv.go:218) is masked on both sides; every other property
+// is compared.
+func huntH10NodeSet(t *testing.T, engine storage.Engine) ([]string, int) {
 	nodes, err := storage.CollectStoredNodes(context.Background(), engine)
 	if err != nil {
 		t.Fatalf("read nodes: %v", err)
 	}
 	out := make([]string, 0, len(nodes))
+	masked := 0
 	for _, node := range nodes {
 		labels := append([]string(nil), node.Labels...)
 		sort.Strings(labels)
-		data, _ := json.Marshal(map[string]any{"labels": labels, "properties": node.Properties})
+		props := make(map[string]any, len(node.Properties))
+		for key, value := range node.Properties {
+			if key == "id" {
+				if s, ok := value.(string); ok && s == string(node.ID) {
+					masked++
+					continue
+				}
+			}
+			props[key] = value
+		}
+		data, _ := json.Marshal(map[string]any{"labels": labels, "properties": props})
 		out = append(out, string(data))
 	}
 	sort.Strings(out)
-	return out
+	return out, masked
+}
+
+// Counts of known (masked) L-H10-001 hits, written to
+// $HUNT_H10_LAST_DIR/FuzzHuntH10CSVImport.masked-<pid> after every input as
+// "compared=<n> inputs_with_masked_hits=<n> nodes_masked=<n>".
+var huntH10CSVExecs, huntH10CSVMaskedInputs, huntH10CSVMaskedNodes int
+
+func huntH10CSVCount(maskedNodes int) {
+	huntH10CSVExecs++
+	if maskedNodes > 0 {
+		huntH10CSVMaskedInputs++
+		huntH10CSVMaskedNodes += maskedNodes
+	}
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("FuzzHuntH10CSVImport.masked-%d", os.Getpid())),
+		[]byte(fmt.Sprintf("compared=%d inputs_with_masked_hits=%d nodes_masked=%d\n", huntH10CSVExecs, huntH10CSVMaskedInputs, huntH10CSVMaskedNodes)), 0o644)
 }
 
 func FuzzHuntH10CSVImport(f *testing.F) {
@@ -74,7 +110,7 @@ func FuzzHuntH10CSVImport(f *testing.F) {
 		if err != nil {
 			return
 		}
-		first := huntH10NodeSet(t, storage.NewNamespacedEngine(base, "fz"))
+		first, maskedFirst := huntH10NodeSet(t, storage.NewNamespacedEngine(base, "fz"))
 		out := filepath.Join(dir, "export")
 		if err := ExportNeo4jCSV(storage.NewNamespacedEngine(base, "fz"), Neo4jCSVExportOptions{OutputDir: out}); err != nil {
 			t.Fatalf("export of an imported database failed: %v (input %q)", err, csv)
@@ -88,7 +124,8 @@ func FuzzHuntH10CSVImport(f *testing.F) {
 		if _, err := ImportFull(context.Background(), second, Options{DatabaseName: "fz2", NodeSources: nodeSources, RelSources: relSources, Now: time.Unix(1700000000, 0).UTC()}); err != nil {
 			t.Fatalf("re-import of the export failed: %v (input %q)", err, csv)
 		}
-		again := huntH10NodeSet(t, storage.NewNamespacedEngine(second, "fz2"))
+		again, maskedAgain := huntH10NodeSet(t, storage.NewNamespacedEngine(second, "fz2"))
+		huntH10CSVCount(maskedFirst - maskedAgain)
 		if len(first) != len(again) {
 			t.Fatalf("round trip changed the node count %d -> %d (input %q)", len(first), len(again), csv)
 		}

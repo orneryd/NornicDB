@@ -18,8 +18,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,9 +83,24 @@ func huntH10SeedsSkipping(f *testing.F, skip map[int]bool) {
 
 func huntH10Bounded(t *testing.T, limit time.Duration, input string, fn func()) {
 	t.Helper()
+	huntH10BoundedPanics(t, limit, input, fn, nil)
+}
+
+// huntH10BoundedPanics recovers a panic inside the hang-guard goroutine
+// (DECISIONS 18). known(value, stack) reports a panic that is already a lead:
+// that input is counted and skipped; any other panic fails with its input.
+func huntH10BoundedPanics(t *testing.T, limit time.Duration, input string, fn func(), known func(any, string) bool) {
+	t.Helper()
 	done := make(chan struct{})
+	var panicked any
+	var stack string
 	go func() {
 		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				panicked, stack = r, string(debug.Stack())
+			}
+		}()
 		fn()
 	}()
 	select {
@@ -90,6 +108,39 @@ func huntH10Bounded(t *testing.T, limit time.Duration, input string, fn func()) 
 	case <-time.After(limit):
 		t.Fatalf("hang: no answer within %s for input %q", limit, input)
 	}
+	if panicked == nil {
+		return
+	}
+	if known != nil && known(panicked, stack) {
+		return
+	}
+	t.Fatalf("panic: %v (input %q)
+%s", panicked, input, stack)
+}
+
+// L-H10-004: opensSubquery slicing q[-1:-1] (label_expression_rewrite.go:1510).
+func huntH10KnownL004(value any, stack string) bool {
+	return strings.Contains(fmt.Sprint(value), "slice bounds out of range [:-1]") &&
+		strings.Contains(stack, "labelExpressionRewriter).opensSubquery")
+}
+
+// Counts of known L-H10-004 panics, written to
+// $HUNT_H10_LAST_DIR/FuzzHuntH10Execute.known-<pid> after every input as
+// "inputs=<n> known_L-H10-004=<n>".
+var huntH10ExecInputs, huntH10ExecKnown int
+
+func huntH10ExecCount(known bool) {
+	huntH10ExecInputs++
+	if known {
+		huntH10ExecKnown++
+	}
+	dir := os.Getenv("HUNT_H10_LAST_DIR")
+	if dir == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("FuzzHuntH10Execute.known-%d", os.Getpid())),
+		[]byte(fmt.Sprintf("inputs=%d known_L-H10-004=%d
+", huntH10ExecInputs, huntH10ExecKnown)), 0o644)
 }
 
 func FuzzHuntH10NornicParse(f *testing.F) {
@@ -137,11 +188,16 @@ func FuzzHuntH10Execute(f *testing.F) {
 		engine := storage.NewMemoryEngine()
 		defer engine.Close()
 		executor := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
-		huntH10Bounded(t, 10*time.Second, query, func() {
+		known := false
+		huntH10BoundedPanics(t, 10*time.Second, query, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			_, _ = executor.Execute(ctx, query, nil)
+		}, func(value any, stack string) bool {
+			known = huntH10KnownL004(value, stack)
+			return known
 		})
+		huntH10ExecCount(known)
 	})
 }
 
