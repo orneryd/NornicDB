@@ -135,7 +135,7 @@ func csAnalyze(label string, prof []byte, base []byte, idxName string, div int64
 		}
 		var xs []kv
 		for key, v := range m {
-			if filter && !strings.Contains(key, "orneryd/nornicdb") {
+			if filter && (!strings.Contains(key, "orneryd/nornicdb") || strings.Contains(key, "nornicdb/pkg/server.") || strings.Contains(key, "nornicdb/pkg/security.") || strings.Contains(key, "nornicdb/pkg/txsession.") || strings.Contains(key, "nornicdb/pkg/lifecycle.")) {
 				continue
 			}
 			xs = append(xs, kv{key, v})
@@ -417,6 +417,8 @@ func csRunOne(t *testing.T, n int) {
 		commitMS = append(commitMS, cd.Milliseconds())
 		if profiling {
 			var aa bytes.Buffer
+			runtime.GC() // the allocs profile is published at GC
+			runtime.GC()
 			_ = pprof.Lookup("allocs").WriteTo(&aa, 0)
 			csAnalyze(fmt.Sprintf("commit-cpu-N%d", n), cpuBuf.Bytes(), nil, "cpu", 1e6, "ms", 30)
 			csAnalyze(fmt.Sprintf("commit-alloc-N%d", n), aa.Bytes(), allocBase, "alloc_space", 1<<20, "MiB", 30)
