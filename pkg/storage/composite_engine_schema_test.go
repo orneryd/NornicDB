@@ -198,7 +198,7 @@ func TestCompositeEngine_GetSchema_MergesConstraints(t *testing.T) {
 	}
 
 	// Verify constraints from both constituents are present
-	assert.True(t, foundPerson || foundCompany, "At least one constraint should be merged")
+	assert.True(t, foundPerson && foundCompany, "both admitted constituents contribute their constraints")
 }
 
 func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
@@ -238,6 +238,8 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	err = schema1.AddRangeIndex("range_idx", "Person", "age")
 	require.NoError(t, err)
 
+	require.NoError(t, engine1.GetSchema().AddTypedIndexForEntity(IndexKindText, "text_name", "Person", []string{"name"}, ConstraintEntityNode))
+
 	// Create composite engine
 	constituents := map[string]Engine{
 		"db1": engine1,
@@ -256,7 +258,7 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 
 	// Verify all index types are present
 	indexes := nonLookupIndexes(mergedSchema.GetIndexes())
-	require.Equal(t, 5, len(indexes))
+	require.Len(t, indexes, 6)
 
 	// Verify each index type
 	typeCounts := make(map[string]int)
@@ -273,23 +275,7 @@ func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	assert.Equal(t, 1, typeCounts["FULLTEXT"], "Should have 1 fulltext index")
 	assert.Equal(t, 1, typeCounts["VECTOR"], "Should have 1 vector index")
 	assert.Equal(t, 1, typeCounts["RANGE"], "Should have 1 range index")
-}
-
-func TestAnyToStringSlice_DeterministicAcrossShapes(t *testing.T) {
-	t.Run("native string slice", func(t *testing.T) {
-		got := anyToStringSlice([]string{"a", "b", "", "  "})
-		require.Equal(t, []string{"a", "b"}, got)
-	})
-
-	t.Run("interface slice from generic decode", func(t *testing.T) {
-		got := anyToStringSlice([]interface{}{"a", "b", 7, nil, ""})
-		require.Equal(t, []string{"a", "b"}, got)
-	})
-
-	t.Run("unsupported shape", func(t *testing.T) {
-		got := anyToStringSlice(map[string]interface{}{"a": 1})
-		require.Nil(t, got)
-	})
+	assert.Equal(t, 1, typeCounts["TEXT"], "Should have 1 text index")
 }
 
 func TestCompositeEngine_GetSchema_MergesRelationshipRangeIndexEntityType(t *testing.T) {

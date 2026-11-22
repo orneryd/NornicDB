@@ -3366,7 +3366,7 @@
       "field": "pkg/storage.CompositeEngine.transactionTimeout",
       "class": "configuration",
       "func": "pkg/storage.CompositeEngine.SetServerTransactionTimeout",
-      "pos": "pkg/storage/composite_engine.go:1731"
+      "pos": "pkg/storage/composite_engine.go:1606"
     },
     {
       "field": "pkg/storage.CountStoreRead.Count",
