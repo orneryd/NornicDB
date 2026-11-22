@@ -9,6 +9,7 @@ package storage
 import (
 	"context"
 	"encoding/binary"
+	"maps"
 	"math"
 	"reflect"
 	"runtime"
@@ -331,6 +332,7 @@ func TestEncodeNodeInTxnMatchesMeasuredEncoding(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			want, got := tc.node(), tc.node()
+			callerMeta := maps.Clone(got.EmbedMeta)
 			var wantData, gotData []byte
 			var wantSeparate, gotSeparate bool
 			var wantErr, gotErr error
@@ -347,14 +349,11 @@ func TestEncodeNodeInTxnMatchesMeasuredEncoding(t *testing.T) {
 			} else {
 				require.NoError(t, gotErr)
 			}
-			// The caller's node, including its metadata map, ends the same.
-			require.Equal(t, want.EmbedMeta == nil, got.EmbedMeta == nil)
-			if wantErr == nil {
-				require.Equal(t, want.EmbedMeta, got.EmbedMeta)
-			} else {
-				_, wantHas := want.EmbedMeta["chunk_count"]
-				_, gotHas := got.EmbedMeta["chunk_count"]
-				require.Equal(t, wantHas, gotHas)
+			// The reference preserves the old encoded representation, including
+			// its caller-map mutation bug. The corrected encoder must instead
+			// leave caller metadata unchanged, on success and encoding failure.
+			require.Equal(t, callerMeta, got.EmbedMeta)
+			if wantErr != nil {
 				return
 			}
 			require.Equal(t, wantSeparate, gotSeparate)

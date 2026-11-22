@@ -11,8 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.5.2]
 
 - Reject unknown declared procedure YIELD outputs before RUN, PROFILE, or EXPLAIN invokes a handler, while preserving dynamic procedure result headers.
+- Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
+
+- Preserve caller-owned embedding metadata when oversized node writes add the stored chunk count.
+- Give cached embedding results independent vectors so caller mutation and duplicate batch entries cannot corrupt later cache hits.
+- Apply bound parameter types through query scopes while preserving Neo4j uncertainty for floating-point parameters, so typed consumers reject invalid bindings and valid empty-input list expressions remain accepted.
+- Make catalog-publication test probes tolerate registered fixture cleanup after an explicit manager close.
+- Preserve continuation-owned rerank windows in `db.rretrieve`, returning all qualifying hits before completion while keeping caller ceilings and provider-once ordering.
+- Use declared relationship RANGE indexes for single-match inline equality reads through the existing derived index owner; preserve complete results for duplicate values and unsupported read views.
 
 - Match Neo4j admission of `timestamp()` in quantifiers and other typed expressions by preserving its pre-semantic property type uncertainty, while keeping ordinary scalar list-source errors.
+- Admit CASE expressions containing COUNT subqueries as DELETE targets while preserving undefined-variable checks and null-target behavior.
 
 - Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
 

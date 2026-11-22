@@ -1,0 +1,392 @@
+[
+  {
+    "id": "comprehension/float",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "indexed/float",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "filtered/float",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "any/float",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "reduce/float",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "membership/float",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "comprehension/integer",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "indexed/integer",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x][0] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "filtered/integer",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "any/integer",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 32 (offset: 31))\n\"UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a\"\n                                ^\n"
+  },
+  {
+    "id": "reduce/integer",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 40 (offset: 39))\n\"UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a\"\n                                        ^\n"
+  },
+  {
+    "id": "membership/integer",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "1",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Integer (line 1, column 28 (offset: 27))\n\"UNWIND [] AS s RETURN 1 IN $p AS a\"\n                            ^\n"
+  },
+  {
+    "id": "comprehension/string",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "indexed/string",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x][0] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "filtered/string",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "any/string",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 32 (offset: 31))\n\"UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a\"\n                                ^\n"
+  },
+  {
+    "id": "reduce/string",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 40 (offset: 39))\n\"UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a\"\n                                        ^\n"
+  },
+  {
+    "id": "membership/string",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "'text'",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was String (line 1, column 28 (offset: 27))\n\"UNWIND [] AS s RETURN 1 IN $p AS a\"\n                            ^\n"
+  },
+  {
+    "id": "comprehension/boolean",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "indexed/boolean",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x][0] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "filtered/boolean",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "any/boolean",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 32 (offset: 31))\n\"UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a\"\n                                ^\n"
+  },
+  {
+    "id": "reduce/boolean",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 40 (offset: 39))\n\"UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a\"\n                                        ^\n"
+  },
+  {
+    "id": "membership/boolean",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "true",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Boolean (line 1, column 28 (offset: 27))\n\"UNWIND [] AS s RETURN 1 IN $p AS a\"\n                            ^\n"
+  },
+  {
+    "id": "comprehension/map",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "indexed/map",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p | x][0] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "filtered/map",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "any/map",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 32 (offset: 31))\n\"UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a\"\n                                ^\n"
+  },
+  {
+    "id": "reduce/map",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 40 (offset: 39))\n\"UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a\"\n                                        ^\n"
+  },
+  {
+    "id": "membership/map",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "{k:1}",
+    "exit_code": 1,
+    "output": "Type mismatch for parameter 'p': expected List<T> but was Map, Node or Relationship (line 1, column 28 (offset: 27))\n\"UNWIND [] AS s RETURN 1 IN $p AS a\"\n                            ^\n"
+  },
+  {
+    "id": "comprehension/null",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "indexed/null",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "filtered/null",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "any/null",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "reduce/null",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "membership/null",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "null",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "comprehension/list",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "indexed/list",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x][0] AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "filtered/list",
+    "query": "UNWIND [] AS s RETURN [x IN $p WHERE true | x] AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "any/list",
+    "query": "UNWIND [] AS s RETURN any(x IN $p WHERE true) AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "reduce/list",
+    "query": "UNWIND [] AS s RETURN reduce(a=0, x IN $p | a) AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "membership/list",
+    "query": "UNWIND [] AS s RETURN 1 IN $p AS a",
+    "parameter": "[1,2]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "original/comprehension",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a",
+    "parameter": "1.5",
+    "paramname": "f",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "original/arithmetic",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a",
+    "parameter": "5",
+    "paramname": "i",
+    "exit_code": 1,
+    "output": "Type mismatch: expected String but was Float, Integer or Duration (line 1, column 61 (offset: 60))\n\"UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a\"\n                                                             ^\n"
+  },
+  {
+    "id": "bound_variable/float",
+    "query": "UNWIND [] AS s WITH $p AS v RETURN [x IN v | x] AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/float",
+    "query": "UNWIND [] AS s RETURN [x IN 1.5 | x] AS a",
+    "exit_code": 1,
+    "output": "Type mismatch: expected List<T> but was Float (line 1, column 29 (offset: 28))\n\"UNWIND [] AS s RETURN [x IN 1.5 | x] AS a\"\n                             ^\n"
+  },
+  {
+    "id": "float_list_source",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "[1.5]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "float_list_element",
+    "query": "UNWIND [] AS s RETURN [x IN $p[0] | x] AS a",
+    "parameter": "[1.5]",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "float_map_value",
+    "query": "UNWIND [] AS s RETURN [x IN $p.v | x] AS a",
+    "parameter": "{v:1.5}",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal_list_element",
+    "query": "UNWIND [] AS s RETURN [x IN [1.5][0] | x] AS a",
+    "exit_code": 1,
+    "output": "Type mismatch: expected List<T> but was Float (line 1, column 35 (offset: 34))\n\"UNWIND [] AS s RETURN [x IN [1.5][0] | x] AS a\"\n                                   ^\n"
+  },
+  {
+    "id": "literal_map_value",
+    "query": "UNWIND [] AS s RETURN [x IN {v:1.5}.v | x] AS a",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "string_consumer/direct_float",
+    "query": "UNWIND [] AS s RETURN toUpper($p) AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "string_consumer/multiply_float",
+    "query": "UNWIND [] AS s RETURN toUpper($p * 2) AS a",
+    "parameter": "1.5",
+    "exit_code": 1,
+    "output": "Type mismatch: expected String but was Float, Integer or Duration (line 1, column 34 (offset: 33))\n\"UNWIND [] AS s RETURN toUpper($p * 2) AS a\"\n                                  ^\n"
+  },
+  {
+    "id": "string_consumer/add_float",
+    "query": "UNWIND [] AS s RETURN toUpper($p + 2) AS a",
+    "parameter": "1.5",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "string_consumer/literal_float",
+    "query": "UNWIND [] AS s RETURN toUpper(1.5) AS a",
+    "exit_code": 1,
+    "output": "Type mismatch: expected String but was Float (line 1, column 31 (offset: 30))\n\"UNWIND [] AS s RETURN toUpper(1.5) AS a\"\n                               ^\n"
+  },
+  {
+    "id": "float_integral_value",
+    "query": "UNWIND [] AS s RETURN [x IN $p | x] AS a",
+    "parameter": "1.0",
+    "exit_code": 0,
+    "output": ""
+  }
+]

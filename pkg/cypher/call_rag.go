@@ -393,7 +393,9 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 
 		searchQuery := func(ctx context.Context, text string, queryEmbedding []float32, searchOpts *search.SearchOptions) (*search.SearchResponse, error) {
 			service := ensureSearchService(queryEmbedding)
-			if useConfiguredRerank {
+			// Continuation owns reranking after chunk fusion. Preserve its
+			// per-chunk switch instead of applying the one-shot TopK cap here.
+			if useConfiguredRerank && !continuationRequested {
 				searchOpts.RerankEnabled = service.RerankerAvailable(ctx)
 			}
 			return service.Search(ctx, text, queryEmbedding, searchOpts)

@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"strings"
 
@@ -147,30 +146,6 @@ func hasTopLevelDeleteLabelQualifier(expression string) bool {
 		}
 	}
 	return false
-}
-
-// deleteExpressionRootIdentifier returns the variable a DELETE target starts
-// with (n in n, n.list[0], `n`), "" for a function call or a literal: null,
-// true and false are never variables there (DELETE null deletes nothing, as
-// in Neo4j, #907).
-func deleteExpressionRootIdentifier(expression string) string {
-	expression = strings.TrimSpace(expression)
-	if expression == "" {
-		return ""
-	}
-	// The name is read by the one identifier rule (cyphertext.ScanIdentifier):
-	// n$ and `a``b` are variables too.
-	name, ok := cyphertext.ScanIdentifier(expression, 0)
-	if !ok || (name.End < len(expression) && expression[name.End] == '(') {
-		return ""
-	}
-	if !strings.HasPrefix(expression, "`") {
-		switch lowerASCII(name.Value) {
-		case "null", "true", "false":
-			return ""
-		}
-	}
-	return name.Value
 }
 
 func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {

@@ -402,7 +402,9 @@ Passwords are hashed using **bcrypt** with automatic salt generation. Plain-text
 
 ### Session Management
 
-Tokens can be revoked (logout) by adding them to a server-side blacklist. Revoked tokens are rejected on subsequent requests.
+`POST /auth/logout` expires the browser session cookie and records a logout audit event when an authenticated principal is available. It does **not** revoke an issued bearer token: NornicDB has no per-token logout blacklist. Clients must discard their retained token when logging out.
+
+A copied NornicDB-issued bearer token can still authenticate after logout while it remains valid, subject to the current account and role checks below. Token expiration applies only when configured; tokens with no expiration do not become invalid merely because time passes. Cookie expiration is not token revocation.
 
 A principal's roles are read from the user store on every request, by one owner: for a Bearer token and for Basic credentials (whose password check the server caches for 30 seconds, but not the roles; a changed password stops working at once, on HTTP, Bolt and gRPC) on HTTP and gRPC, and for a Bolt session before every statement and transaction. A role removed from a user, or deleted (which removes it from every user), stops applying at once, as Neo4j applies role changes at once. A deleted or disabled account, or another account created later under the same name, authorizes nothing: its token is refused (HTTP 401) and its open Bolt session runs no statement. A cluster node's token (from `/api/v1/auth/cluster-token`) is not a user account and keeps its own role.
 

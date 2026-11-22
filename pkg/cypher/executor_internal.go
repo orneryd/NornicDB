@@ -257,5 +257,25 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(ctx, cypher, params)
+	if err := validateListOperands(ctx, cypher, params); err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	// Compilation remains value-independent. Reuse its canonical scope walk
+	// with request-local facts after the existing direct-parameter checks;
+	// WITH, CALL and UNION must carry those facts to their consumers too.
+	_, parameterQuery := parseExecutionMode(cypher)
+	parameterQuery, _ = stripWithEmbeddingSuffix(ctx, parameterQuery)
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	// Public admission already populated this cache. Opaque internal bodies
+	// must establish the same value-independent phase before parameter facts
+	// can affect it (notably the compile-only list-to-Boolean prohibition).
+	if err := e.validateMatchSemanticScopes(ctx, parameterQuery, cypher25); err != nil {
+		return err
+	}
+	return checkedWithoutUnaryPlus(parameterQuery, cypher25, func(text string) error {
+		return e.validateMatchSemanticScopesUncached(ctx, text, cypher25, params)
+	})
 }

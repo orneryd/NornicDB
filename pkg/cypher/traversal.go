@@ -403,8 +403,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 	}
 
-	// Relationship inline equality values a declared relationship constraint
-	// indexes select the pattern's relationship from the relationship equality
+	// Relationship inline equality values a declared relationship RANGE index
+	// covers select the pattern's relationship from the relationship equality
 	// index, before any type scan. The pin below then keeps the relationship's
 	// type, direction, inline properties, endpoint admission and the WHERE with
 	// their existing owners, and no indexed relationship means no match at all.

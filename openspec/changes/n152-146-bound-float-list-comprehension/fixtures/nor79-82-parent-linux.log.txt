@@ -1,0 +1,562 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+=== RUN   TestNor79To82StaticClaims
+=== RUN   TestNor79To82StaticClaims/NOR-79
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/RUN/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/RUN/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/RUN/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/RUN/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/RUN/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/RUN/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/RUN/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/RUN/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/auto/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/auto/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/tx/parameter_arithmetic_into_toUpper
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected String but was Float, Integer or Duration
+=== RUN   TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/tx/parameter_list_comprehension_subscript
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch for parameter 'f': expected List<T> but was Float
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a: accepted by Neo4j, rejected here: Type mismatch for parameter 'f': expected List<T> but was Float
+=== RUN   TestNor79To82StaticClaims/NOR-80
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/procedure_yield_where_count_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/procedure_yield_where_count_call_subquery
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/delete_case_count_subquery
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: DELETE expression "CASE WHEN COUNT { MATCH (m) } > 0 THEN n END" refers to an undefined variable
+=== RUN   TestNor79To82StaticClaims/NOR-81
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: RUN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: EXPLAIN: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/any_over_timestamp
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a: accepted by Neo4j, rejected here: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/control_list_comprehension_over_date
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Date
+=== RUN   TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/control_reduce_over_toInteger
+    nor79_to_82_static_claims_test.go:203: PROFILE: rejected Neo.ClientError.Statement.SyntaxError: Type mismatch: expected List<T> but was Integer
+=== RUN   TestNor79To82StaticClaims/NOR-82
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+    nor79_to_82_static_claims_test.go:208: RUN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: RUN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+    nor79_to_82_static_claims_test.go:208: EXPLAIN: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: EXPLAIN: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_date
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_duration
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+    nor79_to_82_static_claims_test.go:208: PROFILE: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a: rejected by Neo4j (Type mismatch), accepted here
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_empty_list
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+=== RUN   TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_dotj
+    nor79_to_82_static_claims_test.go:191: composed from supplied parts, not supplied inline: UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a
+    nor79_to_82_static_claims_test.go:205: PROFILE: accepted
+--- FAIL: TestNor79To82StaticClaims (2.58s)
+    --- FAIL: TestNor79To82StaticClaims/NOR-79 (0.46s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic (0.26s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/RUN/auto/parameter_arithmetic_into_toUpper (0.03s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/RUN/auto/parameter_list_comprehension_subscript (0.04s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/RUN/tx/parameter_arithmetic_into_toUpper (0.01s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/RUN/tx/parameter_list_comprehension_subscript (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/auto/parameter_arithmetic_into_toUpper (0.03s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/auto/parameter_list_comprehension_subscript (0.01s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/tx/parameter_arithmetic_into_toUpper (0.01s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/EXPLAIN/tx/parameter_list_comprehension_subscript (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/auto/parameter_arithmetic_into_toUpper (0.03s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/auto/parameter_list_comprehension_subscript (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/tx/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/nornic/PROFILE/tx/parameter_list_comprehension_subscript (0.02s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr (0.20s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/RUN/auto/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/RUN/auto/parameter_list_comprehension_subscript (0.01s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/RUN/tx/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/RUN/tx/parameter_list_comprehension_subscript (0.03s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/auto/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/auto/parameter_list_comprehension_subscript (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/tx/parameter_arithmetic_into_toUpper (0.01s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/EXPLAIN/tx/parameter_list_comprehension_subscript (0.01s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/auto/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/auto/parameter_list_comprehension_subscript (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/tx/parameter_arithmetic_into_toUpper (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-79/antlr/PROFILE/tx/parameter_list_comprehension_subscript (0.01s)
+    --- FAIL: TestNor79To82StaticClaims/NOR-80 (0.63s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic (0.32s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/procedure_yield_where_count_subquery (0.03s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/RUN/auto/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/procedure_yield_where_count_subquery (0.01s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/RUN/tx/delete_case_count_subquery (0.03s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/auto/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/EXPLAIN/tx/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/auto/delete_case_count_subquery (0.01s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/nornic/PROFILE/tx/delete_case_count_subquery (0.02s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr (0.30s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/RUN/auto/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/RUN/tx/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/auto/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/EXPLAIN/tx/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/procedure_yield_where_count_call_subquery (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/auto/delete_case_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/procedure_yield_where_count_subquery (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/procedure_yield_where_count_call_subquery (0.01s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-80/antlr/PROFILE/tx/delete_case_count_subquery (0.02s)
+    --- FAIL: TestNor79To82StaticClaims/NOR-81 (0.66s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic (0.34s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/any_over_timestamp (0.03s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/RUN/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/RUN/tx/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/EXPLAIN/tx/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/nornic/PROFILE/tx/control_reduce_over_toInteger (0.02s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr (0.32s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/RUN/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/RUN/tx/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/EXPLAIN/tx/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/auto/control_reduce_over_toInteger (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/any_over_timestamp (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/control_list_comprehension_over_date (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-81/antlr/PROFILE/tx/control_reduce_over_toInteger (0.02s)
+    --- FAIL: TestNor79To82StaticClaims/NOR-82 (0.83s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic (0.42s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/RUN/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/RUN/tx/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/EXPLAIN/tx/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/nornic/PROFILE/tx/toUpper_head_dotk_plus_dotj (0.02s)
+        --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr (0.42s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/RUN/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/RUN/tx/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/EXPLAIN/tx/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/auto/toUpper_head_dotk_plus_dotj (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_date (0.02s)
+            --- FAIL: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_duration (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_empty_list (0.02s)
+            --- PASS: TestNor79To82StaticClaims/NOR-82/antlr/PROFILE/tx/toUpper_head_dotk_plus_dotj (0.02s)
+=== RUN   TestNor79To82NegativeControlsReuseCanonicalVerdicts
+--- PASS: TestNor79To82NegativeControlsReuseCanonicalVerdicts (0.00s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	2.612s
+FAIL

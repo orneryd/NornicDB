@@ -1,0 +1,180 @@
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.QJqzp00RVO/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.QJqzp00RVO/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.QJqzp00RVO/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.QJqzp00RVO/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base 8af1608124fe021d1bd941ba0b6a30aa67411611 (merge base with moved-base), head 0b3ddef64f552b7f2004fc5702875180036acf19
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.LpmsjvJUVM/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.LpmsjvJUVM/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.LpmsjvJUVM/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.LpmsjvJUVM/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base 519638b1d135693e6583b814641b343dcd63c60e (merge base with moved-base), head 99f23e78d92768715272d809f5ab3a087dff9d29
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: relative verifier override survives fixture directory changes
+verify fix/n152-112-logout-contract @ f77ec7706  against origin/release/v1.5.2 (merge base f77ec7706, 3 changed files)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+  localization  skip  (not selected)
+  ui            skip  (not selected)
+  llama-libs    skip  (not selected)
+  build         skip  (not selected)
+  tests         skip  (not selected)
+  allocations   skip  (not selected)
+  conformance   skip  (not selected)
+  differential  skip  (not selected)
+  docs          run   VitePress build and corpus, search and graph contracts
+
+▶ docs  VitePress build and corpus, search and graph contracts
+
+added 258 packages, and audited 259 packages in 4s
+
+47 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+npm warn install-scripts 2 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   core-js@3.51.0 (postinstall: node -e "try{require('./postinstall')}catch(e){}")
+npm warn install-scripts   fsevents@2.3.3 (install: (install scripts present))
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+
+> prebuild
+> npm run graph && npm run prepare-docs
+
+
+> graph
+> node tools/graph.mjs
+
+
+> prepare-docs
+> node tools/prepare.mjs && node tools/pages.mjs
+
+Inventoried 373 source files; 282 documents; 23561 symbols; 24094 direct call edges; 0 exact duplicates.
+
+> build
+> node tools/build-current.mjs
+
+
+  vitepress 2.0.0-alpha.21  (using vite 8.3.6)
+
+- building client + server bundles...
+
+The language 'cuda' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'metal' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'metal' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'prometheus' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'spec' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+
+The language 'pprof' is not loaded, falling back to 'txt' for syntax highlighting.
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[32m✓[0m building client + server bundles...
+- rendering pages...
+[32m✓[0m rendering pages...
+build complete in 23.33s.
+
+> test
+> node --test tests/*.test.mjs
+
+✔ full code bodies are searchable without sending full bodies to the browser (1.485333ms)
+✔ code search recognizes camel case, identifiers and partial names (0.957875ms)
+✔ ordinary documentation prose does not invent code relationships (0.628458ms)
+✔ query functions cannot link to unrelated private helpers or ambiguous symbols (0.146375ms)
+✔ a property or another package Version method cannot link to the build-version function (0.088125ms)
+✔ explicit source paths, code spans, calls and qualified symbols are linked (0.091709ms)
+✔ only explicitly approved obsolete documentation is removed (2.155375ms)
+✔ relocated benchmark artifacts preserve their original recorded data (17.882875ms)
+✔ featured reports use topic paths and retain the large graph and parser measurements (1.209333ms)
+✔ corpus checks retain the recorded base when origin/main advances (282.421542ms)
+✔ corpus checks still reject missing documentation from the recorded base (253.626875ms)
+✔ standalone corpus checks compare origin/main and reject an invalid explicit base (518.484917ms)
+✔ retired archives stay unpublished and historical source links remain public (9.634667ms)
+✔ main documentation is retained at its canonical path except explicit user removals (3.240583ms)
+✔ additional release documentation remains present (1.095541ms)
+✔ release records follow their integration status in the current semantic snapshot (8.672917ms)
+✔ generated inventory covers every source file, including historical artifacts (1.713125ms)
+✔ search and navigation retain the original documentation hub beneath the new home page (7.52225ms)
+✔ documentation checks respect the declared PR scope (6.617167ms)
+ℹ verified release scope
+✔ published source graph edges resolve and code snippets match their hashes (54.571625ms)
+✔ the contribution page renders and indexes the canonical repository guide (7.453875ms)
+✔ recursive neighborhoods remain bounded and preserve edge endpoints (1.511584ms)
+✔ caller traversal follows incoming edges and handles cycles (0.457667ms)
+✔ fractal anchors are deterministic, finite and occupy three dimensions (9.212291ms)
+✔ semantic snapshots agree across filesystem order and line endings (0.91425ms)
+✔ docs and explicitly scoped operations pass the real Git diff check (89.717417ms)
+✔ maintenance rejects pkg/example.go in committed and uncommitted diffs (117.568083ms)
+✔ maintenance rejects pkg/buildinfo/version.go in committed and uncommitted diffs (118.507083ms)
+✔ maintenance rejects scripts/graphify_local.py in committed and uncommitted diffs (113.519584ms)
+✔ maintenance rejects CHANGELOG.md in committed and uncommitted diffs (116.95025ms)
+✔ maintenance rejects docs/release-notes/example.md in committed and uncommitted diffs (193.891041ms)
+✔ release metadata admits release product changes while PR head takes precedence (109.310625ms)
+✔ local release heads are recognized and detached heads remain strict (166.244375ms)
+✔ release-targeted fixes use release scope with immutable PR metadata taking precedence (124.859583ms)
+✔ maintenance comparisons use the recorded verification base after upstream moves (324.491292ms)
+✔ the temporal sidebar links its landing page, guides and costs in reading order (0.889959ms)
+✔ each temporal sidebar target generates a page and a search record (13.4315ms)
+✔ the temporal landing page separates epochs, constraints and retained history (0.75625ms)
+✔ the user guide index routes readers to the temporal patterns page (0.249959ms)
+✔ versions sort numerically newest first, with stable releases ahead of prereleases (0.745417ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1610.975292
+
+verify summary  fix/n152-112-logout-contract @ f77ec7706  (0m 38s)
+  docs          pass    38s   
+  localization  skip
+  ui            skip
+  llama-libs    skip
+  build         skip
+  tests         skip
+  allocations   skip
+  conformance   skip
+  differential  skip
+logs: /private/tmp/n152-112-logout-contract/.verify/runs/20261121-204558  (also .verify/latest)
+All checks passed.

@@ -1,0 +1,4 @@
+#!/bin/bash
+set -eu
+export GOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB
+go test ./pkg/embed -run '^(TestNOR381.*|TestCachedEmbedder_CacheHit|TestCachedEmbedder_BatchCaching|TestCachedEmbedder_TypedCacheSeparatesQueryAndDocument|TestCachedEmbedder_LRUEviction|TestCachedEmbedder_Clear)$' -count=1 -p=1 -tags=noui,nolocalllm -v -timeout=180s

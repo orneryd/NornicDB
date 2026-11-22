@@ -11,14 +11,24 @@ import (
 // Constraint preparation and parser admission precede timing; result caches are
 // disabled. Both transaction modes return the identical single relationship.
 func BenchmarkRelationshipPropertyEquality(b *testing.B) {
+	benchmarkRelationshipPropertyEquality(b, false, []int{128, 4096})
+}
+
+// BenchmarkNOR42OrdinaryRelationshipEquality measures the recovered public
+// query with a standalone relationship index, before and after owner wiring.
+func BenchmarkNOR42OrdinaryRelationshipEquality(b *testing.B) {
+	benchmarkRelationshipPropertyEquality(b, true, []int{8, 512})
+}
+
+func benchmarkRelationshipPropertyEquality(b *testing.B, ordinary bool, populations []int) {
 	for _, parser := range relationshipEqualityParsers {
 		b.Run(parser.name, func(b *testing.B) {
 			b.Cleanup(parser.setup())
-			for _, population := range []int{128, 4096} {
+			for _, population := range populations {
 				for _, explicit := range []bool{false, true} {
 					b.Run(fmt.Sprintf("unrelated-%d/explicit-%v", population, explicit), func(b *testing.B) {
 						b.StopTimer()
-						fixture := newRelationshipEqualityAccessFixture(b, relationshipEqualityFixtureOptions{unrelatedRelationships: population})
+						fixture := newRelationshipEqualityAccessFixture(b, relationshipEqualityFixtureOptions{unrelatedRelationships: population, ordinaryIndex: ordinary})
 						ctx := context.Background()
 						if explicit {
 							ctx = beginRelationshipEqualityTransaction(b, fixture.exec)

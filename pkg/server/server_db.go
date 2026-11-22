@@ -1708,6 +1708,8 @@ func (s *Server) rollbackRequestTransaction(ctx context.Context, lease *txsessio
 		}
 		response.Receipt = nil
 		response.Optimistic = nil
+		response.Transaction = nil
+		response.Commit = ""
 	}
 	return err
 }
@@ -1782,7 +1784,9 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, lease, req.Statements, &response) {
 			s.rollbackRequestTransaction(r.Context(), lease, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.ExpiresAt())
+		if response.Transaction != nil {
+			response.Transaction.Expires = transactionExpires(txSession.ExpiresAt())
+		}
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
@@ -1837,7 +1841,9 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 	if len(req.Statements) == 0 {
 		s.txSessions.Touch(tx)
 	}
-	response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
+	if response.Transaction != nil {
+		response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
+	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
