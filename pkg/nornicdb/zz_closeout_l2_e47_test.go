@@ -112,9 +112,18 @@ func l2E47Run(t *testing.T, refuse, preClearIndex bool) l2E47Outcome {
 		t.Fatalf("BuildIndexes: %v", err)
 	}
 	var out l2E47Outcome
-	out.hitsBefore, err = l2E47Hits(t, svc)
+	// The build may still be finishing (the ANTLR job saw "search index being
+	// built"): retry the precondition search, bounded, until it answers.
+	readyDeadline := time.Now().Add(60 * time.Second)
+	for {
+		out.hitsBefore, err = l2E47Hits(t, svc)
+		if err == nil || time.Now().After(readyDeadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if err != nil {
-		t.Fatalf("search before the clear: %v", err)
+		t.Fatalf("search before the clear (not ready within 60 s): %v", err)
 	}
 	out.countBefore = svc.EmbeddingCount()
 
