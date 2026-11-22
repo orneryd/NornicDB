@@ -800,10 +800,7 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 		procedures = append(procedures, []interface{}{p.Name, description, string(p.Mode), p.WorksOnSystem, p.Signature, arguments, returns, p.Admin, nil, nil, p.IsDeprecated, deprecatedBy, map[string]interface{}{"deprecated": p.IsDeprecated}})
 	}
 
-	return withShowDefaultColumns(&ExecuteResult{
-		Columns: []string{"name", "description", "mode", "worksOnSystem", "signature", "argumentDescription", "returnDescription", "admin", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy", "option"},
-		Rows:    procedures,
-	}, showProceduresDefaultColumns), nil
+	return showProceduresResult.listing(procedures), nil
 }
 
 // executeShowFunctions handles SHOW FUNCTIONS command
@@ -871,10 +868,7 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		rows = append(rows, plugin...)
 		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
 	}
-	return withShowDefaultColumns(&ExecuteResult{
-		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
-		Rows:    rows,
-	}, showFunctionsDefaultColumns), nil
+	return showFunctionsResult.listing(rows), nil
 }
 
 // pluginFunctionRows are SHOW FUNCTIONS' rows for the loaded plugins'

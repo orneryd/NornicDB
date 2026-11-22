@@ -26,6 +26,8 @@ var showMetadataCommands = []struct {
 	{listing: "SHOW INDEXES", column: "name"},
 	{listing: "SHOW CONSTRAINT CONTRACTS", column: "name"},
 	{listing: "SHOW USERS", column: "user"},
+	{listing: "SHOW PROCEDURES", column: "name"},
+	{listing: "SHOW FUNCTIONS", column: "name"},
 }
 
 // showMetadataFixture creates the schema the listings below report, so their
@@ -112,6 +114,8 @@ func TestShowCommandListingHeaderIsTheDeclaration(t *testing.T) {
 		"SHOW INDEXES":              showIndexesResult,
 		"SHOW CONSTRAINT CONTRACTS": showConstraintContractsResult,
 		"SHOW USERS":                showUsersResult,
+		"SHOW PROCEDURES":           showProceduresResult,
+		"SHOW FUNCTIONS":            showFunctionsResult,
 	}
 	for _, command := range showMetadataCommands {
 		declared := declarations[command.listing]
@@ -239,7 +243,7 @@ func TestShowCommandTailUsesTheStatementVersionDeclaration(t *testing.T) {
 // command with a listing of its own keeps the contract it had.
 func TestShowCommandModeDeclinesUndeclaredListings(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	for _, statement := range []string{"SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTINGS"} {
+	for _, statement := range []string{"SHOW SETTINGS"} {
 		_, err := exec.Execute(t.Context(), "EXPLAIN "+statement, nil)
 		require.Error(t, err, statement)
 		require.Equal(t, unresolvedStatementError().Error(), err.Error(), statement)

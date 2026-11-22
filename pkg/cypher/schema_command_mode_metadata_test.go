@@ -90,7 +90,7 @@ func TestProfileSchemaCommandExecutesAndDeclaresEmptyResultSchema(t *testing.T) 
 	})
 }
 
-// The grammar rejects requirement forms this implementation does not support.
+// The grammar rejects schema forms this implementation does not support.
 // EXPLAIN and PROFILE keep rejecting them instead of reporting a plan for a
 // command that could never run, and reject them before any schema change.
 func TestSchemaCommandModesRejectUnsupportedSyntax(t *testing.T) {
@@ -100,6 +100,7 @@ func TestSchemaCommandModesRejectUnsupportedSyntax(t *testing.T) {
 			"CREATE CONSTRAINT unsupported_not_unique FOR (n:Example) REQUIRE n.p IS NOT UNIQUE",
 			"CREATE CONSTRAINT bad FOR (n:Example) REQUIRE () IS NODE KEY",
 			"CREATE CONSTRAINT bad FOR (n:Example) REQUIRE (n.a) IS NODE KEY OPTIONS 7",
+			"CREATE INDEX bad_index FOR (n:Example) ON ()",
 		} {
 			for _, mode := range []string{"", "EXPLAIN ", "PROFILE "} {
 				t.Run(mode+command, func(t *testing.T) {
@@ -108,7 +109,7 @@ func TestSchemaCommandModesRejectUnsupportedSyntax(t *testing.T) {
 					before := schemaCatalogNames(t, ctx, exec)
 
 					_, err := exec.Execute(ctx, mode+command, nil)
-					require.Error(t, err, "unsupported legacy requirement syntax is rejected")
+					require.Error(t, err, "unsupported schema syntax is rejected")
 					require.Equal(t, before, schemaCatalogNames(t, ctx, exec), "a rejected command changes no schema rule")
 				})
 			}
@@ -149,6 +150,9 @@ func TestSchemaMetadataValidatesTheParsedCommandUnderModePrefixes(t *testing.T) 
 			require.NoError(t, err, valid)
 			require.Empty(t, columns, valid)
 			invalid := prefix + "CREATE CONSTRAINT invalid_key FOR (n:Example) REQUIRE () IS NODE KEY"
+			_, err = exec.StatementResultColumnsContext(t.Context(), invalid, RawSource)
+			require.Error(t, err, invalid)
+			invalid = prefix + "CREATE INDEX bad_index FOR (n:Example) ON ()"
 			_, err = exec.StatementResultColumnsContext(t.Context(), invalid, RawSource)
 			require.Error(t, err, invalid)
 		}

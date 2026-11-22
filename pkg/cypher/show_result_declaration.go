@@ -123,6 +123,16 @@ var showConstraintContractsResult = showResult{columns: []string{"name", "target
 // which is also its default set.
 var showUsersResult = showResult{columns: showUsersColumns}
 
+// showProceduresResult is SHOW PROCEDURES' schema: Neo4j's columns, then the
+// procedure metadata NornicDB reports beside them, which only YIELD * or
+// YIELD <column> show.
+var showProceduresResult = declareShowResult(showProceduresDefaultColumns, "signature", "argumentDescription", "returnDescription", "admin", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy", "option")
+
+// showFunctionsResult is SHOW FUNCTIONS' schema: Neo4j's columns, then the
+// function metadata NornicDB reports beside them, which only YIELD * or
+// YIELD <column> show.
+var showFunctionsResult = declareShowResult(showFunctionsDefaultColumns, "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy")
+
 // showCommandResult declares the result schema of the SHOW command show names,
 // through the declaration the command's own listing returns its rows with. The
 // second result reports whether this owner declares that command's schema: a
@@ -142,6 +152,12 @@ func showCommandResult(ctx context.Context, show cypherantlr.SyntaxNode, cypher2
 	}
 	if showIndexesCommand(ctx, code) {
 		return showIndexesResult, true, nil
+	}
+	if startsWithKeywords(ctx, code, "SHOW", "PROCEDURES") {
+		return showProceduresResult, true, nil
+	}
+	if startsWithKeywords(ctx, code, "SHOW", "FUNCTIONS") {
+		return showFunctionsResult, true, nil
 	}
 	if auth.FineGrainedRequestFromContext(ctx) != nil && isShowUsersWithAuth(ctx, code) {
 		defaults := append(slices.Clone(showUsersColumns), "provider", "auth")

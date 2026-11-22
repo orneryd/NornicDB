@@ -163,6 +163,15 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 				return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, err)
 			}
 		}
+		// The index heads executeCreateIndex owns validate through that owner's own
+		// preparer before the mode declares their empty result schema, so a
+		// malformed index statement is rejected with the error execution reports
+		// for it. The preparer binds no OPTIONS payload and publishes nothing.
+		if _, _, owned := createIndexHead(schema.Code()); owned {
+			if _, err := compiler.executor.prepareCreateIndex(ctx, schema.Code()); err != nil {
+				return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, err)
+			}
+		}
 		return fixedCommandScopeFacts(start, end, incoming, retained, nil, resultmetadata.ClauseWrite, commandResultScope)
 	}
 	compilation := newBoundCompilation(compiler, syntax)
