@@ -99,10 +99,10 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 // value kind.
 func TestStaticParameterOperandBranches(t *testing.T) {
 	require.False(t, staticParameterOperand(nil).known())
-	require.Equal(t, "Float", staticParameterOperand(1.5).typeName())
+	require.False(t, staticParameterOperand(1.5).known(), "bound Float is CTAny in Neo4j parameter metadata")
 	require.Equal(t, "Boolean", staticParameterOperand(true).typeName())
 	require.Equal(t, "List<T>", staticParameterOperand([]interface{}{int64(1)}).typeName())
-	require.Equal(t, "Map", staticParameterOperand(map[string]interface{}{"a": 1}).typeName())
+	require.Equal(t, "Map, Node or Relationship", staticParameterOperand(map[string]interface{}{"a": 1}).typeName())
 	require.False(t, staticParameterOperand(struct{}{}).known())
 }
 

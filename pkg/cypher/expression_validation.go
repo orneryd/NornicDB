@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"maps"
 	"reflect"
 	"strings"
@@ -468,8 +469,8 @@ func withLocalTypes(ctx context.Context, scope staticTypeScope, text string, at 
 	if types == nil {
 		return scope
 	}
-	local := types.static(scope.cypher25)
-	local.complete, local.params = scope.complete, scope.params
+	local := types.static(scope.cypher25, scope.params)
+	local.complete = scope.complete
 	return local
 }
 
@@ -699,6 +700,11 @@ func staticListOperand(ctx context.Context, cypher string, start int, params map
 		value, bound := params[name]
 		if name == "" || !bound || value == nil || isCypherListParameter(value) {
 			return end, "", ""
+		}
+		// Numeric parameter admission shares the canonical static proof. Other
+		// runtime kinds retain this boundary's existing diagnostic policy.
+		if _, numeric := valueconvert.ReadNumber(value); numeric {
+			return end, staticParameterOperand(value).display, name
 		}
 		typeName = cypherTypeName(value)
 		if typeName == "Map" {
