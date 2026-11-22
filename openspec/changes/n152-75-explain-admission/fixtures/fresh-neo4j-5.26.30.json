@@ -1,0 +1,116 @@
+[
+  {
+    "id": "procedures",
+    "query": "EXPLAIN SHOW PROCEDURES",
+    "exit_code": 0,
+    "output": "+-------------------------------------------+\n| name | description | mode | worksOnSystem |\n+-------------------------------------------+\n+-------------------------------------------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 125  |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+----------------------------------------+----------------+\n| Operator        | Id | Details                                | Estimated Rows |\n+-----------------+----+----------------------------------------+----------------+\n| +ProduceResults |  0 | name, description, mode, worksOnSystem |             10 |\n| |               +----+----------------------------------------+----------------+\n| +ShowProcedures |  1 | proceduresForUser(all), defaultColumns |             10 |\n+-----------------+----+----------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 125 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "procedures_star",
+    "query": "EXPLAIN SHOW PROCEDURES YIELD *",
+    "exit_code": 0,
+    "output": "+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n| name | description | mode | worksOnSystem | signature | argumentDescription | returnDescription | admin | rolesExecution | rolesBoostedExecution | isDeprecated | deprecatedBy | option |\n+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 141  |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+---------------------------------------------------------------------------------------------------+----------------+\n| Operator        | Id | Details                                                                                           | Estimated Rows |\n+-----------------+----+---------------------------------------------------------------------------------------------------+----------------+\n| +ProduceResults |  0 | name, description, mode, worksOnSystem, signature, argumentDescription, returnDescription, admin, |             10 |\n| |               |    | rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy, option                         |                |\n| |               +----+---------------------------------------------------------------------------------------------------+----------------+\n| +ShowProcedures |  1 | proceduresForUser(all), allColumns                                                                |             10 |\n+-----------------+----+---------------------------------------------------------------------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 141 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "procedures_projected",
+    "query": "EXPLAIN SHOW PROCEDURES YIELD name RETURN name",
+    "exit_code": 0,
+    "output": "+------+\n| name |\n+------+\n+------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 49   |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+---------------------------------------+----------------+\n| Operator        | Id | Details                               | Estimated Rows |\n+-----------------+----+---------------------------------------+----------------+\n| +ProduceResults |  0 | name                                  |             10 |\n| |               +----+---------------------------------------+----------------+\n| +ShowProcedures |  1 | proceduresForUser(all), columns(name) |             10 |\n+-----------------+----+---------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 49 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "functions",
+    "query": "EXPLAIN SHOW FUNCTIONS",
+    "exit_code": 0,
+    "output": "+-------------------------------+\n| name | category | description |\n+-------------------------------+\n+-------------------------------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 57   |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+-----------------------------------------------------+----------------+\n| Operator        | Id | Details                                             | Estimated Rows |\n+-----------------+----+-----------------------------------------------------+----------------+\n| +ProduceResults |  0 | name, category, description                         |             10 |\n| |               +----+-----------------------------------------------------+----------------+\n| +ShowFunctions  |  1 | allFunctions, functionsForUser(all), defaultColumns |             10 |\n+-----------------+----+-----------------------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 57 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "functions_star",
+    "query": "EXPLAIN SHOW FUNCTIONS YIELD *",
+    "exit_code": 0,
+    "output": "+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n| name | category | description | signature | isBuiltIn | argumentDescription | returnDescription | aggregating | rolesExecution | rolesBoostedExecution | isDeprecated | deprecatedBy |\n+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 84   |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+--------------------------------------------------------------------------------------------+----------------+\n| Operator        | Id | Details                                                                                    | Estimated Rows |\n+-----------------+----+--------------------------------------------------------------------------------------------+----------------+\n| +ProduceResults |  0 | name, category, description, signature, isBuiltIn, argumentDescription, returnDescription, |             10 |\n| |               |    | aggregating, rolesExecution, rolesBoostedExecution, isDeprecated, deprecatedBy             |                |\n| |               +----+--------------------------------------------------------------------------------------------+----------------+\n| +ShowFunctions  |  1 | allFunctions, functionsForUser(all), allColumns                                            |             10 |\n+-----------------+----+--------------------------------------------------------------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 84 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "functions_projected",
+    "query": "EXPLAIN SHOW FUNCTIONS YIELD name",
+    "exit_code": 0,
+    "output": "+------+\n| name |\n+------+\n+------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 56   |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+----------------------------------------------------+----------------+\n| Operator        | Id | Details                                            | Estimated Rows |\n+-----------------+----+----------------------------------------------------+----------------+\n| +ProduceResults |  0 | name                                               |             10 |\n| |               +----+----------------------------------------------------+----------------+\n| +ShowFunctions  |  1 | allFunctions, functionsForUser(all), columns(name) |             10 |\n+-----------------+----+----------------------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 56 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "indexes",
+    "query": "EXPLAIN SHOW INDEXES",
+    "exit_code": 0,
+    "output": "+--------------------------------------------------------------------------------------------------------------------------------------------------+\n| id | name | state | populationPercent | type | entityType | labelsOrTypes | properties | indexProvider | owningConstraint | lastRead | readCount |\n+--------------------------------------------------------------------------------------------------------------------------------------------------+\n+--------------------------------------------------------------------------------------------------------------------------------------------------+\n\n+----------------------------------------------------------------+\n| Plan      | Statement   | Version | Planner | Runtime   | Time |\n+----------------------------------------------------------------+\n| \"EXPLAIN\" | \"READ_ONLY\" | \"5\"     | \"COST\"  | \"SLOTTED\" | 56   |\n+----------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner COST\n\nRuntime SLOTTED\n\nRuntime version 5.26.30\n\n+-----------------+----+-------------------------------------------------------------------------------------------------+----------------+\n| Operator        | Id | Details                                                                                         | Estimated Rows |\n+-----------------+----+-------------------------------------------------------------------------------------------------+----------------+\n| +ProduceResults |  0 | id, name, state, populationPercent, type, entityType, labelsOrTypes, properties, indexProvider, |             10 |\n| |               |    | owningConstraint, lastRead, readCount                                                           |                |\n| |               +----+-------------------------------------------------------------------------------------------------+----------------+\n| +ShowIndexes    |  1 | allIndexes, defaultColumns                                                                      |             10 |\n+-----------------+----+-------------------------------------------------------------------------------------------------+----------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 56 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "users",
+    "query": "EXPLAIN SHOW USERS",
+    "exit_code": 0,
+    "output": "+----------------------------------------------------------+\n| user | roles | passwordChangeRequired | suspended | home |\n+----------------------------------------------------------+\n+----------------------------------------------------------+\n\n+---------------------------------------------------------------------------+\n| Plan      | Statement      | Version | Planner          | Runtime  | Time |\n+---------------------------------------------------------------------------+\n| \"EXPLAIN\" | \"SCHEMA_WRITE\" | \"5\"     | \"ADMINISTRATION\" | \"SYSTEM\" | 66   |\n+---------------------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner ADMINISTRATION\n\nRuntime SYSTEM\n\nRuntime version 5.26.30\n\n+------------------------+----+\n| Operator               | Id |\n+------------------------+----+\n| +AdministrationCommand |  0 |\n+------------------------+----+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 66 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "bad_yield",
+    "query": "EXPLAIN SHOW FUNCTIONS YIELD unlistedColumn",
+    "exit_code": 1,
+    "output": "Trying to YIELD non-existing column: `unlistedColumn` (line 1, column 30 (offset: 29))\n\"EXPLAIN SHOW FUNCTIONS YIELD unlistedColumn\"\n                              ^\n"
+  },
+  {
+    "id": "bad_return",
+    "query": "EXPLAIN SHOW PROCEDURES YIELD name RETURN neverYielded",
+    "exit_code": 1,
+    "output": "Variable `neverYielded` not defined (line 1, column 43 (offset: 42))\n\"EXPLAIN SHOW PROCEDURES YIELD name RETURN neverYielded\"\n                                           ^\n"
+  },
+  {
+    "id": "bad_index_empty",
+    "query": "EXPLAIN CREATE INDEX bad FOR (n:Ref) ON ()",
+    "exit_code": 1,
+    "output": "Invalid input ')': expected an identifier (line 1, column 42 (offset: 41))\n\"EXPLAIN CREATE INDEX bad FOR (n:Ref) ON ()\"\n                                          ^\n"
+  },
+  {
+    "id": "bad_index_missing",
+    "query": "EXPLAIN CREATE INDEX bad FOR (n:Ref) ON",
+    "exit_code": 1,
+    "output": "Invalid input '': expected a variable name or '(' (line 1, column 40 (offset: 39))\n\"EXPLAIN CREATE INDEX bad FOR (n:Ref) ON\"\n                                        ^\n"
+  },
+  {
+    "id": "bad_range_empty",
+    "query": "EXPLAIN CREATE RANGE INDEX bad FOR (n:Ref) ON ()",
+    "exit_code": 1,
+    "output": "Invalid input ')': expected an identifier (line 1, column 48 (offset: 47))\n\"EXPLAIN CREATE RANGE INDEX bad FOR (n:Ref) ON ()\"\n                                                ^\n"
+  },
+  {
+    "id": "bad_vector_multiple",
+    "query": "EXPLAIN CREATE VECTOR INDEX bad FOR (n:Ref) ON (n.a,n.b)",
+    "exit_code": 1,
+    "output": "Only single property vector indexes are supported (line 1, column 53 (offset: 52))\n\"EXPLAIN CREATE VECTOR INDEX bad FOR (n:Ref) ON (n.a,n.b)\"\n                                                     ^\n"
+  },
+  {
+    "id": "good_index",
+    "query": "EXPLAIN CREATE INDEX ref_i FOR (n:Ref) ON (n.p)",
+    "exit_code": 0,
+    "output": "+---------------------------------------------------------------------------+\n| Plan      | Statement      | Version | Planner          | Runtime  | Time |\n+---------------------------------------------------------------------------+\n| \"EXPLAIN\" | \"SCHEMA_WRITE\" | \"5\"     | \"ADMINISTRATION\" | \"SCHEMA\" | 29   |\n+---------------------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner ADMINISTRATION\n\nRuntime SCHEMA\n\nRuntime version 5.26.30\n\n+--------------+----+-------------------------------------+\n| Operator     | Id | Details                             |\n+--------------+----+-------------------------------------+\n| +CreateIndex |  0 | RANGE INDEX ref_i FOR (:Ref) ON (p) |\n+--------------+----+-------------------------------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 29 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "good_range",
+    "query": "EXPLAIN CREATE RANGE INDEX ref_r FOR (n:Ref) ON (n.p)",
+    "exit_code": 0,
+    "output": "+---------------------------------------------------------------------------+\n| Plan      | Statement      | Version | Planner          | Runtime  | Time |\n+---------------------------------------------------------------------------+\n| \"EXPLAIN\" | \"SCHEMA_WRITE\" | \"5\"     | \"ADMINISTRATION\" | \"SCHEMA\" | 8    |\n+---------------------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner ADMINISTRATION\n\nRuntime SCHEMA\n\nRuntime version 5.26.30\n\n+--------------+----+-------------------------------------+\n| Operator     | Id | Details                             |\n+--------------+----+-------------------------------------+\n| +CreateIndex |  0 | RANGE INDEX ref_r FOR (:Ref) ON (p) |\n+--------------+----+-------------------------------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 8 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "good_vector",
+    "query": "EXPLAIN CREATE VECTOR INDEX ref_v FOR (n:Ref) ON (n.p)",
+    "exit_code": 0,
+    "output": "+---------------------------------------------------------------------------+\n| Plan      | Statement      | Version | Planner          | Runtime  | Time |\n+---------------------------------------------------------------------------+\n| \"EXPLAIN\" | \"SCHEMA_WRITE\" | \"5\"     | \"ADMINISTRATION\" | \"SCHEMA\" | 13   |\n+---------------------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner ADMINISTRATION\n\nRuntime SCHEMA\n\nRuntime version 5.26.30\n\n+--------------+----+--------------------------------------+\n| Operator     | Id | Details                              |\n+--------------+----+--------------------------------------+\n| +CreateIndex |  0 | VECTOR INDEX ref_v FOR (:Ref) ON (p) |\n+--------------+----+--------------------------------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 13 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "options_unbound",
+    "query": "EXPLAIN CREATE INDEX ref_o FOR (n:Ref) ON (n.p) OPTIONS $opts",
+    "exit_code": 0,
+    "output": "+---------------------------------------------------------------------------+\n| Plan      | Statement      | Version | Planner          | Runtime  | Time |\n+---------------------------------------------------------------------------+\n| \"EXPLAIN\" | \"SCHEMA_WRITE\" | \"5\"     | \"ADMINISTRATION\" | \"SCHEMA\" | 34   |\n+---------------------------------------------------------------------------+\n\n\nCypher 5\n\nPlanner ADMINISTRATION\n\nRuntime SCHEMA\n\nRuntime version 5.26.30\n\n+--------------+----+---------------------------------------------------+\n| Operator     | Id | Details                                           |\n+--------------+----+---------------------------------------------------+\n| +CreateIndex |  0 | RANGE INDEX ref_o FOR (:Ref) ON (p) OPTIONS $opts |\n+--------------+----+---------------------------------------------------+\n\nTotal database accesses: ?\n\n0 rows\nready to start consuming query after 34 ms, results consumed after another 0 ms\n"
+  },
+  {
+    "id": "no_effect",
+    "query": "SHOW INDEXES YIELD name WHERE name STARTS WITH \"ref_\" RETURN name",
+    "exit_code": 0,
+    "output": "+------+\n| name |\n+------+\n+------+\n\n0 rows\nready to start consuming query after 61 ms, results consumed after another 10 ms\n"
+  }
+]
