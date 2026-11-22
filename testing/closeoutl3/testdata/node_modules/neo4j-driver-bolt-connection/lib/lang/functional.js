@@ -1,0 +1,58 @@
+"use strict";
+/**
+ * Copyright (c) "Neo4j"
+ * Neo4j Sweden AB [https://neo4j.com]
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.identity = identity;
+exports.reuseOngoingRequest = reuseOngoingRequest;
+var neo4j_driver_core_1 = require("neo4j-driver-core");
+/**
+ * Identity function.
+ *
+ * Identity functions are function which returns the input as output.
+ *
+ * @param {any} x
+ * @returns {any} the x
+ */
+function identity(x) {
+    return x;
+}
+/**
+ * Makes the function able to share ongoing requests
+ *
+ * @param {function(...args): Promise} func The function to be decorated
+ * @param {any} thisArg The `this` which should be used in the function call
+ * @return {function(...args): Promise} The decorated function
+ */
+function reuseOngoingRequest(func, thisArg) {
+    if (thisArg === void 0) { thisArg = null; }
+    var ongoingRequests = new Map();
+    return function () {
+        var args = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            args[_i] = arguments[_i];
+        }
+        var key = neo4j_driver_core_1.json.stringify(args);
+        if (ongoingRequests.has(key)) {
+            return ongoingRequests.get(key);
+        }
+        var promise = func.apply(thisArg, args);
+        ongoingRequests.set(key, promise);
+        return promise.finally(function () {
+            ongoingRequests.delete(key);
+        });
+    };
+}
