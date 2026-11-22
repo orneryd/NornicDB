@@ -578,6 +578,7 @@ type boundChainReadPlan struct {
 	pattern  string
 	where    string
 	matches  *TraversalMatch
+	prune    *chainPrefixPrune
 	admitted bool
 }
 
@@ -616,6 +617,23 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 			shape.matches = e.parseTraversalPattern(ctx, pattern)
 			shape.admitted = shape.matches != nil
 		}
+		if where != "" {
+			// Prefix admission retains syntax only, including for property maps
+			// whose values must be rebound by the full parser on every row.
+			structure := shape.matches
+			if structure == nil {
+				structure = e.parseTraversalPatternStructure(ctx, pattern)
+			}
+			if structure != nil && structure.IsChained {
+				prefix := *structure
+				prefix.pruneWhere = where
+				shape.prune = e.newChainPrefixPrune(ctx, &prefix)
+				if shape.prune == nil {
+					// Prepared but no conjunct is safe to evaluate early.
+					shape.prune = &chainPrefixPrune{}
+				}
+			}
+		}
 		return shape
 	})
 	if !shape.admitted {
@@ -633,12 +651,16 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
-	if end, ok := values[matches.EndNode.variable].(*storage.Node); ok && end != nil {
+	end, _ := values[matches.EndNode.variable].(*storage.Node)
+	if end != nil || shape.prune != nil {
 		// The retained structural plan is immutable; only this row binds its
 		// endpoint. Carry it into the storage request rather than reading every
 		// same-type relationship and deciding the pair's absence afterward.
 		bound := *matches
-		bound.boundEndNodeID = storage.NodeID(end.IdentityKey())
+		if end != nil {
+			bound.boundEndNodeID = storage.NodeID(end.IdentityKey())
+		}
+		bound.preparedPrune = shape.prune
 		matches = &bound
 	}
 	var paths []PathResult
