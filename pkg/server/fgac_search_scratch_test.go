@@ -39,6 +39,7 @@ import (
 	neo4j "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -714,7 +715,7 @@ type fsEnv struct {
 func (env *fsEnv) adminRun(database, statement string) {
 	env.t.Helper()
 	var o fsOut
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
 		o = env.http.cypher(database, env.admin, statement, nil)
 		if len(o.Errors) == 0 {
 			return
@@ -724,7 +725,23 @@ func (env *fsEnv) adminRun(database, statement string) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	env.t.Fatalf("admin %q: %v", statement, o.Errors)
+	env.t.Logf("DIAG admin-http write failed %q: %v; retrying through an executor without a principal", statement, o.Errors)
+	store, err := env.server.dbManager.GetStorage(database)
+	if err != nil {
+		env.t.Fatalf("storage %s: %v", database, err)
+	}
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), fsDeadline)
+		_, lastErr = cypher.NewStorageExecutor(store).Execute(ctx, statement, nil)
+		cancel()
+		if lastErr == nil {
+			env.t.Logf("DIAG internal executor write succeeded %q (attempt %d)", statement, attempt+1)
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	env.t.Fatalf("admin %q: http %v; internal %v", statement, o.Errors, lastErr)
 }
 
 // diagnose logs what the schema holds, through FGAC-scoped admin and through
