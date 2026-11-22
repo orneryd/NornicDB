@@ -124,6 +124,11 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 	}
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
+	return ew.pendingEmbeddingsCountLocked(ew.ctx)
+}
+
+// pendingEmbeddingsCountLocked requires claimMu.
+func (ew *EmbedWorker) pendingEmbeddingsCountLocked(ctx context.Context) int {
 	ew.applyNodeUpdatesLocked()
 	count := len(ew.claimedNodes)
 	for id := range ew.nodeRetries {
@@ -139,7 +144,7 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 			return !claimed && !queued && ew.admitsEmbedding(storage.NodeID(id))
 		}
 	}
-	count += storage.CountPendingEmbeddingIDs(ew.ctx, ew.storage, accept) // the worker's own lifetime
+	count += storage.CountPendingEmbeddingIDs(ctx, ew.storage, accept)
 	return count
 }
 

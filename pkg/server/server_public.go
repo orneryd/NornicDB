@@ -100,17 +100,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	embedInfo := map[string]interface{}{
 		"enabled": false,
 	}
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil && s.canReadAllDatabases(r) {
-		status := "idle"
-		if embedStats.Running {
-			status = "processing"
-		}
-		embedInfo = map[string]interface{}{
-			"enabled":   true,
-			"status":    status,
-			"processed": embedStats.Processed,
-			"pending":   embedStats.Pending,
-			"failed":    embedStats.Failed,
+	if s.canReadAllDatabases(r) {
+		if embedStats := s.readEmbeddingMonitoringStats(r.Context()); embedStats != nil {
+			status := "idle"
+			if embedStats.Running {
+				status = "processing"
+			}
+			embedInfo = map[string]interface{}{
+				"enabled":   true,
+				"status":    status,
+				"processed": embedStats.Processed,
+				"pending":   embedStats.Pending,
+				"failed":    embedStats.Failed,
+			}
 		}
 	}
 

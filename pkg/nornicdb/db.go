@@ -2152,6 +2152,16 @@ func (db *DB) EmbedQueueStats() *QueueStats {
 	return &stats
 }
 
+// EmbedQueueMonitoringStats reports worker counters with Pending set to -1
+// when the monitoring request cannot obtain the count within its budget.
+func (db *DB) EmbedQueueMonitoringStats(ctx context.Context) *QueueStats {
+	if db.embedQueue == nil {
+		return nil
+	}
+	stats := db.embedQueue.monitoringStats(ctx)
+	return &stats
+}
+
 // EmbeddingFailures lists nodes parked after terminal embedding errors.
 func (db *DB) EmbeddingFailures(ctx context.Context, limit int) ([]EmbeddingFailure, error) {
 	if db.embedQueue == nil {
