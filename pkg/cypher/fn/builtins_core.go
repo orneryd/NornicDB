@@ -293,7 +293,12 @@ const sizeArgumentTypes = "String or List<T>"
 // and toUpper/toLower apply: one mapping for all four functions, as plain
 // functions so passing one doesn't allocate a bound method value per call.
 func UpperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
-func LowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
+func LowerCaseText(text string) string {
+	if !strings.ContainsRune(text, 'Σ') {
+		return cases.Lower(language.Und).String(text)
+	}
+	return lowerCaseSigma(text)
+}
 
 // WrongArityError builds a case function's wrong-argument-count error. upper
 // and lower reject a wrong count with their own error; a nil policy keeps
