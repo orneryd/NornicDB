@@ -123,7 +123,14 @@ func canonicalTypeOrder(types []string) []string {
 	if containsString(types, "Any") {
 		ordered = append(ordered, "Any")
 	}
+	listAnyPending := containsString(types, "List<Any>")
 	for name := range staticTypeChoices(staticPropertyValueType) {
+		// As with scalar Any, List<Any> precedes the concrete list types.
+		// Keep it after scalars so element derivation preserves this order.
+		if listAnyPending && isListTypeName(name) {
+			ordered = append(ordered, "List<Any>")
+			listAnyPending = false
+		}
 		if containsString(types, name) {
 			ordered = append(ordered, name)
 		}

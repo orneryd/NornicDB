@@ -1,0 +1,251 @@
+{
+  "reference": "Neo4j 5.26.30",
+  "status": "executed on Radeon, Neo4j 5.26.30 community; 24 RUN cells; 16 rejected and 8 accepted",
+  "statement_prefixes": [
+    ""
+  ],
+  "probes": [
+    {
+      "id": "Time/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + time('12:00:00Z')) AS a"
+    },
+    {
+      "id": "Time/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + time('12:00:00Z'))) AS a"
+    },
+    {
+      "id": "Time/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + time('12:00:00Z')) AS a"
+    },
+    {
+      "id": "Time/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(time('12:00:00Z') + n.k) AS a"
+    },
+    {
+      "id": "Time/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(time('12:00:00Z') + n.k)) AS a"
+    },
+    {
+      "id": "Time/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(time('12:00:00Z') + n.k) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localtime('12:00:00')) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localtime('12:00:00'))) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + localtime('12:00:00')) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(localtime('12:00:00') + n.k) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(localtime('12:00:00') + n.k)) AS a"
+    },
+    {
+      "id": "LocalTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(localtime('12:00:00') + n.k) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localdatetime('2026-11-21T12:00:00')) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localdatetime('2026-11-21T12:00:00'))) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + localdatetime('2026-11-21T12:00:00')) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(localdatetime('2026-11-21T12:00:00') + n.k) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(localdatetime('2026-11-21T12:00:00') + n.k)) AS a"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(localdatetime('2026-11-21T12:00:00') + n.k) AS a"
+    },
+    {
+      "id": "DateTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + datetime('2026-11-21T12:00:00Z')) AS a"
+    },
+    {
+      "id": "DateTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + datetime('2026-11-21T12:00:00Z'))) AS a"
+    },
+    {
+      "id": "DateTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + datetime('2026-11-21T12:00:00Z')) AS a"
+    },
+    {
+      "id": "DateTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(datetime('2026-11-21T12:00:00Z') + n.k) AS a"
+    },
+    {
+      "id": "DateTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(datetime('2026-11-21T12:00:00Z') + n.k)) AS a"
+    },
+    {
+      "id": "DateTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(datetime('2026-11-21T12:00:00Z') + n.k) AS a"
+    }
+  ],
+  "results": [
+    {
+      "id": "Time/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + time('12:00:00Z')) AS a",
+      "verdict": "Type mismatch: expected String but was Time, List<Any> or List<Time> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "Time/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + time('12:00:00Z'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Time (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "Time/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + time('12:00:00Z')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "Time/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(time('12:00:00Z') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Time, List<Any> or List<Time> (line 1, column 59 (offset: 58))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "Time/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(time('12:00:00Z') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Time (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "Time/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(time('12:00:00Z') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "LocalTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localtime('12:00:00')) AS a",
+      "verdict": "Type mismatch: expected String but was LocalTime, List<Any> or List<LocalTime> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localtime('12:00:00'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or LocalTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + localtime('12:00:00')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "LocalTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(localtime('12:00:00') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was LocalTime, List<Any> or List<LocalTime> (line 1, column 63 (offset: 62))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(localtime('12:00:00') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or LocalTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(localtime('12:00:00') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localdatetime('2026-11-21T12:00:00')) AS a",
+      "verdict": "Type mismatch: expected String but was LocalDateTime, List<Any> or List<LocalDateTime> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localdatetime('2026-11-21T12:00:00'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or LocalDateTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalDateTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + localdatetime('2026-11-21T12:00:00')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(localdatetime('2026-11-21T12:00:00') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was LocalDateTime, List<Any> or List<LocalDateTime> (line 1, column 78 (offset: 77))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(localdatetime('2026-11-21T12:00:00') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or LocalDateTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "LocalDateTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(localdatetime('2026-11-21T12:00:00') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "DateTime/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + datetime('2026-11-21T12:00:00Z')) AS a",
+      "verdict": "Type mismatch: expected String but was DateTime, List<Any> or List<DateTime> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "DateTime/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + datetime('2026-11-21T12:00:00Z'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or DateTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "DateTime/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + datetime('2026-11-21T12:00:00Z')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "DateTime/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(datetime('2026-11-21T12:00:00Z') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was DateTime, List<Any> or List<DateTime> (line 1, column 74 (offset: 73))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "DateTime/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(datetime('2026-11-21T12:00:00Z') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or DateTime (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "DateTime/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(datetime('2026-11-21T12:00:00Z') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    }
+  ]
+}

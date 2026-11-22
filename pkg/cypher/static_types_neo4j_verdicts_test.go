@@ -9,9 +9,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// staticUncertainAdditionVerdicts records the recovered NOR-82 probes and
+// their producer boundaries measured on Neo4j 5.26.30. The historical 64 H2
+// cases are not recovered by this bounded reference population.
+var staticUncertainAdditionVerdicts = []struct{ query, rejection string }{
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + date()) AS a", "Type mismatch: expected String but was Date, List<Any> or List<Date>"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + date()) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN head(n.k + date()) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a", "Type mismatch: expected String but was Any or Date"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(date() + n.k) AS a", "Type mismatch: expected String but was Date, List<Any> or List<Date>"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(date() + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN head(date() + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(date() + n.k)) AS a", "Type mismatch: expected String but was Any or Date"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + duration('P1D')) AS a", "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration>"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + duration('P1D')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN head(n.k + duration('P1D')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a", "Type mismatch: expected String but was Any or Duration"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(duration('P1D') + n.k) AS a", "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration>"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(duration('P1D') + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN head(duration('P1D') + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(duration('P1D') + n.k)) AS a", "Type mismatch: expected String but was Any or Duration"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + time('12:00:00Z')) AS a", "Type mismatch: expected String but was Time, List<Any> or List<Time>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + time('12:00:00Z'))) AS a", "Type mismatch: expected String but was Any or Time"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + time('12:00:00Z')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(time('12:00:00Z') + n.k) AS a", "Type mismatch: expected String but was Time, List<Any> or List<Time>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(time('12:00:00Z') + n.k)) AS a", "Type mismatch: expected String but was Any or Time"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(time('12:00:00Z') + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localtime('12:00:00')) AS a", "Type mismatch: expected String but was LocalTime, List<Any> or List<LocalTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localtime('12:00:00'))) AS a", "Type mismatch: expected String but was Any or LocalTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + localtime('12:00:00')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(localtime('12:00:00') + n.k) AS a", "Type mismatch: expected String but was LocalTime, List<Any> or List<LocalTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(localtime('12:00:00') + n.k)) AS a", "Type mismatch: expected String but was Any or LocalTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(localtime('12:00:00') + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + localdatetime('2026-11-21T12:00:00')) AS a", "Type mismatch: expected String but was LocalDateTime, List<Any> or List<LocalDateTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + localdatetime('2026-11-21T12:00:00'))) AS a", "Type mismatch: expected String but was Any or LocalDateTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + localdatetime('2026-11-21T12:00:00')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(localdatetime('2026-11-21T12:00:00') + n.k) AS a", "Type mismatch: expected String but was LocalDateTime, List<Any> or List<LocalDateTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(localdatetime('2026-11-21T12:00:00') + n.k)) AS a", "Type mismatch: expected String but was Any or LocalDateTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(localdatetime('2026-11-21T12:00:00') + n.k) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + datetime('2026-11-21T12:00:00Z')) AS a", "Type mismatch: expected String but was DateTime, List<Any> or List<DateTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + datetime('2026-11-21T12:00:00Z'))) AS a", "Type mismatch: expected String but was Any or DateTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(n.k + datetime('2026-11-21T12:00:00Z')) AS a", ""},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(datetime('2026-11-21T12:00:00Z') + n.k) AS a", "Type mismatch: expected String but was DateTime, List<Any> or List<DateTime>"},
+	{"UNWIND [] AS s MATCH (n) RETURN toUpper(head(datetime('2026-11-21T12:00:00Z') + n.k)) AS a", "Type mismatch: expected String but was Any or DateTime"},
+	{"UNWIND [] AS s MATCH (n) RETURN size(datetime('2026-11-21T12:00:00Z') + n.k) AS a", ""},
+}
+
 // staticTypeNeo4jVerdicts are Neo4j 5.26.30's verdicts on the round-6 type and query-body probes: the
 // query is accepted (no rejection) or rejected as a SyntaxError with Neo4j's message as given.
-var staticTypeNeo4jVerdicts = []struct{ query, rejection string }{
+var staticTypeNeo4jVerdicts = append(staticUncertainAdditionVerdicts, []struct{ query, rejection string }{
 	{"UNWIND [] AS s RETURN 1 IN size([1]) AS a", "Type mismatch: expected List<T> but was Integer"},
 	{"UNWIND [] AS s RETURN 1 IN toUpper('a') AS a", "Type mismatch: expected List<T> but was String"},
 	{"UNWIND [] AS s RETURN [x IN date() | x] AS a", "Type mismatch: expected List<T> but was Date"},
@@ -225,7 +273,7 @@ var staticTypeNeo4jVerdicts = []struct{ query, rejection string }{
 	{"UNWIND [] AS r MATCH (n) RETURN labels(head([1, 'a']) + 1) AS a", "Type mismatch: expected Node but was Float, Integer, String or List<Float>"},
 	{"UNWIND [] AS r MATCH (n) RETURN labels((head([1] + ['a'])) + 1) AS a", "Type mismatch: expected List<T> but was Integer"},
 	{"UNWIND [] AS r MATCH (n) RETURN labels(head([1] + ['a']) + 'x') AS a", "Type mismatch: expected List<T> but was String"},
-}
+}...)
 
 // Every probe is accepted or rejected as Neo4j does it, in auto-commit and in an explicit
 // transaction; a rejection is a SyntaxError (NornicDB may list a union's alternatives differently).
