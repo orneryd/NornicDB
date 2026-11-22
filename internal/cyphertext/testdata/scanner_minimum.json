@@ -267,7 +267,6 @@
     "isDeleteStreamingEligible"
   ],
   "pkg/cypher/executor_mutations_delete_guard.go": [
-    "deleteExpressionRootIdentifier",
     "hasTopLevelDeleteLabelQualifier"
   ],
   "pkg/cypher/executor_query_routing.go": [
