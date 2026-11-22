@@ -25,7 +25,7 @@ import (
 // with the public-path test in pkg/cypher). Rows here are the Unicode contract,
 // not a claim that Neo4j was executed.
 func TestCaseOwnerFinalSigmaBoundary(t *testing.T) {
-	for _, row := range nor187FinalSigmaRows() {
+	for _, row := range nor187PortedFinalSigmaRows() {
 		t.Run(row.name, func(t *testing.T) {
 			got := LowerCaseText(row.input)
 			assert.Equal(t, row.want, got,
@@ -43,21 +43,21 @@ func TestCaseOwnerFinalSigmaBoundary(t *testing.T) {
 	}
 }
 
-// nor187Row is one exact input string and its exact Unicode lowercase output.
-type nor187Row struct {
+// nor187PortedRow is one exact input string and its exact Unicode lowercase output.
+type nor187PortedRow struct {
 	name  string
 	input string
 	want  string
 }
 
-// nor187FinalSigmaRows returns the reproduction matrix: the recorded historical
+// nor187PortedFinalSigmaRows returns the reproduction matrix: the recorded historical
 // boundary, adjacent lengths on both sides of the 128-byte transform chunk,
 // long combining-acute runs, the 30-mark forward-lookahead limit, U+0345
 // cased/case-ignorable precedence, short cased and uncased left/right context
 // controls, and empty/non-Greek preservation. Inputs are exact strings; long
 // cases use counts small enough to be deterministic (127/128/257 marks), not
 // the 65,537-mark class reported in the design note.
-func nor187FinalSigmaRows() []nor187Row {
+func nor187PortedFinalSigmaRows() []nor187PortedRow {
 	const (
 		sigma         = "\u03A3" // GREEK CAPITAL LETTER SIGMA
 		finalSigma    = "\u03C2" // GREEK SMALL LETTER FINAL SIGMA
@@ -67,7 +67,7 @@ func nor187FinalSigmaRows() []nor187Row {
 	)
 	reps := func(text string, count int) string { return strings.Repeat(text, count) }
 
-	rows := []nor187Row{
+	rows := []nor187PortedRow{
 		// The exact historical case: 127 ASCII letters followed by a capital
 		// sigma, expected to end in final sigma.
 		{name: "ascii127+Sigma_historical", input: reps("a", 127) + sigma, want: reps("a", 127) + finalSigma},
@@ -119,7 +119,7 @@ func nor187FinalSigmaRows() []nor187Row {
 	// two-byte sigma straddle the 128-byte first transform chunk.
 	for _, length := range []int{125, 126, 127, 128, 129, 130, 255, 256, 257} {
 		prefix := reps("a", length)
-		rows = append(rows, nor187Row{
+		rows = append(rows, nor187PortedRow{
 			name:  fmt.Sprintf("ascii%d+Sigma", length),
 			input: prefix + sigma,
 			want:  prefix + finalSigma,
@@ -130,7 +130,7 @@ func nor187FinalSigmaRows() []nor187Row {
 	// only cased character before sigma, and sigma ends the input, so every
 	// row is final sigma no matter how the chunk boundary falls inside the run.
 	for _, marks := range []int{0, 1, 30, 31, 32, 63, 64, 127, 128, 257} {
-		rows = append(rows, nor187Row{
+		rows = append(rows, nor187PortedRow{
 			name:  fmt.Sprintf("A+acute%d+Sigma", marks),
 			input: "A" + reps(acute, marks) + sigma,
 			want:  "a" + reps(acute, marks) + finalSigma,
@@ -143,7 +143,7 @@ func nor187FinalSigmaRows() []nor187Row {
 	// must not silently commit final sigma. 30 marks is the control within the
 	// limit; 31 and above cross it.
 	for _, marks := range []int{30, 31, 32, 63, 255} {
-		rows = append(rows, nor187Row{
+		rows = append(rows, nor187PortedRow{
 			name:  fmt.Sprintf("A+Sigma+acute%d+B", marks),
 			input: "A" + sigma + reps(acute, marks) + "B",
 			want:  "a" + medialSigma + reps(acute, marks) + "b",
