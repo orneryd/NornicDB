@@ -1060,9 +1060,9 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 			return err
 		}
 	}
-	var temporalRead temporalValidationRead
+	var reads edgeConstraintValidation
 	for _, edge := range tx.pendingEdges {
-		if err := tx.validateEdgeConstraints(ctx, edge, &temporalRead); err != nil {
+		if err := tx.validateEdgeConstraints(ctx, edge, &reads); err != nil {
 			return err
 		}
 	}
@@ -1072,11 +1072,17 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 	return nil
 }
 
+type edgeConstraintValidation struct {
+	temporal    temporalValidationRead
+	cardinality cardinalityValidationRead
+	unique      pendingRelationshipUniqueRead
+}
+
 // validateEdgeConstraints checks relationship constraints for an edge in a transaction.
 // ctx is the lifetime of the committed enumerations the checks perform, like
 // validateNodeConstraints': a commit passes the commit preparation context and
 // a terminated statement stops inside the canonical bulk reader.
-func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge, temporalRead *temporalValidationRead) error {
+func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge, reads *edgeConstraintValidation) error {
 	if edge == nil || edge.Type == "" {
 		return nil
 	}
@@ -1098,7 +1104,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 		}
 		switch c.Type {
 		case ConstraintUnique:
-			if err := tx.checkEdgeUniqueness(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeUniqueness(ctx, edge, c, tx.namespace, &reads.unique); err != nil {
 				return err
 			}
 		case ConstraintExists:
@@ -1109,11 +1115,11 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 			if err := checkEdgeExistence(edge, c); err != nil {
 				return err
 			}
-			if err := tx.checkEdgeUniqueness(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeUniqueness(ctx, edge, c, tx.namespace, &reads.unique); err != nil {
 				return err
 			}
 		case ConstraintTemporal:
-			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace, temporalRead); err != nil {
+			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace, &reads.temporal); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -1126,7 +1132,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 				}
 			}
 		case ConstraintCardinality:
-			if err := tx.checkEdgeCardinality(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeCardinality(ctx, edge, c, tx.namespace, &reads.cardinality); err != nil {
 				return err
 			}
 		}
@@ -1160,6 +1166,10 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 // ctx is the lifetime of the committed edge enumeration (see
 // validateEdgeConstraints).
 func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
+	return tx.validateEdgeUniqueness(ctx, edge, c, namespace, nil)
+}
+
+func (tx *BadgerTransaction) validateEdgeUniqueness(ctx context.Context, edge *Edge, c Constraint, namespace string, read *pendingRelationshipUniqueRead) error {
 	values := make([]interface{}, len(c.Properties))
 	for i, prop := range c.Properties {
 		if values[i] = edge.Properties[prop]; values[i] == nil {
@@ -1181,12 +1191,46 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
 	}
 
-	for id, otherEdge := range tx.pendingEdges {
-		if id == edge.ID || otherEdge.Type != edge.Type {
-			continue
-		}
-		if err := collides(otherEdge); err != nil {
+	scanAll := true
+	if read != nil && len(values) > 0 && len(tx.pendingEdges) > 1 {
+		key, supported, err := pendingRelationshipUniqueKey(ctx, edge.Properties, c.Properties)
+		if err != nil {
 			return err
+		}
+		if supported {
+			scope := pendingRelationshipUniqueScope{edge.Type, relationshipPropertyKey(c.Properties)}
+			buckets, err := read.get(ctx, tx, scope, c.Properties)
+			if err != nil {
+				return err
+			}
+			for _, group := range [2][]*Edge{buckets.scalar[key], buckets.other} {
+				var cancel bulkReadCancellation
+				for _, candidate := range group {
+					if err := cancel.check(ctx); err != nil {
+						return err
+					}
+					if candidate.ID != edge.ID {
+						if err := collides(candidate); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			scanAll = false
+		}
+	}
+	if scanAll {
+		var cancel bulkReadCancellation
+		for id, otherEdge := range tx.pendingEdges {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
+			if id == edge.ID || otherEdge.Type != edge.Type {
+				continue
+			}
+			if err := collides(otherEdge); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1378,41 +1422,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, ed
 // ctx is the lifetime of the committed adjacency enumeration (see
 // validateEdgeConstraints).
 func (tx *BadgerTransaction) checkEdgeCardinality(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
-	counter := newEdgeCardinalityCounter(c, edge, namespace, edge.ID)
-
-	// Count pending edges in this transaction that match type + anchor + direction.
-	for id, pendingEdge := range tx.pendingEdges {
-		if counter.anchored(pendingEdge) && counter.admits(id) {
-			counter.counts(pendingEdge.Type)
-		}
-	}
-
-	// Count committed edges from the engine on the read's lifetime (ctx).
-	var committedEdges []*Edge
-	var err error
-	adjacency := AdjacentEdgeRead{Node: counter.anchor}
-	if c.Direction != "OUTGOING" {
-		adjacency.Direction = AdjacentIncoming
-	}
-	committedEdges, err = tx.engine.ReadStoredAdjacentEdges(ctx, adjacency)
-	if err != nil {
-		return err
-	}
-	for _, existingEdge := range committedEdges {
-		// Edges deleted here don't count; rewritten ones are counted as pending.
-		if tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
-		}
-		if counter.admits(existingEdge.ID) {
-			counter.counts(existingEdge.Type)
-		}
-	}
-
-	if counter.reached() {
-		return counter.violation()
-	}
-
-	return nil
+	return tx.validateEdgeCardinality(ctx, edge, c, namespace, nil)
 }
 
 // checkEdgePolicy validates DISALLOWED and ALLOWED endpoint policies within a transaction.
