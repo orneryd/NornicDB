@@ -44,10 +44,10 @@ func validateRemoveClauseScope(ctx context.Context, scope *semanticBindingScope,
 	return nil
 }
 
-// validateDeleteClauseScope rejects a DELETE target whose root variable is not
-// bound (deleteExpressionRootIdentifier), with the error the pipeline DELETE
-// step raises at run time, so a subquery body is checked before it runs.
-func validateDeleteClauseScope(scope *semanticBindingScope, clause string) error {
+// validateDeleteClauseScope checks a DELETE target's free variables with the
+// same reader as the pipeline DELETE step, so CASE keywords and subquery-local
+// bindings are not mistaken for outer variables before execution.
+func validateDeleteClauseScope(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	for _, expression := range targets {
 		if word, ok := trailingWordAfterOperand(expression); ok {
@@ -57,7 +57,7 @@ func validateDeleteClauseScope(scope *semanticBindingScope, clause string) error
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				localization.CypherCoreInvalidInput(word))
 		}
-		if root := deleteExpressionRootIdentifier(expression); root != "" && !scope.contains(root) {
+		if missing := firstUndefinedSetExpressionVariable(ctx, expression, scope); missing != "" {
 			return deleteUndefinedVariableError(expression)
 		}
 	}
