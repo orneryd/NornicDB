@@ -177,6 +177,15 @@ func (c *hsClient) check(code int, body []byte) (*hsResp, error) {
 	return &response, nil
 }
 
+func (c *hsClient) autocommit(query string, params map[string]interface{}) (time.Duration, int, error) {
+	code, body, elapsed, err := c.do(http.MethodPost, "/db/"+c.db+"/tx/commit", hsStmts(query, params))
+	if err != nil {
+		return elapsed, 0, err
+	}
+	_, err = c.check(code, body)
+	return elapsed, len(body), err
+}
+
 const (
 	hs2SIGNATURES = "UNWIND $sources AS x MATCH (s:Source {id: x.source_id}) SET s.set_keys = x.keys, s.set_weights = x.weights, s.set_total = x.total, s.set_pool_runs = x.pool_runs, s.set_pool_keys = x.pool_keys, s.set_pool_records = x.pool_records, s.profiled_current = x.current"
 	hs2PROFILED   = "UNWIND $profiled AS x MATCH (s:Source {id: x.source_id}) SET s.record_profiled = x.generation, s.profiled_run_layout = x.layout"
