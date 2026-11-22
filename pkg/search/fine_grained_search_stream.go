@@ -2,8 +2,6 @@ package search
 
 import (
 	"context"
-	"errors"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -11,35 +9,32 @@ import (
 
 type fineGrainedSearchStream struct {
 	resultstream.Stream
-	policy   string
-	version  uint64
-	versions graphMutationVersionProvider
-	release  func() error
-	close    sync.Once
-	closeErr error
-}
-
-func newFineGrainedSearchStream(stream resultstream.Stream, view *Service, release func() error) *fineGrainedSearchStream {
-	return &fineGrainedSearchStream{
-		Stream: stream, policy: view.fineGrainedOwner.Fingerprint, release: release,
-		version: view.fineGrainedVersion, versions: view.fineGrainedVersions,
-	}
+	scope *indexedSearchScope
 }
 
 func (s *fineGrainedSearchStream) Pull(ctx context.Context, position uint64, n int) (*resultstream.Page, error) {
 	principal := auth.FineGrainedRequestFromContext(ctx)
-	if principal == nil || principal.Fingerprint == "" || principal.Fingerprint != s.policy {
+	if principal == nil || principal.Fingerprint == "" || principal.Fingerprint != s.scope.principal.Fingerprint {
 		return nil, resultstream.ErrInvalidated
 	}
-	if err := s.CheckValid(); err != nil {
+	if err := s.scope.check(ctx); err != nil {
 		return nil, err
 	}
-	return s.Stream.Pull(ctx, position, n)
+	ctx = auth.WithFineGrainedRequest(ctx, s.scope.principal)
+	ctx = context.WithValue(ctx, indexedSearchScopeKey{}, s.scope)
+	page, err := s.Stream.Pull(ctx, position, n)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.scope.check(ctx); err != nil {
+		return nil, err
+	}
+	return page, nil
 }
 
 func (s *fineGrainedSearchStream) CheckValid() error {
-	if s.versions != nil {
-		if err := checkContinuationGraphVersion(s.versions, s.version); err != nil {
+	if s.scope.versions != nil {
+		if err := checkContinuationGraphVersion(s.scope.versions, s.scope.version); err != nil {
 			return err
 		}
 	}
@@ -58,11 +53,4 @@ func (s *fineGrainedSearchStream) RetainedBytes() int64 {
 
 func (s *fineGrainedSearchStream) SetRetainedBytesGrowthGuard(guard func() bool) {
 	resultstream.BindRetainedBytesGrowthGuard(s.Stream, guard)
-}
-
-func (s *fineGrainedSearchStream) Close() error {
-	s.close.Do(func() {
-		s.closeErr = errors.Join(s.Stream.Close(), s.release())
-	})
-	return s.closeErr
 }

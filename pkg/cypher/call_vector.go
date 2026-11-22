@@ -106,7 +106,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 		gate = indexName
 	}
 	useService := false
-	if e.fineGrainedGraph == nil {
+	// A transaction-local image can contain vectors the shared index has
+	// not received yet. Ordinary fine-grained reads use the indexed filter.
+	if _, transaction := e.fineGrainedSource.(*transactionStorageWrapper); !transaction {
 		var err error
 		useService, err = e.vectorIndexServiceAnswers(ctx, svc, gate, search.VectorIndexTarget{Label: targetLabel, Property: targetProperty}, wantDims, vectorReadWarm)
 		if err != nil {
@@ -153,7 +155,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesWithVector(ctx context.Cont
 	for _, hit := range hits {
 		node, err := e.getQueryNode(ctx, e.storage, storage.NodeID(hit.ID))
 		if err != nil || node == nil {
-			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
+			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil && e.fineGrainedGraph == nil {
 				if !seenOrphans[hit.ID] {
 					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
 					// Unless the node was stored again after this read.

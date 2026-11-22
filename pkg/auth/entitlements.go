@@ -146,6 +146,7 @@ func GraphFineGrainedActions() []FineGrainedAction {
 		{ID: "graph.node.delete", ResourceKind: FineGrainedNode},
 		{ID: "graph.node.label.add", ResourceKind: FineGrainedNode},
 		{ID: "graph.node.label.remove", ResourceKind: FineGrainedNode},
+		{ID: "graph.relationship.embedding.read", ResourceKind: FineGrainedRelationship},
 		{ID: "graph.relationship.traverse", ResourceKind: FineGrainedRelationship},
 		{ID: "graph.relationship.property.read", ResourceKind: FineGrainedRelationship, Property: true},
 		{ID: "graph.relationship.property.set", ResourceKind: FineGrainedRelationship, Property: true},

@@ -55,6 +55,23 @@ including while evaluating predicates, projection, and aggregation. A
 relationship is visible only when its traversal and both endpoints' traversal
 are allowed. A write that fails authorization aborts its Cypher transaction.
 
+### Search and vectors
+
+Keyword and vector searches query the database's existing indexes. Search
+returns only graph-visible nodes and relationships, with their readable
+properties. A keyword hit is excluded if the indexed document differs from
+the text built from the caller's readable fields. Restricted searches can
+therefore return fewer hits.
+
+A vector stored in a graph property requires read access to that property.
+Managed vectors have separate entitlements: `graph.node.embedding.read` and
+`graph.relationship.embedding.read`. A managed embedding grant allows the
+vector to contribute to ranking independently of access to individual text
+properties. Grant it only when the derived representation may be searched.
+Matches and result properties are still projected under the caller's read
+permissions. Searches reuse stored vectors without calling the document
+embedder to rebuild them.
+
 To select rows by stored data, use a property rule:
 
 ```cypher

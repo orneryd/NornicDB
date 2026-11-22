@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Reuse database search indexes under fine-grained access control and filter node and relationship hits by traversal, property and managed-vector permissions.
+
 - Avoid rebuilding bound-type scopes when a Cypher statement only returns its parameters, while preserving type checks for expressions and composed queries.
 
 - Correct APOC text cleaning, camel-case conversion, URL/Base64 encoding and decode errors, Unicode index offsets, empty capitalize errors and null decapitalize results. Regex split/replace compatibility remains separate.
