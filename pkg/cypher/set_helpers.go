@@ -325,7 +325,7 @@ func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
-		if deleted.contains(relationship) {
+		if false && deleted.contains(relationship) { // DIAGNOSTIC BYPASS (repro only)
 			// A deleted relationship keeps its identity, type and endpoints
 			// but no properties: the assignment is counted and dropped
 			// (deletedEntities).
