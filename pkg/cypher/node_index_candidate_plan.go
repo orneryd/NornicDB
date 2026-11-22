@@ -32,6 +32,7 @@ package cypher
 // reaches it.
 
 import (
+	"os"
 	"context"
 	"strings"
 
@@ -119,6 +120,9 @@ func (p nodeIndexCandidatePlan) candidateCount() int {
 // route's own empty answer, not an estimate: the caller still reads the plan to
 // report it, and that read reads no node.
 func (e *StorageExecutor) planPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
+	if _, transactional := e.storage.(*transactionStorageWrapper); transactional && os.Getenv("P26_BYPASS") == "F3" {
+		return nodeIndexCandidatePlan{}, false, nil
+	}
 	if e.fineGrainedGraph != nil {
 		// Stored property postings cannot answer a predicate over a projected
 		// property image. Use the regular row filter for this request.

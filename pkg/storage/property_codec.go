@@ -202,13 +202,6 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, names
 				continue
 			}
 		}
-		if at := len(rest) - reader.Len(); at+5 <= len(rest) && (rest[at] == 0xc6 || rest[at] == 0xdb) {
-			claimed := uint64(rest[at+1])<<24 | uint64(rest[at+2])<<16 | uint64(rest[at+3])<<8 | uint64(rest[at+4])
-			fmt.Printf("P26DIAG F6 property %q header %02x claims %d bytes, %d bytes remain in the body\n", name, rest[at], claimed, reader.Len())
-			if (os.Getenv("P26_BYPASS") == "F6" || os.Getenv("P26_BYPASS") == "ST") && claimed > uint64(reader.Len()) {
-				return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, io.ErrUnexpectedEOF)
-			}
-		}
 		val, err := decodeStrictTypedValue(dec)
 		if err != nil {
 			return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, err)
@@ -321,6 +314,18 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	code, err := dec.PeekCode()
 	if err != nil {
 		return nil, err
+	}
+	if code == 0xc6 || code == 0xdb {
+		if r, ok := dec.Buffered().(*bytes.Reader); ok {
+			var header [5]byte
+			if n, _ := r.ReadAt(header[:], r.Size()-int64(r.Len())); n == 5 {
+				claimed := uint64(header[1])<<24 | uint64(header[2])<<16 | uint64(header[3])<<8 | uint64(header[4])
+				fmt.Printf("P26DIAG F6 value header %02x claims %d bytes, %d bytes remain in the body\n", header[0], claimed, r.Len())
+				if os.Getenv("P26_BYPASS") == "ST" && claimed > uint64(r.Len()) {
+					return nil, io.ErrUnexpectedEOF
+				}
+			}
+		}
 	}
 	if msgpcode.IsFixedArray(code) || code == msgpcode.Array16 || code == msgpcode.Array32 {
 		return decodeStrictTypedArray(dec)

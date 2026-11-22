@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"fmt"
-	"os"
 	"context"
 	"errors"
 	"strings"
@@ -81,9 +80,6 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 			return nil
 		})
 		fmt.Printf("P26DIAG F3 index %s(%s)=%v live postings=%v after own pending=%v; nodes of the transaction's snapshot with that value=%v\n", label, property, value, live, ids, snapshot)
-		if os.Getenv("P26_BYPASS") == "F3" {
-			ids = snapshot
-		}
 	}
 	// A PROFILE statement counts the entries this lookup returned and the one
 	// lookup that returned them, after the transaction's own pending writes are
