@@ -168,6 +168,47 @@ func l8cEqual(a, b reflect.Value, depth int) bool {
 
 func l8cConfigEqual(a, b *Config) bool { return l8cEqual(reflect.ValueOf(a), reflect.ValueOf(b), 0) }
 
+// l8cDiff lists the field paths of a *Config whose values differ.
+func l8cDiff(a, b *Config) []string {
+	var out []string
+	var walk func(path string, x, y reflect.Value, depth int)
+	walk = func(path string, x, y reflect.Value, depth int) {
+		if depth > 12 || len(out) > 200 {
+			return
+		}
+		switch x.Kind() {
+		case reflect.Pointer, reflect.Interface:
+			if x.IsNil() || y.IsNil() {
+				if x.IsNil() != y.IsNil() {
+					out = append(out, path)
+				}
+				return
+			}
+			walk(path, x.Elem(), y.Elem(), depth+1)
+		case reflect.Struct:
+			for i := 0; i < x.NumField(); i++ {
+				walk(path+"."+x.Type().Field(i).Name, x.Field(i), y.Field(i), depth+1)
+			}
+		default:
+			if !l8cEqual(x, y, 0) {
+				out = append(out, path)
+			}
+		}
+	}
+	walk("Config", reflect.ValueOf(a), reflect.ValueOf(b), 0)
+	return out
+}
+
+func l8cMinus(list []string, noise map[string]bool) []string {
+	out := []string{}
+	for _, p := range list {
+		if !noise[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // l8cScan lists the repository files (outside docs/ and Markdown) that hold
 // text, split into test and non-test files.
 func l8cScan(needles []string) map[string][2][]string {
@@ -225,12 +266,18 @@ func l8cFirst(list []string, n int) []string {
 // ---------------------------------------------------------------- L-H9-016
 func TestL8_H9_016_DocumentedEnvironmentVariables(t *testing.T) {
 	baseline := LoadFromEnv()
-	if !l8cConfigEqual(baseline, LoadFromEnv()) {
-		t.Fatal("control: two loads of the same environment differ; comparison unusable")
+	noise := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		for _, p := range l8cDiff(baseline, LoadFromEnv()) {
+			noise[p] = true
+		}
 	}
+	l8cLog(t, "L8_ENV_NOISE", map[string]any{"fields_differing_between_identical_loads": noise})
 	t.Setenv("NORNICDB_QUERY_CACHE_SIZE", "77")
-	if l8cConfigEqual(baseline, LoadFromEnv()) {
+	if d := l8cMinus(l8cDiff(baseline, LoadFromEnv()), noise); len(d) == 0 {
 		t.Fatal("control: NORNICDB_QUERY_CACHE_SIZE=77 changed nothing; comparison unusable")
+	} else {
+		l8cLog(t, "L8_ENV_CONTROL", map[string]any{"NORNICDB_QUERY_CACHE_SIZE=77 changed": d})
 	}
 	os.Unsetenv("NORNICDB_QUERY_CACHE_SIZE")
 	rows := l8cRows(t, "option-env")
@@ -258,8 +305,8 @@ func TestL8_H9_016_DocumentedEnvironmentVariables(t *testing.T) {
 					} else {
 						os.Unsetenv(row.Name)
 					}
-					if !l8cConfigEqual(baseline, cfg) {
-						changed = append(changed, value)
+					if d := l8cMinus(l8cDiff(baseline, cfg), noise); len(d) > 0 {
+						changed = append(changed, value+"->"+strings.Join(l8cFirst(d, 3), ","))
 					}
 				}()
 			}
@@ -427,9 +474,67 @@ func TestL8_H9_018_YAMLOptions(t *testing.T) {
 		if len(strictErr) > 300 {
 			strictErr = strictErr[:300]
 		}
-		l8cLog(t, "L8_YAML", map[string]any{"lead": "L-H9-018", "item": row.Item, "name": row.Name, "documented": row.Documented, "lang": lang, "top_keys": l8cFirst(top, 8), "path": strings.Join(path, "."), "doc_line": docText, "class": class, "strict_error": strictErr})
+		blockLoad := map[string]any{}
+		if block != nil {
+			text := strings.Join(block, "
+") + "
+"
+			file := filepath.Join(t.TempDir(), "block.yaml")
+			_ = os.WriteFile(file, []byte(text), 0o644)
+			cfg, err := LoadFromFile(file)
+			blockLoad["LoadFromFile_err"] = fmt.Sprint(err)
+			if err == nil {
+				blockLoad["changed_fields"] = l8cFirst(l8cMinus(l8cDiff(l8cDefaultsFromFile(t), cfg), l8cFileNoise(t)), 8)
+			}
+			decoder := yaml.NewDecoder(strings.NewReader(text))
+			decoder.KnownFields(true)
+			var into YAMLConfig
+			if err := decoder.Decode(&into); err != nil {
+				msg := err.Error()
+				if len(msg) > 400 {
+					msg = msg[:400]
+				}
+				blockLoad["strict_block_error"] = msg
+			}
+		}
+		l8cLog(t, "L8_YAML", map[string]any{"lead": "L-H9-018", "item": row.Item, "name": row.Name, "documented": row.Documented, "lang": lang, "top_keys": l8cFirst(top, 8), "path": strings.Join(path, "."), "doc_line": docText, "class": class, "strict_error": strictErr, "block_load": blockLoad})
 	}
 	l8cLog(t, "L8_YAML_SUMMARY", map[string]any{"lead": "L-H9-018", "counts": counts})
+}
+
+var l8cDefaultsCfg *Config
+var l8cNoise map[string]bool
+
+func l8cDefaultsFromFile(t *testing.T) *Config {
+	if l8cDefaultsCfg == nil {
+		file := filepath.Join(t.TempDir(), "empty.yaml")
+		_ = os.WriteFile(file, []byte("
+"), 0o644)
+		cfg, err := LoadFromFile(file)
+		if err != nil {
+			t.Fatalf("empty config: %v", err)
+		}
+		l8cDefaultsCfg = cfg
+	}
+	return l8cDefaultsCfg
+}
+
+func l8cFileNoise(t *testing.T) map[string]bool {
+	if l8cNoise == nil {
+		l8cNoise = map[string]bool{}
+		file := filepath.Join(t.TempDir(), "empty2.yaml")
+		_ = os.WriteFile(file, []byte("
+"), 0o644)
+		for i := 0; i < 3; i++ {
+			cfg, _ := LoadFromFile(file)
+			if cfg != nil {
+				for _, p := range l8cDiff(l8cDefaultsFromFile(t), cfg) {
+					l8cNoise[p] = true
+				}
+			}
+		}
+	}
+	return l8cNoise
 }
 
 // ---------------------------------------------------------------- L-H9-018 option-flag

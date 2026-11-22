@@ -64,3 +64,52 @@ func TestL8_H2_012_UnwindPropertyUpdateJournal(t *testing.T) {
 		})
 	}
 }
+
+// Owner run: the same property-only update through one storage transaction,
+// once and twice for the same node. The second update of a node finds it in
+// the transaction's pending nodes (badger_transaction.go:1081), which leaves
+// the operation not anchor-eligible (:1080/:1103), so managedReferences
+// (managed_vector_reference.go:133) does not reference the unchanged vectors.
+func TestL8Owner_H2_012_TransactionSecondUpdate(t *testing.T) {
+	for _, updates := range []int{1, 2} {
+		t.Run(fmt.Sprintf("updates-%d", updates), func(t *testing.T) {
+			db, engine, dir, _, id := propertyUpdateJournalPublicFixture(t, 64, true)
+			ctx := context.Background()
+			walDir := filepath.Join(dir, "wal")
+			before, err := storage.ReadWALEntriesFromDir(ctx, walDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx, err := engine.BeginTransaction(ctx, storage.OrdinaryBegin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 1; i <= updates; i++ {
+				current, err := tx.GetNode(ctx, id)
+				if err != nil {
+					t.Fatalf("read in tx: %v", err)
+				}
+				next := storage.CopyNode(current)
+				next.Properties["k"] = int64(i)
+				if err := tx.UpdateGraphNode(ctx, storage.NodeUpdateRequest{Before: current, After: next}); err != nil {
+					t.Fatalf("update %d: %v", i, err)
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			entries, _ := storage.ReadWALEntriesFromDir(ctx, walDir)
+			records := []string{}
+			largest := 0
+			for _, entry := range entries[len(before):] {
+				records = append(records, fmt.Sprintf("%v:%d", entry.Operation, len(entry.Data)))
+				if entry.Operation == storage.OpEntityCommit && len(entry.Data) > largest {
+					largest = len(entry.Data)
+				}
+			}
+			data, _ := json.Marshal(map[string]any{"lead": "L-H2-012", "step": "storage transaction updates of one node", "updates": updates, "records": records, "largest_entity_commit": largest})
+			t.Logf("L8_OWNER %s", data)
+			_ = db.Close()
+		})
+	}
+}
