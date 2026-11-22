@@ -46,6 +46,8 @@ type n15290Stats struct {
 // stream is also drained once per case to verify its returned IDs.
 func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 	ctx := context.Background()
+	queryVector := make([]float64, 2048)
+	queryVector[0] = 1
 	srv, _ := setupTestServer(t)
 	database := srv.dbManager.DefaultDatabaseName()
 	store, err := srv.dbManager.GetStorage(database)
@@ -73,7 +75,7 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, searchService.BuildIndexes(ctx))
 			require.Eventually(t, func() bool {
-				result, runErr := session.Run(ctx, "CALL db.retrieve({query:'quokka',embedding:$vector,types:['PDSearchSource'],minSimilarity:-1,minRRFScore:0,limit:100000}) YIELD node,vector_rank,bm25_rank RETURN count(CASE WHEN vector_rank > 0 AND bm25_rank > 0 THEN 1 END) AS both", map[string]any{"vector": []float64{1, 0, 0}})
+				result, runErr := session.Run(ctx, "CALL db.retrieve({query:'quokka',embedding:$vector,types:['PDSearchSource'],minSimilarity:-1,minRRFScore:0,limit:100000}) YIELD node,vector_rank,bm25_rank RETURN count(CASE WHEN vector_rank > 0 AND bm25_rank > 0 THEN 1 END) AS both", map[string]any{"vector": queryVector})
 				if runErr != nil {
 					return false
 				}
@@ -94,7 +96,7 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 							if qid != "" {
 								return map[string]any{"qid": qid, "n": pageSize}
 							}
-							return map[string]any{"query": "quokka", "embedding": []float64{1, 0, 0}, "types": []string{"PDSearchSource"}, "where": rule.where, "failClosed": true, "minRRFScore": 0, "n": pageSize}
+							return map[string]any{"query": "quokka", "embedding": queryVector, "types": []string{"PDSearchSource"}, "where": rule.where, "failClosed": true, "minRRFScore": 0, "n": pageSize}
 						}
 						call := func(req map[string]any) (n15290Page, time.Duration) {
 							started := time.Now()
@@ -167,7 +169,8 @@ func n15290Library(t *testing.T, ctx context.Context, store storage.Engine, docu
 	require.NoError(t, err)
 	_, err = store.CreateNode(ctx, &storage.Node{ID: "c-closed", Labels: []string{"PDCollection"}, Properties: map[string]any{"id": "closed", "archived": true}})
 	require.NoError(t, err)
-	vector := []float32{1, 0, 0}
+	vector := make([]float32, 2048)
+	vector[0] = 1
 	want := make(map[string]struct{}, documents*2/3)
 	for start := 1; start <= documents; start += 100 {
 		end := min(start+99, documents)
