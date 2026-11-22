@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,14 +34,16 @@ func TestNOR167EscapedUnwindHeadersBolt(t *testing.T) {
 						{"UNWIND [] AS `" + escapedIdentifier + "` RETURN `" + escapedIdentifier + "`", nil},
 						{"RETURN 1 AS `" + escapedIdentifier + "`", [][]any{{int64(1)}}},
 					} {
-						require.True(t, strings.Contains(tc.query, `\u0062`), "query must contain the literal Unicode escape: %q", tc.query)
+						assert.True(t, strings.Contains(tc.query, `\u0062`), "query must contain the literal Unicode escape: %q", tc.query)
 						result, err := backend.Execute(ctx, tc.query, nil)
-						require.NoError(t, err, tc.query)
-						require.Equal(t, []string{"ab"}, result.Columns, tc.query)
+						if !assert.NoError(t, err, tc.query) {
+							continue
+						}
+						assert.Equal(t, []string{"ab"}, result.Columns, tc.query)
 						if tc.rows == nil {
-							require.Empty(t, result.Rows, tc.query)
+							assert.Empty(t, result.Rows, tc.query)
 						} else {
-							require.Equal(t, tc.rows, result.Rows, tc.query)
+							assert.Equal(t, tc.rows, result.Rows, tc.query)
 						}
 						t.Logf("statement=%q columns=%v rows=%v", tc.query, result.Columns, result.Rows)
 					}
