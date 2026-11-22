@@ -11,7 +11,9 @@ import (
 // Review lane R1 of PR #1826: the node body cache's byte budget against what one
 // projected label scan of a numeric list property leaves in it.
 func TestR1PR1826SeriesLabelScanRetention(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() })
 	ctx := t.Context()
 	const count, length = 1500, 50000
 	for start := 0; start < count; start += 10 {
