@@ -196,7 +196,7 @@ func TestShowCommandDeclaredResultScope(t *testing.T) {
 		}
 		return showCommandResult(t.Context(), show, cypher25)
 	}
-	for _, cypher := range []string{"SHOW PROCEDURES", "SHOW FUNCTIONS", "SHOW SETTINGS", "SHOW ALIASES FOR DATABASES"} {
+	for _, cypher := range []string{"SHOW SETTINGS", "SHOW ALIASES FOR DATABASES"} {
 		if _, known, err := declared(cypher, false); known || err != nil {
 			t.Fatalf("%q answered by a declaration this owner does not hold: known=%v err=%v", cypher, known, err)
 		}
@@ -209,6 +209,8 @@ func TestShowCommandDeclaredResultScope(t *testing.T) {
 		{"SHOW CONSTRAINT CONTRACTS", showConstraintContractsResult.columns},
 		{"SHOW USERS", showUsersResult.columns},
 		{"SHOW INDEXES", showIndexesResult.columns},
+		{"SHOW PROCEDURES", showProceduresResult.columns},
+		{"SHOW FUNCTIONS", showFunctionsResult.columns},
 	} {
 		result, known, err := declared(statement.cypher, false)
 		if !known || err != nil {

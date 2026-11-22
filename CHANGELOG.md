@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.5.2]
 
 - Match Neo4j final-sigma casing in `lower()` and `toLower()`, including long strings and supplementary Unicode characters.
+- Return EXPLAIN headers for SHOW PROCEDURES and SHOW FUNCTIONS, and reject malformed index targets without executing schema changes or binding OPTIONS values.
+
+- Report failed native node or relationship count reads through statistics endpoints and Heimdall instead of returning successful zero counts.
 
 - Accept map projections in correlated pattern-property comparisons while preserving scalar correlation and invalid projection receiver errors.
 
