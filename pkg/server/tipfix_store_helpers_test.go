@@ -176,3 +176,49 @@ func (c *hsClient) check(code int, body []byte) (*hsResp, error) {
 	}
 	return &response, nil
 }
+
+const (
+	hs2SIGNATURES = "UNWIND $sources AS x MATCH (s:Source {id: x.source_id}) SET s.set_keys = x.keys, s.set_weights = x.weights, s.set_total = x.total, s.set_pool_runs = x.pool_runs, s.set_pool_keys = x.pool_keys, s.set_pool_records = x.pool_records, s.profiled_current = x.current"
+	hs2PROFILED   = "UNWIND $profiled AS x MATCH (s:Source {id: x.source_id}) SET s.record_profiled = x.generation, s.profiled_run_layout = x.layout"
+	hs2COPIES     = "UNWIND $sources AS x MATCH (s:Source {id: x.source_id}) SET s.set_copy_runs = x.runs, s.set_copy_of = x.of, s.set_copy_documents = x.documents, s.set_copy_whole = x.whole, s.set_copy_version = x.version"
+	cvVERSION     = "UNWIND $versions AS x MATCH (s:Source {id: x.source_id}) SET s.set_version = x.version"
+)
+
+type hsTx struct {
+	client *hsClient
+	id     string
+}
+
+func (c *hsClient) begin(query string, params map[string]interface{}) (*hsTx, time.Duration, int, error) {
+	code, body, elapsed, err := c.do(http.MethodPost, "/db/"+c.db+"/tx", hsStmts(query, params))
+	if err != nil {
+		return nil, elapsed, 0, err
+	}
+	response, err := c.check(code, body)
+	if err != nil {
+		return nil, elapsed, len(body), err
+	}
+	parts := strings.Split(response.Commit, "/")
+	if len(parts) < 2 {
+		return nil, elapsed, len(body), fmt.Errorf("no commit url: %.200s", body)
+	}
+	return &hsTx{client: c, id: parts[len(parts)-2]}, elapsed, len(body), nil
+}
+
+func (tx *hsTx) run(query string, params map[string]interface{}) (time.Duration, int, error) {
+	code, body, elapsed, err := tx.client.do(http.MethodPost, "/db/"+tx.client.db+"/tx/"+tx.id, hsStmts(query, params))
+	if err != nil {
+		return elapsed, 0, err
+	}
+	_, err = tx.client.check(code, body)
+	return elapsed, len(body), err
+}
+
+func (tx *hsTx) commit() (time.Duration, error) {
+	code, body, elapsed, err := tx.client.do(http.MethodPost, "/db/"+tx.client.db+"/tx/"+tx.id+"/commit", map[string]interface{}{"statements": []interface{}{}})
+	if err != nil {
+		return elapsed, err
+	}
+	_, err = tx.client.check(code, body)
+	return elapsed, err
+}
