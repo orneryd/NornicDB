@@ -13,3 +13,11 @@ The original investigation and fail-first evidence are preserved in the N152-58 
 - [x] Confirm public behavior, race, vet and scoped release verification. Indexed analysis was attempted and remains blocked by graph ingestion.
 - [x] Compare representative workloads and allocations against the release base.
 - [ ] Publish the release fix and record the evidence on N152-58.
+
+## Classification reuse follow-up
+
+- [x] Confirm the initial casing fix merged in #1935 and branch from that release commit.
+- [x] Compare matched benchmarks and CPU profiles with a single previous-code-point classification.
+- [x] Verify the full casing package and pinned profile in normal and race runs.
+- [x] Verify both parsers and HTTP on the follow-up branch. Full release verification is tracked on the draft PR.
+- [ ] Publish the measured optimization as a separate release PR.
