@@ -204,7 +204,7 @@ func TestNor79To82StaticClaims(t *testing.T) {
 								} else {
 									t.Logf("%s: accepted", execution.kind)
 								}
-								if mismatch, detail := portedNorClassifyVerdict(execution.kind, result, err, claim.accepts, claim.messageClass); mismatch != norVerdictMatches {
+								if mismatch, detail := portedNorClassifyVerdict(execution.kind, result, err, claim.accepts, claim.messageClass); mismatch != portedNorVerdictMatches {
 									t.Errorf("%s: %s: %s", execution.kind, claim.query, detail)
 								}
 							})
@@ -254,7 +254,7 @@ func TestPortedNor79ParameterAwareConstructorClaims(t *testing.T) {
 				t.Run(execution.kind+"/"+mode, func(t *testing.T) {
 					ctx := context.Background()
 					// counts[0] under-rejections, [1] false rejections, [2] status
-					// mismatches: the enum values above norVerdictMatches, in order.
+					// mismatches: the enum values above portedNorVerdictMatches, in order.
 					var counts [3]int
 					var samples []string
 					for _, index := range oracle.Inherited {
@@ -267,7 +267,7 @@ func TestPortedNor79ParameterAwareConstructorClaims(t *testing.T) {
 						result, err := exec.Execute(ctx, execution.prefix+query, params)
 						portedNorStaticRollback(t, ctx, exec, mode)
 						mismatch, detail := portedNorClassifyVerdict(execution.kind, result, err, !rejected[index], "Type mismatch")
-						if mismatch == norVerdictMatches {
+						if mismatch == portedNorVerdictMatches {
 							continue
 						}
 						counts[mismatch-1]++
@@ -348,16 +348,16 @@ func portedNorStaticRollback(t *testing.T, ctx context.Context, exec *StorageExe
 type portedNorVerdictMismatch int
 
 const (
-	// norVerdictMatches is the reference verdict: a supported acceptance, or
+	// portedNorVerdictMatches is the reference verdict: a supported acceptance, or
 	// Neo4j's SyntaxError in the expected message class.
-	norVerdictMatches portedNorVerdictMismatch = iota
-	// norVerdictUnderRejection is an acceptance where Neo4j rejects.
-	norVerdictUnderRejection
-	// norVerdictFalseRejection is a rejection where Neo4j accepts.
-	norVerdictFalseRejection
-	// norVerdictStatusMismatch is a rejection that is not Neo4j's SyntaxError in
+	portedNorVerdictMatches portedNorVerdictMismatch = iota
+	// portedNorVerdictUnderRejection is an acceptance where Neo4j rejects.
+	portedNorVerdictUnderRejection
+	// portedNorVerdictFalseRejection is a rejection where Neo4j accepts.
+	portedNorVerdictFalseRejection
+	// portedNorVerdictStatusMismatch is a rejection that is not Neo4j's SyntaxError in
 	// the expected message class.
-	norVerdictStatusMismatch
+	portedNorVerdictStatusMismatch
 )
 
 // portedNorClassifyVerdict reads a cell's verdict from the returned error and result -
@@ -367,25 +367,25 @@ func portedNorClassifyVerdict(kind string, result *ExecuteResult, err error, acc
 	if accepts {
 		switch {
 		case err != nil:
-			return norVerdictFalseRejection, fmt.Sprintf("accepted by Neo4j, rejected here: %v", err)
+			return portedNorVerdictFalseRejection, fmt.Sprintf("accepted by Neo4j, rejected here: %v", err)
 		case result == nil:
-			return norVerdictStatusMismatch, "accepted but returned no result"
+			return portedNorVerdictStatusMismatch, "accepted but returned no result"
 		case kind == "RUN" && len(result.Rows) != 0:
 			// Every accepted probe starts from UNWIND [], so it can produce no
 			// row: acceptance means an empty row set, not a silently filled one.
-			return norVerdictStatusMismatch, fmt.Sprintf("accepted with %d rows from an empty input", len(result.Rows))
+			return portedNorVerdictStatusMismatch, fmt.Sprintf("accepted with %d rows from an empty input", len(result.Rows))
 		}
-		return norVerdictMatches, ""
+		return portedNorVerdictMatches, ""
 	}
 	if err == nil {
-		return norVerdictUnderRejection, fmt.Sprintf("rejected by Neo4j (%s), accepted here", messageClass)
+		return portedNorVerdictUnderRejection, fmt.Sprintf("rejected by Neo4j (%s), accepted here", messageClass)
 	}
 	code, message := nornicerrors.Neo4jStatus(err)
 	if code != "Neo.ClientError.Statement.SyntaxError" {
-		return norVerdictStatusMismatch, fmt.Sprintf("rejected as %s instead of Neo4j's SyntaxError: %s", code, message)
+		return portedNorVerdictStatusMismatch, fmt.Sprintf("rejected as %s instead of Neo4j's SyntaxError: %s", code, message)
 	}
 	if messageClass != "" && !strings.HasPrefix(message, messageClass) {
-		return norVerdictStatusMismatch, fmt.Sprintf("rejected as %q, not as %s", message, messageClass)
+		return portedNorVerdictStatusMismatch, fmt.Sprintf("rejected as %q, not as %s", message, messageClass)
 	}
-	return norVerdictMatches, ""
+	return portedNorVerdictMatches, ""
 }

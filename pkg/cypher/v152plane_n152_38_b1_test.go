@@ -39,9 +39,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nor70PreparedFixtureCreate is the issue's prepared one-hop fixture exactly as
+// portedNor70PreparedFixtureCreate is the issue's prepared one-hop fixture exactly as
 // written in NOR-70.
-const nor70PreparedFixtureCreate = "CREATE (q:AggOwner {g: 'g'}), (p1:AggValue {y: 1}), (p2:AggValue {y: 2}), " +
+const portedNor70PreparedFixtureCreate = "CREATE (q:AggOwner {g: 'g'}), (p1:AggValue {y: 1}), (p2:AggValue {y: 2}), " +
 	"(q)-[:AGG {x: 1}]->(p1), (q)-[:AGG {x: 2}]->(p2)"
 
 // portedNor70FollowupNativeFixture returns a real BadgerEngine (in-memory) and an
@@ -63,7 +63,7 @@ func portedNor70FollowupNativeFixture(t *testing.T) (storage.Engine, *StorageExe
 func portedNor70FollowupMemoryFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor70_followup_memory"))
-	_, err := exec.Execute(context.Background(), nor70PreparedFixtureCreate, nil)
+	_, err := exec.Execute(context.Background(), portedNor70PreparedFixtureCreate, nil)
 	require.NoError(t, err)
 	return exec
 }
@@ -105,7 +105,7 @@ func TestPortedNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 				}
 			}()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, portedNor70PreparedFixtureCreate, nil)
 			require.NoError(t, err)
 
 			// The transaction is a real snapshot: a committed reader cannot
@@ -139,7 +139,7 @@ func TestPortedNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 			store, exec := portedNor70FollowupNativeFixture(t)
 			ctx := context.Background()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, portedNor70PreparedFixtureCreate, nil)
 			require.NoError(t, err)
 
 			portedNor70FollowupBegin(t, exec)
@@ -184,7 +184,7 @@ func TestPortedNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 			store, exec := portedNor70FollowupNativeFixture(t)
 			ctx := context.Background()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, portedNor70PreparedFixtureCreate, nil)
 			require.NoError(t, err)
 
 			script := "BEGIN\n" + nor70OneHopPattern + "\nRETURN q.g, sum(r.x), avg(p.y)\nCOMMIT"
