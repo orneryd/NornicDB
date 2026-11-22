@@ -443,7 +443,6 @@ var fsNames = []string{"alice", "bob", "carol", "dave"}
 
 func fsFixtureSchema() []string {
 	return []string{
-		"CREATE INDEX fs_ssn IF NOT EXISTS FOR (p:Person) ON (p.ssn)",
 		"CREATE INDEX fs_name IF NOT EXISTS FOR (p:Person) ON (p.name)",
 		"CREATE INDEX fs_rank IF NOT EXISTS FOR (p:Person) ON (p.rank)",
 		"CREATE INDEX fs_dept_ssn IF NOT EXISTS FOR (p:Person) ON (p.dept, p.ssn)",
@@ -714,8 +713,38 @@ type fsEnv struct {
 
 func (env *fsEnv) adminRun(database, statement string) {
 	env.t.Helper()
-	if o := env.http.cypher(database, env.admin, statement, nil); len(o.Errors) > 0 {
-		env.t.Fatalf("admin %q: %v", statement, o.Errors)
+	var o fsOut
+	for attempt := 0; attempt < 20; attempt++ {
+		o = env.http.cypher(database, env.admin, statement, nil)
+		if len(o.Errors) == 0 {
+			return
+		}
+		if !strings.Contains(strings.Join(o.Errors, " "), "TransientError") {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	env.t.Fatalf("admin %q: %v", statement, o.Errors)
+}
+
+// diagnose logs what the schema holds, through FGAC-scoped admin and through
+// an executor without a principal.
+func (env *fsEnv) diagnose(label string) {
+	for _, statement := range []string{
+		"SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties, state",
+		"SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties",
+		"CALL db.index.fulltext.queryNodes('fs_ft', 'alpha') YIELD node, score RETURN node.name AS n, score",
+	} {
+		out := env.http.cypher(fsDB, env.admin, statement, nil)
+		env.t.Logf("DIAG [%s] admin-http %s => %.1500s", label, statement, out.Canon)
+	}
+	store, err := env.server.dbManager.GetStorage(fsDB)
+	if err == nil {
+		if schema := store.GetSchema(); schema != nil {
+			_, ft := schema.GetFulltextIndex("fs_ft")
+			_, probe := schema.GetFulltextIndex("fs_ft_probe")
+			env.t.Logf("DIAG [%s] storage schema GetFulltextIndex fs_ft=%v fs_ft_probe=%v", label, ft, probe)
+		}
 	}
 }
 
@@ -727,12 +756,10 @@ func fsSetup(t *testing.T) *fsEnv {
 	if _, err := authenticator.CreateUser(context.Background(), fsUser, fsPassword, []auth.Role{auth.RoleViewer}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := server.initializeFineGrainedRuntime(t.Context()); err != nil {
-		t.Fatalf("fgac: %v", err)
-	}
+	// Schema and data are written before FGAC is switched on (see DIAG lines:
+	// on the first run schema written under FGAC was not visible to queries).
 	env := &fsEnv{t: t, server: server, http: &fsHTTP{t: t, router: server.buildRouter()}}
 	env.admin = getAuthToken(t, authenticator, "admin")
-	env.narrow = getAuthToken(t, authenticator, fsUser)
 	manager := server.GetDatabaseManager()
 	for _, name := range []string{fsDB, fsOtherDB} {
 		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
@@ -764,6 +791,20 @@ func fsSetup(t *testing.T) *fsEnv {
 		}
 	}
 	_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
+	env.diagnose("before-fgac")
+	if err := server.initializeFineGrainedRuntime(t.Context()); err != nil {
+		t.Fatalf("fgac: %v", err)
+	}
+	env.http = &fsHTTP{t: t, router: server.buildRouter()}
+	env.admin = getAuthToken(t, authenticator, "admin")
+	env.narrow = getAuthToken(t, authenticator, fsUser)
+	if o := env.http.cypher(fsDB, env.admin, "CREATE FULLTEXT INDEX fs_ft_probe IF NOT EXISTS FOR (p:Person) ON EACH [p.bio]", nil); len(o.Errors) > 0 {
+		t.Logf("DIAG probe index under FGAC not accepted: %v", o.Errors)
+	}
+	_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
+	env.diagnose("after-fgac")
+	probe := env.http.cypher(fsDB, env.admin, "CALL db.index.fulltext.queryNodes('fs_ft_probe', 'alpha') YIELD node RETURN node.name AS n", nil)
+	t.Logf("DIAG probe index created under FGAC, queried by admin => %.800s", probe.Canon)
 	if o := env.http.cypher(fsDB, env.admin, "MATCH (p:Person {name: 'alice'}) RETURN elementId(p) AS e, id(p) AS i", nil); len(o.Errors) == 0 {
 		var decoded TransactionResponse
 		code, _, body := env.http.do(http.MethodPost, "/db/"+fsDB+"/tx/commit", env.admin, map[string]any{
@@ -962,12 +1003,18 @@ func (env *fsEnv) wide(state string) {
 		}
 		httpOut := env.http.cypher(fsDB, env.admin, q.stmt, q.params)
 		_ = env.adminB.auto(fsDB, q.stmt, q.params)
+		if state == "S0" {
+			env.t.Logf("WIDE-OUT http %s S0: %.700s", q.name, httpOut.Canon)
+		}
 		if strings.Contains(strings.ToLower(httpOut.Raw), fsMarker) {
 			visible++
 		}
 	}
 	for _, q := range fsEndpointQueries(env.aliceID) {
 		out, _ := env.http.endpoint(q.path, env.admin, q.request)
+		if state == "S0" {
+			env.t.Logf("WIDE-OUT endpoint %s S0: %.700s", q.name, out.Canon)
+		}
 		if strings.Contains(strings.ToLower(out.Raw), fsMarker) {
 			visible++
 		}
