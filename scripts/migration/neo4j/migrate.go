@@ -246,13 +246,15 @@ func replicateSchema(ctx context.Context, src, dst neo4j.SessionWithContext, dry
 //go:embed queries.json
 var queryJSON []byte
 
-var migrationQueries = func() map[string]string {
+func loadMigrationQueries() map[string]string {
 	var queries map[string]string
 	if err := json.Unmarshal(queryJSON, &queries); err != nil {
 		panic(err)
 	}
 	return queries
-}()
+}
+
+var migrationQueries = loadMigrationQueries()
 
 var nodeUpsertCypher = migrationQueries["nodes"]
 
