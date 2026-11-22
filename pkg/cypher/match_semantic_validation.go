@@ -622,7 +622,7 @@ func (e *StorageExecutor) semanticScopeWalk(ctx context.Context, clauses []pipel
 			}
 		case pipelineClauseDelete:
 			stale = false
-			if err := validateDeleteClauseScope(mutationScope(), clause.text); err != nil {
+			if err := validateDeleteClauseScope(ctx, mutationScope(), clause.text); err != nil {
 				return types, false, err
 			}
 			if err := deleteTargetTypeError(clause.text, scope); err != nil {

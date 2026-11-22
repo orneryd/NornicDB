@@ -1,0 +1,20 @@
+var nor80StaticClaims = []norStaticClaim{
+	{
+		name:    "procedure_yield_where_count_subquery",
+		query:   "UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { MATCH (m) } > 0 RETURN label",
+		accepts: true,
+	},
+	{
+		// The source's CALL-bearing COUNT { CALL { ... } RETURN ... } variant,
+		// kept exactly as supplied.
+		name:    "procedure_yield_where_count_call_subquery",
+		query:   "UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { CALL { MATCH (m) RETURN m } RETURN m } > 0 RETURN label",
+		accepts: true,
+	},
+	{
+		// The ticket's second root.
+		name:    "delete_case_count_subquery",
+		query:   "UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END",
+		accepts: true,
+	},
+}
