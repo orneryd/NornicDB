@@ -169,7 +169,7 @@ func TestCloseoutL4NamedEmbeddingsInlineDiagnostic(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = eng.Close() })
 		node := &Node{ID: NodeID("test:" + c.name), Labels: []string{"Doc"}, Properties: map[string]any{"content": strings.Repeat("z", c.content)}, NamedEmbeddings: c.named, ChunkEmbeddings: c.chunks}
-		_, err := eng.CreateNode(t.Context(), node)
+		_, err = eng.CreateNode(t.Context(), node)
 		errText := ""
 		if err != nil {
 			errText = err.Error()
