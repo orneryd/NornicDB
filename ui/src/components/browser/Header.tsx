@@ -14,7 +14,6 @@ import { BASE_PATH, joinBasePath } from "../../utils/basePath";
 import {Button} from "../common/Button";
 import {MessageCircle} from "lucide-react";
 import {useAssistantAvailability} from "../common/AssistantAvailability";
-import {ServerStatus} from "../common/ServerStatus";
 
 interface HeaderProps {
   workspace?: boolean;
@@ -134,6 +133,12 @@ export function Header({
             <p className="text-xs text-norse-silver">
               {workspace ? 'Query, search and inspect' : 'The Graph Database That Learns'}
             </p>
+            <p className="text-xs text-norse-silver">
+              Finding NornicDB useful?{' '}
+              <a className="underline hover:text-white" href="https://github.com/orneryd/NornicDB">
+                Star us on GitHub
+              </a>
+            </p>
           </div>
         </div>
 
@@ -159,7 +164,6 @@ export function Header({
             </button>
           )}
 
-          <ServerStatus />
         </div>
       </div>
       {logoutError && (
