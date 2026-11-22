@@ -7,5 +7,5 @@
 - [x] Implement only an approved syntax-proven correction using existing projection ownership.
 - [x] Verify changing values, missing parameters, whole-statement boundaries and parameter-dependent admission.
 - [x] Compare exact workload allocations and CPU profiles; retain ratchet thresholds.
-- [ ] Run focused normal/race/vet and applicable verifier/duplicate checks.
-- [ ] Prepare draft PR body and parent review; publication pending.
+- [x] Run broad normal/race/vet and scoped verification; canonical allocation ratchet passes without exceptions. Indexed duplicate service remains unavailable, explicitly disclosed.
+- [x] Parent reviewed implementation and approved draft PR #1943; full Linux/release qualification remains pending.
