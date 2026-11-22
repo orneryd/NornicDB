@@ -66,6 +66,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 	// Detect unprefixed data
 	hasUnprefixedData, err := m.detectUnprefixedData(ctx, engine)
 	if err != nil {
+		v152Diag("DIAG-D4 migrateLegacyData: detectUnprefixedData scan failed chain=%s: %v", v152Chain(err), err)
 		return fmt.Errorf("failed to detect unprefixed data: %w", err)
 	}
 

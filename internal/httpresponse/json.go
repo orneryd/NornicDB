@@ -13,7 +13,9 @@ import (
 func WriteJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
-	_ = jsontext.NewEncoder(writer).Encode(value)
+	if err := jsontext.NewEncoder(writer).Encode(value); err != nil {
+		v152Diag("DIAG-D1 httpresponse.WriteJSON status=%d encode error type=%s: %v", status, v152Chain(err), err)
+	}
 }
 
 // WritePropertyJSON binds the property-number domain before the shared HTTP

@@ -217,6 +217,7 @@ func neo4jStatusPlain(err error) (code, message string, classified bool) {
 			return message, message, true
 		}
 	}
+	v152Diag("DIAG-D3 neo4jStatusPlain fallback to SyntaxError chain=%s msg=%q", v152Chain(err), message)
 	return StatementSyntaxError, message, false
 }
 

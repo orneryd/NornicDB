@@ -380,6 +380,7 @@ func (e *StorageExecutor) readNodeCandidates(ctx context.Context, store storage.
 		}
 		node, err := e.getQueryNode(ctx, store, id)
 		if err != nil || node == nil {
+			v152Diag("DIAG-D2 readNodeCandidates drops id=%s policy=%d nilNode=%v err=%v", id, req.policy, node == nil, err)
 			continue
 		}
 		switch req.policy {

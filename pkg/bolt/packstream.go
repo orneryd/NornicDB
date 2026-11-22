@@ -381,6 +381,9 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 	}
 
 	// Fall back to existing implementation for less common types (nodes, relationships, etc.)
+	if v != nil {
+		v152Diag("DIAG-D1 bolt packstream fallback type=%s", typeName(v))
+	}
 	if packstreamFallbackHook != nil {
 		packstreamFallbackHook(v)
 	}
@@ -511,6 +514,9 @@ func encodePackStreamValue(v any) []byte {
 			return encoded
 		}
 		// Unknown type - encode as null
+		if v != nil {
+			v152Diag("DIAG-D1 bolt encodePackStreamValue unknown type=%s -> null caller=%s", typeName(v), v152Caller(2))
+		}
 		return []byte{0xC0}
 	}
 }

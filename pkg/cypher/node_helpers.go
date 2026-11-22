@@ -73,6 +73,9 @@ func (e *StorageExecutor) getQueryNode(ctx context.Context, store storage.Engine
 		node, err = store.GetNode(ctx, id)
 	}
 	queryprofile.EntityReadResult(counter, node, err)
+	if err != nil && err.Error() != "not found" {
+		v152Diag("DIAG-D2 getQueryNode id=%s err=%v caller=%s", id, err, v152Caller(2))
+	}
 	return node, err
 }
 
