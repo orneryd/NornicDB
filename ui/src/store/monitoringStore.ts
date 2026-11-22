@@ -17,6 +17,7 @@ async function poll(){
  const health=api.getHealth(controller.signal).then(()=>{if(valid()){healthy=true;useMonitoringStore.setState({connected:true,updatedAt:Date.now()});}return true;}).catch(()=>false);
  try{
   await Promise.all([
+   health,
    api.getStatus(controller.signal).then(value=>{if(valid()){stats=value;useMonitoringStore.setState({stats:value,connected:true,updatedAt:Date.now(),error:''});}}).catch(async error=>{if(valid()){const status=(error as {status?:number}).status;if(status===401||status===403)resetPrivateHistory();const message=error instanceof Error?error.message:'Status request failed';const reachable=await health;if(valid())useMonitoringStore.setState({stats:null,connected:reachable,updatedAt:reachable?Date.now():null,error:message});}}),
    detailConsumers?api.getMonitoringMetrics(controller.signal).then(value=>{if(valid()){metrics=value;if(useMonitoringStore.getState().metrics?.scope&&useMonitoringStore.getState().metrics?.scope!==value.scope){useMonitoringStore.setState({history:[]});lastMetrics=null;}useMonitoringStore.setState({metrics:value,metricsError:'',metricsStatus:200});}}).catch(error=>{if(valid()){const status=(error as {status?:number}).status??null;useMonitoringStore.setState({metrics:null,metricsError:error instanceof Error?error.message:'Metrics request failed',metricsStatus:status});if(status===401||status===403)useMonitoringStore.setState({history:[]});}}):Promise.resolve()
   ]);
