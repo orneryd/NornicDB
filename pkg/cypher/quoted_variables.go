@@ -267,8 +267,7 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // side - is not plain: written as text it would be read back as a different
 // name.
 func isPlainVariableName(name string) bool {
-	end, ok := cyphertext.ScanIdentifier(name, 0)
-	return ok && end.End == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
+	return cyphertext.IsIdentifier(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
