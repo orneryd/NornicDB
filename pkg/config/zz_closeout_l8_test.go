@@ -476,9 +476,7 @@ func TestL8_H9_018_YAMLOptions(t *testing.T) {
 		}
 		blockLoad := map[string]any{}
 		if block != nil {
-			text := strings.Join(block, "
-") + "
-"
+			text := strings.Join(block, l8cNewline) + l8cNewline
 			file := filepath.Join(t.TempDir(), "block.yaml")
 			_ = os.WriteFile(file, []byte(text), 0o644)
 			cfg, err := LoadFromFile(file)
@@ -502,14 +500,15 @@ func TestL8_H9_018_YAMLOptions(t *testing.T) {
 	l8cLog(t, "L8_YAML_SUMMARY", map[string]any{"lead": "L-H9-018", "counts": counts})
 }
 
+const l8cNewline = string(rune(10))
+
 var l8cDefaultsCfg *Config
 var l8cNoise map[string]bool
 
 func l8cDefaultsFromFile(t *testing.T) *Config {
 	if l8cDefaultsCfg == nil {
 		file := filepath.Join(t.TempDir(), "empty.yaml")
-		_ = os.WriteFile(file, []byte("
-"), 0o644)
+		_ = os.WriteFile(file, []byte(l8cNewline), 0o644)
 		cfg, err := LoadFromFile(file)
 		if err != nil {
 			t.Fatalf("empty config: %v", err)
@@ -523,8 +522,7 @@ func l8cFileNoise(t *testing.T) map[string]bool {
 	if l8cNoise == nil {
 		l8cNoise = map[string]bool{}
 		file := filepath.Join(t.TempDir(), "empty2.yaml")
-		_ = os.WriteFile(file, []byte("
-"), 0o644)
+		_ = os.WriteFile(file, []byte(l8cNewline), 0o644)
 		for i := 0; i < 3; i++ {
 			cfg, _ := LoadFromFile(file)
 			if cfg != nil {
