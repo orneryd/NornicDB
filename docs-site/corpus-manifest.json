@@ -362,8 +362,8 @@
     },
     {
       "path": "compliance/rbac.md",
-      "sha256": "3a4544bc27783e758a2556c14c4e0eab32ff94911f019fea03e7d601781a28b8",
-      "bytes": 21607
+      "sha256": "d8199794f712ffe0e557da80e4e1c7701855f5debb4929caad38261806e91de7",
+      "bytes": 22085
     },
     {
       "path": "compliance/soc2-compliance.md",
@@ -727,12 +727,12 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "e71695a1775be4064c896e21c1fd5053ad143191803fb9c20cea63652716f04c",
+      "sha256": "0b49f9e234c212a8a1203eadb18792b6656ea3d66512b2689bef8b4dfcfc26cc",
       "bytes": 220559
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "8d959244e669e2914f3a9bc89150fc0327d8f5a5d0c968c31b1b4a4aadb22cb0",
+      "sha256": "29e95a59899b0b502ab3619facceaba353d569e3c6762acc81259b47dd71c4e2",
       "bytes": 161027
     },
     {
@@ -762,8 +762,8 @@
     },
     {
       "path": "getting-started/quick-start.md",
-      "sha256": "dac6549439966eea1075fee9aa1b5a5f2f0bbcd856de75e35130ab744620232e",
-      "bytes": 7656
+      "sha256": "29e4a96501a39bf12714b74ed5046cfdeeaa7dc9e519fecdbfe96b92507568c0",
+      "bytes": 7770
     },
     {
       "path": "getting-started/windows-cuda.md",
