@@ -424,7 +424,7 @@ const (
 // order and opens it once. The visitor owns the per-source contribution, and a
 // visitor error stops the walk with the accumulated state intact.
 func walkReadableConstituents(c *CompositeEngine, access constituentAccess, visit func(alias string, engine Engine) error) error {
-	for _, alias := range c.getConstituentsForRead() {
+	for _, alias := range c.readConstituentAliases(access) {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			// Access failure is fatal unless this walk is explicitly partial.

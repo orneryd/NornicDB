@@ -379,7 +379,22 @@ func TestCompositeEngine_ReadWriteSelectorsAndDeleteByPrefix(t *testing.T) {
 	writes := composite.getConstituentsForWrite()
 	assert.ElementsMatch(t, []string{"db2"}, writes)
 
-	_, _, err := composite.DeleteByPrefix("tenant:")
+	ctx := t.Context()
+	_, err := engine1.CreateNode(ctx, &Node{ID: "visible"})
+	require.NoError(t, err)
+	nodes, err := composite.AllNodes(ctx)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, NodeID("visible"), nodes[0].ID)
+
+	count, err := composite.NodeCount(ctx)
+	require.ErrorContains(t, err, "db3")
+	require.Zero(t, count)
+	schema, err := ReadSchema(ctx, composite)
+	require.ErrorContains(t, err, "db3")
+	require.Nil(t, schema)
+
+	_, _, err = composite.DeleteByPrefix("tenant:")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported on composite")
 }

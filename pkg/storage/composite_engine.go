@@ -125,6 +125,12 @@ func (c *CompositeEngine) SetPropertyDefault(propertyName string, constituent st
 // getConstituentsForRead selects each configured readable source once.
 // A configured unavailable source remains in the result for admission.
 func (c *CompositeEngine) getConstituentsForRead() []string {
+	return c.readConstituentAliases(constituentAccessOptional)
+}
+
+// readConstituentAliases preserves source deduplication for both available
+// reads and operations whose result requires every configured participant.
+func (c *CompositeEngine) readConstituentAliases(access constituentAccess) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -142,7 +148,9 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 			// Keep unavailable configured participants so a required read can
 			// distinguish their admission failure from an empty composite.
 			if engine == nil {
-				result = append(result, alias)
+				if access == constituentAccessRequired {
+					result = append(result, alias)
+				}
 				continue
 			}
 			database := DatabaseOf(engine)
@@ -1440,7 +1448,7 @@ func (kind constituentCountKind) wrap(alias string, err error) error {
 // yields zero rather than a partial total.
 func (c *CompositeEngine) sumConstituentCounts(kind constituentCountKind, count func(Engine) (int64, error)) (int64, error) {
 	var total int64
-	for _, alias := range c.getConstituentsForRead() {
+	for _, alias := range c.readConstituentAliases(constituentAccessRequired) {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			return 0, err
