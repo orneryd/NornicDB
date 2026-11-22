@@ -435,9 +435,12 @@ func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, 
 		}
 		return b.String(), nil
 	}
-	_, rest, hasUse, err := parseLeadingUse(ctx, query, inSubquery)
-	if err == nil && !hasUse && inSubquery {
-		_, rest, hasUse, err = parseLeadingWithUse(ctx, query, p.keywordIsName)
+	var rest string
+	var hasUse bool
+	if inSubquery {
+		_, rest, hasUse, err = ParseAcceptedSubqueryUseClause(ctx, query, p.keywordIsName)
+	} else {
+		_, rest, hasUse, err = parseLeadingUse(ctx, query, false)
 	}
 	if err != nil {
 		return "", err
@@ -724,10 +727,7 @@ func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scop
 // planCallBranch preserves the existing USE and import handling for one CALL
 // branch. planQuery has already separated any sibling UNION branches.
 func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top planTarget, scope string) (Fragment, error) {
-	subUse, subBody, hasUse, err := parseLeadingUse(ctx, body, true)
-	if err == nil && !hasUse {
-		subUse, subBody, hasUse, err = parseLeadingWithUse(ctx, body, p.keywordIsName)
-	}
+	subUse, subBody, hasUse, err := ParseAcceptedSubqueryUseClause(ctx, body, p.keywordIsName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}
@@ -755,6 +755,19 @@ func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top pla
 		return nil, err
 	}
 	return bindLeadingImportColumns(fragment, imports), nil
+}
+
+// ParseAcceptedSubqueryUseClause reads a CALL body's USE clause, either leading
+// or immediately after its importing WITH. body must already be accepted source;
+// this entry does not normalize raw input. It preserves the importing WITH, for
+// example "WITH x USE db RETURN x" becomes "WITH x RETURN x". Clause names are
+// distinguished from identifiers using the caller's existing keyword reader.
+func ParseAcceptedSubqueryUseClause(ctx context.Context, body string, isName ClauseKeywordNameReader) (UseClause, string, bool, error) {
+	use, remaining, hasUse, err := parseLeadingUse(ctx, body, true)
+	if err != nil || hasUse {
+		return use, remaining, hasUse, err
+	}
+	return parseLeadingWithUse(ctx, body, isName)
 }
 
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
@@ -1061,18 +1074,11 @@ func callBodyReturns(ctx context.Context, body string, isName ClauseKeywordNameR
 }
 
 func callBlockContainsFabricUse(ctx context.Context, body string, isName ClauseKeywordNameReader) (bool, error) {
-	_, _, hasUse, err := parseLeadingUse(ctx, body, true)
+	_, _, hasUse, err := ParseAcceptedSubqueryUseClause(ctx, body, isName)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}
 	if hasUse {
-		return true, nil
-	}
-	_, _, hasWithUse, err := parseLeadingWithUse(ctx, body, isName)
-	if err != nil {
-		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
-	}
-	if hasWithUse {
 		return true, nil
 	}
 	if _, _, ok := splitAtTopLevelUse(ctx, body, isName); ok {
