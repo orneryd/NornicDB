@@ -36,11 +36,16 @@ func TestL9BoltSuccessPrecedesRequestLeaseRelease(t *testing.T) {
 	require.Positive(t, resultBytes)
 	conn.observed = nil
 
-	const combinedFrameAndRequest = 65616
-	wire := memory.NewWireRequest(policy)
-	require.NoError(t, wire.Grow(combinedFrameAndRequest))
-	require.NoError(t, session.processMessage(&boltMessage{msgType: MsgPull, memoryLease: wire}))
+	const wireForecast = 64 << 10
+	body := append([]byte{0xB1, MsgPull}, encodePackStreamMap(map[string]any{"n": int64(-1)})...)
+	conn.readData = append([]byte{0, byte(len(body))}, body...)
+	conn.readData = append(conn.readData, 0, 0)
+	msg, _, err := session.readWireMessage(nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(wireForecast)+resultBytes, policy.Reserved())
+	require.NoError(t, session.processMessage(msg))
 	t.Logf("result=%d reserved at reply write=%v after dispatch=%d", resultBytes, conn.observed, policy.Reserved())
-	require.Contains(t, conn.observed, int64(combinedFrameAndRequest))
+	require.NotEmpty(t, conn.observed)
+	require.Contains(t, conn.observed, int64(wireForecast)+resultBytes)
 	require.Zero(t, policy.Reserved())
 }
