@@ -2,7 +2,6 @@ package nornicdb
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,31 +16,60 @@ import (
 // this test keeps each harness command and its result visible in that job.
 func TestV152TipRerunHarness(t *testing.T) {
 	type step struct {
-		Script string            `json:"script"`
-		Args   []string          `json:"args"`
-		Env    map[string]string `json:"env"`
+		Script string
+		Args   []string
+		Env    map[string]string
 	}
-	var steps []step
+	parseSteps := func(raw string) ([]step, error) {
+		var steps []step
+		for _, encoded := range strings.Split(raw, ";") {
+			if encoded == "" {
+				continue
+			}
+			parts := strings.SplitN(encoded, ":", 2)
+			name, mode := parts[0], ""
+			if len(parts) == 2 {
+				mode = parts[1]
+			}
+			s := step{Env: map[string]string{}}
+			switch name {
+			case "snapshot-rebuild-b6", "wal-replay-rebuild":
+				s.Script = "scripts/v152-repro/" + name + ".sh"
+				if mode != "" {
+					return nil, fmt.Errorf("unsupported mode %q for %s", mode, name)
+				}
+			case "wal-v4-upgrade":
+				s.Script = "scripts/v152-repro/" + name + ".sh"
+				if mode != "" {
+					s.Env["REPRO_SCENARIO"] = mode
+				}
+			case "snapshot-wal-recovery":
+				s.Script = "scripts/v152-repro/" + name + ".sh"
+				switch mode {
+				case "", "default":
+				case "overlap":
+					s.Args = []string{"--overlap-inducing"}
+				case "overlap-off":
+					s.Args = []string{"--overlap-inducing", "--write-behind=off"}
+				default:
+					return nil, fmt.Errorf("unsupported mode %q for %s", mode, name)
+				}
+			default:
+				return nil, fmt.Errorf("unsupported harness %q", name)
+			}
+			steps = append(steps, s)
+		}
+		if len(steps) == 0 {
+			return nil, fmt.Errorf("no harness steps")
+		}
+		return steps, nil
+	}
 	raw := os.Getenv("TNRUN_HARNESS_STEPS")
 	if raw == "" {
 		t.Skip("TNRUN_HARNESS_STEPS is not set")
 	}
-	err := json.Unmarshal([]byte(raw), &steps)
+	steps, err := parseSteps(raw)
 	if err != nil {
-		// tnrun transports --env values through Bash; accept JSON strings
-		// with nested escaping as well as literal JSON.
-		normalized := raw
-		for i := 0; i < 4; i++ {
-			before := normalized
-			normalized = strings.ReplaceAll(normalized, `\\`, `\`)
-			normalized = strings.ReplaceAll(normalized, `\"`, `"`)
-			if normalized == before {
-				break
-			}
-		}
-		err = json.Unmarshal([]byte(normalized), &steps)
-	}
-	if err != nil || len(steps) == 0 {
 		t.Fatalf("invalid TNRUN_HARNESS_STEPS: %v", err)
 	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -51,9 +79,6 @@ func TestV152TipRerunHarness(t *testing.T) {
 	observedFailure := false
 	var harnessErrors []string
 	for i, s := range steps {
-		if !strings.HasPrefix(s.Script, "scripts/v152-repro/") || strings.Contains(s.Script, "..") {
-			t.Fatalf("step %d has an unsupported script path %q", i, s.Script)
-		}
 		cmd := exec.Command("bash", append([]string{s.Script}, s.Args...)...)
 		cmd.Dir = root
 		cmd.Env = os.Environ()
