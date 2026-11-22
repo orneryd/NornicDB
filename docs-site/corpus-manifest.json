@@ -727,12 +727,12 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "f45fa37a459936075bd2d1983de2662786763555b5f079294dbdaedeb1db78b1",
+      "sha256": "208720a1394e879230ce765b35422df2c12e275ce0e5e855e6c29efcdeae2d84",
       "bytes": 220994
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "e008c235080269200263d8bf5f92824d7f58beb2130425e4aa4a30941bf5b086",
+      "sha256": "fbd5082d70001da4814bab054fac840565a9327a2fa9c341a6ef6596120513d8",
       "bytes": 161328
     },
     {
