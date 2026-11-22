@@ -7,4 +7,4 @@
 - [ ] Complete release verification and duplicate review.
 - [x] Parent: review implementation, extend filter-composition controls, and rebase onto current release.
 - [x] Parent: pass full MCP package race run and selected canonical localization checks; see evidence.md for exact scope and skips.
-- [ ] Publish candidate PR; full qualification and graph analysis remain pending.
+- [x] Publish draft PR #1908 against release/v1.5.2 with milestone v1.5.2; full qualification and graph analysis remain pending.
