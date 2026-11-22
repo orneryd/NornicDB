@@ -83,8 +83,20 @@ func TestFineGrainedHTTPPrivilegeAdministration(t *testing.T) {
 	require.Empty(t, result.Errors)
 	require.Equal(t, []any{nil}, result.Results[0].Data[0].Row)
 
-	// An explicit masked write is authorized using its authored property name.
-	require.Empty(t, run("system", admin, "GRANT SET PROPERTY {draft} ON GRAPH "+database+" NODES Article TO document_reader").Errors)
+	// Property-write permission alone must not expose whether a name is registered.
+	require.Empty(t, run("system", admin, "GRANT SET PROPERTY {draft, unknown} ON GRAPH "+database+" NODES Article TO document_reader").Errors)
+	existing := run(database, reader, "MATCH (n:Article) SET n.draft = false")
+	unknown := run(database, reader, "MATCH (n:Article) SET n.unknown = false")
+	require.Len(t, existing.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Security.Forbidden", existing.Errors[0].Code)
+	require.Equal(t, existing.Errors, unknown.Errors)
+	result = run(database, admin, "MATCH (n:Article) RETURN n.draft")
+	require.Empty(t, result.Errors)
+	require.Equal(t, []any{true}, result.Results[0].Data[0].Row)
+
+	result = run(database, reader, "MATCH (n:Article) SET n.draft = null")
+	require.Equal(t, existing.Errors, result.Errors)
+	require.Empty(t, run("system", admin, "GRANT READ {draft} ON GRAPH "+database+" NODES Article TO document_reader").Errors)
 	require.Empty(t, run(database, reader, "MATCH (n:Article) SET n.draft = null").Errors)
 	result = run(database, admin, "MATCH (n:Article) RETURN n.draft")
 	require.Empty(t, result.Errors)

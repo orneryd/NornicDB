@@ -797,13 +797,13 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "61f6d37ab00420666776d7223e842da0d266b5c997dd478e65e29773db3ad948",
-      "bytes": 35537
+      "sha256": "fd76ed21717112527627260968a95745bb485f43ee1e985addea2b98d13e8b2c",
+      "bytes": 36087
     },
     {
       "path": "neo4j-migration/feature-parity.md",
-      "sha256": "0a56ecd1f868d6872d3b63c22c8709bd7b5dba729c9c31bd92d007f17a12899d",
-      "bytes": 23099
+      "sha256": "c525961bf1ca33e43e6c12a15c73ba942943b4f75b06a2dfc769c1c856439ec0",
+      "bytes": 23428
     },
     {
       "path": "nornicdb-vs-neo4j-tradeoffs.md",
@@ -1557,8 +1557,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "9c85d714ec699abfefe8db13483d1e997a11a86efbaa2d2ed5add16b72e50240",
-      "bytes": 10702
+      "sha256": "e6adc354de2e329a3ecac9c71aeb90379e27d741104168c9910efd358ee1ccef",
+      "bytes": 12397
     },
     {
       "path": "security/http-security.md",

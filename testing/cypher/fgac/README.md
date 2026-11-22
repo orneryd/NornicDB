@@ -113,13 +113,17 @@ auth-rule cases. When supplying that reference yourself, set
 | `transaction-rollback-on-scoped-write-denial` | A permitted write followed by a scoped write denial fails the transaction |
 | `transaction-rollback-side-effect-absent` | Neither transaction write is visible in a fresh session |
 | `property-rule-filters-before-projection` | A rule uses a stored property to select nodes without returning it |
-| `writer-assigns-property-to-new-node` | A creator may set an allowed property on a node it bound in that statement |
+| `writer-assigns-property-to-new-node` | A creator with read and write access to the property may set it on a node it bound in that statement |
 | `new-node-property-is-stored` | A separate session reads the final committed property |
 | `impersonation-uses-target-role-for-read` | Bolt evaluates property visibility using the impersonated account |
 | `impersonation-uses-target-role-for-write` | Bolt applies the impersonated account's read-only role to a write |
 | `impersonation-autocommit-reuses-session` | Driver auto-commit applies the target scope on successive queries |
 | `impersonation-autocommit-default-database` | Omitting the database selects the target account's home database |
 | `impersonation-routed-read` | Driver routing and execution apply the target scope |
+
+The common writer fixture grants read access to its writable fixture keys.
+NornicDB requires that access for property writes by a role without token
+creation permission. The [FGAC guide](../../../docs/security/fine-grained-access-control.md#property-writes-and-name-confidentiality) describes the deliberate difference from Neo4j.
 
 The documented behavior is taken from the Neo4j Operations Manual:
 

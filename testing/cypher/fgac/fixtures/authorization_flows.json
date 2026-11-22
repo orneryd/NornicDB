@@ -73,6 +73,7 @@
       "GRANT ACCESS ON DATABASE ${database} TO fgac_writer",
       "GRANT CREATE ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
       "GRANT SET PROPERTY { * } ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "GRANT READ { id, title } ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
       "CREATE ROLE fgac_policy IF NOT EXISTS",
       "CREATE USER fgac_policy IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
       "GRANT ROLE fgac_policy TO fgac_policy",

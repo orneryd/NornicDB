@@ -55,6 +55,35 @@ including while evaluating predicates, projection, and aggregation. A
 relationship is visible only when its traversal and both endpoints' traversal
 are allowed. A write that fails authorization aborts its Cypher transaction.
 
+### Property writes and name confidentiality
+
+NornicDB and Neo4j Enterprise both check property-write privileges separately
+from read privileges, and both require `CREATE NEW PROPERTY NAME` for a
+previously unregistered property name. Read projections, predicates and
+`keys()` use the caller's readable properties.
+
+NornicDB applies an additional check to node and relationship writes under
+FGAC. A caller without `CREATE NEW PROPERTY NAME` needs property-read access
+for the name on the target to set or remove it. Setting a value also requires
+an existing name in that database. A registered but unreadable name and a
+new name both receive the same authorization error when setting a value.
+Whole-map replacements by these callers preserve unreadable properties that
+the map omits. Explicitly including an unreadable name in the replacement
+still requires authorization.
+
+Neo4j Enterprise permits a write to a registered name with `SET PROPERTY`
+even when the caller cannot read that property. Workloads that depend on
+that behavior can either grant narrowly scoped `READ` on the intended fields
+or grant database-wide `CREATE NEW PROPERTY NAME` alongside the existing
+property-write permissions. Granting token creation alone does not authorize
+any property write or read.
+
+`db.propertyKeys()` under NornicDB FGAC lists names found on caller-visible
+nodes and relationships after property filtering. Neo4j Enterprise filters
+its database token catalog, so it can also list an authorized name with no
+value on a visible entity. See the
+[Neo4j write privileges reference](https://neo4j.com/docs/operations-manual/current/authentication-authorization/privileges-writes/).
+
 ### Search and vectors
 
 Keyword and vector searches query the database's existing indexes. Search
@@ -208,8 +237,9 @@ profiles use the same authorization checks.
 
 HTTP, Bolt, GraphQL, MCP, and Qdrant operations bind to the principal's active
 policy revision. Policy changes invalidate retained search pages and Bolt
-results. Search ranking uses a corpus assembled from visible entities and
-properties. An FGAC request against a remote composite constituent requires a
+results. Search uses shared indexes and filters candidates and result
+properties using the caller's policy. An FGAC request against a remote
+composite constituent requires a
 trusted policy-aware execution path, so local FGAC refuses remote graph
 execution. Scoped policies still apply on local constituents.
 
