@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestNOR167EscapedUnwindHeadersExecute keeps the Unicode escape in the query
