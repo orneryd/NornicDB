@@ -1,0 +1,527 @@
+job	item	kind	name	documented	verdict	detail
+i20261121050251-1420-f8e6	H9-01051,H9-01052,H9-01787,H9-01810		YAML memory.search_* block sets the global search defaults	H9-01051=docs/user-guides/multi-database.md:935 H9-01052=docs/operations/low-memory-mode.md:63 H9-01787=docs/operations/configuration.md:333 H9-01810=docs/operations/environment-variables.md:12	behaviour differs from the documentation	{"check": "YAML memory.search_* block sets the global search defaults", "failures": ["YAML memory.search_bm25_enabled=false, search_bm25_warming=lazy, search_vector_enabled=false, search_vector_warming=lazy loaded as bm25 enabled=true warming=\"startup\", vector enabled=true warming=\"startup\" (no error)"], "notes": ["memory.search_*: bm25 enabled=true warming=\"startup\" vector enabled=true warming=\"startup\"", "control search.bm25_enabled=false: loaded enabled=false warming=\"lazy\""], "statements": ["LoadFromFile(memory:\\n  search_bm25_enabled: false\\n  search_bm25_warming: lazy\\n  search_vector_enabled: false\\n  search_vector_warming: lazy)"]}
+i20261121050251-1420-f8e6	H9-01776,H9-01777,H9-01779		configuration validation rejects a negative cache size and defaults validate	H9-01776=docs/operations/configuration.md:1188 H9-01777=docs/operations/configuration.md:1189 H9-01779=docs/operations/configuration.md:1191	behaviour differs from the documentation	{"check": "configuration validation rejects a negative cache size and defaults validate", "failures": ["memory.query_cache_size: -5 is accepted by LoadFromFile and Validate; documented: reject invalid values (e.g., negative cache sizes)"], "notes": ["loaded query_cache_size=1000"], "statements": ["YAML memory.query_cache_size: -5"]}
+i20261121050251-1420-f8e6	H9-01036	option-yaml	logging.driver	docs/operations/monitoring.md:345	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field driver not found in type struct { Level string \"yaml:\\\"level\\\"\"; Format string \"yaml:\\\"format\\\"\"; Output string \"yaml:\\\"output\\\"\"; QueryLogEnabled bool \"yaml:\\\"query_log_enabled\\\"\"; SlowQueryThreshold string \"yaml:\\\"slow_query_threshold\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01037	option-yaml	logging.options	docs/operations/monitoring.md:346	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field options not found in type struct { Level string \"yaml:\\\"level\\\"\"; Format string \"yaml:\\\"format\\\"\"; Output string \"yaml:\\\"output\\\"\"; QueryLogEnabled bool \"yaml:\\\"query_log_enabled\\\"\"; SlowQueryThreshold string \"yaml:\\\"slow_query_threshold\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01038	option-yaml	logging.options.fluentd-address	docs/operations/monitoring.md:347	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field options not found in type struct { Level string \"yaml:\\\"level\\\"\"; Format string \"yaml:\\\"format\\\"\"; Output string \"yaml:\\\"output\\\"\"; QueryLogEnabled bool \"yaml:\\\"query_log_enabled\\\"\"; SlowQueryThreshold string \"yaml:\\\"slow_query_threshold\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01039	option-yaml	logging.options.tag	docs/operations/monitoring.md:348	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field options not found in type struct { Level string \"yaml:\\\"level\\\"\"; Format string \"yaml:\\\"format\\\"\"; Output string \"yaml:\\\"output\\\"\"; QueryLogEnabled bool \"yaml:\\\"query_log_enabled\\\"\"; SlowQueryThreshold string \"yaml:\\\"slow_query_threshold\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01074	option-yaml	observability.logging	docs/architecture/observability.md:561	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field logging not found in type struct { Metrics struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" } \"yaml:\\\"metrics\\\"\"; Tracing struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" } \"yaml:\\\"tracing\\\"\"; Pprof struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\" } \"yaml:\\\"pprof\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01075	option-yaml	observability.logging.format	docs/architecture/observability.md:563	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field logging not found in type struct { Metrics struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" } \"yaml:\\\"metrics\\\"\"; Tracing struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" } \"yaml:\\\"tracing\\\"\"; Pprof struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\" } \"yaml:\\\"pprof\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01076	option-yaml	observability.logging.level	docs/architecture/observability.md:562	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field logging not found in type struct { Metrics struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" } \"yaml:\\\"metrics\\\"\"; Tracing struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" } \"yaml:\\\"tracing\\\"\"; Pprof struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\" } \"yaml:\\\"pprof\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01077	option-yaml	observability.logging.output	docs/architecture/observability.md:564	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field logging not found in type struct { Metrics struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" } \"yaml:\\\"metrics\\\"\"; Tracing struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" } \"yaml:\\\"tracing\\\"\"; Pprof struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\" } \"yaml:\\\"pprof\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01078	option-yaml	observability.logging.redact_extra	docs/architecture/observability.md:565	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field logging not found in type struct { Metrics struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" } \"yaml:\\\"metrics\\\"\"; Tracing struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" } \"yaml:\\\"tracing\\\"\"; Pprof struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\" } \"yaml:\\\"pprof\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01081	option-yaml	observability.metrics.port	docs/architecture/observability.md:553	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 3: field port not found in type struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Listen string \"yaml:\\\"listen\\\"\"; TenantLabelsEnabled *bool \"yaml:\\\"tenant_labels_enabled\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01090	option-yaml	observability.tracing.sample_ratio	docs/architecture/observability.md:559	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 3: field sample_ratio not found in type struct { Enabled *bool \"yaml:\\\"enabled\\\"\"; Endpoint string \"yaml:\\\"endpoint\\\"\"; Protocol string \"yaml:\\\"protocol\\\"\"; Insecure *bool \"yaml:\\\"insecure\\\"\"; Timeout string \"yaml:\\\"timeout\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01148	option-yaml	search.min_similarity	docs/operations/configuration.md:678	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field min_similarity not found in type struct { BM25Enabled *bool \"yaml:\\\"bm25_enabled\\\"\"; BM25Warming string \"yaml:\\\"bm25_warming\\\"\"; BM25Properties []string \"yaml:\\\"bm25_properties\\\"\"; RelationshipBM25Properties []string \"yaml:\\\"relationship_bm25_properties\\\"\"; BM25Labels []string \"yaml:\\\"bm25_labels\\\"\"; BM25Stemmer string \"yaml:\\\"bm25_stemmer\\\"\"; VectorEnabled *bool \"yaml:\\\"vector_enabled\\\"\"; VectorWarming string \"yaml:\\\"vector_warming\\\"\"; RelationshipsEnabled *bool \"yaml:\\\"relationships_enabled\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01272	option-yaml	storage.cache_size_mb	docs/packaging/raspberry-pi.md:171	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field cache_size_mb not found in type struct { Path string \"yaml:\\\"path\\\"\"; Mode string \"yaml:\\\"mode\\\"\"; BytesMetricInterval time.Duration \"yaml:\\\"bytes_metric_interval\\\"\" }"}
+i20261121050251-1420-f8e6	H9-01273	option-yaml	storage.flush_interval	docs/packaging/raspberry-pi.md:174	documented configuration key path is not a field of the configuration file schema (strict YAML decode)	{"error": "yaml: unmarshal errors:\n  line 2: field flush_interval not found in type struct { Path string \"yaml:\\\"path\\\"\"; Mode string \"yaml:\\\"mode\\\"\"; BytesMetricInterval time.Duration \"yaml:\\\"bytes_metric_interval\\\"\" }"}
+i20261121050244-35624-60dc	H9-00326	option-env	NORNICDB_APOC_ALGO_ENABLED	docs/features/apoc-functions.md:423	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00327	option-env	NORNICDB_APOC_COLL_ENABLED	docs/features/apoc-functions.md:488	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00328	option-env	NORNICDB_APOC_CREATE_ENABLED	docs/features/apoc-functions.md:492	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00329	option-env	NORNICDB_APOC_MATH_ENABLED	docs/features/apoc-functions.md:490	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00337	option-env	NORNICDB_APOC_TEXT_ENABLED	docs/features/apoc-functions.md:489	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00347	option-env	NORNICDB_AUTH_ENABLED	docs/packaging/docker.md:210	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00349	option-env	NORNICDB_AUTH_PASSWORD	docs/packaging/docker.md:212	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00352	option-env	NORNICDB_AUTH_USER	docs/packaging/docker.md:211	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00360	option-env	NORNICDB_BADGER_HIGH_PERFORMANCE	docs/operations/low-memory-mode.md:24	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00390	option-env	NORNICDB_CENSUS_UPDATE	docs/generated/stored-entity-census.md:3	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00391	option-env	NORNICDB_CLUSTER_	docs/operations/scaling.md:63	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00399	option-env	NORNICDB_CLUSTER_HA_	docs/operations/scaling.md:79	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00449	option-env	NORNICDB_CYPHER_VERSION	docs/neo4j-migration/cypher-compatibility.md:12	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00450	option-env	NORNICDB_DATABASE	docs/user-guides/graphify-local.md:5	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00468	option-env	NORNICDB_EMBEDDING_ENDPOINT	docs/packaging/docker.md:44	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00519	option-env	NORNICDB_GPU_BATCH_SIZE	docs/features/gpu-acceleration.md:207	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00521	option-env	NORNICDB_GPU_CLUSTERING_ENABLED	docs/development/kmeans-testing.md:35	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00522	option-env	NORNICDB_GPU_MAX_MEMORY_MB	docs/features/gpu-acceleration.md:210	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00549	option-env	NORNICDB_HNSW_BUILD_BENCH_VECTOR_BASE	docs/performance/searching.md:136	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00571	option-env	NORNICDB_JWT_SECRET	docs/start.md:11	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00573	option-env	NORNICDB_KEY	docs/operations/environment-variables.md:250	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00585	option-env	NORNICDB_LARGE_GPU_TEST	docs/development/gpu-large-build-qualification.md:21	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00586	option-env	NORNICDB_LARGE_METAL_TEST	docs/development/gpu-large-build-qualification.md:32	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00587	option-env	NORNICDB_LARGE_RRF_BOLT_ADDR	docs/performance/hybrid-query-benchmarks.md:125	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00588	option-env	NORNICDB_LARGE_RRF_DATABASE	docs/performance/hybrid-query-benchmarks.md:126	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00589	option-env	NORNICDB_LARGE_RRF_E2E	docs/performance/hybrid-query-benchmarks.md:123	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00590	option-env	NORNICDB_LARGE_RRF_EDGES	docs/performance/hybrid-query-benchmarks.md:127	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00591	option-env	NORNICDB_LARGE_RRF_HTTP_ADDR	docs/performance/hybrid-query-benchmarks.md:124	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00592	option-env	NORNICDB_LARGE_RRF_ITERS	docs/performance/hybrid-query-benchmarks.md:129	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00593	option-env	NORNICDB_LARGE_RRF_WARMUP	docs/performance/hybrid-query-benchmarks.md:128	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00602	option-env	NORNICDB_MASTER_PASSWORD	docs/operations/environment-variables.md:269	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00606	option-env	NORNICDB_MCP_PORT	docs/packaging/docker.md:218	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00608	option-env	NORNICDB_MEMORY_ARCHIVE_THRESHOLD	docs/operations/environment-variables.md:273	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00616	option-env	NORNICDB_METRICS_ENABLED	docs/architecture/observability.md:552	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00622	option-env	NORNICDB_NODE_ID	docs/operations/scaling.md:155	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00623	option-env	NORNICDB_NO_AUTH	docs/operations/cli-commands.md:60	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00624	option-env	NORNICDB_NO_CUDA	docs/getting-started/windows-cuda.md:142	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00625	option-env	NORNICDB_OAUTH_	docs/operations/configuration.md:522	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00630	option-env	NORNICDB_OTLP_	docs/architecture/observability.md:381	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00632	option-env	NORNICDB_PASSWORD	docs/start.md:10	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00637	option-env	NORNICDB_PLUGINS_ENABLED	docs/architecture/plugin-system.md:28	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00668	option-env	NORNICDB_SALT	docs/operations/environment-variables.md:328	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00669	option-env	NORNICDB_SEARCH_	docs/operations/configuration.md:333	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00687	option-env	NORNICDB_SEARCH_RERANK_	docs/features/cross-encoder-reranking.md:133	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00700	option-env	NORNICDB_SERVER_BOLT_PORT	docs/operations/configuration.md:1100	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00701	option-env	NORNICDB_SERVER_HTTP_PORT	docs/operations/configuration.md:1101	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00707	option-env	NORNICDB_STORAGE_SERIALIZER	docs/property-key-dictionary.md:191	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00711	option-env	NORNICDB_TMP_DIR	docs/operations/docker.md:473	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00712	option-env	NORNICDB_TOKEN	docs/user-guides/connecting-bolt.md:89	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00729	option-env	NORNICDB_URI	docs/user-guides/graphify-local.md:17	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00730	option-env	NORNICDB_USER	docs/user-guides/graphify-local.md:21	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00762	option-env	NORNICDB_VERSION	docs/packaging/raspberry-pi.md:86	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00763	option-env	NORNICDB_VISIBILITY_THRESHOLD	docs/features/memory-decay.md:100	documented environment variable is not read by any code	{}
+i20261121050244-35624-60dc	H9-00774	option-yaml	Installers	docs/packaging/windows.md:462	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00775	option-yaml	Installers.InstallerSha256	docs/packaging/windows.md:466	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00776	option-yaml	Installers.InstallerType	docs/packaging/windows.md:464	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00777	option-yaml	Installers.InstallerUrl	docs/packaging/windows.md:465	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00778	option-yaml	License	docs/packaging/windows.md:460	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00779	option-yaml	ManifestType	docs/packaging/windows.md:467	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00780	option-yaml	ManifestVersion	docs/packaging/windows.md:468	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00781	option-yaml	NORNICDB_ADDRESS	docs/operations/deployment.md:256	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00782	option-yaml	PackageIdentifier	docs/packaging/windows.md:456	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00783	option-yaml	PackageName	docs/packaging/windows.md:458	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00784	option-yaml	PackageVersion	docs/packaging/windows.md:457	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00785	option-yaml	Publisher	docs/packaging/windows.md:459	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00786	option-yaml	ShortDescription	docs/packaging/windows.md:461	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00787	option-yaml	apiVersion	docs/architecture/observability.md:515	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00788	option-yaml	assign	docs/features/mcp-integration.md:109	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00789	option-yaml	assigned_to	docs/features/mcp-integration.md:118	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00790	option-yaml	audit	docs/compliance/audit-logging.md:252	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00791	option-yaml	audit.auto_purge	docs/compliance/audit-logging.md:254	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00792	option-yaml	audit.elasticsearch	docs/compliance/audit-logging.md:273	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00794	option-yaml	audit.elasticsearch.index	docs/compliance/audit-logging.md:276	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00795	option-yaml	audit.elasticsearch.urls	docs/compliance/audit-logging.md:275	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00797	option-yaml	audit.splunk	docs/compliance/audit-logging.md:283	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00799	option-yaml	audit.splunk.hec_url	docs/compliance/audit-logging.md:285	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00800	option-yaml	audit.splunk.token	docs/compliance/audit-logging.md:286	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00801	option-yaml	audit.syslog	docs/compliance/audit-logging.md:263	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00804	option-yaml	audit.syslog.facility	docs/compliance/audit-logging.md:266	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00812	option-yaml	auto_links	docs/operations/configuration.md:1081	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00814	option-yaml	auto_links.similarity_threshold	docs/operations/configuration.md:1083	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00816	option-yaml	categories.algo	docs/features/apoc-functions.md:517	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00817	option-yaml	categories.coll	docs/features/apoc-functions.md:514	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00818	option-yaml	categories.create	docs/features/apoc-functions.md:518	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00819	option-yaml	categories.math	docs/features/apoc-functions.md:516	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00820	option-yaml	categories.text	docs/features/apoc-functions.md:515	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00843	option-yaml	concept_clustering	docs/advanced/k-means-clustering/kmeans-algorithm.md:727	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00844	option-yaml	concept_clustering.device	docs/advanced/k-means-clustering/kmeans-algorithm.md:733	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00847	option-yaml	concept_clustering.keep_embeddings_in_gpu	docs/advanced/k-means-clustering/kmeans-algorithm.md:740	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00848	option-yaml	concept_clustering.max_gpu_memory_mb	docs/advanced/k-means-clustering/kmeans-algorithm.md:741	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00849	option-yaml	concept_clustering.max_iterations	docs/advanced/k-means-clustering/kmeans-algorithm.md:731	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00850	option-yaml	concept_clustering.num_clusters	docs/advanced/k-means-clustering/kmeans-algorithm.md:729	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00851	option-yaml	concept_clustering.recluster_schedule	docs/advanced/k-means-clustering/kmeans-algorithm.md:737	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00852	option-yaml	concept_clustering.recluster_threshold	docs/advanced/k-means-clustering/kmeans-algorithm.md:736	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00853	option-yaml	concept_clustering.tolerance	docs/advanced/k-means-clustering/kmeans-algorithm.md:732	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00854	option-yaml	content	docs/features/mcp-integration.md:66	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00855	option-yaml	cross_encoder	docs/performance/searching.md:1340	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00859	option-yaml	cross_encoder.threshold	docs/performance/searching.md:1345	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00899	option-yaml	database.storage_serializer	docs/operations/configuration.md:93	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00908	option-yaml	databases.analytics	docs/operations/configuration.md:376	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00909	option-yaml	databases.analytics.NORNICDB_SEARCH_VECTOR_WARMING	docs/operations/configuration.md:378	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00910	option-yaml	databases.audit_logs	docs/operations/configuration.md:380	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00911	option-yaml	databases.default_docs	docs/user-guides/bm25-stemmers.md:253	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00912	option-yaml	databases.exports_only	docs/operations/configuration.md:384	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00913	option-yaml	databases.french_docs	docs/user-guides/bm25-stemmers.md:249	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00914	option-yaml	databases.hot_app_db	docs/operations/configuration.md:374	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00915	option-yaml	databases.multi_tenant_archive	docs/user-guides/multi-database.md:955	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00916	option-yaml	databases.spanish_docs	docs/user-guides/bm25-stemmers.md:251	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00917	option-yaml	decay	docs/operations/configuration.md:1072	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00918	option-yaml	decay.decay_rate	docs/operations/configuration.md:1075	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00920	option-yaml	decay.recalculate_interval	docs/operations/configuration.md:1074	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00921	option-yaml	depends_on	docs/features/mcp-integration.md:108	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00922	option-yaml	depth	docs/features/mcp-integration.md:89	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00924	option-yaml	embed	docs/getting-started/windows-cuda.md:283	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00941	option-yaml	embeddings	docs/packaging/raspberry-pi.md:176	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00946	option-yaml	encryption	docs/compliance/soc2-compliance.md:175	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00949	option-yaml	encryption.key_rotation_days	docs/compliance/soc2-compliance.md:178	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00951	option-yaml	environment	docs/user-guides/qdrant-grpc.md:50	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00965	option-yaml	from	docs/features/mcp-integration.md:94	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00966	option-yaml	fulltext_search	docs/performance/searching.md:1309	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00967	option-yaml	fulltext_search.bm25	docs/performance/searching.md:1319	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00968	option-yaml	fulltext_search.bm25.b	docs/performance/searching.md:1321	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00969	option-yaml	fulltext_search.bm25.k1	docs/performance/searching.md:1320	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00971	option-yaml	fulltext_search.priority_properties	docs/performance/searching.md:1313	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00973	option-yaml	groups	docs/operations/monitoring.md:284	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00974	option-yaml	groups.rules	docs/operations/monitoring.md:286	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00975	option-yaml	groups.rules.annotations	docs/operations/monitoring.md:292	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00976	option-yaml	groups.rules.annotations.summary	docs/operations/monitoring.md:293	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00977	option-yaml	groups.rules.expr	docs/operations/monitoring.md:288	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00978	option-yaml	groups.rules.for	docs/operations/monitoring.md:289	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00979	option-yaml	groups.rules.labels	docs/operations/monitoring.md:290	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00980	option-yaml	groups.rules.labels.severity	docs/operations/monitoring.md:291	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00981	option-yaml	healthcheck	docs/operations/docker.md:265	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00982	option-yaml	healthcheck.interval	docs/operations/docker.md:267	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00983	option-yaml	healthcheck.retries	docs/operations/docker.md:269	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00984	option-yaml	healthcheck.start_period	docs/operations/docker.md:270	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00985	option-yaml	healthcheck.test	docs/operations/docker.md:266	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00997	option-yaml	jobs	docs/advanced/embeddings/local-gguf.md:562	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00998	option-yaml	jobs.build	docs/advanced/embeddings/local-gguf.md:563	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-00999	option-yaml	jobs.build.runs-on	docs/advanced/embeddings/local-gguf.md:573	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01000	option-yaml	jobs.build.steps	docs/advanced/embeddings/local-gguf.md:574	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01001	option-yaml	jobs.build.steps.with	docs/advanced/embeddings/local-gguf.md:578	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01004	option-yaml	jobs.build.strategy	docs/advanced/embeddings/local-gguf.md:564	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01005	option-yaml	jobs.build.strategy.matrix	docs/advanced/embeddings/local-gguf.md:565	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01006	option-yaml	jobs.build.strategy.matrix.include	docs/advanced/embeddings/local-gguf.md:566	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01007	option-yaml	jobs.build.strategy.matrix.include.lib	docs/advanced/embeddings/local-gguf.md:568	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01008	option-yaml	jobs.update-formula	docs/packaging/macos.md:113	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01009	option-yaml	jobs.update-formula.runs-on	docs/packaging/macos.md:114	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01010	option-yaml	jobs.update-formula.steps	docs/packaging/macos.md:115	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01011	option-yaml	jobs.update-formula.steps.run	docs/packaging/macos.md:119	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01012	option-yaml	jobs.update-formula.steps.uses	docs/packaging/macos.md:129	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01013	option-yaml	jobs.update-formula.steps.with	docs/packaging/macos.md:130	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01014	option-yaml	jobs.update-formula.steps.with.files	docs/packaging/macos.md:131	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01015	option-yaml	k_means_clustering	docs/performance/searching.md:982	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01016	option-yaml	k_means_clustering.cluster_interval	docs/performance/searching.md:998	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01017	option-yaml	k_means_clustering.drift_threshold	docs/performance/searching.md:999	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01019	option-yaml	k_means_clustering.init_method	docs/performance/searching.md:995	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01020	option-yaml	k_means_clustering.max_iterations	docs/performance/searching.md:991	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01021	option-yaml	k_means_clustering.min_cluster_size	docs/performance/searching.md:1002	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01022	option-yaml	k_means_clustering.num_clusters	docs/performance/searching.md:986	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01023	option-yaml	k_means_clustering.tolerance	docs/performance/searching.md:992	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01024	option-yaml	kind	docs/architecture/observability.md:516	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01025	option-yaml	labels	docs/user-guides/open-knowledge-format-interchange.md:93	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01026	option-yaml	limit	docs/features/mcp-integration.md:80	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01027	option-yaml	livenessProbe	docs/operations/monitoring.md:76	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01028	option-yaml	livenessProbe.httpGet	docs/operations/monitoring.md:77	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01031	option-yaml	livenessProbe.initialDelaySeconds	docs/operations/monitoring.md:80	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01032	option-yaml	livenessProbe.periodSeconds	docs/operations/monitoring.md:81	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01036	option-yaml	logging.driver	docs/operations/monitoring.md:345	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01037	option-yaml	logging.options	docs/operations/monitoring.md:346	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01038	option-yaml	logging.options.fluentd-address	docs/operations/monitoring.md:347	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01039	option-yaml	logging.options.tag	docs/operations/monitoring.md:348	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01040	option-yaml	mcp	docs/packaging/raspberry-pi.md:235	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01051	option-yaml	memory.search_bm25_enabled	docs/user-guides/multi-database.md:935	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01052	option-yaml	memory.search_bm25_warming	docs/operations/low-memory-mode.md:63	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01053	option-yaml	memory.search_vector_enabled	docs/features/vector-embeddings.md:436	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01054	option-yaml	memory.search_vector_warming	docs/operations/low-memory-mode.md:64	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01058	option-yaml	metadata	docs/architecture/observability.md:517	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01059	option-yaml	metadata.labels	docs/architecture/observability.md:519	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01060	option-yaml	metadata.labels.release	docs/architecture/observability.md:520	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01063	option-yaml	models	docs/user-guides/heimdall-ai-assistant.md:415	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01064	option-yaml	models.apiBase	docs/user-guides/heimdall-ai-assistant.md:419	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01065	option-yaml	models.apiKey	docs/user-guides/heimdall-ai-assistant.md:420	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01066	option-yaml	models.defaultCompletionOptions	docs/user-guides/heimdall-ai-assistant.md:425	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01067	option-yaml	models.defaultCompletionOptions.maxTokens	docs/user-guides/heimdall-ai-assistant.md:427	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01071	option-yaml	models.roles	docs/user-guides/heimdall-ai-assistant.md:421	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01078	option-yaml	observability.logging.redact_extra	docs/architecture/observability.md:565	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01090	option-yaml	observability.tracing.sample_ratio	docs/architecture/observability.md:559	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01091	option-yaml	on	docs/advanced/embeddings/local-gguf.md:560	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01092	option-yaml	on.release	docs/packaging/macos.md:109	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01093	option-yaml	on.release.types	docs/packaging/macos.md:110	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01094	option-yaml	plugin	docs/security/llm-ast-security.md:359	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01096	option-yaml	plugin.permissions	docs/security/llm-ast-security.md:361	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01097	option-yaml	plugin.permissions.ast_access	docs/security/llm-ast-security.md:368	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01098	option-yaml	plugin.permissions.ast_access.can_generate	docs/security/llm-ast-security.md:370	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01099	option-yaml	plugin.permissions.ast_access.can_read	docs/security/llm-ast-security.md:369	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01100	option-yaml	plugin.permissions.queries	docs/security/llm-ast-security.md:362	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01101	option-yaml	plugin.permissions.queries.allowed_labels	docs/security/llm-ast-security.md:364	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01102	option-yaml	plugin.permissions.queries.allowed_relationships	docs/security/llm-ast-security.md:365	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01103	option-yaml	plugin.permissions.queries.max_results	docs/security/llm-ast-security.md:366	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01105	option-yaml	plugin.permissions.queries.timeout_ms	docs/security/llm-ast-security.md:367	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01110	option-yaml	ports	docs/user-guides/qdrant-grpc.md:46	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01111	option-yaml	priority	docs/features/mcp-integration.md:107	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01112	option-yaml	query	docs/features/mcp-integration.md:85	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01113	option-yaml	rate_limiting	docs/operations/troubleshooting.md:70	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01114	option-yaml	rate_limiting.per_hour	docs/operations/troubleshooting.md:72	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01115	option-yaml	rate_limiting.per_minute	docs/operations/troubleshooting.md:71	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01116	option-yaml	readinessProbe	docs/operations/monitoring.md:83	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01117	option-yaml	readinessProbe.httpGet	docs/operations/monitoring.md:84	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01120	option-yaml	readinessProbe.initialDelaySeconds	docs/operations/monitoring.md:87	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01121	option-yaml	readinessProbe.periodSeconds	docs/operations/monitoring.md:88	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01122	option-yaml	relation	docs/features/mcp-integration.md:96	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01135	option-yaml	rrf_fusion	docs/performance/searching.md:1327	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01136	option-yaml	rrf_fusion.bm25_weight	docs/performance/searching.md:1331	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01138	option-yaml	rrf_fusion.fallback_enabled	docs/performance/searching.md:1334	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01139	option-yaml	rrf_fusion.k	docs/performance/searching.md:1329	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01140	option-yaml	rrf_fusion.vector_weight	docs/performance/searching.md:1330	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01141	option-yaml	run	docs/advanced/search-evaluation.md:159	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01142	option-yaml	schema	docs/user-guides/heimdall-ai-assistant.md:414	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01143	option-yaml	scrape_configs	docs/operations/monitoring.md:230	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01144	option-yaml	scrape_configs.metrics_path	docs/operations/monitoring.md:234	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01145	option-yaml	scrape_configs.static_configs	docs/operations/monitoring.md:232	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01156	option-yaml	secrets	docs/operations/cluster-security.md:153	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01157	option-yaml	secrets.jwt-secret	docs/operations/cluster-security.md:154	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01158	option-yaml	secrets.jwt-secret.external	docs/operations/cluster-security.md:155	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01166	option-yaml	security_opt	docs/operations/troubleshooting.md:353	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01201	option-yaml	since	docs/features/mcp-integration.md:79	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01202	option-yaml	spec	docs/architecture/observability.md:521	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01203	option-yaml	spec.accessModes	docs/packaging/docker.md:430	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01204	option-yaml	spec.endpoints	docs/architecture/observability.md:525	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01205	option-yaml	spec.endpoints.honorLabels	docs/architecture/observability.md:530	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01206	option-yaml	spec.endpoints.interval	docs/architecture/observability.md:528	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01208	option-yaml	spec.endpoints.relabelings	docs/architecture/observability.md:531	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01209	option-yaml	spec.endpoints.relabelings.targetLabel	docs/architecture/observability.md:533	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01210	option-yaml	spec.endpoints.scrapeTimeout	docs/architecture/observability.md:529	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01211	option-yaml	spec.ports	docs/operations/deployment.md:143	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01213	option-yaml	spec.ports.targetPort	docs/operations/deployment.md:146	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01214	option-yaml	spec.replicas	docs/operations/deployment.md:86	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01215	option-yaml	spec.resources	docs/packaging/docker.md:432	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01216	option-yaml	spec.resources.requests	docs/packaging/docker.md:433	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01218	option-yaml	spec.selector	docs/architecture/observability.md:522	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01219	option-yaml	spec.selector.app	docs/operations/deployment.md:142	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01220	option-yaml	spec.selector.matchLabels	docs/architecture/observability.md:523	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01221	option-yaml	spec.selector.matchLabels.app	docs/operations/deployment.md:89	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01222	option-yaml	spec.serviceName	docs/operations/scaling.md:139	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01223	option-yaml	spec.template	docs/operations/deployment.md:90	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01224	option-yaml	spec.template.metadata	docs/operations/deployment.md:91	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01225	option-yaml	spec.template.metadata.labels	docs/operations/deployment.md:92	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01226	option-yaml	spec.template.metadata.labels.app	docs/operations/deployment.md:93	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01227	option-yaml	spec.template.spec	docs/operations/deployment.md:94	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01228	option-yaml	spec.template.spec.containers	docs/operations/deployment.md:95	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01229	option-yaml	spec.template.spec.containers.env	docs/operations/deployment.md:101	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01230	option-yaml	spec.template.spec.containers.env.value	docs/operations/deployment.md:103	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01231	option-yaml	spec.template.spec.containers.env.valueFrom	docs/operations/deployment.md:105	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01232	option-yaml	spec.template.spec.containers.env.valueFrom.fieldRef	docs/operations/scaling.md:157	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01233	option-yaml	spec.template.spec.containers.env.valueFrom.fieldRef.fieldPath	docs/operations/scaling.md:158	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01234	option-yaml	spec.template.spec.containers.env.valueFrom.secretKeyRef	docs/operations/deployment.md:106	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01235	option-yaml	spec.template.spec.containers.env.valueFrom.secretKeyRef.key	docs/operations/deployment.md:108	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01237	option-yaml	spec.template.spec.containers.image	docs/operations/deployment.md:97	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01238	option-yaml	spec.template.spec.containers.livenessProbe	docs/operations/deployment.md:119	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01239	option-yaml	spec.template.spec.containers.livenessProbe.httpGet	docs/operations/deployment.md:120	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01242	option-yaml	spec.template.spec.containers.livenessProbe.initialDelaySeconds	docs/operations/deployment.md:123	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01243	option-yaml	spec.template.spec.containers.livenessProbe.periodSeconds	docs/operations/deployment.md:124	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01244	option-yaml	spec.template.spec.containers.ports	docs/operations/deployment.md:98	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01245	option-yaml	spec.template.spec.containers.readinessProbe	docs/operations/deployment.md:125	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01246	option-yaml	spec.template.spec.containers.readinessProbe.httpGet	docs/operations/deployment.md:126	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01249	option-yaml	spec.template.spec.containers.readinessProbe.initialDelaySeconds	docs/operations/deployment.md:129	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01250	option-yaml	spec.template.spec.containers.readinessProbe.periodSeconds	docs/operations/deployment.md:130	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01251	option-yaml	spec.template.spec.containers.resources	docs/operations/deployment.md:112	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01252	option-yaml	spec.template.spec.containers.resources.limits	docs/operations/deployment.md:116	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01253	option-yaml	spec.template.spec.containers.resources.limits.cpu	docs/operations/deployment.md:118	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01255	option-yaml	spec.template.spec.containers.resources.requests	docs/operations/deployment.md:113	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01256	option-yaml	spec.template.spec.containers.resources.requests.cpu	docs/operations/deployment.md:115	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01258	option-yaml	spec.template.spec.containers.volumeMounts	docs/operations/deployment.md:109	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01259	option-yaml	spec.template.spec.containers.volumeMounts.mountPath	docs/operations/deployment.md:111	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01260	option-yaml	spec.template.spec.volumes	docs/operations/deployment.md:131	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01261	option-yaml	spec.template.spec.volumes.persistentVolumeClaim	docs/operations/deployment.md:133	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01262	option-yaml	spec.template.spec.volumes.persistentVolumeClaim.claimName	docs/operations/deployment.md:134	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01263	option-yaml	spec.volumeClaimTemplates	docs/operations/scaling.md:166	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01265	option-yaml	spec.volumeClaimTemplates.spec	docs/operations/scaling.md:169	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01266	option-yaml	spec.volumeClaimTemplates.spec.accessModes	docs/operations/scaling.md:170	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01267	option-yaml	spec.volumeClaimTemplates.spec.resources	docs/operations/scaling.md:171	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01268	option-yaml	spec.volumeClaimTemplates.spec.resources.requests	docs/operations/scaling.md:172	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01270	option-yaml	status	docs/features/mcp-integration.md:106	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01272	option-yaml	storage.cache_size_mb	docs/packaging/raspberry-pi.md:171	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01275	option-yaml	strength	docs/features/mcp-integration.md:97	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01276	option-yaml	stringData	docs/operations/deployment.md:161	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01277	option-yaml	stringData.encryption-password	docs/operations/deployment.md:163	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01278	option-yaml	stringData.jwt-secret	docs/operations/deployment.md:162	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01279	option-yaml	tags	docs/features/mcp-integration.md:69	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01280	option-yaml	title	docs/features/mcp-integration.md:68	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01285	option-yaml	tls.min_version	docs/compliance/soc2-compliance.md:186	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01286	option-yaml	to	docs/features/mcp-integration.md:95	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01287	option-yaml	type	docs/features/mcp-integration.md:67	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01288	option-yaml	unblocked_only	docs/features/mcp-integration.md:119	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01289	option-yaml	uses	docs/advanced/search-evaluation.md:168	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01290	option-yaml	vector_search	docs/performance/searching.md:1005	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01291	option-yaml	vector_search.clusters_to_search	docs/performance/searching.md:1007	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01293	option-yaml	vector_search.hnsw	docs/performance/searching.md:1295	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01294	option-yaml	vector_search.hnsw.ef_construction	docs/performance/searching.md:1297	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01295	option-yaml	vector_search.hnsw.ef_search	docs/performance/searching.md:1298	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01296	option-yaml	vector_search.hnsw.m	docs/performance/searching.md:1296	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01297	option-yaml	vector_search.use_clustered_search	docs/performance/searching.md:1006	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01298	option-yaml	version	docs/features/apoc-functions.md:543	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01299	option-yaml	with	docs/advanced/search-evaluation.md:169	documented configuration key is not a yaml key of the configuration	{}
+i20261121050244-35624-60dc	H9-01302	option-flag	--auth	docs/architecture/system-design.md:313	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01305	option-flag	--build-arg	docs/development/gpu-large-build-qualification.md:113	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01306	option-flag	--check-gpu	docs/getting-started/windows-cuda.md:42	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01310	option-flag	--dearmor	docs/packaging/linux.md:125	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01311	option-flag	--default-database	docs/development/multi-db-e2e-test.md:40	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01317	option-flag	--format	docs/operations/memory-management.md:79	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01319	option-flag	--global-with-code-intelligence	docs/user-guides/graphify-local.md:196	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01320	option-flag	--go-	docs/user-guides/nornic-search-grpc.md:39	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01324	option-flag	--identifier	docs/packaging/macos.md:298	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01329	option-flag	--memory	docs/getting-started/docker-deployment.md:319	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01332	option-flag	--no-deps	docs/operations/docker.md:495	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01333	option-flag	--no-stream	docs/operations/docker.md:391	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01338	option-flag	--python	docs/user-guides/graphify-local.md:195	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01342	option-flag	--rm	docs/getting-started/docker-deployment.md:292	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01343	option-flag	--since	docs/operations/docker.md:318	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01344	option-flag	--tail	docs/operations/docker.md:315	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01346	option-flag	--target-grpc-port	docs/skills/qdrant-migration.skill.md:112	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01347	option-flag	--target-host	docs/skills/qdrant-migration.skill.md:112	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01348	option-flag	--target-port	docs/skills/qdrant-migration.skill.md:118	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01349	option-flag	--target-url	docs/skills/neo4j-migration.skill.md:162	documented command-line flag is not defined in cmd/	{}
+i20261121050244-35624-60dc	H9-01354	procedure	apoc.Call	docs/features/apoc-functions.md:204	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01355	procedure	apoc.GetStorage	docs/features/apoc-functions.md:245	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01356	procedure	apoc.Initialize	docs/features/apoc-functions.md:237	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01357	procedure	apoc.SetStorage	docs/features/apoc-functions.md:239	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01362	procedure	apoc.algo.community	docs/features/apoc-functions.md:777	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01368	procedure	apoc.atomic.add	docs/features/apoc-functions.md:785	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01369	procedure	apoc.atomic.compareAndSwap	docs/features/apoc-functions.md:794	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01370	procedure	apoc.atomic.insert	docs/features/apoc-functions.md:790	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01371	procedure	apoc.bitwise.and	docs/features/apoc-functions.md:802	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01372	procedure	apoc.bitwise.countBits	docs/features/apoc-functions.md:808	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01373	procedure	apoc.bitwise.op	docs/features/apoc-functions.md:801	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01374	procedure	apoc.bitwise.or	docs/features/apoc-functions.md:803	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01375	procedure	apoc.bitwise.setBit	docs/features/apoc-functions.md:806	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01376	procedure	apoc.bitwise.testBit	docs/features/apoc-functions.md:807	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01379	procedure	apoc.coll.duplicates	docs/features/apoc-functions.md:700	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01395	procedure	apoc.custom.myFunc	docs/features/apoc-functions.md:1397	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01398	procedure	apoc.cypher.parallel	docs/features/apoc-functions.md:826	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01401	procedure	apoc.diff.maps	docs/features/apoc-functions.md:837	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01402	procedure	apoc.diff.nodes	docs/features/apoc-functions.md:834	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01404	procedure	apoc.export.cypher.all	docs/features/apoc-functions.md:856	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01407	procedure	apoc.hashing.consistentHash	docs/features/apoc-functions.md:890	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01408	procedure	apoc.hashing.md5	docs/features/apoc-functions.md:881	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01409	procedure	apoc.hashing.murmur3	docs/features/apoc-functions.md:886	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01410	procedure	apoc.hashing.sha256	docs/features/apoc-functions.md:882	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01411	procedure	apoc.hashing.sha512	docs/features/apoc-functions.md:883	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01412	procedure	apoc.hashing.xxhash	docs/features/apoc-functions.md:887	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01413	procedure	apoc.help	docs/user-guides/plugin-system.md:242	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01414	procedure	apoc.import.batch	docs/features/apoc-functions.md:871	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01415	procedure	apoc.import.csv	docs/features/apoc-functions.md:868	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01417	procedure	apoc.kafka.consume	docs/features/apoc-functions.md:670	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01418	procedure	apoc.label.add	docs/features/apoc-functions.md:898	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01419	procedure	apoc.label.has	docs/features/apoc-functions.md:906	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01420	procedure	apoc.label.remove	docs/features/apoc-functions.md:902	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01422	procedure	apoc.load.jdbc	docs/features/apoc-functions.md:927	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01424	procedure	apoc.load.s3	docs/features/apoc-functions.md:924	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01425	procedure	apoc.lock.detectDeadlock	docs/features/apoc-functions.md:944	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01426	procedure	apoc.lock.nodes	docs/features/apoc-functions.md:935	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01427	procedure	apoc.lock.read	docs/features/apoc-functions.md:940	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01428	procedure	apoc.lock.unlock	docs/features/apoc-functions.md:937	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01429	procedure	apoc.lock.write	docs/features/apoc-functions.md:941	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01430	procedure	apoc.log.debug	docs/features/apoc-functions.md:954	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01431	procedure	apoc.log.error	docs/features/apoc-functions.md:956	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01432	procedure	apoc.log.info	docs/features/apoc-functions.md:953	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01433	procedure	apoc.log.metrics	docs/features/apoc-functions.md:966	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01434	procedure	apoc.log.timer	docs/features/apoc-functions.md:959	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01435	procedure	apoc.log.warn	docs/features/apoc-functions.md:955	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01436	procedure	apoc.math.abs	docs/features/apoc-functions.md:733	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01437	procedure	apoc.math.ceil	docs/features/apoc-functions.md:731	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01438	procedure	apoc.math.factorial	docs/features/apoc-functions.md:744	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01439	procedure	apoc.math.floor	docs/features/apoc-functions.md:732	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01440	procedure	apoc.math.gcd	docs/features/apoc-functions.md:742	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01441	procedure	apoc.math.isPrime	docs/features/apoc-functions.md:745	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01442	procedure	apoc.math.lcm	docs/features/apoc-functions.md:743	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01443	procedure	apoc.math.mean	docs/features/apoc-functions.md:736	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01444	procedure	apoc.math.median	docs/features/apoc-functions.md:737	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01445	procedure	apoc.math.percentile	docs/features/apoc-functions.md:739	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01446	procedure	apoc.math.round	docs/features/apoc-functions.md:730	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01447	procedure	apoc.math.sigmoid	docs/user-guides/plugin-system.md:33	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01448	procedure	apoc.math.sqrt	docs/user-guides/plugin-system.md:32	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01449	procedure	apoc.math.stdDev	docs/features/apoc-functions.md:738	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01450	procedure	apoc.merge.deepMerge	docs/features/apoc-functions.md:986	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01451	procedure	apoc.merge.node	docs/features/apoc-functions.md:973	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01452	procedure	apoc.merge.relationship	docs/features/apoc-functions.md:980	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01453	procedure	apoc.meta.nodeTypeProperties	docs/features/apoc-functions.md:1003	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01454	procedure	apoc.meta.schema	docs/features/apoc-functions.md:993	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01455	procedure	apoc.meta.stats	docs/features/apoc-functions.md:998	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01457	procedure	apoc.ml.cosineSimilarity	docs/project-details.md:341	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01458	procedure	apoc.ml.relu	docs/features/apoc-functions.md:612	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01459	procedure	apoc.ml.sigmoid	docs/project-details.md:340	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01460	procedure	apoc.myplugin.double	docs/user-guides/plugin-system.md:152	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01461	procedure	apoc.myplugin.hello	docs/user-guides/plugin-system.md:146	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01462	procedure	apoc.neighbors.atHop	docs/features/apoc-functions.md:1013	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01463	procedure	apoc.neighbors.bfs	docs/features/apoc-functions.md:1021	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01469	procedure	apoc.nodes.filter	docs/features/apoc-functions.md:1044	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01470	procedure	apoc.nodes.group	docs/features/apoc-functions.md:1039	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01471	procedure	apoc.nodes.link	docs/features/apoc-functions.md:1032	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01472	procedure	apoc.number.arabize	docs/features/apoc-functions.md:1058	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01473	procedure	apoc.number.format	docs/features/apoc-functions.md:1053	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01474	procedure	apoc.number.fromHex	docs/features/apoc-functions.md:1062	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01475	procedure	apoc.number.romanize	docs/features/apoc-functions.md:1057	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01476	procedure	apoc.number.toBinary	docs/features/apoc-functions.md:1063	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01477	procedure	apoc.number.toHex	docs/features/apoc-functions.md:1061	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01484	procedure	apoc.paths.all	docs/features/apoc-functions.md:1071	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01485	procedure	apoc.paths.disjoint	docs/features/apoc-functions.md:1082	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01486	procedure	apoc.paths.kShortest	docs/features/apoc-functions.md:1077	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01489	procedure	apoc.periodic.schedule	docs/features/apoc-functions.md:1098	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01490	procedure	apoc.refactor.cloneSubgraph	docs/features/apoc-functions.md:1143	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01491	procedure	apoc.refactor.mergeNodes	docs/features/apoc-functions.md:1136	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01492	procedure	apoc.refactor.normalize	docs/features/apoc-functions.md:1149	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01493	procedure	apoc.rel.clone	docs/features/apoc-functions.md:1162	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01494	procedure	apoc.rel.properties	docs/features/apoc-functions.md:1157	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01496	procedure	apoc.rel.weight	docs/features/apoc-functions.md:1168	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01497	procedure	apoc.schema.constraint.create	docs/features/apoc-functions.md:1178	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01498	procedure	apoc.schema.index.create	docs/features/apoc-functions.md:1175	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01499	procedure	apoc.schema.node.indexes	docs/features/apoc-functions.md:1181	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01500	procedure	apoc.schema.validate	docs/features/apoc-functions.md:1186	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01501	procedure	apoc.scoring.cosine	docs/features/apoc-functions.md:1195	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01502	procedure	apoc.scoring.jaccard	docs/features/apoc-functions.md:1198	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01503	procedure	apoc.scoring.pearson	docs/features/apoc-functions.md:1204	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01504	procedure	apoc.scoring.tfidf	docs/features/apoc-functions.md:1201	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01505	procedure	apoc.search.autocomplete	docs/features/apoc-functions.md:1226	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01506	procedure	apoc.search.fullText	docs/features/apoc-functions.md:1211	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01507	procedure	apoc.search.fuzzy	docs/features/apoc-functions.md:1216	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01508	procedure	apoc.search.multiSearchAny	docs/features/apoc-functions.md:1231	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01509	procedure	apoc.search.regex	docs/features/apoc-functions.md:1221	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01510	procedure	apoc.spatial.distance	docs/features/apoc-functions.md:1242	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01511	procedure	apoc.spatial.haversineDistance	docs/user-guides/plugin-system.md:40	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01512	procedure	apoc.spatial.kNearest	docs/features/apoc-functions.md:1248	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01513	procedure	apoc.spatial.within	docs/features/apoc-functions.md:1251	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01514	procedure	apoc.stats.correlation	docs/features/apoc-functions.md:1268	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01515	procedure	apoc.stats.mean	docs/features/apoc-functions.md:1262	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01516	procedure	apoc.stats.median	docs/features/apoc-functions.md:1263	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01517	procedure	apoc.stats.percentile	docs/features/apoc-functions.md:1272	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01518	procedure	apoc.stats.stdDev	docs/features/apoc-functions.md:1264	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01519	procedure	apoc.temporal.add	docs/features/apoc-functions.md:1285	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01520	procedure	apoc.temporal.age	docs/features/apoc-functions.md:1290	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01522	procedure	apoc.temporal.parse	docs/features/apoc-functions.md:1282	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01523	procedure	apoc.temporal.subtract	docs/features/apoc-functions.md:1286	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01524	procedure	apoc.temporal.timezone	docs/features/apoc-functions.md:1293	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01525	procedure	apoc.text.camelCase	docs/project-details.md:336	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01526	procedure	apoc.text.capitalize	docs/features/apoc-functions.md:713	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01527	procedure	apoc.text.distance	docs/features/apoc-functions.md:718	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01528	procedure	apoc.text.hammingDistance	docs/features/apoc-functions.md:720	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01529	procedure	apoc.text.jaroWinklerDistance	docs/features/apoc-functions.md:719	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01531	procedure	apoc.text.levenshteinDistance	docs/user-guides/plugin-system.md:29	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01532	procedure	apoc.text.phonetic	docs/features/apoc-functions.md:723	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01533	procedure	apoc.text.replace	docs/features/apoc-functions.md:710	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01534	procedure	apoc.text.slugify	docs/project-details.md:337	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01535	procedure	apoc.text.snakeCase	docs/features/apoc-functions.md:715	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01536	procedure	apoc.text.split	docs/features/apoc-functions.md:709	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01537	procedure	apoc.trigger.add	docs/features/apoc-functions.md:1300	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01538	procedure	apoc.trigger.list	docs/features/apoc-functions.md:1306	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01539	procedure	apoc.trigger.pause	docs/features/apoc-functions.md:1311	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01540	procedure	apoc.trigger.remove	docs/features/apoc-functions.md:1315	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01541	procedure	apoc.trigger.resume	docs/features/apoc-functions.md:1312	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01545	procedure	apoc.warmup.indexes	docs/features/apoc-functions.md:1330	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01546	procedure	apoc.warmup.nodes	docs/features/apoc-functions.md:1327	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01547	procedure	apoc.warmup.run	docs/features/apoc-functions.md:1322	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01548	procedure	apoc.warmup.subgraph	docs/features/apoc-functions.md:1334	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01549	procedure	apoc.xml.parse	docs/features/apoc-functions.md:1342	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01550	procedure	apoc.xml.query	docs/features/apoc-functions.md:1346	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01551	procedure	apoc.xml.toJson	docs/features/apoc-functions.md:1350	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01552	procedure	custom.reach	docs/features/stored-procedure-parity.md:68	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01553	procedure	db.AnonymizeUserData	docs/compliance/gdpr-compliance.md:144	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01554	procedure	db.Backup	docs/operations/backup-restore.md:30	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01555	procedure	db.ChunkQuery	docs/architecture/query-embedder-readiness.md:42	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01556	procedure	db.Close	docs/development/embedding.md:43	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01557	procedure	db.CreateNode	docs/features/vector-embeddings.md:148	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01558	procedure	db.CreateNodes	docs/features/vector-embeddings.md:366	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01559	procedure	db.EmbedQuery	docs/architecture/query-embedder-readiness.md:46	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01560	procedure	db.EmbeddingQueueStatus	docs/features/vector-embeddings.md:171	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01561	procedure	db.ExecuteCypher	docs/development/embedding.md:47	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01562	procedure	db.FindSimilar	docs/features/vector-embeddings.md:298	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01563	procedure	db.GetBaseStorageForManager	docs/development/catalog-context-api.md:10	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01564	procedure	db.GetCypherExecutor	docs/architecture/query-embedder-readiness.md:12	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01565	procedure	db.GetStorage	docs/architecture/query-embedder-readiness.md:13	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01566	procedure	db.HybridSearch	docs/features/gpu-acceleration.md:162	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01567	procedure	db.LifetimeContext	docs/development/catalog-context-api.md:10	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01568	procedure	db.Open	docs/observability/knowledge-policy-metrics.md:178	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01569	procedure	db.PruneMVCCVersions	docs/user-guides/historical-reads-mvcc-retention.md:247	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01570	procedure	db.QueryEmbeddingForDB	docs/architecture/query-embedder-readiness.md:26	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01571	procedure	db.RebuildMVCCHeads	docs/user-guides/historical-reads-mvcc-retention.md:269	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01572	procedure	db.RecordConsent	docs/compliance/gdpr-compliance.md:155	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01573	procedure	db.Restore	docs/compliance/soc2-compliance.md:149	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01574	procedure	db.Search	docs/getting-started/installation.md:131	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01575	procedure	db.SetSearchReranker	docs/features/cross-encoder-reranking.md:198	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01576	procedure	db.UpdateNodeEmbedding	docs/user-guides/vector-search.md:354	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01577	procedure	db.WithQueryEmbeddingSnapshot	docs/architecture/query-embedder-readiness.md:41	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01604	procedure	db.nornic.config.set	docs/advanced/embeddings/voyage-ai.md:153	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01636	procedure	gds.linkPrediction	docs/features/auto-tlp.md:335	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01662	procedure	nornic.touchUser	docs/features/stored-procedure-parity.md:112	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01663	procedure	nornicdb.DefaultConfig	docs/compliance/encryption.md:45	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01664	procedure	nornicdb.LoadPluginsFromDir	docs/development/plugin-host-metadata-api.md:11	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01665	procedure	nornicdb.Open	docs/compliance/encryption.md:49	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01666	procedure	nornicdb.explainScore	docs/observability/knowledge-policy-metrics.md:231	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01667	procedure	temporal.epoch	docs/neo4j-migration/cypher-compatibility.md:59	documented procedure or function is not registered in the default configuration	{}
+i20261121050244-35624-60dc	H9-01672	endpoint	DELETE /nornicdb/gdpr/	docs/compliance/rbac.md:453	documented endpoint is not routed	{"requested": "DELETE /nornicdb/gdpr/", "status": 404}
+i20261121050244-35624-60dc	H9-01673	endpoint	GET /admin/	docs/compliance/rbac.md:454	documented endpoint is not routed	{"requested": "GET /admin/", "status": 404}
+i20261121050244-35624-60dc	H9-01688	endpoint	GET /db/tenant_a/stats	docs/architecture/multi-db-implementation-spec.md:209	documented endpoint is not routed	{"requested": "GET /db/tenant_a/stats", "status": 404}
+i20261121050244-35624-60dc	H9-01690	endpoint	GET /gdpr/export	docs/api-reference/openapi.md:128	documented endpoint is not routed	{"requested": "GET /gdpr/export", "status": 405}
+i20261121050244-35624-60dc	H9-01694	endpoint	GET /mvcc/prune	docs/user-guides/mvcc-lifecycle-admin-api.md:384	documented endpoint is not routed	{"requested": "GET /mvcc/prune", "status": 404}
+i20261121050244-35624-60dc	H9-01697	endpoint	GET /nornicdb/health	docs/skills/cypher-queries.skill.md:612	documented endpoint is not routed	{"requested": "GET /nornicdb/health", "status": 404}
+i20261121050244-35624-60dc	H9-01710	endpoint	POST /db/<db>/tx/<id>	docs/operations/transaction-memory-limits.md:250	documented endpoint is not routed	{"requested": "POST /db/nornic/tx/nornic", "status": 404}
+i20261121050244-35624-60dc	H9-01719	endpoint	POST /mvcc/prune	docs/user-guides/mvcc-lifecycle-admin-api.md:372	documented endpoint is not routed	{"requested": "POST /mvcc/prune", "status": 404}
+i20261121050244-35624-60dc	H9-01727	endpoint	POST /nornicdb/similar	docs/api-reference/openapi.md:100	documented endpoint is not routed	{"requested": "POST /nornicdb/similar", "status": 404}

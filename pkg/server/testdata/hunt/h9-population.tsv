@@ -1,0 +1,1907 @@
+item	kind	name	first_mention	mentions	text
+H9-00001	changelog	1.5.0#1001	CHANGELOG.md:1001	1	- Install Windows llama DLLs with the pinned yzma module and llama version,
+H9-00002	changelog	1.5.0#1003	CHANGELOG.md:1003	1	- Build reusable CUDA llama archives without host-native CPU instructions.
+H9-00003	changelog	1.5.0#1004	CHANGELOG.md:1004	1	- Distinguish invalid WAL directory paths from absent WAL data on Windows.
+H9-00004	changelog	1.5.0#1005	CHANGELOG.md:1005	1	- Use device pointer mode for CUDA vector norms and wide coordinate offsets.
+H9-00005	changelog	1.5.0#1006	CHANGELOG.md:1006	1	- Keep Vulkan push-constant data alive across the native binding and Go stack
+H9-00006	changelog	1.5.0#1009	CHANGELOG.md:1009	1	- Read pooled sequence embeddings through the Windows yzma adapter so BGE-M3
+H9-00007	changelog	1.5.0#1011	CHANGELOG.md:1011	1	- Resolve HNSW construction coordinates from its supplied file store when
+H9-00008	changelog	1.5.0#1014	CHANGELOG.md:1014	1	- Run Windows build GPU detection from a PowerShell file so shell expansion
+H9-00009	changelog	1.5.0#1016	CHANGELOG.md:1016	1	- Drain rejected GraphQL WebSocket messages within the transport limits before
+H9-00010	changelog	1.5.0#1018	CHANGELOG.md:1018	1	- Isolate evaluation file-error fixtures and restrict native Go plugin and
+H9-00011	changelog	1.5.0#1020	CHANGELOG.md:1020	1	- Recognize native Windows drive paths as local APOC files. Parameterize file
+H9-00012	changelog	1.5.0#1023	CHANGELOG.md:1023	1	- Make deferred-log outcome tests independent of clock resolution, calibrate
+H9-00013	changelog	1.5.0#1026	CHANGELOG.md:1026	1	- Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch, including properties on relationships inside paths. Named-zone parameters share the temporal constructor's DST
+H9-00014	changelog	1.5.0#1028	CHANGELOG.md:1028	1	- Concurrent identical `MERGE` statements on a uniquely constrained key now all succeed when they write the node they match (`ON MATCH SET`, or a later `SET`/`REMOVE`/`DELETE` of it), as in Neo4j: a l
+H9-00015	changelog	1.5.0#1029	CHANGELOG.md:1029	1	- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
+H9-00016	changelog	1.5.0#1030	CHANGELOG.md:1030	1	- Preserve node properties and source metadata in retrieval procedure rows, graph
+H9-00017	changelog	1.5.0#1032	CHANGELOG.md:1032	1	- Evaluate EXISTS, COUNT and COLLECT subqueries through one expression owner in every clause. Preserve statement context for NOT EXISTS and reuse the cached indexed lookup for correlated predicates wi
+H9-00018	changelog	1.5.0#1033	CHANGELOG.md:1033	1	- Share retained statement syntax, bound variable scopes and ordered result
+H9-00019	changelog	1.5.0#1039	CHANGELOG.md:1039	1	- Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow al
+H9-00020	changelog	1.5.0#1040	CHANGELOG.md:1040	1	- Preserve property names when buffered WAL records are replayed after snapshot
+H9-00021	changelog	1.5.0#105	CHANGELOG.md:105	1	- Temporal epochs support a null start (unbounded past) or null end (unbounded
+H9-00022	changelog	1.5.0#1060	CHANGELOG.md:1060	1	- Configure sampler recovery spacing and unleased rearm with positive-millisecond
+H9-00023	changelog	1.5.0#1064	CHANGELOG.md:1064	1	- Snapshot transaction-pool ceilings for each statement so hot reload applies
+H9-00024	changelog	1.5.0#1067	CHANGELOG.md:1067	1	- Preserve serving databases' process-wide transaction-memory settings when a
+H9-00025	changelog	1.5.0#1070	CHANGELOG.md:1070	1	- Bound upgraded GraphQL WebSocket messages by available application-policy
+H9-00026	changelog	1.5.0#1076	CHANGELOG.md:1076	1	- Admit Bolt client payloads while accumulating chunks and before decoding, and
+H9-00027	changelog	1.5.0#1087	CHANGELOG.md:1087	1	- Rearm application memory reclamation after 30 seconds without a released lease,
+H9-00028	changelog	1.5.0#1090	CHANGELOG.md:1090	1	- Preserve local variable bindings inside correlated subqueries in quantified
+H9-00029	changelog	1.5.0#1092	CHANGELOG.md:1092	1	- Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
+H9-00030	changelog	1.5.0#1093	CHANGELOG.md:1093	1	- Match Neo4j 5.26/APOC pair-list coercion, map keys and argument errors across embedded, HTTP and Bolt queries.
+H9-00031	changelog	1.5.0#1094	CHANGELOG.md:1094	1	- Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.
+H9-00032	changelog	1.5.0#1095	CHANGELOG.md:1095	1	- Reuse bound nodes in MATCH before discovering candidates, preserving bounded WITH/MATCH streaming and avoiding unnecessary scans.
+H9-00033	changelog	1.5.0#1097	CHANGELOG.md:1097	1	- Recover application memory admission after rejected queries leave idle Go heap
+H9-00034	changelog	1.5.0#1103	CHANGELOG.md:1103	1	- `recall-bench ingest` enables embedding when an embedding provider is set and
+H9-00035	changelog	1.5.0#1109	CHANGELOG.md:1109	1	- Preserve issued search continuation qids when page production is canceled or
+H9-00036	changelog	1.5.0#111	CHANGELOG.md:111	1	- Temporal no-overlap constraints accept the epoch spelling
+H9-00037	changelog	1.5.0#1113	CHANGELOG.md:1113	1	- Preserve typed-list parameters and stored list properties across collection
+H9-00038	changelog	1.5.0#1116	CHANGELOG.md:1116	1	- Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
+H9-00039	changelog	1.5.0#1119	CHANGELOG.md:1119	1	- Register existing quantization localization IDs in the typed catalog and repair
+H9-00040	changelog	1.5.0#1122	CHANGELOG.md:1122	1	- Restore the list-index error source catalogs and existing translations so
+H9-00041	changelog	1.5.0#1125	CHANGELOG.md:1125	1	- macOS installer/settings: preserve provider/startup configuration, replace old executable payloads safely, enforce one tray instance, and review existing settings after install. Configure independen
+H9-00042	changelog	1.5.0#1127	CHANGELOG.md:1127	1	- Avoid allocating and filling an unused predicate scope for streaming WITH
+H9-00043	changelog	1.5.0#1130	CHANGELOG.md:1130	1	- Reuse recovery encoding buffers across snapshot frames and WAL appends without changing their formats.
+H9-00044	changelog	1.5.0#1132	CHANGELOG.md:1132	1	- Bound slow-query log redaction to avoid parsing large statements, reuse
+H9-00045	changelog	1.5.0#1134	CHANGELOG.md:1134	1	- Share syntax-verdict and upper-cased statement caches with Bolt and HTTP
+H9-00046	changelog	1.5.0#1140	CHANGELOG.md:1140	1	- Find cgroup memory limits through mountinfo roots and namespaces, including
+H9-00047	changelog	1.5.0#1142	CHANGELOG.md:1142	1	- Derive the Go soft memory limit from the container's cgroup limit by default,
+H9-00048	changelog	1.5.0#1144	CHANGELOG.md:1144	1	- Own embedding providers through initialization, foreground/background use and
+H9-00049	changelog	1.5.0#1147	CHANGELOG.md:1147	1	- Bound aggregate ANTLR prediction generations with an exactly counted ledger,
+H9-00050	changelog	1.5.0#1150	CHANGELOG.md:1150	1	- Preserve the prompt wire format for custom legacy Ollama endpoints during batching and use array input for scalar calls to modern /api/embed endpoints.
+H9-00051	changelog	1.5.0#1152	CHANGELOG.md:1152	1	- Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
+H9-00052	changelog	1.5.0#1153	CHANGELOG.md:1153	1	- Parse transactional CALL batch clauses structurally and share static size/context admission between execution and EXPLAIN.
+H9-00053	changelog	1.5.0#1156	CHANGELOG.md:1156	1	- Use canonical temporal equality for APOC collection membership and set operations, including typed Go parameters and temporal values nested in lists and maps.
+H9-00054	changelog	1.5.0#1157	CHANGELOG.md:1157	1	- Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
+H9-00055	changelog	1.5.0#1160	CHANGELOG.md:1160	1	- Reuse pending embedding candidates between active claims so deleted index markers are not traversed again for every document. Durable markers and atomic storage writes remain authoritative across re
+H9-00056	changelog	1.5.0#1161	CHANGELOG.md:1161	1	- Keep a node findable by its indexed key while a concurrent write publishes it.
+H9-00057	changelog	1.5.0#1169	CHANGELOG.md:1169	1	- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+H9-00058	changelog	1.5.0#1172	CHANGELOG.md:1172	1	- Enforce database node, relationship, byte and write-rate quotas when committing
+H9-00059	changelog	1.5.0#1181	CHANGELOG.md:1181	1	- Reject unfinished comments consistently before HTTP, Bolt and native execution; preserve comment-aware CYPHER options, EXPLAIN schemas and PROFILE FINISH completion through re-entry.
+H9-00060	changelog	1.5.0#1185	CHANGELOG.md:1185	1	- Optional local code-intelligence Git hooks: block staged reuse/refactor findings, refresh the
+H9-00061	changelog	1.5.0#1191	CHANGELOG.md:1191	1	- Default application HNSW traversal to scalar int8 with original-vector rescoring;
+H9-00062	changelog	1.5.0#1193	CHANGELOG.md:1193	1	- Add HNSW scalar int8, product (4×–64×), and binary coordinate compression
+H9-00063	changelog	1.5.0#1201	CHANGELOG.md:1201	1	- Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
+H9-00064	changelog	1.5.0#1203	CHANGELOG.md:1203	1	- Treat CALL (*) as a scope clause and keep imported variable types, including aggregate imports, in static validation.
+H9-00065	changelog	1.5.0#1206	CHANGELOG.md:1206	1	- Use store-owned read-only mappings for file-backed query rescoring and final
+H9-00066	changelog	1.5.0#121	CHANGELOG.md:121	1	- Go USE/clause preparation scanners now require operation contexts and explicit
+H9-00067	changelog	1.5.0#1211	CHANGELOG.md:1211	1	- Separate cached search responses by effective quantization ignore/rescore/oversampling
+H9-00068	changelog	1.5.0#1216	CHANGELOG.md:1216	1	- Build IVF-HNSW graphs for every nonempty cluster, retire minimum-size/maximum-count
+H9-00069	changelog	1.5.0#1218	CHANGELOG.md:1218	1	- Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
+H9-00070	changelog	1.5.0#1221	CHANGELOG.md:1221	1	- Resolve named/property/chunk lexical HNSW seeds using indexed identities while preserving
+H9-00071	changelog	1.5.0#1227	CHANGELOG.md:1227	1	- Honor the configured logger for unary/streaming gRPC request completion: successful requests log at debug,
+H9-00072	changelog	1.5.0#1230	CHANGELOG.md:1230	1	- Accelerate ARM64 CPU dot-product scoring with independent NEON fused multiply-add accumulators,
+H9-00073	changelog	1.5.0#1233	CHANGELOG.md:1233	1	- Admit managed model-space chunks before dimension validation and restrict persisted exact queries to admitted
+H9-00074	changelog	1.5.0#1238	CHANGELOG.md:1238	1	- Preserve global IVF-HNSW candidate budgets when nearest neighbours concentrate in one cluster, and retain lexical
+H9-00075	changelog	1.5.0#1241	CHANGELOG.md:1241	1	- Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
+H9-00076	changelog	1.5.0#1244	CHANGELOG.md:1244	1	- Delete Qdrant storage before final shared-index removal, so population cannot restore a point while its durable
+H9-00077	changelog	1.5.0#1246	CHANGELOG.md:1246	1	- Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
+H9-00078	changelog	1.5.0#1247	CHANGELOG.md:1247	1	- Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
+H9-00079	changelog	1.5.0#125	CHANGELOG.md:125	1	- Go `search.SearchOptions.Where` and `RelationshipWhere` filters now receive
+H9-00080	changelog	1.5.0#1250	CHANGELOG.md:1250	1	- Recreate the cluster backend when an unfixed collection adopts a new vector dimension, retaining its k-means policy.
+H9-00081	changelog	1.5.0#1251	CHANGELOG.md:1251	1	- Support `--gpu-backend cpu` / `NORNICDB_GPU_BACKEND=cpu` to disable all GPU-manager paths, including clustering.
+H9-00082	changelog	1.5.0#1252	CHANGELOG.md:1252	1	- Replace a full HNSW result beam's worst heap member with one sift rather than a push/pop pair.
+H9-00083	changelog	1.5.0#1254	CHANGELOG.md:1254	1	- Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
+H9-00084	changelog	1.5.0#1259	CHANGELOG.md:1259	1	- Rebuild a search index from storage with the dimension of the first stored vector, not of the first stored node, when
+H9-00085	changelog	1.5.0#1262	CHANGELOG.md:1262	1	- Drop a Qdrant collection's search index with the collection, as Cypher's `DROP DATABASE` does.
+H9-00086	changelog	1.5.0#1263	CHANGELOG.md:1263	1	- Fix the GPU-assisted HNSW build (on by default on macOS) building a poor graph: on 88k 1024-d vectors recall@10 fell
+H9-00087	changelog	1.5.0#1270	CHANGELOG.md:1270	1	- Use resident inserted vectors for native GPU HNSW construction. Metal scores its contiguous buffer with Metal
+H9-00088	changelog	1.5.0#1274	CHANGELOG.md:1274	1	- Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
+H9-00089	changelog	1.5.0#1276	CHANGELOG.md:1276	1	- Keep exact-search results in a bounded heap and score in parallel instead of sorting the complete scored population.
+H9-00090	changelog	1.5.0#1277	CHANGELOG.md:1277	1	- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200. This reduces
+H9-00091	changelog	1.5.0#1279	CHANGELOG.md:1279	1	- Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
+H9-00092	changelog	1.5.0#1281	CHANGELOG.md:1281	1	- Cluster a database with k-means soon after a bulk load finishes instead of at the next
+H9-00093	changelog	1.5.0#1285	CHANGELOG.md:1285	1	- Build the GPU brute-force copy of the vectors only when a search first chooses GPU brute force. Attaching the GPU
+H9-00094	changelog	1.5.0#1288	CHANGELOG.md:1288	1	- Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
+H9-00095	changelog	1.5.0#1290	CHANGELOG.md:1290	1	- Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
+H9-00096	changelog	1.5.0#1294	CHANGELOG.md:1294	1	- A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
+H9-00097	changelog	1.5.0#130	CHANGELOG.md:130	1	- Go search integrations now install `CrossEncoder` through `Service.SetReranker`.
+H9-00098	changelog	1.5.0#136	CHANGELOG.md:136	1	- Enforce Bolt read requests across transaction statements and dynamically executed queries while allowing nested reads and EXPLAIN.
+H9-00099	changelog	1.5.0#137	CHANGELOG.md:137	1	- Preserve quoted property chains, quoted schema names and mixed map-projection selectors; reject malformed maps before execution rewrites.
+H9-00100	changelog	1.5.0#138	CHANGELOG.md:138	1	- Report MVCC lifecycle startup as enabled only when retention actually enables it.
+H9-00101	changelog	1.5.0#140	CHANGELOG.md:140	1	- Historical WAL upgrades stage every converted file before publishing their
+H9-00102	changelog	1.5.0#144	CHANGELOG.md:144	1	- Clustered entity writes that exceed replication journal capacity are rejected
+H9-00103	changelog	1.5.0#148	CHANGELOG.md:148	1	- Embedded Cypher transactions now retain their WAL publication owner when
+H9-00104	changelog	1.5.0#153	CHANGELOG.md:153	1	- Two or more concurrent journal writers (client transactions, write-behind
+H9-00105	changelog	1.5.0#163	CHANGELOG.md:163	1	- An HTTP transaction canceled before commit admission returns a structured
+H9-00106	changelog	1.5.0#166	CHANGELOG.md:166	1	- Upgrading an old WAL now preserves the complete record prefix when the
+H9-00107	changelog	1.5.0#171	CHANGELOG.md:171	1	- Relationship uniqueness indexes preserve distinct escaped UTF-16 property names, preventing a duplicate value from bypassing its constraint in a native transaction. Existing stored data and storage 
+H9-00108	changelog	1.5.0#173	CHANGELOG.md:173	1	- A store rebuilt at start from its latest snapshot and the journal
+H9-00109	changelog	1.5.0#193	CHANGELOG.md:193	1	- A single-node server commits a transaction whose journal record is larger
+H9-00110	changelog	1.5.0#207	CHANGELOG.md:207	1	- Collection/document traversals consider candidate and adjacency work before
+H9-00111	changelog	1.5.0#211	CHANGELOG.md:211	1	- A labelled pattern with an unindexed property in braces that returns
+H9-00112	changelog	1.5.0#215	CHANGELOG.md:215	1	- `n.has_embedding` no longer reads false through a label scan for a node
+H9-00113	changelog	1.5.0#221	CHANGELOG.md:221	1	- A statement that looks a node up by a property once per row without an
+H9-00114	changelog	1.5.0#23	CHANGELOG.md:23	1	- Keep cycle-safe result inspection allocation-free for scalar and shallow results.
+H9-00115	changelog	1.5.0#236	CHANGELOG.md:236	1	- A match that runs once per row, such as a correlated
+H9-00116	changelog	1.5.0#243	CHANGELOG.md:243	1	- Long Cypher statements no longer take seconds to read. The first run of a
+H9-00117	changelog	1.5.0#25	CHANGELOG.md:25	1	- Preserve local bindings in CALL UNION branches after nested CALLs.
+H9-00118	changelog	1.5.0#264	CHANGELOG.md:264	1	- Concurrent Cypher writers of an existing node or relationship wait for the
+H9-00119	changelog	1.5.0#27	CHANGELOG.md:27	1	- Restore clean UI dependency installation and consolidate Heimdall prompt construction into `BuildFinalPrompt(PromptMode)`; Go callers/plugins must rebuild.
+H9-00120	changelog	1.5.0#270	CHANGELOG.md:270	1	- Explicit-transaction label and equality reads apply live suppression consistently
+H9-00121	changelog	1.5.0#275	CHANGELOG.md:275	1	- Isolate APOC graph/warmup and Cypher query-cache results from retained state:
+H9-00122	changelog	1.5.0#28	CHANGELOG.md:28	1	- Fix composite-index estimate undercounts when write-behind flushes between committed and pending reads.
+H9-00123	changelog	1.5.0#284	CHANGELOG.md:284	1	- Keep embedding WAL audit records independent of document and vector size.
+H9-00124	changelog	1.5.0#29	CHANGELOG.md:29	1	- Align grouped numeric literal statement classification with execution without changing permission requirements.
+H9-00125	changelog	1.5.0#292	CHANGELOG.md:292	1	- Preserve request/job trace context in WAL read diagnostics. WAL recovery and
+H9-00126	changelog	1.5.0#298	CHANGELOG.md:298	1	- Bound `db.cdc.query`, `db.cdc.current` and `db.cdc.earliest` inside a
+H9-00127	changelog	1.5.0#30	CHANGELOG.md:30	1	- Return declared empty results for successful native procedure handlers that produce no result object.
+H9-00128	changelog	1.5.0#304	CHANGELOG.md:304	1	- Stop MVCC history pruning from holding back new transactions, writes and
+H9-00129	changelog	1.5.0#312	CHANGELOG.md:312	1	- Require exact database identity for qualified textual element IDs in MATCH
+H9-00130	changelog	1.5.0#315	CHANGELOG.md:315	1	- Stop false "changed after transaction start" conflicts on observed relationship
+H9-00131	changelog	1.5.0#32	CHANGELOG.md:32	1	- Return relationship storage read failures from streams and retained search reads instead of silently omitting unreadable records; honor buffered replacements before reading older bodies.
+H9-00132	changelog	1.5.0#322	CHANGELOG.md:322	1	- Keep lightweight CALL-subquery and metadata reads lightweight after full node
+H9-00133	changelog	1.5.0#327	CHANGELOG.md:327	1	- Exclude internal nodes consistently from indexed and bound MATCH rows and
+H9-00134	changelog	1.5.0#33	CHANGELOG.md:33	1	- Keep deferred search refreshes progressing during continuous writes instead of waiting for an idle interval.
+H9-00135	changelog	1.5.0#330	CHANGELOG.md:330	1	- Require every pattern label before filling ordered index pages and evaluating
+H9-00136	changelog	1.5.0#335	CHANGELOG.md:335	1	- Keep accepted replication transactions distinct across databases when Go callers
+H9-00137	changelog	1.5.0#34	CHANGELOG.md:34	1	- Read current relationships for mutation guards and reject invalidated write-owned absence decisions before acceptance.
+H9-00138	changelog	1.5.0#340	CHANGELOG.md:340	1	- Publish vector compaction checkpoints with recoverable payload/ordinal metadata.
+H9-00139	changelog	1.5.0#347	CHANGELOG.md:347	1	- Keep the creation time of a node or relationship that is created and then
+H9-00140	changelog	1.5.0#353	CHANGELOG.md:353	1	- End an idle explicit transaction at once when `TERMINATE TRANSACTIONS`
+H9-00141	changelog	1.5.0#36	CHANGELOG.md:36	1	- Separate temporal-index derivation from its write owners while preserving schema staging and release audit verification.
+H9-00142	changelog	1.5.0#38	CHANGELOG.md:38	1	- Periodic iteration honors configured parameters and returns failed-batch messages instead of empty error maps.
+H9-00143	changelog	1.5.0#386	CHANGELOG.md:386	1	- Bound a MERGE's wait for a uniquely constrained node key that another
+H9-00144	changelog	1.5.0#39	CHANGELOG.md:39	1	- Stop repeated-endpoint traversals once LIMIT is satisfied by qualifying self-loop paths, rather than materializing the whole population.
+H9-00145	changelog	1.5.0#40	CHANGELOG.md:40	1	- Evaluate volatile chained-pattern predicates only on complete paths, including spaced, quoted and plugin function calls.
+H9-00146	changelog	1.5.0#404	CHANGELOG.md:404	1	- Apply the `where` of a ranked `db.retrieve` / `db.rretrieve` continuation on
+H9-00147	changelog	1.5.0#41	CHANGELOG.md:41	1	- Preserve exact 64-bit integer tool arguments in native and prompt-based assistant actions, including nested values, quoted braces and escaped text.
+H9-00148	changelog	1.5.0#415	CHANGELOG.md:415	1	- Preserve quoted dotted property names in constraints and projected reads.
+H9-00149	changelog	1.5.0#42	CHANGELOG.md:42	1	- Projected node streams apply property filters to the same selected map on cold and cached reads.
+H9-00150	changelog	1.5.0#422	CHANGELOG.md:422	1	- Keep CSV export values under their matching property headers by selecting
+H9-00151	changelog	1.5.0#425	CHANGELOG.md:425	1	- Keep other vector indexes working when one is dropped. `DROP INDEX` removed
+H9-00152	changelog	1.5.0#44	CHANGELOG.md:44	1	- Use the normal server storage profile for full CSV import so exported large values remain importable. Explicitly smaller embedded and low-memory capacities are unchanged.
+H9-00153	changelog	1.5.0#446	CHANGELOG.md:446	1	- Reconcile recovered label and relationship-type counts with replayed graph
+H9-00154	changelog	1.5.0#449	CHANGELOG.md:449	1	- Complete APOC calls containing relationship-pattern COLLECT subqueries
+H9-00155	changelog	1.5.0#45	CHANGELOG.md:45	1	- Reduce temporary identity-table allocations when copying large cached query results while preserving detached mutable outputs.
+H9-00156	changelog	1.5.0#452	CHANGELOG.md:452	1	- Preserve recreated node and relationship identities when rebuilding MVCC
+H9-00157	changelog	1.5.0#455	CHANGELOG.md:455	1	- Reject stale relationship property updates under write-behind, including
+H9-00158	changelog	1.5.0#458	CHANGELOG.md:458	1	- Require the existing APOC export capability for Go file exporters and share
+H9-00159	changelog	1.5.0#46	CHANGELOG.md:46	1	- Property-only journal updates reference exact anchored managed vectors instead
+H9-00160	changelog	1.5.0#463	CHANGELOG.md:463	1	- Preserve XML-special characters and Unicode in GraphML export; reject text XML
+H9-00161	changelog	1.5.0#466	CHANGELOG.md:466	1	- Normalize labels by their complete first codepoint, preserving multibyte
+H9-00162	changelog	1.5.0#470	CHANGELOG.md:470	1	- Return the normal syntax error for zero-argument `normalize()` calls instead
+H9-00163	changelog	1.5.0#473	CHANGELOG.md:473	1	- Reject repeated relationship removals when a peer reserved its version before
+H9-00164	changelog	1.5.0#477	CHANGELOG.md:477	1	- Keep composite query parameters separate from same-named imported variables,
+H9-00165	changelog	1.5.0#48	CHANGELOG.md:48	1	- Historical WAL upgrades reconstruct damaged derived keys only when the journal
+H9-00166	changelog	1.5.0#481	CHANGELOG.md:481	1	- Keep CALL import visibility separate from wildcard output membership across
+H9-00167	changelog	1.5.0#486	CHANGELOG.md:486	1	- Preserve user `_pathResult` fields and ordinary map types over Bolt while
+H9-00168	changelog	1.5.0#489	CHANGELOG.md:489	1	- Read comments and quoted names consistently across function calls, indexed
+H9-00169	changelog	1.5.0#495	CHANGELOG.md:495	1	- Report WAL snapshot admission interrupted by shutdown as a closed WAL,
+H9-00170	changelog	1.5.0#499	CHANGELOG.md:499	1	- Preserve quoted relationship type identity in correlated COUNT and EXISTS
+H9-00171	changelog	1.5.0#506	CHANGELOG.md:506	1	- Reject a node cascade when a peer has already deleted one of its staged
+H9-00172	changelog	1.5.0#51	CHANGELOG.md:51	1	- Property updates reuse matching managed embedding sidecars instead of rewriting
+H9-00173	changelog	1.5.0#511	CHANGELOG.md:511	1	- Reduce continued retrieval scratch allocations by reusing the exact-stage
+H9-00174	changelog	1.5.0#515	CHANGELOG.md:515	1	- Consolidate schema DDL readers and transaction property ownership without
+H9-00175	changelog	1.5.0#519	CHANGELOG.md:519	1	- Reject stale write-behind node updates when a peer reserved its version before
+H9-00176	changelog	1.5.0#527	CHANGELOG.md:527	1	- Preserve acknowledged write-behind updates and increments by validating
+H9-00177	changelog	1.5.0#53	CHANGELOG.md:53	1	- Scoped CALL subqueries retain their imported variables inside FOREACH, and
+H9-00178	changelog	1.5.0#532	CHANGELOG.md:532	1	- Reuse bounded complete node snapshots for repeated explicit-transaction reads,
+H9-00179	changelog	1.5.0#536	CHANGELOG.md:536	1	- Align CREATE DATABASE and EXPLAIN CREATE DATABASE with Neo4j's empty result
+H9-00180	changelog	1.5.0#540	CHANGELOG.md:540	1	- Maintain scoped full-text scoring documents between queries instead of rebuilding
+H9-00181	changelog	1.5.0#544	CHANGELOG.md:544	1	- Northwind benchmark seeds now check terminal write results and every generated
+H9-00182	changelog	1.5.0#547	CHANGELOG.md:547	1	- Reuse retained syntax through CALL, projection and iteration readers to avoid
+H9-00183	changelog	1.5.0#550	CHANGELOG.md:550	1	- Filter property-restricted scans before materializing rejected nodes, resolve
+H9-00184	changelog	1.5.0#554	CHANGELOG.md:554	1	- Read-only auto-commit statements whose only `CALL`s are `CALL { }`
+H9-00185	changelog	1.5.0#56	CHANGELOG.md:56	1	- Prepared write-behind commits reserve memory before journal acceptance, so
+H9-00186	changelog	1.5.0#560	CHANGELOG.md:560	1	- Batch Graphify relationship inventory by at most 200 source nodes per request,
+H9-00187	changelog	1.5.0#562	CHANGELOG.md:562	1	- Honor the host's per-database result-cache size and TTL for Bolt, including
+H9-00188	changelog	1.5.0#565	CHANGELOG.md:565	1	- Preserve runtime type errors for duration-plus-property expressions, avoid
+H9-00189	changelog	1.5.0#569	CHANGELOG.md:569	1	- Preserve exact JSON INTEGER values and whole-FLOAT kind through import, public results, remote parameters, export and supported backup/recovery boundaries. Numeric text and typed wire output retain 
+H9-00190	changelog	1.5.0#570	CHANGELOG.md:570	1	- Match equal INTEGER/FLOAT CDC selectors without rounding adjacent large integers; preserve native unsigned event values and observable numeric-kind changes.
+H9-00191	changelog	1.5.0#571	CHANGELOG.md:571	1	- Decode float32 extrema and midpoint decimals at destination precision, avoiding rejected valid values and double rounding.
+H9-00192	changelog	1.5.0#573	CHANGELOG.md:573	1	- Go query metadata and permission readers now require an explicit raw or accepted source stage; see [the source-stage migration guide](docs/development/cypher-source-stage-api.md).
+H9-00193	changelog	1.5.0#574	CHANGELOG.md:574	1	- Require Go 1.27.3 (go.mod, CI, release and Docker builders). Go embedders and
+H9-00194	changelog	1.5.0#582	CHANGELOG.md:582	1	- Add opt-in CUDA and Vulkan HNSW qualification beyond 4 GiB of resident
+H9-00195	changelog	1.5.0#585	CHANGELOG.md:585	1	- Heimdall plugin actions can opt into the public MCP server with `External: true`; combined tool registration retains the first name and logs collisions. Default examples remain internal. Plugins com
+H9-00196	changelog	1.5.0#589	CHANGELOG.md:589	1	- Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
+H9-00197	changelog	1.5.0#59	CHANGELOG.md:59	1	- Native automatic snapshot compaction releases the mutation barrier before file
+H9-00198	changelog	1.5.0#593	CHANGELOG.md:593	1	- Reduce native ingestion allocations by compacting physical cache facts.
+H9-00199	changelog	1.5.0#595	CHANGELOG.md:595	1	- Go grammar consumers now pass an original-source byte offset to
+H9-00200	changelog	1.5.0#598	CHANGELOG.md:598	1	- Reduce per-record MessagePack metadata allocations using private decode state;
+H9-00201	changelog	1.5.0#601	CHANGELOG.md:601	1	- Reduce temporary path, binding and predicate-row allocations while preserving
+H9-00202	changelog	1.5.0#603	CHANGELOG.md:603	1	- Revoke large-commit cache facts once at final publication instead of repeating
+H9-00203	changelog	1.5.0#607	CHANGELOG.md:607	1	- Go callers of `cypher.FormatFloat` now call the canonical `convert.FormatFloat` owner directly. Numeric JSON callers select the property or external-input domain; see [the numeric JSON contract](pkg
+H9-00204	changelog	1.5.0#609	CHANGELOG.md:609	1	- Search candidate serving and local/LLM reranking require the supplied operation
+H9-00205	changelog	1.5.0#61	CHANGELOG.md:61	1	- Admin CSV round trips distinguish absent properties from empty strings and
+H9-00206	changelog	1.5.0#611	CHANGELOG.md:611	1	- Go storage, search, Bolt, Fabric, transaction-session, replication, auth, MCP
+H9-00207	changelog	1.5.0#618	CHANGELOG.md:618	1	- Go parser and MERGE retry classifiers take an explicit operation context;
+H9-00208	changelog	1.5.0#621	CHANGELOG.md:621	1	- Go label-count capabilities receive the caller context through native metadata
+H9-00209	changelog	1.5.0#626	CHANGELOG.md:626	1	- Plugin host configuration uses typed `heimdall.SubsystemHost` metadata;
+H9-00210	changelog	1.5.0#630	CHANGELOG.md:630	1	- Owned shutdowns join the existing completion channel with `WorkLifetime.JoinStopped`; bounded waits retain their caller budgets. See the [lifetime guide](docs/development/work-lifetime.md).
+H9-00211	changelog	1.5.0#632	CHANGELOG.md:632	1	- Composite index and node-key tuple hashes frame each property separately, so
+H9-00212	changelog	1.5.0#636	CHANGELOG.md:636	1	- Embedded Go index discovery, candidate/ordered reads, unique-value, transaction
+H9-00213	changelog	1.5.0#64	CHANGELOG.md:64	1	- Property-index reads keep pending deletions and relabels hidden when an older
+H9-00214	changelog	1.5.0#641	CHANGELOG.md:641	1	- Storage-backed Go APOC helpers use immutable `New(backend)` instances instead
+H9-00215	changelog	1.5.0#647	CHANGELOG.md:647	1	- Retire the graph-free Go `apoc/algo.PageRank` stub and bundled scalar
+H9-00216	changelog	1.5.0#650	CHANGELOG.md:650	1	- Go bulk storage readers and Louvain APIs receive the caller context; bulk
+H9-00217	changelog	1.5.0#654	CHANGELOG.md:654	1	- Both Cypher `apoc.load.binary` and `apoc.load.stream` return serializable
+H9-00218	changelog	1.5.0#658	CHANGELOG.md:658	1	- Registered Go Cypher functions receive an explicit caller context; bundled
+H9-00219	changelog	1.5.0#663	CHANGELOG.md:663	1	- Go write-behind mutations use `Append(BufferedMutation)`; index visibility
+H9-00220	changelog	1.5.0#669	CHANGELOG.md:669	1	- Go full-text and vector index creation use canonical `AddFulltextIndex` and
+H9-00221	changelog	1.5.0#67	CHANGELOG.md:67	1	- Refused WAL records no longer advance snapshot cuts or sealed ranges.
+H9-00222	changelog	1.5.0#674	CHANGELOG.md:674	1	- Go account state changes use `ChangeUserState(username, UserEnable | UserDisable | UserUnlock)` in place of separate enable/disable/unlock methods. User edits share one durable publication and audit
+H9-00223	changelog	1.5.0#676	CHANGELOG.md:676	1	- Go node runtime provenance and flags use `RuntimeMetadata` / `SetRuntimeMetadata`
+H9-00224	changelog	1.5.0#680	CHANGELOG.md:680	1	- Go native transaction schemas use `Schema(SchemaPurpose)` for ordinary DDL or
+H9-00225	changelog	1.5.0#687	CHANGELOG.md:687	1	- Go entity commits use typed preparation, publication and encoding requests.
+H9-00226	changelog	1.5.0#691	CHANGELOG.md:691	1	- Persisted relationship-search vectors use MessagePack with packed float32
+H9-00227	changelog	1.5.0#695	CHANGELOG.md:695	1	- WAL snapshots transcode eligible stored relationship properties through the shared
+H9-00228	changelog	1.5.0#699	CHANGELOG.md:699	1	- Standard Go database creation uses `DatabaseCreateRequest{Name, Options}`.
+H9-00229	changelog	1.5.0#703	CHANGELOG.md:703	1	- Go catalog construction and all catalog mutations now take an explicit context.
+H9-00230	changelog	1.5.0#707	CHANGELOG.md:707	1	- Go access-metadata reads use `ReadAccessMeta(AccessMetaReadRequest)` with
+H9-00231	changelog	1.5.0#71	CHANGELOG.md:71	1	- Rebuild rejected vector populations from their pinned database source instead
+H9-00232	changelog	1.5.0#711	CHANGELOG.md:711	1	- Transaction Go node updates use `UpdateGraphNode(node, policy)` with per-operation
+H9-00233	changelog	1.5.0#717	CHANGELOG.md:717	1	- Go batch WAL replay uses the canonical `ReplayWALEntry` applier and
+H9-00234	changelog	1.5.0#721	CHANGELOG.md:721	1	- Retire low-level raw Cypher, property and legacy batch replication commands;
+H9-00235	changelog	1.5.0#725	CHANGELOG.md:725	1	- Transactional Go node deletion now uses `DeleteGraphNode(id, mode)` with
+H9-00236	changelog	1.5.0#730	CHANGELOG.md:730	1	- Embedded Go query readers now take explicit request contexts, and executor cache
+H9-00237	changelog	1.5.0#734	CHANGELOG.md:734	1	- Update llama.cpp libraries and headers to v0.7.0, the Windows yzma adapter
+H9-00238	changelog	1.5.0#739	CHANGELOG.md:739	1	- Replay protection is always enabled for signed cluster traffic: every message requires a nonce and
+H9-00239	changelog	1.5.0#748	CHANGELOG.md:748	1	- Preserve authoritative wrapper admission and namespace preparation for WAL
+H9-00240	changelog	1.5.0#750	CHANGELOG.md:750	1	- Finish pending-index bookkeeping with its staged write so cancellation cannot
+H9-00241	changelog	1.5.0#752	CHANGELOG.md:752	1	- Retain caller cancellation, values and the existing default timeout through
+H9-00242	changelog	1.5.0#755	CHANGELOG.md:755	1	- Preserve the caller's cancellation error when a `CALL` fragment is read
+H9-00243	changelog	1.5.0#757	CHANGELOG.md:757	1	- Keep acknowledged replay, token persistence and post-durable count updates on
+H9-00244	changelog	1.5.0#759	CHANGELOG.md:759	1	- Preserve transaction-memory inheritance when process defaults change or a
+H9-00245	changelog	1.5.0#76	CHANGELOG.md:76	1	- Reject commits whose physical keys exceed the backend limit before buffered or
+H9-00246	changelog	1.5.0#763	CHANGELOG.md:763	1	- `gds.graph.project` retains request cancellation through node and relationship
+H9-00247	changelog	1.5.0#765	CHANGELOG.md:765	1	- Transaction streams cancel lock reacquisition after a visitor returns, preserve
+H9-00248	changelog	1.5.0#767	CHANGELOG.md:767	1	- Explicit composite transactions see their own staged index drops in
+H9-00249	changelog	1.5.0#773	CHANGELOG.md:773	1	- Snapshot/read-view admission observes caller cancellation while waiting for
+H9-00250	changelog	1.5.0#775	CHANGELOG.md:775	1	- Sorted property-index readers retain their rebuilt key cache through an atomic
+H9-00251	changelog	1.5.0#778	CHANGELOG.md:778	1	- Keep namespace-scoped label reads complete during index rebuilding and retain
+H9-00252	changelog	1.5.0#781	CHANGELOG.md:781	1	- Stop indexed statement preparation on caller cancellation, retain accepted
+H9-00253	changelog	1.5.0#785	CHANGELOG.md:785	1	- Escape CSV export identifiers, relationship types and headers containing
+H9-00254	changelog	1.5.0#787	CHANGELOG.md:787	1	- Stop native bulk and buffered-overlay enumeration when its caller cancels;
+H9-00255	changelog	1.5.0#790	CHANGELOG.md:790	1	- Preserve warm graph caches when an explicit read-only transaction commits;
+H9-00256	changelog	1.5.0#792	CHANGELOG.md:792	1	- Stop materialized candidate scans, projection and stable ordering when the
+H9-00257	changelog	1.5.0#795	CHANGELOG.md:795	1	- Return cancellation instead of panicking when a canceled WITH scope flows
+H9-00258	changelog	1.5.0#797	CHANGELOG.md:797	1	- Apply the configured file/URL capability to bundled scalar APOC loaders and
+H9-00259	changelog	1.5.0#80	CHANGELOG.md:80	1	- Prepared commits reuse transaction-owned after-images rather than copying
+H9-00260	changelog	1.5.0#801	CHANGELOG.md:801	1	- Keep durable cache publication scoped to affected entities, publish final
+H9-00261	changelog	1.5.0#805	CHANGELOG.md:805	1	- Classify concurrent non-key updates as ordinary retryable write conflicts,
+H9-00262	changelog	1.5.0#815	CHANGELOG.md:815	1	- Unify database-info metadata projection and range/vector index creation while
+H9-00263	changelog	1.5.0#818	CHANGELOG.md:818	1	- Preserve canonical parse diagnostics for malformed statements under both parser
+H9-00264	changelog	1.5.0#821	CHANGELOG.md:821	1	- Composite statements claim their sole write database at the first actual
+H9-00265	changelog	1.5.0#829	CHANGELOG.md:829	1	- Share one checked integer owner for APOC math/number GCD and LCM. Return
+H9-00266	changelog	1.5.0#83	CHANGELOG.md:83	1	- Bound-endpoint relationship MERGE prepares its MERGE action mutation targets before deciding
+H9-00267	changelog	1.5.0#840	CHANGELOG.md:840	1	- Preserve ordinary query text in `db.stats.retrieve('QUERIES')` while excluding
+H9-00268	changelog	1.5.0#842	CHANGELOG.md:842	1	- Recheck transaction detachment under the publication lock and detach returned
+H9-00269	changelog	1.5.0#845	CHANGELOG.md:845	1	- Align remote composite database administration across native and ANTLR parsers,
+H9-00270	changelog	1.5.0#849	CHANGELOG.md:849	1	- Preserve named single-node CREATE path bindings and their node labels, properties
+H9-00271	changelog	1.5.0#852	CHANGELOG.md:852	1	- Preserve keyword-shaped ORDER BY operands and comment-separated ORDER BY spans
+H9-00272	changelog	1.5.0#855	CHANGELOG.md:855	1	- Accept whitespace and comment separators between `DETACH` and `DELETE` in
+H9-00273	changelog	1.5.0#858	CHANGELOG.md:858	1	- Read compound keyword spans consistently for OPTIONAL MATCH, DISTINCT,
+H9-00274	changelog	1.5.0#86	CHANGELOG.md:86	1	- Statement cancellation now interrupts materialized ranges, reduce folds and
+H9-00275	changelog	1.5.0#861	CHANGELOG.md:861	1	- Report invalid Fabric CALL scopes before missing parameters; retain parameter
+H9-00276	changelog	1.5.0#864	CHANGELOG.md:864	1	- Qdrant point deletion reports rejected storage mutations instead of returning
+H9-00277	changelog	1.5.0#867	CHANGELOG.md:867	1	- Accept flexible whitespace in CREATE OR REPLACE DATABASE and reject malformed
+H9-00278	changelog	1.5.0#870	CHANGELOG.md:870	1	- Reject malformed database DROP targets and invalid trailing clauses before
+H9-00279	changelog	1.5.0#872	CHANGELOG.md:872	1	- Reduce Unicode lexer-input allocations and repeated Fabric keyword scans.
+H9-00280	changelog	1.5.0#874	CHANGELOG.md:874	1	- Fix recursive graph-component JSON encoding while preserving exact admitted UTF-16 identities through an opt-in decoder policy.
+H9-00281	changelog	1.5.0#876	CHANGELOG.md:876	1	- Encrypt saved remote constituent credentials and resolve runtime identities
+H9-00282	changelog	1.5.0#88	CHANGELOG.md:88	1	- Persist each newly journaled semantic commit's admitted CDC mode so recovery
+H9-00283	changelog	1.5.0#882	CHANGELOG.md:882	1	- Report logical WAL commit and abort record failures from explicit and implicit
+H9-00284	changelog	1.5.0#901	CHANGELOG.md:901	1	- Finish native application of accepted entity commands after transient commit
+H9-00285	changelog	1.5.0#908	CHANGELOG.md:908	1	- Accepted native replay materializes stored timestamp images without stamping
+H9-00286	changelog	1.5.0#91	CHANGELOG.md:91	1	- Load persisted change-capture options before journal replay so recovered
+H9-00287	changelog	1.5.0#917	CHANGELOG.md:917	1	- DROP DATABASE whose intent was accepted but whose acknowledgement failed
+H9-00288	changelog	1.5.0#927	CHANGELOG.md:927	1	- Keep typed relationship counts scoped through WAL, tracing, replication and
+H9-00289	changelog	1.5.0#932	CHANGELOG.md:932	1	- Keep a failed database DROP unavailable until durable cleanup completes, with
+H9-00290	changelog	1.5.0#937	CHANGELOG.md:937	1	- Match APOC word-initial capitalize/decapitalize values, including ASCII-space
+H9-00291	changelog	1.5.0#941	CHANGELOG.md:941	1	- Publish each replication command to the in-memory WAL once; complete transport
+H9-00292	changelog	1.5.0#943	CHANGELOG.md:943	1	- Prevent native node-deletion/relationship lock cycles and retain temporal
+H9-00293	changelog	1.5.0#945	CHANGELOG.md:945	1	- Clearing an absent database configuration succeeds when storage wraps its
+H9-00294	changelog	1.5.0#948	CHANGELOG.md:948	1	- Publish derived storage indexes and caches in commit order for overlapping
+H9-00295	changelog	1.5.0#951	CHANGELOG.md:951	1	- Persist replacement transaction embedding chunks and remove obsolete chunks
+H9-00296	changelog	1.5.0#954	CHANGELOG.md:954	1	- Preserve hidden stored node and relationship identity, quota usage and cascades.
+H9-00297	changelog	1.5.0#959	CHANGELOG.md:959	1	- Preserve public parser RETURN items, aliases and DISTINCT through the shared AST
+H9-00298	changelog	1.5.0#962	CHANGELOG.md:962	1	- Propagate request cancellation through shared query readers, semantic validation,
+H9-00299	changelog	1.5.0#964	CHANGELOG.md:964	1	- Share retained FOREACH bodies and CALL/UNION projection owners while preserving
+H9-00300	changelog	1.5.0#967	CHANGELOG.md:967	1	- Migrate the Go URL validator to `ValidateURL(url, URLPolicy)` with production
+H9-00301	changelog	1.5.0#970	CHANGELOG.md:970	1	- Register WAL recovery, snapshot and replication test databases with the shared
+H9-00302	changelog	1.5.0#972	CHANGELOG.md:972	1	- Keep generated plugin test sources outside repository package discovery.
+H9-00303	changelog	1.5.0#974	CHANGELOG.md:974	1	- Keep configured credentials out of CLI help, startup and configuration errors,
+H9-00304	changelog	1.5.0#978	CHANGELOG.md:978	1	- Keep registered and dynamic procedure writes in the caller's rollback owner,
+H9-00305	changelog	1.5.0#981	CHANGELOG.md:981	1	- Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
+H9-00306	changelog	1.5.0#983	CHANGELOG.md:983	1	- Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports ac
+H9-00307	changelog	1.5.0#985	CHANGELOG.md:985	1	- Keep the compile-time type check of nested list comprehensions, quantifiers and reduce linear in their nesting: each
+H9-00308	changelog	1.5.0#989	CHANGELOG.md:989	1	- Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
+H9-00309	changelog	1.5.0#99	CHANGELOG.md:99	1	- Embedding resets publish committed per-node search refreshes instead of
+H9-00310	changelog	1.5.0#991	CHANGELOG.md:991	1	- Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascade
+H9-00311	changelog	1.5.0#993	CHANGELOG.md:993	1	- Select only usable compiled GPU backends, and close replaced vector-file
+H9-00312	changelog	1.5.0#995	CHANGELOG.md:995	1	- Preserve pre-pin MVCC scan visibility at tied clock timestamps and use the
+H9-00313	changelog	1.5.0#997	CHANGELOG.md:997	1	- Deliver Bolt memory-pressure and HTTP body-limit responses before transport
+H9-00314	changelog	1.5.0#999	CHANGELOG.md:999	1	- Compute AMD64 vector norms with a correctly rounded square root, retaining
+H9-00315	changelog	1.5.1#17	CHANGELOG.md:17	1	- Update the Go build toolchain to 1.27.4 and `golang.org/x/net` to v0.63.0.
+H9-00316	changelog	1.5.1#18	CHANGELOG.md:18	1	- Update klauspost/compress to v1.20.2 to fix a panic reported by the Go vulnerability scanner in the WAL compression dependency.
+H9-00317	changelog	1.5.1#19	CHANGELOG.md:19	1	- Use patched Node.js versions for UI builds, documentation, and CI.
+H9-00318	changelog	Unreleased#11	CHANGELOG.md:11	1	- Preserve transaction cleanup failures alongside BEGIN setup errors.
+H9-00319	option-env	NORNICDB_ACCESS_CONTROL_ENABLED	docs/operations/environment-variables.md:22	1	
+H9-00320	option-env	NORNICDB_ADDRESS	docs/compliance/soc2-compliance.md:137	13	
+H9-00321	option-env	NORNICDB_ALLOW_HTTP	docs/operations/environment-variables.md:24	2	
+H9-00322	option-env	NORNICDB_ALLOW_REMOTE_EVAL	docs/operations/environment-variables.md:25	1	
+H9-00323	option-env	NORNICDB_ANONYMIZATION_ENABLED	docs/operations/environment-variables.md:26	1	
+H9-00324	option-env	NORNICDB_ANONYMIZATION_METHOD	docs/operations/environment-variables.md:27	1	
+H9-00325	option-env	NORNICDB_APOC_	docs/features/apoc-functions.md:1404	2	
+H9-00326	option-env	NORNICDB_APOC_ALGO_ENABLED	docs/features/apoc-functions.md:423	5	
+H9-00327	option-env	NORNICDB_APOC_COLL_ENABLED	docs/features/apoc-functions.md:488	1	
+H9-00328	option-env	NORNICDB_APOC_CREATE_ENABLED	docs/features/apoc-functions.md:492	3	
+H9-00329	option-env	NORNICDB_APOC_MATH_ENABLED	docs/features/apoc-functions.md:490	1	
+H9-00330	option-env	NORNICDB_APOC_SECURITY_ALLOW_DYNAMIC_CREATION	docs/operations/environment-variables.md:30	1	
+H9-00331	option-env	NORNICDB_APOC_SECURITY_ALLOW_EXPORT_FILE_ACCESS	docs/features/apoc-functions.md:496	2	
+H9-00332	option-env	NORNICDB_APOC_SECURITY_ALLOW_FILE_ACCESS	docs/features/apoc-functions.md:1362	2	
+H9-00333	option-env	NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS	docs/features/apoc-functions.md:495	2	
+H9-00334	option-env	NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS	docs/features/apoc-functions.md:497	2	
+H9-00335	option-env	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT	docs/features/apoc-functions.md:498	2	
+H9-00336	option-env	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE	docs/features/apoc-functions.md:499	3	
+H9-00337	option-env	NORNICDB_APOC_TEXT_ENABLED	docs/features/apoc-functions.md:489	1	
+H9-00338	option-env	NORNICDB_ASYNC_FLUSH_INTERVAL	docs/features/feature-flags.md:21	8	
+H9-00339	option-env	NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE	docs/operations/configuration.md:573	2	
+H9-00340	option-env	NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE	docs/operations/configuration.md:572	3	
+H9-00341	option-env	NORNICDB_ASYNC_MAX_OPS	docs/operations/configuration.md:571	7	
+H9-00342	option-env	NORNICDB_ASYNC_WRITES_ENABLED	docs/features/feature-flags.md:20	11	
+H9-00343	option-env	NORNICDB_AUDIT_ENABLED	docs/operations/environment-variables.md:42	1	
+H9-00344	option-env	NORNICDB_AUDIT_LOG_PATH	docs/operations/environment-variables.md:43	1	
+H9-00345	option-env	NORNICDB_AUDIT_RETENTION_DAYS	docs/operations/environment-variables.md:44	1	
+H9-00346	option-env	NORNICDB_AUTH	docs/start.md:16	17	
+H9-00347	option-env	NORNICDB_AUTH_ENABLED	docs/packaging/docker.md:210	1	
+H9-00348	option-env	NORNICDB_AUTH_JWT_SECRET	docs/start.md:17	25	
+H9-00349	option-env	NORNICDB_AUTH_PASSWORD	docs/packaging/docker.md:212	1	
+H9-00350	option-env	NORNICDB_AUTH_PROVIDER	docs/operations/configuration.md:522	2	
+H9-00351	option-env	NORNICDB_AUTH_TOKEN_EXPIRY	docs/operations/environment-variables.md:48	1	
+H9-00352	option-env	NORNICDB_AUTH_USER	docs/packaging/docker.md:211	1	
+H9-00353	option-env	NORNICDB_AUTO_LINKS_ENABLED	docs/operations/configuration.md:250	2	
+H9-00354	option-env	NORNICDB_AUTO_LINKS_THRESHOLD	docs/operations/configuration.md:251	2	
+H9-00355	option-env	NORNICDB_AUTO_RECOVER_ON_CORRUPTION	docs/features/feature-flags.md:17	9	
+H9-00356	option-env	NORNICDB_AUTO_TLP_ENABLED	docs/architecture/cognitive-slm-architecture.md:104	22	
+H9-00357	option-env	NORNICDB_AUTO_TLP_LLM_AUGMENT_ENABLED	docs/architecture/cognitive-slm-architecture.md:106	11	
+H9-00358	option-env	NORNICDB_AUTO_TLP_LLM_QC_ENABLED	docs/architecture/cognitive-slm-architecture.md:102	17	
+H9-00359	option-env	NORNICDB_BADGER_EDGE_TYPE_CACHE_MAX_TYPES	docs/operations/environment-variables.md:55	1	
+H9-00360	option-env	NORNICDB_BADGER_HIGH_PERFORMANCE	docs/operations/low-memory-mode.md:24	1	
+H9-00361	option-env	NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES	docs/operations/environment-variables.md:56	1	
+H9-00362	option-env	NORNICDB_BASE_PATH	docs/operations/environment-variables.md:57	2	
+H9-00363	option-env	NORNICDB_BM25_IDF_MIN_DOC_FREQ	docs/performance/retrieval-recall-benchmark.md:86	1	
+H9-00364	option-env	NORNICDB_BM25_PREFIX_MAX_EXPANSIONS	docs/operations/configuration.md:347	2	
+H9-00365	option-env	NORNICDB_BM25_PREFIX_MIN_LEN	docs/operations/configuration.md:347	2	
+H9-00366	option-env	NORNICDB_BOLT_ADDRESS	docs/operations/environment-variables.md:60	1	
+H9-00367	option-env	NORNICDB_BOLT_AUTH_TIMEOUT	docs/operations/configuration.md:509	3	
+H9-00368	option-env	NORNICDB_BOLT_ENABLED	docs/operations/environment-variables.md:61	5	
+H9-00369	option-env	NORNICDB_BOLT_MAX_CONNECTIONS	docs/operations/configuration.md:501	3	
+H9-00370	option-env	NORNICDB_BOLT_PORT	docs/ai-agents/chat-modes.md:53	8	
+H9-00371	option-env	NORNICDB_BOLT_SERVER_ANNOUNCEMENT	docs/neo4j-migration/cypher-compatibility.md:217	4	
+H9-00372	option-env	NORNICDB_BOLT_SNIFF_TIMEOUT	docs/operations/configuration.md:508	3	
+H9-00373	option-env	NORNICDB_BOLT_STATEMENT_TIMEOUT	docs/operations/configuration.md:510	3	
+H9-00374	option-env	NORNICDB_BOLT_TLS_CERT	docs/operations/configuration.md:503	4	
+H9-00375	option-env	NORNICDB_BOLT_TLS_CLIENT_AUTH_MODE	docs/operations/configuration.md:507	4	
+H9-00376	option-env	NORNICDB_BOLT_TLS_CLIENT_CA	docs/operations/configuration.md:506	3	
+H9-00377	option-env	NORNICDB_BOLT_TLS_ENABLED	docs/compliance/encryption.md:89	8	
+H9-00378	option-env	NORNICDB_BOLT_TLS_KEY	docs/operations/configuration.md:504	3	
+H9-00379	option-env	NORNICDB_BOLT_TLS_REQUIRE	docs/operations/configuration.md:505	5	
+H9-00380	option-env	NORNICDB_BOLT_WEBSOCKET_ALLOWED_ORIGINS	docs/operations/configuration.md:512	3	
+H9-00381	option-env	NORNICDB_BOLT_WEBSOCKET_ENABLED	docs/operations/configuration.md:511	4	
+H9-00382	option-env	NORNICDB_BOLT_WEBSOCKET_MAX_MESSAGE_SIZE	docs/operations/configuration.md:513	3	
+H9-00383	option-env	NORNICDB_BOLT_WEBSOCKET_PING_INTERVAL	docs/operations/configuration.md:515	3	
+H9-00384	option-env	NORNICDB_BOLT_WEBSOCKET_PONG_TIMEOUT	docs/operations/configuration.md:516	3	
+H9-00385	option-env	NORNICDB_BOLT_WEBSOCKET_WRITE_BUFFER_SIZE	docs/operations/configuration.md:514	2	
+H9-00386	option-env	NORNICDB_BREACH_DETECTION_ENABLED	docs/operations/environment-variables.md:80	1	
+H9-00387	option-env	NORNICDB_BREACH_NOTIFY_EMAIL	docs/operations/environment-variables.md:81	1	
+H9-00388	option-env	NORNICDB_BREACH_NOTIFY_WEBHOOK	docs/operations/environment-variables.md:82	1	
+H9-00389	option-env	NORNICDB_CDC_RETENTION	docs/operations/environment-variables.md:401	2	
+H9-00390	option-env	NORNICDB_CENSUS_UPDATE	docs/generated/stored-entity-census.md:3	1	
+H9-00391	option-env	NORNICDB_CLUSTER_	docs/operations/scaling.md:63	1	
+H9-00392	option-env	NORNICDB_CLUSTER_ADVERTISE_ADDR	docs/architecture/replication.md:431	9	
+H9-00393	option-env	NORNICDB_CLUSTER_BIND_ADDR	docs/architecture/replication.md:242	15	
+H9-00394	option-env	NORNICDB_CLUSTER_CONFLICT_STRATEGY	docs/operations/environment-variables.md:85	3	
+H9-00395	option-env	NORNICDB_CLUSTER_CROSS_REGION_BATCH_SIZE	docs/operations/environment-variables.md:86	1	
+H9-00396	option-env	NORNICDB_CLUSTER_CROSS_REGION_BATCH_TIMEOUT	docs/operations/environment-variables.md:87	1	
+H9-00397	option-env	NORNICDB_CLUSTER_CROSS_REGION_MODE	docs/operations/environment-variables.md:88	3	
+H9-00398	option-env	NORNICDB_CLUSTER_DATA_DIR	docs/operations/environment-variables.md:89	3	
+H9-00399	option-env	NORNICDB_CLUSTER_HA_	docs/operations/scaling.md:79	1	
+H9-00400	option-env	NORNICDB_CLUSTER_HA_AUTO_FAILOVER	docs/operations/environment-variables.md:90	6	
+H9-00401	option-env	NORNICDB_CLUSTER_HA_FAILOVER_TIMEOUT	docs/operations/environment-variables.md:91	5	
+H9-00402	option-env	NORNICDB_CLUSTER_HA_HEARTBEAT_MS	docs/operations/environment-variables.md:92	4	
+H9-00403	option-env	NORNICDB_CLUSTER_HA_MAX_RECONNECT_BACKOFF	docs/operations/environment-variables.md:93	1	
+H9-00404	option-env	NORNICDB_CLUSTER_HA_PEER_ADDR	docs/operations/environment-variables.md:94	6	
+H9-00405	option-env	NORNICDB_CLUSTER_HA_RECONNECT_INTERVAL	docs/operations/environment-variables.md:95	1	
+H9-00406	option-env	NORNICDB_CLUSTER_HA_ROLE	docs/operations/environment-variables.md:96	8	
+H9-00407	option-env	NORNICDB_CLUSTER_HA_SYNC_MODE	docs/operations/environment-variables.md:97	8	
+H9-00408	option-env	NORNICDB_CLUSTER_HA_WAL_BATCH_SIZE	docs/operations/environment-variables.md:98	1	
+H9-00409	option-env	NORNICDB_CLUSTER_HA_WAL_BATCH_TIMEOUT	docs/operations/environment-variables.md:99	1	
+H9-00410	option-env	NORNICDB_CLUSTER_MODE	docs/architecture/replication.md:428	18	
+H9-00411	option-env	NORNICDB_CLUSTER_NODE_ID	docs/architecture/replication.md:429	14	
+H9-00412	option-env	NORNICDB_CLUSTER_RAFT_BOOTSTRAP	docs/operations/environment-variables.md:102	11	
+H9-00413	option-env	NORNICDB_CLUSTER_RAFT_CLUSTER_ID	docs/operations/environment-variables.md:103	8	
+H9-00414	option-env	NORNICDB_CLUSTER_RAFT_COMMIT_TIMEOUT	docs/operations/environment-variables.md:104	1	
+H9-00415	option-env	NORNICDB_CLUSTER_RAFT_ELECTION_TIMEOUT	docs/operations/environment-variables.md:105	8	
+H9-00416	option-env	NORNICDB_CLUSTER_RAFT_HEARTBEAT_TIMEOUT	docs/operations/environment-variables.md:106	7	
+H9-00417	option-env	NORNICDB_CLUSTER_RAFT_LEADER_LEASE_TIMEOUT	docs/operations/environment-variables.md:107	1	
+H9-00418	option-env	NORNICDB_CLUSTER_RAFT_MAX_APPEND_ENTRIES	docs/operations/environment-variables.md:108	1	
+H9-00419	option-env	NORNICDB_CLUSTER_RAFT_MAX_INFLIGHT_LOGS	docs/operations/environment-variables.md:109	1	
+H9-00420	option-env	NORNICDB_CLUSTER_RAFT_PEERS	docs/operations/environment-variables.md:110	11	
+H9-00421	option-env	NORNICDB_CLUSTER_RAFT_SNAPSHOT_INTERVAL	docs/operations/environment-variables.md:111	4	
+H9-00422	option-env	NORNICDB_CLUSTER_RAFT_SNAPSHOT_RETAIN	docs/operations/environment-variables.md:112	1	
+H9-00423	option-env	NORNICDB_CLUSTER_RAFT_SNAPSHOT_THRESHOLD	docs/operations/environment-variables.md:113	4	
+H9-00424	option-env	NORNICDB_CLUSTER_RAFT_TRAILING_LOGS	docs/operations/environment-variables.md:114	1	
+H9-00425	option-env	NORNICDB_CLUSTER_READ_CONSISTENCY	docs/operations/environment-variables.md:115	1	
+H9-00426	option-env	NORNICDB_CLUSTER_REGION_ID	docs/operations/environment-variables.md:116	6	
+H9-00427	option-env	NORNICDB_CLUSTER_REMOTE_REGIONS	docs/operations/environment-variables.md:117	6	
+H9-00428	option-env	NORNICDB_CLUSTER_REPLICATION_SECRET	docs/operations/environment-variables.md:118	2	
+H9-00429	option-env	NORNICDB_CLUSTER_TLS_CA_FILE	docs/operations/environment-variables.md:119	3	
+H9-00430	option-env	NORNICDB_CLUSTER_TLS_CERT_FILE	docs/operations/environment-variables.md:120	2	
+H9-00431	option-env	NORNICDB_CLUSTER_TLS_CIPHER_SUITES	docs/operations/environment-variables.md:121	1	
+H9-00432	option-env	NORNICDB_CLUSTER_TLS_ENABLED	docs/operations/environment-variables.md:122	2	
+H9-00433	option-env	NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY	docs/operations/environment-variables.md:123	2	
+H9-00434	option-env	NORNICDB_CLUSTER_TLS_KEY_FILE	docs/operations/environment-variables.md:124	2	
+H9-00435	option-env	NORNICDB_CLUSTER_TLS_MIN_VERSION	docs/operations/environment-variables.md:125	1	
+H9-00436	option-env	NORNICDB_CLUSTER_TLS_SERVER_NAME	docs/operations/environment-variables.md:126	1	
+H9-00437	option-env	NORNICDB_CLUSTER_TLS_VERIFY_CLIENT	docs/operations/environment-variables.md:127	2	
+H9-00438	option-env	NORNICDB_CLUSTER_TRACE_WRITES	docs/operations/environment-variables.md:128	1	
+H9-00439	option-env	NORNICDB_CLUSTER_WRITE_CONSISTENCY	docs/operations/environment-variables.md:129	1	
+H9-00440	option-env	NORNICDB_CONFIG	docs/operations/configuration.md:21	8	
+H9-00441	option-env	NORNICDB_CONSENT_AUDIT_TRAIL	docs/operations/environment-variables.md:131	1	
+H9-00442	option-env	NORNICDB_CONSENT_REQUIRED	docs/operations/environment-variables.md:132	1	
+H9-00443	option-env	NORNICDB_CONSENT_VERSIONING	docs/operations/environment-variables.md:133	1	
+H9-00444	option-env	NORNICDB_COOLDOWN_AUTO_INTEGRATION_ENABLED	docs/features/feature-flags.md:31	5	
+H9-00445	option-env	NORNICDB_COOLDOWN_ENABLED	docs/features/feature-flags.md:13	5	
+H9-00446	option-env	NORNICDB_CORS_ENABLED	docs/operations/environment-variables.md:136	5	
+H9-00447	option-env	NORNICDB_CORS_ORIGINS	docs/operations/environment-variables.md:137	3	
+H9-00448	option-env	NORNICDB_CYPHER_QUERY_NORMALIZATION	docs/neo4j-migration/cypher-compatibility.md:236	2	
+H9-00449	option-env	NORNICDB_CYPHER_VERSION	docs/neo4j-migration/cypher-compatibility.md:12	1	
+H9-00450	option-env	NORNICDB_DATABASE	docs/user-guides/graphify-local.md:5	2	
+H9-00451	option-env	NORNICDB_DATA_ACCESS_ENABLED	docs/operations/environment-variables.md:139	1	
+H9-00452	option-env	NORNICDB_DATA_DIR	docs/ai-agents/chat-modes.md:51	10	
+H9-00453	option-env	NORNICDB_DATA_ERASURE_ENABLED	docs/operations/environment-variables.md:141	1	
+H9-00454	option-env	NORNICDB_DATA_EXPORT_ENABLED	docs/operations/environment-variables.md:142	1	
+H9-00455	option-env	NORNICDB_DEBUG	docs/operations/environment-variables.md:143	1	
+H9-00456	option-env	NORNICDB_DEFAULT_DATABASE	docs/architecture/multi-db-implementation-spec.md:128	7	
+H9-00457	option-env	NORNICDB_DEFAULT_NODE_LABEL	docs/features/memory-decay.md:101	1	
+H9-00458	option-env	NORNICDB_EDGE_DECAY_ENABLED	docs/features/feature-flags.md:30	5	
+H9-00459	option-env	NORNICDB_EDGE_PROVENANCE_AUTO_INTEGRATION_ENABLED	docs/features/feature-flags.md:33	5	
+H9-00460	option-env	NORNICDB_EDGE_PROVENANCE_ENABLED	docs/features/feature-flags.md:12	5	
+H9-00461	option-env	NORNICDB_EMBEDDING_API_KEY	docs/advanced/embeddings/README.md:39	17	
+H9-00462	option-env	NORNICDB_EMBEDDING_API_URL	docs/advanced/embeddings/voyage-ai.md:24	16	
+H9-00463	option-env	NORNICDB_EMBEDDING_ATTENTION_TYPE	docs/advanced/embeddings/local-gguf.md:68	3	
+H9-00464	option-env	NORNICDB_EMBEDDING_CACHE_SIZE	docs/architecture/system-design.md:281	12	
+H9-00465	option-env	NORNICDB_EMBEDDING_CTX_TYPE	docs/advanced/embeddings/local-gguf.md:66	3	
+H9-00466	option-env	NORNICDB_EMBEDDING_DIMENSIONS	docs/release-notes-since-v1.0.11.md:563	20	
+H9-00467	option-env	NORNICDB_EMBEDDING_ENABLED	docs/advanced/embeddings/voyage-ai.md:16	39	
+H9-00468	option-env	NORNICDB_EMBEDDING_ENDPOINT	docs/packaging/docker.md:44	4	
+H9-00469	option-env	NORNICDB_EMBEDDING_FLASH_ATTN	docs/advanced/embeddings/local-gguf.md:69	3	
+H9-00470	option-env	NORNICDB_EMBEDDING_GPU_LAYERS	docs/advanced/embeddings/local-gguf.md:61	11	
+H9-00471	option-env	NORNICDB_EMBEDDING_INCLUDE_LABELS	docs/release-notes-since-v1.0.11.md:234	9	
+H9-00472	option-env	NORNICDB_EMBEDDING_LABELS_EXCLUDE	docs/features/vector-embeddings.md:134	3	
+H9-00473	option-env	NORNICDB_EMBEDDING_LABELS_INCLUDE	docs/features/vector-embeddings.md:133	4	
+H9-00474	option-env	NORNICDB_EMBEDDING_LAZY_MODE	docs/advanced/embeddings/local-gguf.md:70	3	
+H9-00475	option-env	NORNICDB_EMBEDDING_MODE	docs/advanced/embeddings/voyage-ai.md:30	7	
+H9-00476	option-env	NORNICDB_EMBEDDING_MODEL	docs/release-notes-since-v1.0.11.md:562	43	
+H9-00477	option-env	NORNICDB_EMBEDDING_POOLING_TYPE	docs/advanced/embeddings/local-gguf.md:67	3	
+H9-00478	option-env	NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE	docs/release-notes-since-v1.0.11.md:231	8	
+H9-00479	option-env	NORNICDB_EMBEDDING_PROPERTIES_INCLUDE	docs/release-notes-since-v1.0.11.md:228	11	
+H9-00480	option-env	NORNICDB_EMBEDDING_PROVIDER	docs/advanced/embeddings/README.md:30	41	
+H9-00481	option-env	NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_EXCLUDE	docs/operations/environment-variables.md:158	1	
+H9-00482	option-env	NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE	docs/operations/environment-variables.md:159	3	
+H9-00483	option-env	NORNICDB_EMBEDDING_WARMUP_INTERVAL	docs/operations/configuration.md:220	2	
+H9-00484	option-env	NORNICDB_EMBED_BATCH_DELAY	docs/architecture/mvcc-lifecycle-background-work.md:74	4	
+H9-00485	option-env	NORNICDB_EMBED_CHUNK_OVERLAP	docs/advanced/embeddings/voyage-ai.md:45	4	
+H9-00486	option-env	NORNICDB_EMBED_CHUNK_SIZE	docs/architecture/system-design.md:288	3	
+H9-00487	option-env	NORNICDB_EMBED_MAX_RETRIES	docs/architecture/system-design.md:287	3	
+H9-00488	option-env	NORNICDB_EMBED_SCAN_INTERVAL	docs/architecture/mvcc-lifecycle-background-work.md:75	4	
+H9-00489	option-env	NORNICDB_EMBED_TRIGGER_DEBOUNCE	docs/architecture/mvcc-lifecycle-background-work.md:73	3	
+H9-00490	option-env	NORNICDB_EMBED_WORKER_NUM_WORKERS	docs/operations/configuration.md:255	2	
+H9-00491	option-env	NORNICDB_ENCRYPTION_AT_REST	docs/operations/environment-variables.md:174	1	
+H9-00492	option-env	NORNICDB_ENCRYPTION_AUDIT_LOG_PATH	docs/compliance/encryption.md:200	4	
+H9-00493	option-env	NORNICDB_ENCRYPTION_AUDIT_SIGN_EVENTS	docs/encryption/cmek-setup.md:95	2	
+H9-00494	option-env	NORNICDB_ENCRYPTION_AUDIT_SIGN_KEY	docs/encryption/cmek-setup.md:96	3	
+H9-00495	option-env	NORNICDB_ENCRYPTION_AWS_KMS_KEY_ID	docs/encryption/cmek-setup.md:51	2	
+H9-00496	option-env	NORNICDB_ENCRYPTION_AWS_REGION	docs/encryption/cmek-setup.md:50	2	
+H9-00497	option-env	NORNICDB_ENCRYPTION_AZURE_KEY_NAME	docs/operations/environment-variables.md:182	1	
+H9-00498	option-env	NORNICDB_ENCRYPTION_AZURE_VAULT_NAME	docs/operations/environment-variables.md:181	1	
+H9-00499	option-env	NORNICDB_ENCRYPTION_ENABLED	docs/encryption/cmek-setup.md:48	2	
+H9-00500	option-env	NORNICDB_ENCRYPTION_GCP_KEY_NAME	docs/operations/environment-variables.md:186	1	
+H9-00501	option-env	NORNICDB_ENCRYPTION_GCP_KEY_RING	docs/operations/environment-variables.md:185	1	
+H9-00502	option-env	NORNICDB_ENCRYPTION_GCP_LOCATION	docs/operations/environment-variables.md:184	1	
+H9-00503	option-env	NORNICDB_ENCRYPTION_GCP_PROJECT	docs/operations/environment-variables.md:183	1	
+H9-00504	option-env	NORNICDB_ENCRYPTION_IN_TRANSIT	docs/operations/environment-variables.md:192	1	
+H9-00505	option-env	NORNICDB_ENCRYPTION_KEY_PATH	docs/operations/environment-variables.md:193	1	
+H9-00506	option-env	NORNICDB_ENCRYPTION_KEY_URI	docs/operations/environment-variables.md:177	1	
+H9-00507	option-env	NORNICDB_ENCRYPTION_MASTER_KEY	docs/operations/environment-variables.md:178	1	
+H9-00508	option-env	NORNICDB_ENCRYPTION_PASSWORD	docs/architecture/multi-db-architecture.md:166	12	
+H9-00509	option-env	NORNICDB_ENCRYPTION_PROVIDER	docs/compliance/soc2-compliance.md:140	3	
+H9-00510	option-env	NORNICDB_ENCRYPTION_ROTATION_ENABLED	docs/encryption/cmek-setup.md:52	3	
+H9-00511	option-env	NORNICDB_ENCRYPTION_ROTATION_INTERVAL	docs/encryption/cmek-setup.md:53	3	
+H9-00512	option-env	NORNICDB_ENV	docs/operations/environment-variables.md:195	3	
+H9-00513	option-env	NORNICDB_EVIDENCE_AUTO_INTEGRATION_ENABLED	docs/features/feature-flags.md:32	5	
+H9-00514	option-env	NORNICDB_EVIDENCE_BUFFERING_ENABLED	docs/features/feature-flags.md:14	5	
+H9-00515	option-env	NORNICDB_FORCE_CPU	docs/operations/environment-variables.md:198	1	
+H9-00516	option-env	NORNICDB_GC_PERCENT	docs/operations/environment-variables.md:199	1	
+H9-00517	option-env	NORNICDB_GO_MEMORY_LIMIT_BYTES	docs/operations/environment-variables.md:276	4	
+H9-00518	option-env	NORNICDB_GPU_BACKEND	docs/features/gpu-acceleration.md:39	6	
+H9-00519	option-env	NORNICDB_GPU_BATCH_SIZE	docs/features/gpu-acceleration.md:207	1	
+H9-00520	option-env	NORNICDB_GPU_CLUSTERING_AUTO_INTEGRATION_ENABLED	docs/operations/environment-variables.md:201	1	
+H9-00521	option-env	NORNICDB_GPU_CLUSTERING_ENABLED	docs/development/kmeans-testing.md:35	2	
+H9-00522	option-env	NORNICDB_GPU_MAX_MEMORY_MB	docs/features/gpu-acceleration.md:210	1	
+H9-00523	option-env	NORNICDB_HEADLESS	docs/project-details.md:399	3	
+H9-00524	option-env	NORNICDB_HEIMDALL_ANOMALY_DETECTION	docs/operations/environment-variables.md:203	1	
+H9-00525	option-env	NORNICDB_HEIMDALL_API_KEY	docs/architecture/cognitive-slm-architecture.md:143	13	
+H9-00526	option-env	NORNICDB_HEIMDALL_API_URL	docs/release-notes-since-v1.0.11.md:447	13	
+H9-00527	option-env	NORNICDB_HEIMDALL_ATTENTION_TYPE	docs/operations/configuration.md:1020	2	
+H9-00528	option-env	NORNICDB_HEIMDALL_BATCH_SIZE	docs/architecture/cognitive-slm-architecture.md:147	5	
+H9-00529	option-env	NORNICDB_HEIMDALL_CONTEXT_SIZE	docs/architecture/cognitive-slm-architecture.md:146	6	
+H9-00530	option-env	NORNICDB_HEIMDALL_CTX_TYPE	docs/operations/configuration.md:1018	2	
+H9-00531	option-env	NORNICDB_HEIMDALL_ENABLED	docs/project-details.md:312	32	
+H9-00532	option-env	NORNICDB_HEIMDALL_FLASH_ATTN	docs/operations/configuration.md:1021	2	
+H9-00533	option-env	NORNICDB_HEIMDALL_GPU_LAYERS	docs/architecture/cognitive-slm-architecture.md:145	10	
+H9-00534	option-env	NORNICDB_HEIMDALL_LAZY_MODE	docs/operations/configuration.md:1022	2	
+H9-00535	option-env	NORNICDB_HEIMDALL_MAX_CONTEXT_TOKENS	docs/architecture/cognitive-slm-architecture.md:131	7	
+H9-00536	option-env	NORNICDB_HEIMDALL_MAX_SYSTEM_TOKENS	docs/architecture/cognitive-slm-architecture.md:131	6	
+H9-00537	option-env	NORNICDB_HEIMDALL_MAX_TOKENS	docs/architecture/cognitive-slm-architecture.md:148	8	
+H9-00538	option-env	NORNICDB_HEIMDALL_MAX_USER_TOKENS	docs/architecture/cognitive-slm-architecture.md:131	7	
+H9-00539	option-env	NORNICDB_HEIMDALL_MCP_ENABLE	docs/architecture/cognitive-slm-architecture.md:150	8	
+H9-00540	option-env	NORNICDB_HEIMDALL_MCP_TOOLS	docs/architecture/cognitive-slm-architecture.md:151	7	
+H9-00541	option-env	NORNICDB_HEIMDALL_MEMORY_CURATION	docs/operations/environment-variables.md:221	1	
+H9-00542	option-env	NORNICDB_HEIMDALL_MODEL	docs/release-notes-since-v1.0.11.md:448	22	
+H9-00543	option-env	NORNICDB_HEIMDALL_PLUGINS_DIR	docs/architecture/plugin-system.md:29	15	
+H9-00544	option-env	NORNICDB_HEIMDALL_POOLING_TYPE	docs/operations/configuration.md:1019	2	
+H9-00545	option-env	NORNICDB_HEIMDALL_PROVIDER	docs/release-notes-since-v1.0.11.md:446	20	
+H9-00546	option-env	NORNICDB_HEIMDALL_PROVIDER_NAME	docs/operations/configuration.md:1009	3	
+H9-00547	option-env	NORNICDB_HEIMDALL_RUNTIME_DIAGNOSIS	docs/operations/environment-variables.md:226	1	
+H9-00548	option-env	NORNICDB_HEIMDALL_TEMPERATURE	docs/architecture/cognitive-slm-architecture.md:149	3	
+H9-00549	option-env	NORNICDB_HNSW_BUILD_BENCH_VECTOR_BASE	docs/performance/searching.md:136	1	
+H9-00550	option-env	NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE	docs/operations/configuration.md:798	3	
+H9-00551	option-env	NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP	docs/operations/configuration.md:803	2	
+H9-00552	option-env	NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX	docs/operations/configuration.md:802	2	
+H9-00553	option-env	NORNICDB_HNSW_BUILD_GPU_BEAM_WIDTH	docs/operations/configuration.md:801	2	
+H9-00554	option-env	NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K	docs/operations/configuration.md:799	3	
+H9-00555	option-env	NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION	docs/operations/configuration.md:800	3	
+H9-00556	option-env	NORNICDB_HNSW_BUILD_GPU_ENABLED	docs/operations/configuration.md:797	5	
+H9-00557	option-env	NORNICDB_HNSW_MAINT_INTERVAL_MS	docs/operations/configuration.md:805	2	
+H9-00558	option-env	NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR	docs/operations/configuration.md:808	2	
+H9-00559	option-env	NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC	docs/operations/configuration.md:806	2	
+H9-00560	option-env	NORNICDB_HNSW_REBUILD_ENABLED	docs/operations/configuration.md:809	2	
+H9-00561	option-env	NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO	docs/operations/configuration.md:807	2	
+H9-00562	option-env	NORNICDB_HTTPS_ENABLED	docs/operations/environment-variables.md:240	4	
+H9-00563	option-env	NORNICDB_HTTPS_PORT	docs/operations/environment-variables.md:241	2	
+H9-00564	option-env	NORNICDB_HTTP_ADDRESS	docs/operations/environment-variables.md:242	1	
+H9-00565	option-env	NORNICDB_HTTP_ENABLED	docs/operations/environment-variables.md:243	1	
+H9-00566	option-env	NORNICDB_HTTP_PORT	docs/ai-agents/chat-modes.md:52	8	
+H9-00567	option-env	NORNICDB_HTTP_TLS_CERT	docs/operations/environment-variables.md:240	3	
+H9-00568	option-env	NORNICDB_HTTP_TLS_KEY	docs/operations/environment-variables.md:240	3	
+H9-00569	option-env	NORNICDB_HTTP_TRUSTED_PROXIES	docs/operations/environment-variables.md:247	10	
+H9-00570	option-env	NORNICDB_HTTP_TX_TIMEOUT	docs/operations/environment-variables.md:248	1	
+H9-00571	option-env	NORNICDB_JWT_SECRET	docs/start.md:11	9	
+H9-00572	option-env	NORNICDB_KALMAN_ENABLED	docs/features/feature-flags.md:24	5	
+H9-00573	option-env	NORNICDB_KEY	docs/operations/environment-variables.md:250	1	
+H9-00574	option-env	NORNICDB_KMEANS_CLUSTERING_ENABLED	docs/release-notes-since-v1.0.11.md:778	10	
+H9-00575	option-env	NORNICDB_KMEANS_CLUSTER_INTERVAL	docs/operations/configuration.md:247	2	
+H9-00576	option-env	NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL	docs/operations/environment-variables.md:257	1	
+H9-00577	option-env	NORNICDB_KMEANS_GROWTH_RATIO	docs/operations/environment-variables.md:256	2	
+H9-00578	option-env	NORNICDB_KMEANS_MAX_ITERATIONS	docs/operations/configuration.md:249	5	
+H9-00579	option-env	NORNICDB_KMEANS_MIN_EMBEDDINGS	docs/advanced/k-means-clustering/README.md:23	5	
+H9-00580	option-env	NORNICDB_KMEANS_NPROBE	docs/operations/environment-variables.md:258	1	
+H9-00581	option-env	NORNICDB_KMEANS_NUM_CLUSTERS	docs/release-notes-since-v1.0.11.md:793	6	
+H9-00582	option-env	NORNICDB_KMEANS_SEED_DOCS_PER_TERM	docs/operations/configuration.md:781	2	
+H9-00583	option-env	NORNICDB_KMEANS_SEED_MAX_TERMS	docs/operations/configuration.md:780	2	
+H9-00584	option-env	NORNICDB_LANGUAGE	docs/operations/configuration.md:47	3	
+H9-00585	option-env	NORNICDB_LARGE_GPU_TEST	docs/development/gpu-large-build-qualification.md:21	2	
+H9-00586	option-env	NORNICDB_LARGE_METAL_TEST	docs/development/gpu-large-build-qualification.md:32	1	
+H9-00587	option-env	NORNICDB_LARGE_RRF_BOLT_ADDR	docs/performance/hybrid-query-benchmarks.md:125	1	
+H9-00588	option-env	NORNICDB_LARGE_RRF_DATABASE	docs/performance/hybrid-query-benchmarks.md:126	1	
+H9-00589	option-env	NORNICDB_LARGE_RRF_E2E	docs/performance/hybrid-query-benchmarks.md:123	1	
+H9-00590	option-env	NORNICDB_LARGE_RRF_EDGES	docs/performance/hybrid-query-benchmarks.md:127	1	
+H9-00591	option-env	NORNICDB_LARGE_RRF_HTTP_ADDR	docs/performance/hybrid-query-benchmarks.md:124	1	
+H9-00592	option-env	NORNICDB_LARGE_RRF_ITERS	docs/performance/hybrid-query-benchmarks.md:129	1	
+H9-00593	option-env	NORNICDB_LARGE_RRF_WARMUP	docs/performance/hybrid-query-benchmarks.md:128	1	
+H9-00594	option-env	NORNICDB_LIB	docs/development/gpu-large-build-qualification.md:124	10	
+H9-00595	option-env	NORNICDB_LOCKOUT_DURATION	docs/operations/environment-variables.md:263	1	
+H9-00596	option-env	NORNICDB_LOG_FORMAT	docs/architecture/observability.md:563	2	
+H9-00597	option-env	NORNICDB_LOG_LEVEL	docs/architecture/observability.md:562	18	
+H9-00598	option-env	NORNICDB_LOG_OUTPUT	docs/architecture/observability.md:564	2	
+H9-00599	option-env	NORNICDB_LOG_QUERIES	docs/operations/environment-variables.md:267	1	
+H9-00600	option-env	NORNICDB_LOG_REDACT_EXTRA	docs/architecture/observability.md:565	1	
+H9-00601	option-env	NORNICDB_LOW_MEMORY	docs/getting-started/docker-deployment.md:72	9	
+H9-00602	option-env	NORNICDB_MASTER_PASSWORD	docs/operations/environment-variables.md:269	1	
+H9-00603	option-env	NORNICDB_MAX_FAILED_LOGINS	docs/operations/environment-variables.md:270	1	
+H9-00604	option-env	NORNICDB_MAX_TRANSACTIONS	docs/operations/environment-variables.md:271	1	
+H9-00605	option-env	NORNICDB_MCP_ENABLED	docs/architecture/system-design.md:273	4	
+H9-00606	option-env	NORNICDB_MCP_PORT	docs/packaging/docker.md:218	1	
+H9-00607	option-env	NORNICDB_MEMORY_APPLICATION_SOFT_MAX	docs/operations/environment-variables.md:279	4	
+H9-00608	option-env	NORNICDB_MEMORY_ARCHIVE_THRESHOLD	docs/operations/environment-variables.md:273	1	
+H9-00609	option-env	NORNICDB_MEMORY_DECAY_ENABLED	docs/features/memory-decay.md:99	3	
+H9-00610	option-env	NORNICDB_MEMORY_DECAY_INTERVAL	docs/operations/environment-variables.md:275	1	
+H9-00611	option-env	NORNICDB_MEMORY_LIMIT	docs/operations/environment-variables.md:276	4	
+H9-00612	option-env	NORNICDB_MEMORY_RECOVERY_INTERVAL_MS	docs/operations/environment-variables.md:280	2	
+H9-00613	option-env	NORNICDB_MEMORY_RECOVERY_REARM_MS	docs/operations/environment-variables.md:281	2	
+H9-00614	option-env	NORNICDB_MEMORY_TRANSACTION_MAX	docs/operations/environment-variables.md:277	3	
+H9-00615	option-env	NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX	docs/operations/environment-variables.md:278	3	
+H9-00616	option-env	NORNICDB_METRICS_ENABLED	docs/architecture/observability.md:552	2	
+H9-00617	option-env	NORNICDB_MIN_PASSWORD_LENGTH	docs/operations/environment-variables.md:285	1	
+H9-00618	option-env	NORNICDB_MODELS_DIR	docs/advanced/embeddings/local-gguf.md:448	27	
+H9-00619	option-env	NORNICDB_MVCC_LIFECYCLE_INTERVAL	docs/operations/configuration.md:262	1	
+H9-00620	option-env	NORNICDB_MVCC_RETENTION_MAX_VERSIONS	docs/operations/configuration.md:114	3	
+H9-00621	option-env	NORNICDB_MVCC_RETENTION_TTL	docs/operations/configuration.md:115	3	
+H9-00622	option-env	NORNICDB_NODE_ID	docs/operations/scaling.md:155	1	
+H9-00623	option-env	NORNICDB_NO_AUTH	docs/operations/cli-commands.md:60	2	
+H9-00624	option-env	NORNICDB_NO_CUDA	docs/getting-started/windows-cuda.md:142	2	
+H9-00625	option-env	NORNICDB_OAUTH_	docs/operations/configuration.md:522	1	
+H9-00626	option-env	NORNICDB_OAUTH_CALLBACK_URL	docs/operations/environment-variables.md:287	1	
+H9-00627	option-env	NORNICDB_OAUTH_CLIENT_ID	docs/operations/environment-variables.md:288	1	
+H9-00628	option-env	NORNICDB_OAUTH_CLIENT_SECRET	docs/operations/environment-variables.md:289	1	
+H9-00629	option-env	NORNICDB_OAUTH_ISSUER	docs/operations/environment-variables.md:290	1	
+H9-00630	option-env	NORNICDB_OTLP_	docs/architecture/observability.md:381	1	
+H9-00631	option-env	NORNICDB_PARSER	docs/architecture/cypher-parser-modes.md:3	14	
+H9-00632	option-env	NORNICDB_PASSWORD	docs/start.md:10	17	
+H9-00633	option-env	NORNICDB_PERSIST_SEARCH_INDEXES	docs/release-notes-since-v1.0.11.md:721	12	
+H9-00634	option-env	NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED	docs/features/feature-flags.md:22	5	
+H9-00635	option-env	NORNICDB_PER_NODE_CONFIG_ENABLED	docs/features/feature-flags.md:15	5	
+H9-00636	option-env	NORNICDB_PLUGINS_DIR	docs/architecture/plugin-system.md:27	22	
+H9-00637	option-env	NORNICDB_PLUGINS_ENABLED	docs/architecture/plugin-system.md:28	2	
+H9-00638	option-env	NORNICDB_POOL_ENABLED	docs/operations/environment-variables.md:298	1	
+H9-00639	option-env	NORNICDB_POOL_MAX_SIZE	docs/operations/environment-variables.md:299	1	
+H9-00640	option-env	NORNICDB_PPROF_ENABLED	docs/architecture/observability.md:108	8	
+H9-00641	option-env	NORNICDB_PPROF_LISTEN	docs/operations/environment-variables.md:297	6	
+H9-00642	option-env	NORNICDB_QDRANT_GRPC_ENABLED	docs/getting-started/docker-deployment.md:151	16	
+H9-00643	option-env	NORNICDB_QDRANT_GRPC_LISTEN_ADDR	docs/getting-started/docker-deployment.md:152	12	
+H9-00644	option-env	NORNICDB_QDRANT_GRPC_MAX_BATCH_POINTS	docs/operations/configuration.md:1166	4	
+H9-00645	option-env	NORNICDB_QDRANT_GRPC_MAX_TOP_K	docs/operations/configuration.md:1167	3	
+H9-00646	option-env	NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM	docs/operations/configuration.md:1165	4	
+H9-00647	option-env	NORNICDB_QDRANT_GRPC_TLS_CERT	docs/operations/configuration.md:1169	9	
+H9-00648	option-env	NORNICDB_QDRANT_GRPC_TLS_CLIENT_AUTH_MODE	docs/operations/configuration.md:1172	7	
+H9-00649	option-env	NORNICDB_QDRANT_GRPC_TLS_CLIENT_CA	docs/operations/configuration.md:1171	8	
+H9-00650	option-env	NORNICDB_QDRANT_GRPC_TLS_ENABLED	docs/getting-started/docker-deployment.md:194	9	
+H9-00651	option-env	NORNICDB_QDRANT_GRPC_TLS_KEY	docs/operations/configuration.md:1170	8	
+H9-00652	option-env	NORNICDB_QUERY_CACHE_ENABLED	docs/operations/environment-variables.md:310	1	
+H9-00653	option-env	NORNICDB_QUERY_CACHE_SIZE	docs/operations/configuration.md:263	2	
+H9-00654	option-env	NORNICDB_QUERY_CACHE_TTL	docs/operations/configuration.md:264	2	
+H9-00655	option-env	NORNICDB_QUERY_LOG_ENABLED	docs/operations/environment-variables.md:315	1	
+H9-00656	option-env	NORNICDB_READ_ONLY	docs/operations/environment-variables.md:316	1	
+H9-00657	option-env	NORNICDB_REMOTE_CREDENTIALS_KEY	docs/property-key-dictionary.md:236	6	
+H9-00658	option-env	NORNICDB_RERANK_ATTENTION_TYPE	docs/features/cross-encoder-reranking.md:86	3	
+H9-00659	option-env	NORNICDB_RERANK_CTX_TYPE	docs/operations/configuration.md:1045	2	
+H9-00660	option-env	NORNICDB_RERANK_DEBUG	docs/features/cross-encoder-reranking.md:149	2	
+H9-00661	option-env	NORNICDB_RERANK_FLASH_ATTN	docs/features/cross-encoder-reranking.md:87	3	
+H9-00662	option-env	NORNICDB_RERANK_LAZY_MODE	docs/features/cross-encoder-reranking.md:89	3	
+H9-00663	option-env	NORNICDB_RERANK_POOLING_TYPE	docs/features/cross-encoder-reranking.md:86	3	
+H9-00664	option-env	NORNICDB_RETENTION_AUTO_DELETE	docs/operations/environment-variables.md:324	2	
+H9-00665	option-env	NORNICDB_RETENTION_ENABLED	docs/operations/configuration.md:59	3	
+H9-00666	option-env	NORNICDB_RETENTION_EXEMPT_ROLES	docs/operations/environment-variables.md:326	1	
+H9-00667	option-env	NORNICDB_RETENTION_POLICY_DAYS	docs/operations/environment-variables.md:327	2	
+H9-00668	option-env	NORNICDB_SALT	docs/operations/environment-variables.md:328	1	
+H9-00669	option-env	NORNICDB_SEARCH_	docs/operations/configuration.md:333	3	
+H9-00670	option-env	NORNICDB_SEARCH_BM25_ENABLED	docs/operations/configuration.md:222	5	
+H9-00671	option-env	NORNICDB_SEARCH_BM25_LABELS	docs/operations/environment-variables.md:332	2	
+H9-00672	option-env	NORNICDB_SEARCH_BM25_PROPERTIES	docs/advanced/embeddings/voyage-ai.md:98	6	
+H9-00673	option-env	NORNICDB_SEARCH_BM25_STEMMER	docs/operations/configuration.md:224	5	
+H9-00674	option-env	NORNICDB_SEARCH_BM25_WARMING	docs/operations/configuration.md:223	4	
+H9-00675	option-env	NORNICDB_SEARCH_BUILD_PROGRESS_LOG_SEC	docs/operations/environment-variables.md:334	1	
+H9-00676	option-env	NORNICDB_SEARCH_CURSOR_MAX	docs/architecture/secure-search-continuation.md:218	4	
+H9-00677	option-env	NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE	docs/operations/configuration.md:275	2	
+H9-00678	option-env	NORNICDB_SEARCH_CURSOR_TTL	docs/operations/configuration.md:272	3	
+H9-00679	option-env	NORNICDB_SEARCH_DIAG_TIMINGS	docs/operations/configuration.md:956	3	
+H9-00680	option-env	NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC	docs/release-notes-since-v1.0.11.md:765	5	
+H9-00681	option-env	NORNICDB_SEARCH_LOG_TIMINGS	docs/operations/configuration.md:955	3	
+H9-00682	option-env	NORNICDB_SEARCH_MIN_SIMILARITY	docs/operations/configuration.md:221	3	
+H9-00683	option-env	NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW	docs/operations/environment-variables.md:339	3	
+H9-00684	option-env	NORNICDB_SEARCH_QUERY_MAX_CHUNKS	docs/operations/environment-variables.md:339	6	
+H9-00685	option-env	NORNICDB_SEARCH_RELATIONSHIPS_ENABLED	docs/api-reference/openapi.md:99	4	
+H9-00686	option-env	NORNICDB_SEARCH_RELATIONSHIP_BM25_PROPERTIES	docs/operations/environment-variables.md:331	3	
+H9-00687	option-env	NORNICDB_SEARCH_RERANK_	docs/features/cross-encoder-reranking.md:133	2	
+H9-00688	option-env	NORNICDB_SEARCH_RERANK_API_KEY	docs/advanced/embeddings/voyage-ai.md:122	8	
+H9-00689	option-env	NORNICDB_SEARCH_RERANK_API_URL	docs/advanced/embeddings/voyage-ai.md:130	9	
+H9-00690	option-env	NORNICDB_SEARCH_RERANK_CONTEXT_PROPERTIES	docs/advanced/embeddings/voyage-ai.md:133	1	
+H9-00691	option-env	NORNICDB_SEARCH_RERANK_ENABLED	docs/release-notes-since-v1.0.11.md:205	21	
+H9-00692	option-env	NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_BYTES	docs/features/cross-encoder-reranking.md:61	2	
+H9-00693	option-env	NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS	docs/advanced/embeddings/voyage-ai.md:138	5	
+H9-00694	option-env	NORNICDB_SEARCH_RERANK_MODEL	docs/release-notes-since-v1.0.11.md:207	10	
+H9-00695	option-env	NORNICDB_SEARCH_RERANK_PROVIDER	docs/release-notes-since-v1.0.11.md:206	17	
+H9-00696	option-env	NORNICDB_SEARCH_RERANK_TRUNCATION	docs/advanced/embeddings/voyage-ai.md:145	2	
+H9-00697	option-env	NORNICDB_SEARCH_RESULT_CACHE_ENABLED	docs/operations/environment-variables.md:348	1	
+H9-00698	option-env	NORNICDB_SEARCH_VECTOR_ENABLED	docs/api-reference/cypher-functions/README.md:671	7	
+H9-00699	option-env	NORNICDB_SEARCH_VECTOR_WARMING	docs/operations/configuration.md:226	6	
+H9-00700	option-env	NORNICDB_SERVER_BOLT_PORT	docs/operations/configuration.md:1100	1	
+H9-00701	option-env	NORNICDB_SERVER_HTTP_PORT	docs/operations/configuration.md:1101	1	
+H9-00702	option-env	NORNICDB_SESSION_TIMEOUT	docs/operations/environment-variables.md:352	1	
+H9-00703	option-env	NORNICDB_SLOW_QUERY_THRESHOLD	docs/operations/environment-variables.md:353	1	
+H9-00704	option-env	NORNICDB_STDIO_LOG_COMPACT_SECONDS	docs/operations/environment-variables.md:354	1	
+H9-00705	option-env	NORNICDB_STDIO_LOG_MAX_KB	docs/operations/environment-variables.md:355	1	
+H9-00706	option-env	NORNICDB_STEMMER_PLUGINS_DIR	docs/operations/configuration.md:347	3	
+H9-00707	option-env	NORNICDB_STORAGE_SERIALIZER	docs/property-key-dictionary.md:191	6	
+H9-00708	option-env	NORNICDB_STRICT_DURABILITY	docs/operations/durability.md:28	3	
+H9-00709	option-env	NORNICDB_TELEMETRY_PORT	docs/architecture/observability.md:477	3	
+H9-00710	option-env	NORNICDB_TLS_DIR	docs/operations/environment-variables.md:358	1	
+H9-00711	option-env	NORNICDB_TMP_DIR	docs/operations/docker.md:473	1	
+H9-00712	option-env	NORNICDB_TOKEN	docs/user-guides/connecting-bolt.md:89	2	
+H9-00713	option-env	NORNICDB_TOPOLOGY_AB_TEST_ENABLED	docs/operations/environment-variables.md:359	1	
+H9-00714	option-env	NORNICDB_TOPOLOGY_AB_TEST_PERCENTAGE	docs/operations/environment-variables.md:360	1	
+H9-00715	option-env	NORNICDB_TOPOLOGY_ALGORITHM	docs/operations/environment-variables.md:361	1	
+H9-00716	option-env	NORNICDB_TOPOLOGY_AUTO_INTEGRATION_ENABLED	docs/operations/environment-variables.md:362	1	
+H9-00717	option-env	NORNICDB_TOPOLOGY_GRAPH_REFRESH_INTERVAL	docs/operations/environment-variables.md:363	1	
+H9-00718	option-env	NORNICDB_TOPOLOGY_MIN_SCORE	docs/operations/environment-variables.md:364	1	
+H9-00719	option-env	NORNICDB_TOPOLOGY_TOPK	docs/operations/environment-variables.md:365	1	
+H9-00720	option-env	NORNICDB_TOPOLOGY_WEIGHT	docs/operations/environment-variables.md:366	1	
+H9-00721	option-env	NORNICDB_TRACE_AUTH	docs/operations/environment-variables.md:367	1	
+H9-00722	option-env	NORNICDB_TRACE_GRAPHQL	docs/operations/environment-variables.md:368	1	
+H9-00723	option-env	NORNICDB_TRACE_PARENT_MAX_QPS	docs/architecture/observability.md:384	2	
+H9-00724	option-env	NORNICDB_TRACE_PARENT_MODE	docs/architecture/observability.md:384	3	
+H9-00725	option-env	NORNICDB_TRACE_SAMPLE_RATIO	docs/architecture/observability.md:384	2	
+H9-00726	option-env	NORNICDB_TRACING_ENABLED	docs/architecture/observability.md:558	1	
+H9-00727	option-env	NORNICDB_TRANSACTION_TIMEOUT	docs/operations/environment-variables.md:369	1	
+H9-00728	option-env	NORNICDB_UPGRADE_STORAGE	docs/property-key-dictionary.md:131	3	
+H9-00729	option-env	NORNICDB_URI	docs/user-guides/graphify-local.md:17	1	
+H9-00730	option-env	NORNICDB_USER	docs/user-guides/graphify-local.md:21	1	
+H9-00731	option-env	NORNICDB_VECTOR_ANN_QUALITY	docs/operations/configuration.md:233	12	
+H9-00732	option-env	NORNICDB_VECTOR_CPU_BRUTE_MAX_N	docs/features/vector-embeddings.md:330	13	
+H9-00733	option-env	NORNICDB_VECTOR_GPU_BRUTE_MAX_N	docs/operations/configuration.md:244	5	
+H9-00734	option-env	NORNICDB_VECTOR_GPU_BRUTE_MIN_N	docs/operations/configuration.md:243	5	
+H9-00735	option-env	NORNICDB_VECTOR_HNSW_BEAM_FACTOR	docs/operations/configuration.md:237	3	
+H9-00736	option-env	NORNICDB_VECTOR_HNSW_BINARY_QUERY_BITS	docs/user-guides/vector-search.md:515	1	
+H9-00737	option-env	NORNICDB_VECTOR_HNSW_EF_CONSTRUCTION	docs/operations/configuration.md:235	3	
+H9-00738	option-env	NORNICDB_VECTOR_HNSW_EF_SEARCH	docs/operations/configuration.md:236	5	
+H9-00739	option-env	NORNICDB_VECTOR_HNSW_M	docs/operations/configuration.md:234	3	
+H9-00740	option-env	NORNICDB_VECTOR_HNSW_METAL_MIN_CANDIDATES	docs/operations/configuration.md:238	3	
+H9-00741	option-env	NORNICDB_VECTOR_HNSW_PQ_COMPRESSION	docs/user-guides/vector-search.md:489	1	
+H9-00742	option-env	NORNICDB_VECTOR_HNSW_PQ_TRAINING_ITERATIONS	docs/user-guides/vector-search.md:491	1	
+H9-00743	option-env	NORNICDB_VECTOR_HNSW_PQ_TRAINING_SAMPLE_MAX	docs/user-guides/vector-search.md:490	1	
+H9-00744	option-env	NORNICDB_VECTOR_HNSW_QUANTIZATION	docs/user-guides/vector-search.md:474	1	
+H9-00745	option-env	NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS	docs/release-notes-since-v1.0.11.md:178	3	
+H9-00746	option-env	NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX	docs/release-notes-since-v1.0.11.md:177	4	
+H9-00747	option-env	NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM	docs/release-notes-since-v1.0.11.md:176	4	
+H9-00748	option-env	NORNICDB_VECTOR_IVFPQ_NPROBE	docs/operations/configuration.md:790	3	
+H9-00749	option-env	NORNICDB_VECTOR_IVFPQ_OVERFLOW_MAX	docs/operations/configuration.md:793	3	
+H9-00750	option-env	NORNICDB_VECTOR_IVFPQ_RERANK_TOPK	docs/operations/configuration.md:791	4	
+H9-00751	option-env	NORNICDB_VECTOR_IVFPQ_TRAINING_SAMPLE_MAX	docs/operations/configuration.md:792	3	
+H9-00752	option-env	NORNICDB_VECTOR_IVF_HNSW_ENABLED	docs/release-notes-since-v1.0.11.md:794	4	
+H9-00753	option-env	NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS	docs/operations/configuration.md:241	3	
+H9-00754	option-env	NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE	docs/release-notes-since-v1.0.11.md:795	4	
+H9-00755	option-env	NORNICDB_VECTOR_IVF_LISTS	docs/operations/environment-variables.md:389	1	
+H9-00756	option-env	NORNICDB_VECTOR_PQ_BITS	docs/operations/configuration.md:789	4	
+H9-00757	option-env	NORNICDB_VECTOR_PQ_SEGMENTS	docs/operations/configuration.md:788	4	
+H9-00758	option-env	NORNICDB_VECTOR_ROUTING_MODE	docs/release-notes-since-v1.0.11.md:175	5	
+H9-00759	option-env	NORNICDB_VECTOR_VFS_COMPACT_DEAD_RATIO	docs/operations/environment-variables.md:393	1	
+H9-00760	option-env	NORNICDB_VECTOR_VFS_COMPACT_MIN_OBSOLETE	docs/operations/environment-variables.md:394	1	
+H9-00761	option-env	NORNICDB_VECTOR_VFS_COMPACT_MIN_SIZE_MB	docs/operations/environment-variables.md:395	1	
+H9-00762	option-env	NORNICDB_VERSION	docs/packaging/raspberry-pi.md:86	1	
+H9-00763	option-env	NORNICDB_VISIBILITY_THRESHOLD	docs/features/memory-decay.md:100	1	
+H9-00764	option-env	NORNICDB_WAL_AUTO_COMPACTION_ENABLED	docs/operations/environment-variables.md:396	3	
+H9-00765	option-env	NORNICDB_WAL_ENABLED	docs/features/feature-flags.md:16	5	
+H9-00766	option-env	NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS	docs/operations/environment-variables.md:399	2	
+H9-00767	option-env	NORNICDB_WAL_RETENTION_MAX_AGE	docs/operations/environment-variables.md:400	2	
+H9-00768	option-env	NORNICDB_WAL_RETENTION_MAX_SEGMENTS	docs/operations/environment-variables.md:402	2	
+H9-00769	option-env	NORNICDB_WAL_SNAPSHOT_INTERVAL	docs/operations/environment-variables.md:397	2	
+H9-00770	option-env	NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_AGE	docs/release-notes-since-v1.0.11.md:526	3	
+H9-00771	option-env	NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_COUNT	docs/release-notes-since-v1.0.11.md:523	4	
+H9-00772	option-env	NORNICDB_WAL_SYNC_INTERVAL	docs/operations/durability.md:46	2	
+H9-00773	option-env	NORNICDB_WAL_SYNC_MODE	docs/operations/durability.md:45	2	
+H9-00774	option-yaml	Installers	docs/packaging/windows.md:462	1	
+H9-00775	option-yaml	Installers.InstallerSha256	docs/packaging/windows.md:466	1	
+H9-00776	option-yaml	Installers.InstallerType	docs/packaging/windows.md:464	1	
+H9-00777	option-yaml	Installers.InstallerUrl	docs/packaging/windows.md:465	1	
+H9-00778	option-yaml	License	docs/packaging/windows.md:460	1	
+H9-00779	option-yaml	ManifestType	docs/packaging/windows.md:467	1	
+H9-00780	option-yaml	ManifestVersion	docs/packaging/windows.md:468	1	
+H9-00781	option-yaml	NORNICDB_ADDRESS	docs/operations/deployment.md:256	2	
+H9-00782	option-yaml	PackageIdentifier	docs/packaging/windows.md:456	1	
+H9-00783	option-yaml	PackageName	docs/packaging/windows.md:458	1	
+H9-00784	option-yaml	PackageVersion	docs/packaging/windows.md:457	1	
+H9-00785	option-yaml	Publisher	docs/packaging/windows.md:459	1	
+H9-00786	option-yaml	ShortDescription	docs/packaging/windows.md:461	1	
+H9-00787	option-yaml	apiVersion	docs/architecture/observability.md:515	8	
+H9-00788	option-yaml	assign	docs/features/mcp-integration.md:109	1	
+H9-00789	option-yaml	assigned_to	docs/features/mcp-integration.md:118	1	
+H9-00790	option-yaml	audit	docs/compliance/audit-logging.md:252	4	
+H9-00791	option-yaml	audit.auto_purge	docs/compliance/audit-logging.md:254	1	
+H9-00792	option-yaml	audit.elasticsearch	docs/compliance/audit-logging.md:273	1	
+H9-00793	option-yaml	audit.elasticsearch.enabled	docs/compliance/audit-logging.md:274	1	
+H9-00794	option-yaml	audit.elasticsearch.index	docs/compliance/audit-logging.md:276	1	
+H9-00795	option-yaml	audit.elasticsearch.urls	docs/compliance/audit-logging.md:275	1	
+H9-00796	option-yaml	audit.retention_days	docs/compliance/audit-logging.md:253	1	
+H9-00797	option-yaml	audit.splunk	docs/compliance/audit-logging.md:283	1	
+H9-00798	option-yaml	audit.splunk.enabled	docs/compliance/audit-logging.md:284	1	
+H9-00799	option-yaml	audit.splunk.hec_url	docs/compliance/audit-logging.md:285	1	
+H9-00800	option-yaml	audit.splunk.token	docs/compliance/audit-logging.md:286	1	
+H9-00801	option-yaml	audit.syslog	docs/compliance/audit-logging.md:263	1	
+H9-00802	option-yaml	audit.syslog.address	docs/compliance/audit-logging.md:265	1	
+H9-00803	option-yaml	audit.syslog.enabled	docs/compliance/audit-logging.md:264	1	
+H9-00804	option-yaml	audit.syslog.facility	docs/compliance/audit-logging.md:266	1	
+H9-00805	option-yaml	auth	docs/compliance/hipaa-compliance.md:74	5	
+H9-00806	option-yaml	auth.enabled	docs/compliance/hipaa-compliance.md:75	4	
+H9-00807	option-yaml	auth.jwt_secret	docs/compliance/hipaa-compliance.md:78	4	
+H9-00808	option-yaml	auth.min_password_length	docs/compliance/hipaa-compliance.md:80	5	
+H9-00809	option-yaml	auth.password	docs/compliance/hipaa-compliance.md:77	4	
+H9-00810	option-yaml	auth.token_expiry	docs/compliance/hipaa-compliance.md:79	4	
+H9-00811	option-yaml	auth.username	docs/compliance/hipaa-compliance.md:76	4	
+H9-00812	option-yaml	auto_links	docs/operations/configuration.md:1081	1	
+H9-00813	option-yaml	auto_links.enabled	docs/operations/configuration.md:1082	1	
+H9-00814	option-yaml	auto_links.similarity_threshold	docs/operations/configuration.md:1083	1	
+H9-00815	option-yaml	categories	docs/features/apoc-functions.md:513	1	
+H9-00816	option-yaml	categories.algo	docs/features/apoc-functions.md:517	1	
+H9-00817	option-yaml	categories.coll	docs/features/apoc-functions.md:514	1	
+H9-00818	option-yaml	categories.create	docs/features/apoc-functions.md:518	1	
+H9-00819	option-yaml	categories.math	docs/features/apoc-functions.md:516	1	
+H9-00820	option-yaml	categories.text	docs/features/apoc-functions.md:515	1	
+H9-00821	option-yaml	compliance	docs/compliance/audit-logging.md:32	8	
+H9-00822	option-yaml	compliance.access_control_enabled	docs/compliance/gdpr-compliance.md:33	1	
+H9-00823	option-yaml	compliance.anonymization_enabled	docs/compliance/gdpr-compliance.md:30	1	
+H9-00824	option-yaml	compliance.anonymization_method	docs/compliance/gdpr-compliance.md:31	1	
+H9-00825	option-yaml	compliance.audit_enabled	docs/compliance/audit-logging.md:33	5	
+H9-00826	option-yaml	compliance.audit_log_path	docs/compliance/audit-logging.md:34	5	
+H9-00827	option-yaml	compliance.audit_retention_days	docs/compliance/audit-logging.md:35	4	
+H9-00828	option-yaml	compliance.data_access_enabled	docs/compliance/gdpr-compliance.md:28	1	
+H9-00829	option-yaml	compliance.data_erasure_enabled	docs/compliance/gdpr-compliance.md:27	1	
+H9-00830	option-yaml	compliance.data_export_enabled	docs/compliance/gdpr-compliance.md:26	1	
+H9-00831	option-yaml	compliance.encryption_at_rest	docs/compliance/gdpr-compliance.md:38	1	
+H9-00832	option-yaml	compliance.encryption_in_transit	docs/compliance/gdpr-compliance.md:39	1	
+H9-00833	option-yaml	compliance.lockout_duration	docs/compliance/gdpr-compliance.md:36	1	
+H9-00834	option-yaml	compliance.max_failed_logins	docs/compliance/gdpr-compliance.md:35	1	
+H9-00835	option-yaml	compliance.retention_auto_delete	docs/compliance/gdpr-compliance.md:47	4	
+H9-00836	option-yaml	compliance.retention_enabled	docs/compliance/gdpr-compliance.md:45	4	
+H9-00837	option-yaml	compliance.retention_exempt_roles	docs/compliance/gdpr-compliance.md:48	1	
+H9-00838	option-yaml	compliance.retention_policy_days	docs/compliance/gdpr-compliance.md:46	3	
+H9-00839	option-yaml	compliance.session_timeout	docs/compliance/gdpr-compliance.md:34	1	
+H9-00840	option-yaml	compliance.subject_identifier_properties	docs/compliance/gdpr-compliance.md:41	1	
+H9-00841	option-yaml	compliance.subject_pseudonymize_properties	docs/compliance/gdpr-compliance.md:42	1	
+H9-00842	option-yaml	compliance.subject_redact_properties	docs/compliance/gdpr-compliance.md:43	1	
+H9-00843	option-yaml	concept_clustering	docs/advanced/k-means-clustering/kmeans-algorithm.md:727	1	
+H9-00844	option-yaml	concept_clustering.device	docs/advanced/k-means-clustering/kmeans-algorithm.md:733	1	
+H9-00845	option-yaml	concept_clustering.dimensions	docs/advanced/k-means-clustering/kmeans-algorithm.md:730	1	
+H9-00846	option-yaml	concept_clustering.enabled	docs/advanced/k-means-clustering/kmeans-algorithm.md:728	1	
+H9-00847	option-yaml	concept_clustering.keep_embeddings_in_gpu	docs/advanced/k-means-clustering/kmeans-algorithm.md:740	1	
+H9-00848	option-yaml	concept_clustering.max_gpu_memory_mb	docs/advanced/k-means-clustering/kmeans-algorithm.md:741	1	
+H9-00849	option-yaml	concept_clustering.max_iterations	docs/advanced/k-means-clustering/kmeans-algorithm.md:731	1	
+H9-00850	option-yaml	concept_clustering.num_clusters	docs/advanced/k-means-clustering/kmeans-algorithm.md:729	1	
+H9-00851	option-yaml	concept_clustering.recluster_schedule	docs/advanced/k-means-clustering/kmeans-algorithm.md:737	1	
+H9-00852	option-yaml	concept_clustering.recluster_threshold	docs/advanced/k-means-clustering/kmeans-algorithm.md:736	1	
+H9-00853	option-yaml	concept_clustering.tolerance	docs/advanced/k-means-clustering/kmeans-algorithm.md:732	1	
+H9-00854	option-yaml	content	docs/features/mcp-integration.md:66	1	
+H9-00855	option-yaml	cross_encoder	docs/performance/searching.md:1340	1	
+H9-00856	option-yaml	cross_encoder.api_url	docs/performance/searching.md:1342	1	
+H9-00857	option-yaml	cross_encoder.enabled	docs/performance/searching.md:1341	1	
+H9-00858	option-yaml	cross_encoder.model	docs/performance/searching.md:1343	1	
+H9-00859	option-yaml	cross_encoder.threshold	docs/performance/searching.md:1345	1	
+H9-00860	option-yaml	cross_encoder.top_k	docs/performance/searching.md:1344	1	
+H9-00861	option-yaml	database	docs/project-details.md:421	35	
+H9-00862	option-yaml	database.async_flush_interval	docs/project-details.md:424	7	
+H9-00863	option-yaml	database.async_max_edge_cache_size	docs/project-details.md:426	1	
+H9-00864	option-yaml	database.async_max_node_cache_size	docs/project-details.md:425	1	
+H9-00865	option-yaml	database.async_max_ops	docs/operations/configuration.md:559	5	
+H9-00866	option-yaml	database.async_writes_enabled	docs/project-details.md:423	12	
+H9-00867	option-yaml	database.badger_edge_type_cache_max_types	docs/operations/low-memory-mode.md:20	1	
+H9-00868	option-yaml	database.badger_node_cache_max_entries	docs/operations/low-memory-mode.md:19	1	
+H9-00869	option-yaml	database.data_dir	docs/project-details.md:422	1	
+H9-00870	option-yaml	database.default_database	docs/architecture/multi-db-implementation-spec.md:123	7	
+H9-00871	option-yaml	database.encryption_audit_log_path	docs/encryption/cmek-setup.md:85	1	
+H9-00872	option-yaml	database.encryption_audit_sign_events	docs/encryption/cmek-setup.md:28	3	
+H9-00873	option-yaml	database.encryption_audit_sign_key	docs/encryption/cmek-setup.md:29	3	
+H9-00874	option-yaml	database.encryption_aws_kms_key_id	docs/compliance/hipaa-compliance.md:271	3	
+H9-00875	option-yaml	database.encryption_aws_region	docs/compliance/hipaa-compliance.md:270	3	
+H9-00876	option-yaml	database.encryption_aws_role_arn	docs/encryption/cmek-setup.md:42	1	
+H9-00877	option-yaml	database.encryption_aws_role_session_name	docs/encryption/cmek-setup.md:43	1	
+H9-00878	option-yaml	database.encryption_azure_client_id	docs/encryption/cmek-setup.md:64	1	
+H9-00879	option-yaml	database.encryption_azure_client_secret	docs/encryption/cmek-setup.md:65	1	
+H9-00880	option-yaml	database.encryption_azure_key_name	docs/encryption/cmek-setup.md:62	1	
+H9-00881	option-yaml	database.encryption_azure_tenant_id	docs/encryption/cmek-setup.md:63	1	
+H9-00882	option-yaml	database.encryption_azure_vault_name	docs/encryption/cmek-setup.md:61	1	
+H9-00883	option-yaml	database.encryption_enabled	docs/compliance/encryption.md:28	8	
+H9-00884	option-yaml	database.encryption_gcp_credentials_file	docs/encryption/cmek-setup.md:78	1	
+H9-00885	option-yaml	database.encryption_gcp_key_name	docs/encryption/cmek-setup.md:77	1	
+H9-00886	option-yaml	database.encryption_gcp_key_ring	docs/encryption/cmek-setup.md:76	1	
+H9-00887	option-yaml	database.encryption_gcp_location	docs/encryption/cmek-setup.md:75	1	
+H9-00888	option-yaml	database.encryption_gcp_project	docs/encryption/cmek-setup.md:74	1	
+H9-00889	option-yaml	database.encryption_key_uri	docs/encryption/cmek-setup.md:26	1	
+H9-00890	option-yaml	database.encryption_master_key	docs/encryption/cmek-setup.md:27	1	
+H9-00891	option-yaml	database.encryption_password	docs/compliance/encryption.md:29	2	
+H9-00892	option-yaml	database.encryption_provider	docs/compliance/hipaa-compliance.md:269	6	
+H9-00893	option-yaml	database.encryption_rotation_enabled	docs/encryption/cmek-setup.md:30	3	
+H9-00894	option-yaml	database.encryption_rotation_interval	docs/encryption/cmek-setup.md:31	3	
+H9-00895	option-yaml	database.mvcc_retention_max_versions	docs/operations/configuration.md:94	3	
+H9-00896	option-yaml	database.mvcc_retention_ttl	docs/operations/configuration.md:95	3	
+H9-00897	option-yaml	database.path	docs/operations/configuration.md:91	1	
+H9-00898	option-yaml	database.persist_search_indexes	docs/release-notes-since-v1.0.11.md:747	2	
+H9-00899	option-yaml	database.storage_serializer	docs/operations/configuration.md:93	4	
+H9-00900	option-yaml	database.strict_durability	docs/operations/configuration.md:599	2	
+H9-00901	option-yaml	database.wal_auto_compaction_enabled	docs/operations/durability.md:22	2	
+H9-00902	option-yaml	database.wal_retention_max_age	docs/operations/wal-compaction.md:14	2	
+H9-00903	option-yaml	database.wal_retention_max_segments	docs/operations/wal-compaction.md:13	2	
+H9-00904	option-yaml	database.wal_snapshot_interval	docs/operations/wal-compaction.md:10	1	
+H9-00905	option-yaml	database.wal_snapshot_retention_max_age	docs/operations/wal-compaction.md:12	1	
+H9-00906	option-yaml	database.wal_snapshot_retention_max_count	docs/operations/wal-compaction.md:11	1	
+H9-00907	option-yaml	databases	docs/operations/configuration.md:373	3	
+H9-00908	option-yaml	databases.analytics	docs/operations/configuration.md:376	2	
+H9-00909	option-yaml	databases.analytics.NORNICDB_SEARCH_VECTOR_WARMING	docs/operations/configuration.md:378	1	
+H9-00910	option-yaml	databases.audit_logs	docs/operations/configuration.md:380	2	
+H9-00911	option-yaml	databases.default_docs	docs/user-guides/bm25-stemmers.md:253	1	
+H9-00912	option-yaml	databases.exports_only	docs/operations/configuration.md:384	2	
+H9-00913	option-yaml	databases.french_docs	docs/user-guides/bm25-stemmers.md:249	1	
+H9-00914	option-yaml	databases.hot_app_db	docs/operations/configuration.md:374	2	
+H9-00915	option-yaml	databases.multi_tenant_archive	docs/user-guides/multi-database.md:955	1	
+H9-00916	option-yaml	databases.spanish_docs	docs/user-guides/bm25-stemmers.md:251	1	
+H9-00917	option-yaml	decay	docs/operations/configuration.md:1072	1	
+H9-00918	option-yaml	decay.decay_rate	docs/operations/configuration.md:1075	1	
+H9-00919	option-yaml	decay.enabled	docs/operations/configuration.md:1073	1	
+H9-00920	option-yaml	decay.recalculate_interval	docs/operations/configuration.md:1074	1	
+H9-00921	option-yaml	depends_on	docs/features/mcp-integration.md:108	1	
+H9-00922	option-yaml	depth	docs/features/mcp-integration.md:89	1	
+H9-00923	option-yaml	description	docs/features/mcp-integration.md:105	1	
+H9-00924	option-yaml	embed	docs/getting-started/windows-cuda.md:283	1	
+H9-00925	option-yaml	embed.gpu_layers	docs/getting-started/windows-cuda.md:285	1	
+H9-00926	option-yaml	embed.model	docs/getting-started/windows-cuda.md:284	1	
+H9-00927	option-yaml	embedding	docs/project-details.md:428	5	
+H9-00928	option-yaml	embedding.api_key	docs/advanced/embeddings/voyage-ai.md:53	1	
+H9-00929	option-yaml	embedding.dimensions	docs/project-details.md:433	4	
+H9-00930	option-yaml	embedding.enabled	docs/project-details.md:429	4	
+H9-00931	option-yaml	embedding.mode	docs/advanced/embeddings/voyage-ai.md:55	2	
+H9-00932	option-yaml	embedding.model	docs/project-details.md:431	4	
+H9-00933	option-yaml	embedding.provider	docs/project-details.md:430	4	
+H9-00934	option-yaml	embedding.url	docs/project-details.md:432	2	
+H9-00935	option-yaml	embedding_worker	docs/project-details.md:435	4	
+H9-00936	option-yaml	embedding_worker.chunk_overlap	docs/project-details.md:437	2	
+H9-00937	option-yaml	embedding_worker.chunk_size	docs/project-details.md:436	2	
+H9-00938	option-yaml	embedding_worker.include_labels	docs/features/vector-embeddings.md:107	2	
+H9-00939	option-yaml	embedding_worker.properties_exclude	docs/features/vector-embeddings.md:106	2	
+H9-00940	option-yaml	embedding_worker.properties_include	docs/features/vector-embeddings.md:105	2	
+H9-00941	option-yaml	embeddings	docs/packaging/raspberry-pi.md:176	2	
+H9-00942	option-yaml	embeddings.batch_size	docs/packaging/raspberry-pi.md:178	1	
+H9-00943	option-yaml	embeddings.endpoint	docs/packaging/raspberry-pi.md:232	1	
+H9-00944	option-yaml	embeddings.model	docs/packaging/raspberry-pi.md:182	2	
+H9-00945	option-yaml	embeddings.provider	docs/packaging/raspberry-pi.md:231	1	
+H9-00946	option-yaml	encryption	docs/compliance/soc2-compliance.md:175	2	
+H9-00947	option-yaml	encryption.algorithm	docs/compliance/soc2-compliance.md:177	1	
+H9-00948	option-yaml	encryption.enabled	docs/compliance/soc2-compliance.md:176	2	
+H9-00949	option-yaml	encryption.key_rotation_days	docs/compliance/soc2-compliance.md:178	1	
+H9-00950	option-yaml	encryption.password	docs/operations/configuration.md:1091	1	
+H9-00951	option-yaml	environment	docs/user-guides/qdrant-grpc.md:50	1	
+H9-00952	option-yaml	features	docs/operations/configuration.md:1137	3	
+H9-00953	option-yaml	features.qdrant_grpc_enabled	docs/operations/configuration.md:1138	3	
+H9-00954	option-yaml	features.qdrant_grpc_listen_addr	docs/operations/configuration.md:1139	3	
+H9-00955	option-yaml	features.qdrant_grpc_max_batch_points	docs/operations/configuration.md:1141	3	
+H9-00956	option-yaml	features.qdrant_grpc_max_top_k	docs/operations/configuration.md:1142	3	
+H9-00957	option-yaml	features.qdrant_grpc_max_vector_dim	docs/operations/configuration.md:1140	3	
+H9-00958	option-yaml	features.qdrant_grpc_rbac	docs/operations/configuration.md:1151	1	
+H9-00959	option-yaml	features.qdrant_grpc_rbac.methods	docs/operations/configuration.md:1152	1	
+H9-00960	option-yaml	features.qdrant_grpc_tls_cert	docs/operations/configuration.md:1144	3	
+H9-00961	option-yaml	features.qdrant_grpc_tls_client_auth_mode	docs/operations/configuration.md:1148	1	
+H9-00962	option-yaml	features.qdrant_grpc_tls_client_ca	docs/operations/configuration.md:1147	1	
+H9-00963	option-yaml	features.qdrant_grpc_tls_enabled	docs/operations/configuration.md:1143	3	
+H9-00964	option-yaml	features.qdrant_grpc_tls_key	docs/operations/configuration.md:1145	3	
+H9-00965	option-yaml	from	docs/features/mcp-integration.md:94	1	
+H9-00966	option-yaml	fulltext_search	docs/performance/searching.md:1309	1	
+H9-00967	option-yaml	fulltext_search.bm25	docs/performance/searching.md:1319	1	
+H9-00968	option-yaml	fulltext_search.bm25.b	docs/performance/searching.md:1321	1	
+H9-00969	option-yaml	fulltext_search.bm25.k1	docs/performance/searching.md:1320	1	
+H9-00970	option-yaml	fulltext_search.enabled	docs/performance/searching.md:1310	1	
+H9-00971	option-yaml	fulltext_search.priority_properties	docs/performance/searching.md:1313	1	
+H9-00972	option-yaml	functions	docs/features/apoc-functions.md:521	1	
+H9-00973	option-yaml	groups	docs/operations/monitoring.md:284	2	
+H9-00974	option-yaml	groups.rules	docs/operations/monitoring.md:286	2	
+H9-00975	option-yaml	groups.rules.annotations	docs/operations/monitoring.md:292	6	
+H9-00976	option-yaml	groups.rules.annotations.summary	docs/operations/monitoring.md:293	6	
+H9-00977	option-yaml	groups.rules.expr	docs/operations/monitoring.md:288	6	
+H9-00978	option-yaml	groups.rules.for	docs/operations/monitoring.md:289	6	
+H9-00979	option-yaml	groups.rules.labels	docs/operations/monitoring.md:290	6	
+H9-00980	option-yaml	groups.rules.labels.severity	docs/operations/monitoring.md:291	6	
+H9-00981	option-yaml	healthcheck	docs/operations/docker.md:265	3	
+H9-00982	option-yaml	healthcheck.interval	docs/operations/docker.md:267	3	
+H9-00983	option-yaml	healthcheck.retries	docs/operations/docker.md:269	3	
+H9-00984	option-yaml	healthcheck.start_period	docs/operations/docker.md:270	3	
+H9-00985	option-yaml	healthcheck.test	docs/operations/docker.md:266	3	
+H9-00986	option-yaml	healthcheck.timeout	docs/operations/docker.md:268	3	
+H9-00987	option-yaml	heimdall	docs/release-notes-since-v1.0.11.md:427	12	
+H9-00988	option-yaml	heimdall.api_key	docs/release-notes-since-v1.0.11.md:430	5	
+H9-00989	option-yaml	heimdall.api_url	docs/release-notes-since-v1.0.11.md:429	6	
+H9-00990	option-yaml	heimdall.enabled	docs/user-guides/heimdall-ai-assistant.md:25	9	
+H9-00991	option-yaml	heimdall.mcp_enable	docs/user-guides/heimdall-mcp-tools.md:31	2	
+H9-00992	option-yaml	heimdall.mcp_tools	docs/user-guides/heimdall-mcp-tools.md:68	1	
+H9-00993	option-yaml	heimdall.model	docs/release-notes-since-v1.0.11.md:431	8	
+H9-00994	option-yaml	heimdall.provider	docs/release-notes-since-v1.0.11.md:428	9	
+H9-00995	option-yaml	heimdall.provider_name	docs/user-guides/heimdall-ai-assistant.md:187	1	
+H9-00996	option-yaml	id	docs/features/mcp-integration.md:75	2	
+H9-00997	option-yaml	jobs	docs/advanced/embeddings/local-gguf.md:562	2	
+H9-00998	option-yaml	jobs.build	docs/advanced/embeddings/local-gguf.md:563	1	
+H9-00999	option-yaml	jobs.build.runs-on	docs/advanced/embeddings/local-gguf.md:573	1	
+H9-01000	option-yaml	jobs.build.steps	docs/advanced/embeddings/local-gguf.md:574	1	
+H9-01001	option-yaml	jobs.build.steps.with	docs/advanced/embeddings/local-gguf.md:578	1	
+H9-01002	option-yaml	jobs.build.steps.with.name	docs/advanced/embeddings/local-gguf.md:579	1	
+H9-01003	option-yaml	jobs.build.steps.with.path	docs/advanced/embeddings/local-gguf.md:580	1	
+H9-01004	option-yaml	jobs.build.strategy	docs/advanced/embeddings/local-gguf.md:564	1	
+H9-01005	option-yaml	jobs.build.strategy.matrix	docs/advanced/embeddings/local-gguf.md:565	1	
+H9-01006	option-yaml	jobs.build.strategy.matrix.include	docs/advanced/embeddings/local-gguf.md:566	1	
+H9-01007	option-yaml	jobs.build.strategy.matrix.include.lib	docs/advanced/embeddings/local-gguf.md:568	3	
+H9-01008	option-yaml	jobs.update-formula	docs/packaging/macos.md:113	1	
+H9-01009	option-yaml	jobs.update-formula.runs-on	docs/packaging/macos.md:114	1	
+H9-01010	option-yaml	jobs.update-formula.steps	docs/packaging/macos.md:115	1	
+H9-01011	option-yaml	jobs.update-formula.steps.run	docs/packaging/macos.md:119	3	
+H9-01012	option-yaml	jobs.update-formula.steps.uses	docs/packaging/macos.md:129	1	
+H9-01013	option-yaml	jobs.update-formula.steps.with	docs/packaging/macos.md:130	1	
+H9-01014	option-yaml	jobs.update-formula.steps.with.files	docs/packaging/macos.md:131	1	
+H9-01015	option-yaml	k_means_clustering	docs/performance/searching.md:982	1	
+H9-01016	option-yaml	k_means_clustering.cluster_interval	docs/performance/searching.md:998	1	
+H9-01017	option-yaml	k_means_clustering.drift_threshold	docs/performance/searching.md:999	1	
+H9-01018	option-yaml	k_means_clustering.enabled	docs/performance/searching.md:983	1	
+H9-01019	option-yaml	k_means_clustering.init_method	docs/performance/searching.md:995	1	
+H9-01020	option-yaml	k_means_clustering.max_iterations	docs/performance/searching.md:991	1	
+H9-01021	option-yaml	k_means_clustering.min_cluster_size	docs/performance/searching.md:1002	1	
+H9-01022	option-yaml	k_means_clustering.num_clusters	docs/performance/searching.md:986	1	
+H9-01023	option-yaml	k_means_clustering.tolerance	docs/performance/searching.md:992	1	
+H9-01024	option-yaml	kind	docs/architecture/observability.md:516	8	
+H9-01025	option-yaml	labels	docs/user-guides/open-knowledge-format-interchange.md:93	1	
+H9-01026	option-yaml	limit	docs/features/mcp-integration.md:80	3	
+H9-01027	option-yaml	livenessProbe	docs/operations/monitoring.md:76	1	
+H9-01028	option-yaml	livenessProbe.httpGet	docs/operations/monitoring.md:77	1	
+H9-01029	option-yaml	livenessProbe.httpGet.path	docs/operations/monitoring.md:78	1	
+H9-01030	option-yaml	livenessProbe.httpGet.port	docs/operations/monitoring.md:79	1	
+H9-01031	option-yaml	livenessProbe.initialDelaySeconds	docs/operations/monitoring.md:80	1	
+H9-01032	option-yaml	livenessProbe.periodSeconds	docs/operations/monitoring.md:81	1	
+H9-01033	option-yaml	localization	docs/operations/configuration.md:43	1	
+H9-01034	option-yaml	localization.language	docs/operations/configuration.md:44	1	
+H9-01035	option-yaml	logging	docs/operations/monitoring.md:344	1	
+H9-01036	option-yaml	logging.driver	docs/operations/monitoring.md:345	1	
+H9-01037	option-yaml	logging.options	docs/operations/monitoring.md:346	1	
+H9-01038	option-yaml	logging.options.fluentd-address	docs/operations/monitoring.md:347	1	
+H9-01039	option-yaml	logging.options.tag	docs/operations/monitoring.md:348	1	
+H9-01040	option-yaml	mcp	docs/packaging/raspberry-pi.md:235	1	
+H9-01041	option-yaml	mcp.enabled	docs/packaging/raspberry-pi.md:236	1	
+H9-01042	option-yaml	memory	docs/project-details.md:439	9	
+H9-01043	option-yaml	memory.application_soft_max	docs/operations/memory-management.md:40	1	
+H9-01044	option-yaml	memory.auto_links_enabled	docs/project-details.md:442	1	
+H9-01045	option-yaml	memory.auto_links_similarity_threshold	docs/project-details.md:443	1	
+H9-01046	option-yaml	memory.decay_enabled	docs/project-details.md:440	4	
+H9-01047	option-yaml	memory.decay_interval	docs/project-details.md:441	1	
+H9-01048	option-yaml	memory.go_runtime_limit_bytes	docs/operations/memory-management.md:39	1	
+H9-01049	option-yaml	memory.recovery_interval_ms	docs/operations/memory-management.md:43	1	
+H9-01050	option-yaml	memory.recovery_rearm_ms	docs/operations/memory-management.md:44	1	
+H9-01051	option-yaml	memory.search_bm25_enabled	docs/user-guides/multi-database.md:935	1	
+H9-01052	option-yaml	memory.search_bm25_warming	docs/operations/low-memory-mode.md:63	2	
+H9-01053	option-yaml	memory.search_vector_enabled	docs/features/vector-embeddings.md:436	2	
+H9-01054	option-yaml	memory.search_vector_warming	docs/operations/low-memory-mode.md:64	2	
+H9-01055	option-yaml	memory.transaction_max	docs/operations/memory-management.md:42	1	
+H9-01056	option-yaml	memory.transaction_total_max	docs/operations/memory-management.md:41	1	
+H9-01057	option-yaml	memory.visibility_threshold	docs/features/memory-decay.md:92	2	
+H9-01058	option-yaml	metadata	docs/architecture/observability.md:517	10	
+H9-01059	option-yaml	metadata.labels	docs/architecture/observability.md:519	1	
+H9-01060	option-yaml	metadata.labels.release	docs/architecture/observability.md:520	1	
+H9-01061	option-yaml	metadata.name	docs/architecture/observability.md:518	8	
+H9-01062	option-yaml	min_similarity	docs/features/mcp-integration.md:88	1	
+H9-01063	option-yaml	models	docs/user-guides/heimdall-ai-assistant.md:415	1	
+H9-01064	option-yaml	models.apiBase	docs/user-guides/heimdall-ai-assistant.md:419	1	
+H9-01065	option-yaml	models.apiKey	docs/user-guides/heimdall-ai-assistant.md:420	1	
+H9-01066	option-yaml	models.defaultCompletionOptions	docs/user-guides/heimdall-ai-assistant.md:425	1	
+H9-01067	option-yaml	models.defaultCompletionOptions.maxTokens	docs/user-guides/heimdall-ai-assistant.md:427	1	
+H9-01068	option-yaml	models.defaultCompletionOptions.temperature	docs/user-guides/heimdall-ai-assistant.md:426	1	
+H9-01069	option-yaml	models.model	docs/user-guides/heimdall-ai-assistant.md:418	1	
+H9-01070	option-yaml	models.provider	docs/user-guides/heimdall-ai-assistant.md:417	1	
+H9-01071	option-yaml	models.roles	docs/user-guides/heimdall-ai-assistant.md:421	1	
+H9-01072	option-yaml	name	docs/advanced/embeddings/local-gguf.md:559	3	
+H9-01073	option-yaml	observability	docs/architecture/observability.md:550	2	
+H9-01074	option-yaml	observability.logging	docs/architecture/observability.md:561	1	
+H9-01075	option-yaml	observability.logging.format	docs/architecture/observability.md:563	1	
+H9-01076	option-yaml	observability.logging.level	docs/architecture/observability.md:562	1	
+H9-01077	option-yaml	observability.logging.output	docs/architecture/observability.md:564	1	
+H9-01078	option-yaml	observability.logging.redact_extra	docs/architecture/observability.md:565	1	
+H9-01079	option-yaml	observability.metrics	docs/architecture/observability.md:551	2	
+H9-01080	option-yaml	observability.metrics.enabled	docs/architecture/observability.md:552	2	
+H9-01081	option-yaml	observability.metrics.port	docs/architecture/observability.md:553	2	
+H9-01082	option-yaml	observability.metrics.tenant_labels_enabled	docs/operations/monitoring.md:148	1	
+H9-01083	option-yaml	observability.pprof	docs/architecture/observability.md:566	2	
+H9-01084	option-yaml	observability.pprof.enabled	docs/architecture/observability.md:567	2	
+H9-01085	option-yaml	observability.pprof.listen	docs/architecture/observability.md:568	2	
+H9-01086	option-yaml	observability.tracing	docs/architecture/observability.md:557	2	
+H9-01087	option-yaml	observability.tracing.enabled	docs/architecture/observability.md:558	2	
+H9-01088	option-yaml	observability.tracing.endpoint	docs/operations/monitoring.md:151	1	
+H9-01089	option-yaml	observability.tracing.protocol	docs/operations/monitoring.md:152	1	
+H9-01090	option-yaml	observability.tracing.sample_ratio	docs/architecture/observability.md:559	1	
+H9-01091	option-yaml	on	docs/advanced/embeddings/local-gguf.md:560	2	
+H9-01092	option-yaml	on.release	docs/packaging/macos.md:109	1	
+H9-01093	option-yaml	on.release.types	docs/packaging/macos.md:110	1	
+H9-01094	option-yaml	plugin	docs/security/llm-ast-security.md:359	1	
+H9-01095	option-yaml	plugin.name	docs/security/llm-ast-security.md:360	1	
+H9-01096	option-yaml	plugin.permissions	docs/security/llm-ast-security.md:361	1	
+H9-01097	option-yaml	plugin.permissions.ast_access	docs/security/llm-ast-security.md:368	1	
+H9-01098	option-yaml	plugin.permissions.ast_access.can_generate	docs/security/llm-ast-security.md:370	1	
+H9-01099	option-yaml	plugin.permissions.ast_access.can_read	docs/security/llm-ast-security.md:369	1	
+H9-01100	option-yaml	plugin.permissions.queries	docs/security/llm-ast-security.md:362	1	
+H9-01101	option-yaml	plugin.permissions.queries.allowed_labels	docs/security/llm-ast-security.md:364	1	
+H9-01102	option-yaml	plugin.permissions.queries.allowed_relationships	docs/security/llm-ast-security.md:365	1	
+H9-01103	option-yaml	plugin.permissions.queries.max_results	docs/security/llm-ast-security.md:366	1	
+H9-01104	option-yaml	plugin.permissions.queries.read_only	docs/security/llm-ast-security.md:363	1	
+H9-01105	option-yaml	plugin.permissions.queries.timeout_ms	docs/security/llm-ast-security.md:367	1	
+H9-01106	option-yaml	plugins	docs/user-guides/bm25-stemmers.md:223	1	
+H9-01107	option-yaml	plugins.stemmers	docs/user-guides/bm25-stemmers.md:224	1	
+H9-01108	option-yaml	plugins.stemmers.directory	docs/user-guides/bm25-stemmers.md:225	1	
+H9-01109	option-yaml	plugins_dir	docs/features/apoc-functions.md:510	1	
+H9-01110	option-yaml	ports	docs/user-guides/qdrant-grpc.md:46	1	
+H9-01111	option-yaml	priority	docs/features/mcp-integration.md:107	2	
+H9-01112	option-yaml	query	docs/features/mcp-integration.md:85	1	
+H9-01113	option-yaml	rate_limiting	docs/operations/troubleshooting.md:70	1	
+H9-01114	option-yaml	rate_limiting.per_hour	docs/operations/troubleshooting.md:72	1	
+H9-01115	option-yaml	rate_limiting.per_minute	docs/operations/troubleshooting.md:71	1	
+H9-01116	option-yaml	readinessProbe	docs/operations/monitoring.md:83	1	
+H9-01117	option-yaml	readinessProbe.httpGet	docs/operations/monitoring.md:84	1	
+H9-01118	option-yaml	readinessProbe.httpGet.path	docs/operations/monitoring.md:85	1	
+H9-01119	option-yaml	readinessProbe.httpGet.port	docs/operations/monitoring.md:86	1	
+H9-01120	option-yaml	readinessProbe.initialDelaySeconds	docs/operations/monitoring.md:87	1	
+H9-01121	option-yaml	readinessProbe.periodSeconds	docs/operations/monitoring.md:88	1	
+H9-01122	option-yaml	relation	docs/features/mcp-integration.md:96	1	
+H9-01123	option-yaml	retention	docs/operations/configuration.md:76	3	
+H9-01124	option-yaml	retention.default_policies	docs/operations/configuration.md:78	2	
+H9-01125	option-yaml	retention.excluded_labels	docs/operations/configuration.md:79	3	
+H9-01126	option-yaml	retention.max_sweep_records	docs/user-guides/retention-policies.md:31	1	
+H9-01127	option-yaml	retention.policies	docs/user-guides/retention-policies.md:93	1	
+H9-01128	option-yaml	retention.policies.active	docs/user-guides/retention-policies.md:100	1	
+H9-01129	option-yaml	retention.policies.archive_before_delete	docs/user-guides/retention-policies.md:98	1	
+H9-01130	option-yaml	retention.policies.archive_path	docs/user-guides/retention-policies.md:99	1	
+H9-01131	option-yaml	retention.policies.category	docs/user-guides/retention-policies.md:96	1	
+H9-01132	option-yaml	retention.policies.name	docs/user-guides/retention-policies.md:95	1	
+H9-01133	option-yaml	retention.policies.retention_days	docs/user-guides/retention-policies.md:97	1	
+H9-01134	option-yaml	retention.sweep_interval	docs/operations/configuration.md:77	3	
+H9-01135	option-yaml	rrf_fusion	docs/performance/searching.md:1327	1	
+H9-01136	option-yaml	rrf_fusion.bm25_weight	docs/performance/searching.md:1331	1	
+H9-01137	option-yaml	rrf_fusion.enabled	docs/performance/searching.md:1328	1	
+H9-01138	option-yaml	rrf_fusion.fallback_enabled	docs/performance/searching.md:1334	1	
+H9-01139	option-yaml	rrf_fusion.k	docs/performance/searching.md:1329	1	
+H9-01140	option-yaml	rrf_fusion.vector_weight	docs/performance/searching.md:1330	1	
+H9-01141	option-yaml	run	docs/advanced/search-evaluation.md:159	1	
+H9-01142	option-yaml	schema	docs/user-guides/heimdall-ai-assistant.md:414	1	
+H9-01143	option-yaml	scrape_configs	docs/operations/monitoring.md:230	1	
+H9-01144	option-yaml	scrape_configs.metrics_path	docs/operations/monitoring.md:234	1	
+H9-01145	option-yaml	scrape_configs.static_configs	docs/operations/monitoring.md:232	1	
+H9-01146	option-yaml	search	docs/operations/configuration.md:677	6	
+H9-01147	option-yaml	search.bm25_stemmer	docs/user-guides/bm25-stemmers.md:228	1	
+H9-01148	option-yaml	search.min_similarity	docs/operations/configuration.md:678	5	
+H9-01149	option-yaml	search_rerank	docs/release-notes-since-v1.0.11.md:212	3	
+H9-01150	option-yaml	search_rerank.api_key	docs/features/cross-encoder-reranking.md:105	2	
+H9-01151	option-yaml	search_rerank.api_url	docs/features/cross-encoder-reranking.md:104	2	
+H9-01152	option-yaml	search_rerank.enabled	docs/release-notes-since-v1.0.11.md:213	3	
+H9-01153	option-yaml	search_rerank.lazy_mode	docs/features/cross-encoder-reranking.md:106	2	
+H9-01154	option-yaml	search_rerank.model	docs/release-notes-since-v1.0.11.md:215	3	
+H9-01155	option-yaml	search_rerank.provider	docs/release-notes-since-v1.0.11.md:214	3	
+H9-01156	option-yaml	secrets	docs/operations/cluster-security.md:153	1	
+H9-01157	option-yaml	secrets.jwt-secret	docs/operations/cluster-security.md:154	1	
+H9-01158	option-yaml	secrets.jwt-secret.external	docs/operations/cluster-security.md:155	1	
+H9-01159	option-yaml	security	docs/api-reference/openapi.md:59	3	
+H9-01160	option-yaml	security.allow_dynamic_creation	docs/features/apoc-functions.md:528	1	
+H9-01161	option-yaml	security.allow_export_file_access	docs/features/apoc-functions.md:530	1	
+H9-01162	option-yaml	security.allow_import_file_access	docs/features/apoc-functions.md:529	1	
+H9-01163	option-yaml	security.allow_remote_url_access	docs/features/apoc-functions.md:531	1	
+H9-01164	option-yaml	security.file_access_root	docs/features/apoc-functions.md:532	1	
+H9-01165	option-yaml	security.max_collection_size	docs/features/apoc-functions.md:533	1	
+H9-01166	option-yaml	security_opt	docs/operations/troubleshooting.md:353	1	
+H9-01167	option-yaml	server	docs/project-details.md:416	10	
+H9-01168	option-yaml	server.bolt_auth_timeout	docs/operations/configuration.md:487	1	
+H9-01169	option-yaml	server.bolt_enabled	docs/operations/configuration.md:401	1	
+H9-01170	option-yaml	server.bolt_max_connections	docs/operations/configuration.md:479	1	
+H9-01171	option-yaml	server.bolt_port	docs/project-details.md:417	2	
+H9-01172	option-yaml	server.bolt_server_announcement	docs/neo4j-migration/cypher-compatibility.md:225	3	
+H9-01173	option-yaml	server.bolt_sniff_timeout	docs/operations/configuration.md:486	1	
+H9-01174	option-yaml	server.bolt_statement_timeout	docs/operations/configuration.md:488	1	
+H9-01175	option-yaml	server.bolt_tls_cert	docs/operations/configuration.md:481	1	
+H9-01176	option-yaml	server.bolt_tls_client_auth_mode	docs/operations/configuration.md:485	1	
+H9-01177	option-yaml	server.bolt_tls_client_ca_file	docs/operations/configuration.md:484	1	
+H9-01178	option-yaml	server.bolt_tls_enabled	docs/compliance/hipaa-compliance.md:182	3	
+H9-01179	option-yaml	server.bolt_tls_key	docs/operations/configuration.md:482	1	
+H9-01180	option-yaml	server.bolt_tls_require	docs/operations/configuration.md:483	1	
+H9-01181	option-yaml	server.bolt_websocket_allowed_origins	docs/operations/configuration.md:490	1	
+H9-01182	option-yaml	server.bolt_websocket_enabled	docs/operations/configuration.md:489	1	
+H9-01183	option-yaml	server.bolt_websocket_max_message_size	docs/operations/configuration.md:491	1	
+H9-01184	option-yaml	server.bolt_websocket_ping_interval	docs/operations/configuration.md:493	1	
+H9-01185	option-yaml	server.bolt_websocket_pong_timeout	docs/operations/configuration.md:494	1	
+H9-01186	option-yaml	server.bolt_websocket_write_buffer_size	docs/operations/configuration.md:492	1	
+H9-01187	option-yaml	server.host	docs/project-details.md:419	1	
+H9-01188	option-yaml	server.http_address	docs/operations/configuration.md:407	2	
+H9-01189	option-yaml	server.http_enabled	docs/operations/configuration.md:405	1	
+H9-01190	option-yaml	server.http_port	docs/project-details.md:418	2	
+H9-01191	option-yaml	server.http_trusted_proxies	docs/operations/configuration.md:408	1	
+H9-01192	option-yaml	server.https	docs/operations/configuration.md:409	3	
+H9-01193	option-yaml	server.https.cert_file	docs/operations/configuration.md:412	3	
+H9-01194	option-yaml	server.https.enabled	docs/operations/configuration.md:410	3	
+H9-01195	option-yaml	server.https.key_file	docs/operations/configuration.md:413	3	
+H9-01196	option-yaml	server.https.port	docs/operations/configuration.md:411	3	
+H9-01197	option-yaml	server.tls	docs/compliance/encryption.md:83	3	
+H9-01198	option-yaml	server.tls.cert_file	docs/compliance/encryption.md:85	3	
+H9-01199	option-yaml	server.tls.enabled	docs/compliance/encryption.md:84	3	
+H9-01200	option-yaml	server.tls.key_file	docs/compliance/encryption.md:86	3	
+H9-01201	option-yaml	since	docs/features/mcp-integration.md:79	1	
+H9-01202	option-yaml	spec	docs/architecture/observability.md:521	7	
+H9-01203	option-yaml	spec.accessModes	docs/packaging/docker.md:430	1	
+H9-01204	option-yaml	spec.endpoints	docs/architecture/observability.md:525	1	
+H9-01205	option-yaml	spec.endpoints.honorLabels	docs/architecture/observability.md:530	1	
+H9-01206	option-yaml	spec.endpoints.interval	docs/architecture/observability.md:528	1	
+H9-01207	option-yaml	spec.endpoints.path	docs/architecture/observability.md:527	1	
+H9-01208	option-yaml	spec.endpoints.relabelings	docs/architecture/observability.md:531	1	
+H9-01209	option-yaml	spec.endpoints.relabelings.targetLabel	docs/architecture/observability.md:533	1	
+H9-01210	option-yaml	spec.endpoints.scrapeTimeout	docs/architecture/observability.md:529	1	
+H9-01211	option-yaml	spec.ports	docs/operations/deployment.md:143	2	
+H9-01212	option-yaml	spec.ports.port	docs/operations/deployment.md:145	4	
+H9-01213	option-yaml	spec.ports.targetPort	docs/operations/deployment.md:146	2	
+H9-01214	option-yaml	spec.replicas	docs/operations/deployment.md:86	3	
+H9-01215	option-yaml	spec.resources	docs/packaging/docker.md:432	1	
+H9-01216	option-yaml	spec.resources.requests	docs/packaging/docker.md:433	1	
+H9-01217	option-yaml	spec.resources.requests.storage	docs/packaging/docker.md:434	1	
+H9-01218	option-yaml	spec.selector	docs/architecture/observability.md:522	6	
+H9-01219	option-yaml	spec.selector.app	docs/operations/deployment.md:142	2	
+H9-01220	option-yaml	spec.selector.matchLabels	docs/architecture/observability.md:523	4	
+H9-01221	option-yaml	spec.selector.matchLabels.app	docs/operations/deployment.md:89	3	
+H9-01222	option-yaml	spec.serviceName	docs/operations/scaling.md:139	1	
+H9-01223	option-yaml	spec.template	docs/operations/deployment.md:90	3	
+H9-01224	option-yaml	spec.template.metadata	docs/operations/deployment.md:91	3	
+H9-01225	option-yaml	spec.template.metadata.labels	docs/operations/deployment.md:92	3	
+H9-01226	option-yaml	spec.template.metadata.labels.app	docs/operations/deployment.md:93	3	
+H9-01227	option-yaml	spec.template.spec	docs/operations/deployment.md:94	3	
+H9-01228	option-yaml	spec.template.spec.containers	docs/operations/deployment.md:95	3	
+H9-01229	option-yaml	spec.template.spec.containers.env	docs/operations/deployment.md:101	2	
+H9-01230	option-yaml	spec.template.spec.containers.env.value	docs/operations/deployment.md:103	2	
+H9-01231	option-yaml	spec.template.spec.containers.env.valueFrom	docs/operations/deployment.md:105	2	
+H9-01232	option-yaml	spec.template.spec.containers.env.valueFrom.fieldRef	docs/operations/scaling.md:157	1	
+H9-01233	option-yaml	spec.template.spec.containers.env.valueFrom.fieldRef.fieldPath	docs/operations/scaling.md:158	1	
+H9-01234	option-yaml	spec.template.spec.containers.env.valueFrom.secretKeyRef	docs/operations/deployment.md:106	1	
+H9-01235	option-yaml	spec.template.spec.containers.env.valueFrom.secretKeyRef.key	docs/operations/deployment.md:108	1	
+H9-01236	option-yaml	spec.template.spec.containers.env.valueFrom.secretKeyRef.name	docs/operations/deployment.md:107	1	
+H9-01237	option-yaml	spec.template.spec.containers.image	docs/operations/deployment.md:97	3	
+H9-01238	option-yaml	spec.template.spec.containers.livenessProbe	docs/operations/deployment.md:119	2	
+H9-01239	option-yaml	spec.template.spec.containers.livenessProbe.httpGet	docs/operations/deployment.md:120	2	
+H9-01240	option-yaml	spec.template.spec.containers.livenessProbe.httpGet.path	docs/operations/deployment.md:121	2	
+H9-01241	option-yaml	spec.template.spec.containers.livenessProbe.httpGet.port	docs/operations/deployment.md:122	2	
+H9-01242	option-yaml	spec.template.spec.containers.livenessProbe.initialDelaySeconds	docs/operations/deployment.md:123	2	
+H9-01243	option-yaml	spec.template.spec.containers.livenessProbe.periodSeconds	docs/operations/deployment.md:124	2	
+H9-01244	option-yaml	spec.template.spec.containers.ports	docs/operations/deployment.md:98	3	
+H9-01245	option-yaml	spec.template.spec.containers.readinessProbe	docs/operations/deployment.md:125	2	
+H9-01246	option-yaml	spec.template.spec.containers.readinessProbe.httpGet	docs/operations/deployment.md:126	2	
+H9-01247	option-yaml	spec.template.spec.containers.readinessProbe.httpGet.path	docs/operations/deployment.md:127	2	
+H9-01248	option-yaml	spec.template.spec.containers.readinessProbe.httpGet.port	docs/operations/deployment.md:128	2	
+H9-01249	option-yaml	spec.template.spec.containers.readinessProbe.initialDelaySeconds	docs/operations/deployment.md:129	2	
+H9-01250	option-yaml	spec.template.spec.containers.readinessProbe.periodSeconds	docs/operations/deployment.md:130	2	
+H9-01251	option-yaml	spec.template.spec.containers.resources	docs/operations/deployment.md:112	2	
+H9-01252	option-yaml	spec.template.spec.containers.resources.limits	docs/operations/deployment.md:116	2	
+H9-01253	option-yaml	spec.template.spec.containers.resources.limits.cpu	docs/operations/deployment.md:118	2	
+H9-01254	option-yaml	spec.template.spec.containers.resources.limits.memory	docs/operations/deployment.md:117	2	
+H9-01255	option-yaml	spec.template.spec.containers.resources.requests	docs/operations/deployment.md:113	2	
+H9-01256	option-yaml	spec.template.spec.containers.resources.requests.cpu	docs/operations/deployment.md:115	2	
+H9-01257	option-yaml	spec.template.spec.containers.resources.requests.memory	docs/operations/deployment.md:114	2	
+H9-01258	option-yaml	spec.template.spec.containers.volumeMounts	docs/operations/deployment.md:109	3	
+H9-01259	option-yaml	spec.template.spec.containers.volumeMounts.mountPath	docs/operations/deployment.md:111	3	
+H9-01260	option-yaml	spec.template.spec.volumes	docs/operations/deployment.md:131	2	
+H9-01261	option-yaml	spec.template.spec.volumes.persistentVolumeClaim	docs/operations/deployment.md:133	2	
+H9-01262	option-yaml	spec.template.spec.volumes.persistentVolumeClaim.claimName	docs/operations/deployment.md:134	2	
+H9-01263	option-yaml	spec.volumeClaimTemplates	docs/operations/scaling.md:166	1	
+H9-01264	option-yaml	spec.volumeClaimTemplates.name	docs/operations/scaling.md:168	1	
+H9-01265	option-yaml	spec.volumeClaimTemplates.spec	docs/operations/scaling.md:169	1	
+H9-01266	option-yaml	spec.volumeClaimTemplates.spec.accessModes	docs/operations/scaling.md:170	1	
+H9-01267	option-yaml	spec.volumeClaimTemplates.spec.resources	docs/operations/scaling.md:171	1	
+H9-01268	option-yaml	spec.volumeClaimTemplates.spec.resources.requests	docs/operations/scaling.md:172	1	
+H9-01269	option-yaml	spec.volumeClaimTemplates.spec.resources.requests.storage	docs/operations/scaling.md:173	1	
+H9-01270	option-yaml	status	docs/features/mcp-integration.md:106	3	
+H9-01271	option-yaml	storage	docs/operations/configuration.md:1279	3	
+H9-01272	option-yaml	storage.cache_size_mb	docs/packaging/raspberry-pi.md:171	1	
+H9-01273	option-yaml	storage.flush_interval	docs/packaging/raspberry-pi.md:174	1	
+H9-01274	option-yaml	storage.mode	docs/operations/configuration.md:1280	2	
+H9-01275	option-yaml	strength	docs/features/mcp-integration.md:97	1	
+H9-01276	option-yaml	stringData	docs/operations/deployment.md:161	1	
+H9-01277	option-yaml	stringData.encryption-password	docs/operations/deployment.md:163	1	
+H9-01278	option-yaml	stringData.jwt-secret	docs/operations/deployment.md:162	1	
+H9-01279	option-yaml	tags	docs/features/mcp-integration.md:69	2	
+H9-01280	option-yaml	title	docs/features/mcp-integration.md:68	2	
+H9-01281	option-yaml	tls	docs/compliance/soc2-compliance.md:184	1	
+H9-01282	option-yaml	tls.cert_file	docs/compliance/soc2-compliance.md:187	1	
+H9-01283	option-yaml	tls.enabled	docs/compliance/soc2-compliance.md:185	1	
+H9-01284	option-yaml	tls.key_file	docs/compliance/soc2-compliance.md:188	1	
+H9-01285	option-yaml	tls.min_version	docs/compliance/soc2-compliance.md:186	1	
+H9-01286	option-yaml	to	docs/features/mcp-integration.md:95	1	
+H9-01287	option-yaml	type	docs/features/mcp-integration.md:67	4	
+H9-01288	option-yaml	unblocked_only	docs/features/mcp-integration.md:119	1	
+H9-01289	option-yaml	uses	docs/advanced/search-evaluation.md:168	1	
+H9-01290	option-yaml	vector_search	docs/performance/searching.md:1005	2	
+H9-01291	option-yaml	vector_search.clusters_to_search	docs/performance/searching.md:1007	1	
+H9-01292	option-yaml	vector_search.enabled	docs/performance/searching.md:1294	1	
+H9-01293	option-yaml	vector_search.hnsw	docs/performance/searching.md:1295	1	
+H9-01294	option-yaml	vector_search.hnsw.ef_construction	docs/performance/searching.md:1297	1	
+H9-01295	option-yaml	vector_search.hnsw.ef_search	docs/performance/searching.md:1298	1	
+H9-01296	option-yaml	vector_search.hnsw.m	docs/performance/searching.md:1296	1	
+H9-01297	option-yaml	vector_search.use_clustered_search	docs/performance/searching.md:1006	1	
+H9-01298	option-yaml	version	docs/features/apoc-functions.md:543	16	
+H9-01299	option-yaml	with	docs/advanced/search-evaluation.md:169	1	
+H9-01300	option-yaml	with.name	docs/advanced/search-evaluation.md:170	1	
+H9-01301	option-yaml	with.path	docs/advanced/search-evaluation.md:171	1	
+H9-01302	option-flag	--auth	docs/architecture/system-design.md:313	1	
+H9-01303	option-flag	--bolt-port	docs/architecture/system-design.md:307	3	
+H9-01304	option-flag	--build	docs/packaging/linux.md:262	1	
+H9-01305	option-flag	--build-arg	docs/development/gpu-large-build-qualification.md:113	3	
+H9-01306	option-flag	--check-gpu	docs/getting-started/windows-cuda.md:42	1	
+H9-01307	option-flag	--config	docs/operations/configuration.md:10	2	
+H9-01308	option-flag	--count	docs/getting-started/windows-cuda.md:130	2	
+H9-01309	option-flag	--data-dir	docs/release-notes-since-v1.0.11.md:690	24	
+H9-01310	option-flag	--dearmor	docs/packaging/linux.md:125	1	
+H9-01311	option-flag	--default-database	docs/development/multi-db-e2e-test.md:40	2	
+H9-01312	option-flag	--embedding-cache	docs/features/feature-flags.md:416	5	
+H9-01313	option-flag	--embedding-enabled	docs/getting-started/installation.md:231	2	
+H9-01314	option-flag	--embedding-model	docs/advanced/embeddings/local-gguf.md:684	1	
+H9-01315	option-flag	--embedding-provider	docs/advanced/embeddings/local-gguf.md:684	1	
+H9-01316	option-flag	--embeddings	docs/getting-started/windows-cuda.md:130	2	
+H9-01317	option-flag	--format	docs/operations/memory-management.md:79	2	
+H9-01318	option-flag	--from-path	docs/operations/admin-tool.md:126	1	
+H9-01319	option-flag	--global-with-code-intelligence	docs/user-guides/graphify-local.md:196	1	
+H9-01320	option-flag	--go-	docs/user-guides/nornic-search-grpc.md:39	1	
+H9-01321	option-flag	--headless	docs/project-details.md:393	1	
+H9-01322	option-flag	--help	docs/getting-started/installation.md:27	1	
+H9-01323	option-flag	--http-port	docs/architecture/system-design.md:307	3	
+H9-01324	option-flag	--identifier	docs/packaging/macos.md:298	1	
+H9-01325	option-flag	--local	docs/user-guides/graphify-local.md:212	1	
+H9-01326	option-flag	--log-queries	docs/operations/monitoring.md:402	2	
+H9-01327	option-flag	--low-memory	docs/operations/low-memory-mode.md:8	1	
+H9-01328	option-flag	--mcp-enabled	docs/architecture/system-design.md:310	2	
+H9-01329	option-flag	--memory	docs/getting-started/docker-deployment.md:319	2	
+H9-01330	option-flag	--name	docs/project-details.md:12	31	
+H9-01331	option-flag	--no-auth	docs/development/setup.md:141	2	
+H9-01332	option-flag	--no-deps	docs/operations/docker.md:495	1	
+H9-01333	option-flag	--no-stream	docs/operations/docker.md:391	2	
+H9-01334	option-flag	--nodes	docs/operations/admin-tool.md:89	2	
+H9-01335	option-flag	--parallel	docs/operations/troubleshooting.md:154	1	
+H9-01336	option-flag	--parallel-workers	docs/operations/troubleshooting.md:230	1	
+H9-01337	option-flag	--pool-enabled	docs/operations/scaling.md:215	1	
+H9-01338	option-flag	--python	docs/user-guides/graphify-local.md:195	1	
+H9-01339	option-flag	--query-cache-size	docs/operations/scaling.md:181	2	
+H9-01340	option-flag	--query-cache-ttl	docs/operations/scaling.md:181	1	
+H9-01341	option-flag	--repair	docs/operations/admin-tool.md:177	1	
+H9-01342	option-flag	--rm	docs/getting-started/docker-deployment.md:292	6	
+H9-01343	option-flag	--since	docs/operations/docker.md:318	2	
+H9-01344	option-flag	--tail	docs/operations/docker.md:315	2	
+H9-01345	option-flag	--target	docs/user-guides/bm25-stemmers.md:134	4	
+H9-01346	option-flag	--target-grpc-port	docs/skills/qdrant-migration.skill.md:112	1	
+H9-01347	option-flag	--target-host	docs/skills/qdrant-migration.skill.md:112	2	
+H9-01348	option-flag	--target-port	docs/skills/qdrant-migration.skill.md:118	1	
+H9-01349	option-flag	--target-url	docs/skills/neo4j-migration.skill.md:162	4	
+H9-01350	option-flag	--threshold	docs/operations/cli-commands.md:130	3	
+H9-01351	option-flag	--time	docs/operations/backup-restore.md:66	1	
+H9-01352	option-flag	--to-path	docs/operations/admin-tool.md:125	1	
+H9-01353	option-flag	--version	docs/getting-started/installation.md:24	2	
+H9-01354	procedure	apoc.Call	docs/features/apoc-functions.md:204	1	
+H9-01355	procedure	apoc.GetStorage	docs/features/apoc-functions.md:245	1	
+H9-01356	procedure	apoc.Initialize	docs/features/apoc-functions.md:237	1	
+H9-01357	procedure	apoc.SetStorage	docs/features/apoc-functions.md:239	1	
+H9-01358	procedure	apoc.algo.aStar	docs/user-guides/graph-traversal.md:259	2	
+H9-01359	procedure	apoc.algo.allSimplePaths	docs/user-guides/graph-traversal.md:277	2	
+H9-01360	procedure	apoc.algo.betweenness	docs/features/apoc-functions.md:762	4	
+H9-01361	procedure	apoc.algo.closeness	docs/user-guides/graph-traversal.md:349	2	
+H9-01362	procedure	apoc.algo.community	docs/features/apoc-functions.md:777	1	
+H9-01363	procedure	apoc.algo.dijkstra	docs/features/apoc-functions.md:767	6	
+H9-01364	procedure	apoc.algo.labelPropagation	docs/user-guides/graph-traversal.md:369	2	
+H9-01365	procedure	apoc.algo.louvain	docs/user-guides/graph-traversal.md:358	2	
+H9-01366	procedure	apoc.algo.pageRank	docs/features/apoc-functions.md:389	10	
+H9-01367	procedure	apoc.algo.wcc	docs/user-guides/graph-traversal.md:378	2	
+H9-01368	procedure	apoc.atomic.add	docs/features/apoc-functions.md:785	2	
+H9-01369	procedure	apoc.atomic.compareAndSwap	docs/features/apoc-functions.md:794	2	
+H9-01370	procedure	apoc.atomic.insert	docs/features/apoc-functions.md:790	2	
+H9-01371	procedure	apoc.bitwise.and	docs/features/apoc-functions.md:802	1	
+H9-01372	procedure	apoc.bitwise.countBits	docs/features/apoc-functions.md:808	1	
+H9-01373	procedure	apoc.bitwise.op	docs/features/apoc-functions.md:801	1	
+H9-01374	procedure	apoc.bitwise.or	docs/features/apoc-functions.md:803	1	
+H9-01375	procedure	apoc.bitwise.setBit	docs/features/apoc-functions.md:806	1	
+H9-01376	procedure	apoc.bitwise.testBit	docs/features/apoc-functions.md:807	1	
+H9-01377	procedure	apoc.coll.avg	docs/features/apoc-functions.md:684	2	
+H9-01378	procedure	apoc.coll.contains	docs/features/apoc-functions.md:699	1	
+H9-01379	procedure	apoc.coll.duplicates	docs/features/apoc-functions.md:700	1	
+H9-01380	procedure	apoc.coll.flatten	docs/features/apoc-functions.md:691	2	
+H9-01381	procedure	apoc.coll.frequencies	docs/features/apoc-functions.md:701	1	
+H9-01382	procedure	apoc.coll.intersection	docs/features/apoc-functions.md:695	1	
+H9-01383	procedure	apoc.coll.max	docs/features/apoc-functions.md:686	1	
+H9-01384	procedure	apoc.coll.min	docs/features/apoc-functions.md:685	1	
+H9-01385	procedure	apoc.coll.reverse	docs/features/apoc-functions.md:690	1	
+H9-01386	procedure	apoc.coll.sort	docs/features/apoc-functions.md:689	1	
+H9-01387	procedure	apoc.coll.subtract	docs/features/apoc-functions.md:696	1	
+H9-01388	procedure	apoc.coll.sum	docs/project-details.md:344	6	
+H9-01389	procedure	apoc.coll.union	docs/features/apoc-functions.md:694	1	
+H9-01390	procedure	apoc.create.uuid	docs/user-guides/plugin-system.md:43	1	
+H9-01391	procedure	apoc.custom.declareProcedure	docs/features/stored-procedure-parity.md:73	1	
+H9-01392	procedure	apoc.custom.dropProcedure	docs/features/stored-procedure-parity.md:84	1	
+H9-01393	procedure	apoc.custom.installProcedure	docs/features/stored-procedure-parity.md:63	3	
+H9-01394	procedure	apoc.custom.list	docs/features/stored-procedure-parity.md:85	1	
+H9-01395	procedure	apoc.custom.myFunc	docs/features/apoc-functions.md:1397	1	
+H9-01396	procedure	apoc.custom.show	docs/features/stored-procedure-parity.md:85	1	
+H9-01397	procedure	apoc.cypher.doIt	docs/features/stored-procedure-parity.md:199	4	
+H9-01398	procedure	apoc.cypher.parallel	docs/features/apoc-functions.md:826	2	
+H9-01399	procedure	apoc.cypher.run	docs/features/apoc-functions.md:815	4	
+H9-01400	procedure	apoc.cypher.runMany	docs/features/apoc-functions.md:820	4	
+H9-01401	procedure	apoc.diff.maps	docs/features/apoc-functions.md:837	1	
+H9-01402	procedure	apoc.diff.nodes	docs/features/apoc-functions.md:834	1	
+H9-01403	procedure	apoc.export.csv.all	docs/development/graphml-go-api.md:105	4	
+H9-01404	procedure	apoc.export.cypher.all	docs/features/apoc-functions.md:856	2	
+H9-01405	procedure	apoc.export.json.all	docs/migration-notice.md:68	2	
+H9-01406	procedure	apoc.export.json.query	docs/features/apoc-functions.md:849	2	
+H9-01407	procedure	apoc.hashing.consistentHash	docs/features/apoc-functions.md:890	1	
+H9-01408	procedure	apoc.hashing.md5	docs/features/apoc-functions.md:881	1	
+H9-01409	procedure	apoc.hashing.murmur3	docs/features/apoc-functions.md:886	1	
+H9-01410	procedure	apoc.hashing.sha256	docs/features/apoc-functions.md:882	1	
+H9-01411	procedure	apoc.hashing.sha512	docs/features/apoc-functions.md:883	1	
+H9-01412	procedure	apoc.hashing.xxhash	docs/features/apoc-functions.md:887	1	
+H9-01413	procedure	apoc.help	docs/user-guides/plugin-system.md:242	2	
+H9-01414	procedure	apoc.import.batch	docs/features/apoc-functions.md:871	2	
+H9-01415	procedure	apoc.import.csv	docs/features/apoc-functions.md:868	2	
+H9-01416	procedure	apoc.import.json	docs/features/apoc-functions.md:863	2	
+H9-01417	procedure	apoc.kafka.consume	docs/features/apoc-functions.md:670	1	
+H9-01418	procedure	apoc.label.add	docs/features/apoc-functions.md:898	2	
+H9-01419	procedure	apoc.label.has	docs/features/apoc-functions.md:906	1	
+H9-01420	procedure	apoc.label.remove	docs/features/apoc-functions.md:902	2	
+H9-01421	procedure	apoc.load.csv	docs/features/apoc-functions.md:919	2	
+H9-01422	procedure	apoc.load.jdbc	docs/features/apoc-functions.md:927	2	
+H9-01423	procedure	apoc.load.json	docs/features/apoc-functions.md:914	2	
+H9-01424	procedure	apoc.load.s3	docs/features/apoc-functions.md:924	2	
+H9-01425	procedure	apoc.lock.detectDeadlock	docs/features/apoc-functions.md:944	2	
+H9-01426	procedure	apoc.lock.nodes	docs/features/apoc-functions.md:935	2	
+H9-01427	procedure	apoc.lock.read	docs/features/apoc-functions.md:940	2	
+H9-01428	procedure	apoc.lock.unlock	docs/features/apoc-functions.md:937	2	
+H9-01429	procedure	apoc.lock.write	docs/features/apoc-functions.md:941	2	
+H9-01430	procedure	apoc.log.debug	docs/features/apoc-functions.md:954	2	
+H9-01431	procedure	apoc.log.error	docs/features/apoc-functions.md:956	2	
+H9-01432	procedure	apoc.log.info	docs/features/apoc-functions.md:953	2	
+H9-01433	procedure	apoc.log.metrics	docs/features/apoc-functions.md:966	2	
+H9-01434	procedure	apoc.log.timer	docs/features/apoc-functions.md:959	1	
+H9-01435	procedure	apoc.log.warn	docs/features/apoc-functions.md:955	2	
+H9-01436	procedure	apoc.math.abs	docs/features/apoc-functions.md:733	1	
+H9-01437	procedure	apoc.math.ceil	docs/features/apoc-functions.md:731	1	
+H9-01438	procedure	apoc.math.factorial	docs/features/apoc-functions.md:744	1	
+H9-01439	procedure	apoc.math.floor	docs/features/apoc-functions.md:732	1	
+H9-01440	procedure	apoc.math.gcd	docs/features/apoc-functions.md:742	1	
+H9-01441	procedure	apoc.math.isPrime	docs/features/apoc-functions.md:745	1	
+H9-01442	procedure	apoc.math.lcm	docs/features/apoc-functions.md:743	1	
+H9-01443	procedure	apoc.math.mean	docs/features/apoc-functions.md:736	1	
+H9-01444	procedure	apoc.math.median	docs/features/apoc-functions.md:737	1	
+H9-01445	procedure	apoc.math.percentile	docs/features/apoc-functions.md:739	1	
+H9-01446	procedure	apoc.math.round	docs/features/apoc-functions.md:730	1	
+H9-01447	procedure	apoc.math.sigmoid	docs/user-guides/plugin-system.md:33	1	
+H9-01448	procedure	apoc.math.sqrt	docs/user-guides/plugin-system.md:32	1	
+H9-01449	procedure	apoc.math.stdDev	docs/features/apoc-functions.md:738	1	
+H9-01450	procedure	apoc.merge.deepMerge	docs/features/apoc-functions.md:986	2	
+H9-01451	procedure	apoc.merge.node	docs/features/apoc-functions.md:973	2	
+H9-01452	procedure	apoc.merge.relationship	docs/features/apoc-functions.md:980	2	
+H9-01453	procedure	apoc.meta.nodeTypeProperties	docs/features/apoc-functions.md:1003	2	
+H9-01454	procedure	apoc.meta.schema	docs/features/apoc-functions.md:993	2	
+H9-01455	procedure	apoc.meta.stats	docs/features/apoc-functions.md:998	2	
+H9-01456	procedure	apoc.meta.type	docs/migration-notice.md:130	1	
+H9-01457	procedure	apoc.ml.cosineSimilarity	docs/project-details.md:341	1	
+H9-01458	procedure	apoc.ml.relu	docs/features/apoc-functions.md:612	2	
+H9-01459	procedure	apoc.ml.sigmoid	docs/project-details.md:340	3	
+H9-01460	procedure	apoc.myplugin.double	docs/user-guides/plugin-system.md:152	2	
+H9-01461	procedure	apoc.myplugin.hello	docs/user-guides/plugin-system.md:146	2	
+H9-01462	procedure	apoc.neighbors.atHop	docs/features/apoc-functions.md:1013	1	
+H9-01463	procedure	apoc.neighbors.bfs	docs/features/apoc-functions.md:1021	2	
+H9-01464	procedure	apoc.neighbors.byhop	docs/user-guides/graph-traversal.md:294	2	
+H9-01465	procedure	apoc.neighbors.toHop	docs/features/apoc-functions.md:1017	1	
+H9-01466	procedure	apoc.neighbors.tohop	docs/user-guides/graph-traversal.md:299	2	
+H9-01467	procedure	apoc.node.degree	docs/features/apoc-functions.md:22	1	
+H9-01468	procedure	apoc.node.labels	docs/features/apoc-functions.md:22	1	
+H9-01469	procedure	apoc.nodes.filter	docs/features/apoc-functions.md:1044	1	
+H9-01470	procedure	apoc.nodes.group	docs/features/apoc-functions.md:1039	1	
+H9-01471	procedure	apoc.nodes.link	docs/features/apoc-functions.md:1032	2	
+H9-01472	procedure	apoc.number.arabize	docs/features/apoc-functions.md:1058	1	
+H9-01473	procedure	apoc.number.format	docs/features/apoc-functions.md:1053	1	
+H9-01474	procedure	apoc.number.fromHex	docs/features/apoc-functions.md:1062	1	
+H9-01475	procedure	apoc.number.romanize	docs/features/apoc-functions.md:1057	1	
+H9-01476	procedure	apoc.number.toBinary	docs/features/apoc-functions.md:1063	1	
+H9-01477	procedure	apoc.number.toHex	docs/features/apoc-functions.md:1061	1	
+H9-01478	procedure	apoc.path.elements	docs/features/apoc-functions.md:25	1	
+H9-01479	procedure	apoc.path.expand	docs/neo4j-migration/cypher-compatibility.md:107	1	
+H9-01480	procedure	apoc.path.expandConfig	docs/user-guides/graph-traversal.md:207	3	
+H9-01481	procedure	apoc.path.slice	docs/features/apoc-functions.md:25	1	
+H9-01482	procedure	apoc.path.spanningTree	docs/user-guides/graph-traversal.md:218	3	
+H9-01483	procedure	apoc.path.subgraphNodes	docs/neo4j-migration/cypher-compatibility.md:106	3	
+H9-01484	procedure	apoc.paths.all	docs/features/apoc-functions.md:1071	2	
+H9-01485	procedure	apoc.paths.disjoint	docs/features/apoc-functions.md:1082	2	
+H9-01486	procedure	apoc.paths.kShortest	docs/features/apoc-functions.md:1077	2	
+H9-01487	procedure	apoc.periodic.commit	docs/features/apoc-functions.md:1103	2	
+H9-01488	procedure	apoc.periodic.iterate	docs/features/apoc-functions.md:1091	6	
+H9-01489	procedure	apoc.periodic.schedule	docs/features/apoc-functions.md:1098	2	
+H9-01490	procedure	apoc.refactor.cloneSubgraph	docs/features/apoc-functions.md:1143	2	
+H9-01491	procedure	apoc.refactor.mergeNodes	docs/features/apoc-functions.md:1136	2	
+H9-01492	procedure	apoc.refactor.normalize	docs/features/apoc-functions.md:1149	2	
+H9-01493	procedure	apoc.rel.clone	docs/features/apoc-functions.md:1162	2	
+H9-01494	procedure	apoc.rel.properties	docs/features/apoc-functions.md:1157	1	
+H9-01495	procedure	apoc.rel.type	docs/features/apoc-functions.md:1157	1	
+H9-01496	procedure	apoc.rel.weight	docs/features/apoc-functions.md:1168	1	
+H9-01497	procedure	apoc.schema.constraint.create	docs/features/apoc-functions.md:1178	2	
+H9-01498	procedure	apoc.schema.index.create	docs/features/apoc-functions.md:1175	2	
+H9-01499	procedure	apoc.schema.node.indexes	docs/features/apoc-functions.md:1181	2	
+H9-01500	procedure	apoc.schema.validate	docs/features/apoc-functions.md:1186	2	
+H9-01501	procedure	apoc.scoring.cosine	docs/features/apoc-functions.md:1195	2	
+H9-01502	procedure	apoc.scoring.jaccard	docs/features/apoc-functions.md:1198	2	
+H9-01503	procedure	apoc.scoring.pearson	docs/features/apoc-functions.md:1204	1	
+H9-01504	procedure	apoc.scoring.tfidf	docs/features/apoc-functions.md:1201	1	
+H9-01505	procedure	apoc.search.autocomplete	docs/features/apoc-functions.md:1226	2	
+H9-01506	procedure	apoc.search.fullText	docs/features/apoc-functions.md:1211	2	
+H9-01507	procedure	apoc.search.fuzzy	docs/features/apoc-functions.md:1216	2	
+H9-01508	procedure	apoc.search.multiSearchAny	docs/features/apoc-functions.md:1231	2	
+H9-01509	procedure	apoc.search.regex	docs/features/apoc-functions.md:1221	2	
+H9-01510	procedure	apoc.spatial.distance	docs/features/apoc-functions.md:1242	1	
+H9-01511	procedure	apoc.spatial.haversineDistance	docs/user-guides/plugin-system.md:40	1	
+H9-01512	procedure	apoc.spatial.kNearest	docs/features/apoc-functions.md:1248	1	
+H9-01513	procedure	apoc.spatial.within	docs/features/apoc-functions.md:1251	1	
+H9-01514	procedure	apoc.stats.correlation	docs/features/apoc-functions.md:1268	1	
+H9-01515	procedure	apoc.stats.mean	docs/features/apoc-functions.md:1262	1	
+H9-01516	procedure	apoc.stats.median	docs/features/apoc-functions.md:1263	1	
+H9-01517	procedure	apoc.stats.percentile	docs/features/apoc-functions.md:1272	1	
+H9-01518	procedure	apoc.stats.stdDev	docs/features/apoc-functions.md:1264	1	
+H9-01519	procedure	apoc.temporal.add	docs/features/apoc-functions.md:1285	1	
+H9-01520	procedure	apoc.temporal.age	docs/features/apoc-functions.md:1290	1	
+H9-01521	procedure	apoc.temporal.format	docs/features/apoc-functions.md:27	2	
+H9-01522	procedure	apoc.temporal.parse	docs/features/apoc-functions.md:1282	1	
+H9-01523	procedure	apoc.temporal.subtract	docs/features/apoc-functions.md:1286	1	
+H9-01524	procedure	apoc.temporal.timezone	docs/features/apoc-functions.md:1293	1	
+H9-01525	procedure	apoc.text.camelCase	docs/project-details.md:336	3	
+H9-01526	procedure	apoc.text.capitalize	docs/features/apoc-functions.md:713	2	
+H9-01527	procedure	apoc.text.distance	docs/features/apoc-functions.md:718	1	
+H9-01528	procedure	apoc.text.hammingDistance	docs/features/apoc-functions.md:720	1	
+H9-01529	procedure	apoc.text.jaroWinklerDistance	docs/features/apoc-functions.md:719	1	
+H9-01530	procedure	apoc.text.join	docs/features/apoc-functions.md:409	4	
+H9-01531	procedure	apoc.text.levenshteinDistance	docs/user-guides/plugin-system.md:29	1	
+H9-01532	procedure	apoc.text.phonetic	docs/features/apoc-functions.md:723	1	
+H9-01533	procedure	apoc.text.replace	docs/features/apoc-functions.md:710	1	
+H9-01534	procedure	apoc.text.slugify	docs/project-details.md:337	1	
+H9-01535	procedure	apoc.text.snakeCase	docs/features/apoc-functions.md:715	1	
+H9-01536	procedure	apoc.text.split	docs/features/apoc-functions.md:709	1	
+H9-01537	procedure	apoc.trigger.add	docs/features/apoc-functions.md:1300	2	
+H9-01538	procedure	apoc.trigger.list	docs/features/apoc-functions.md:1306	2	
+H9-01539	procedure	apoc.trigger.pause	docs/features/apoc-functions.md:1311	2	
+H9-01540	procedure	apoc.trigger.remove	docs/features/apoc-functions.md:1315	2	
+H9-01541	procedure	apoc.trigger.resume	docs/features/apoc-functions.md:1312	2	
+H9-01542	procedure	apoc.util.md5	docs/api-reference/cypher-functions/README.md:254	1	
+H9-01543	procedure	apoc.util.sha1	docs/api-reference/cypher-functions/README.md:254	1	
+H9-01544	procedure	apoc.util.sha256	docs/api-reference/cypher-functions/README.md:254	2	
+H9-01545	procedure	apoc.warmup.indexes	docs/features/apoc-functions.md:1330	2	
+H9-01546	procedure	apoc.warmup.nodes	docs/features/apoc-functions.md:1327	2	
+H9-01547	procedure	apoc.warmup.run	docs/features/apoc-functions.md:1322	2	
+H9-01548	procedure	apoc.warmup.subgraph	docs/features/apoc-functions.md:1334	2	
+H9-01549	procedure	apoc.xml.parse	docs/features/apoc-functions.md:1342	2	
+H9-01550	procedure	apoc.xml.query	docs/features/apoc-functions.md:1346	1	
+H9-01551	procedure	apoc.xml.toJson	docs/features/apoc-functions.md:1350	1	
+H9-01552	procedure	custom.reach	docs/features/stored-procedure-parity.md:68	2	
+H9-01553	procedure	db.AnonymizeUserData	docs/compliance/gdpr-compliance.md:144	1	
+H9-01554	procedure	db.Backup	docs/operations/backup-restore.md:30	1	
+H9-01555	procedure	db.ChunkQuery	docs/architecture/query-embedder-readiness.md:42	1	
+H9-01556	procedure	db.Close	docs/development/embedding.md:43	4	
+H9-01557	procedure	db.CreateNode	docs/features/vector-embeddings.md:148	1	
+H9-01558	procedure	db.CreateNodes	docs/features/vector-embeddings.md:366	1	
+H9-01559	procedure	db.EmbedQuery	docs/architecture/query-embedder-readiness.md:46	2	
+H9-01560	procedure	db.EmbeddingQueueStatus	docs/features/vector-embeddings.md:171	1	
+H9-01561	procedure	db.ExecuteCypher	docs/development/embedding.md:47	7	
+H9-01562	procedure	db.FindSimilar	docs/features/vector-embeddings.md:298	1	
+H9-01563	procedure	db.GetBaseStorageForManager	docs/development/catalog-context-api.md:10	1	
+H9-01564	procedure	db.GetCypherExecutor	docs/architecture/query-embedder-readiness.md:12	1	
+H9-01565	procedure	db.GetStorage	docs/architecture/query-embedder-readiness.md:13	2	
+H9-01566	procedure	db.HybridSearch	docs/features/gpu-acceleration.md:162	4	
+H9-01567	procedure	db.LifetimeContext	docs/development/catalog-context-api.md:10	1	
+H9-01568	procedure	db.Open	docs/observability/knowledge-policy-metrics.md:178	1	
+H9-01569	procedure	db.PruneMVCCVersions	docs/user-guides/historical-reads-mvcc-retention.md:247	2	
+H9-01570	procedure	db.QueryEmbeddingForDB	docs/architecture/query-embedder-readiness.md:26	1	
+H9-01571	procedure	db.RebuildMVCCHeads	docs/user-guides/historical-reads-mvcc-retention.md:269	1	
+H9-01572	procedure	db.RecordConsent	docs/compliance/gdpr-compliance.md:155	1	
+H9-01573	procedure	db.Restore	docs/compliance/soc2-compliance.md:149	4	
+H9-01574	procedure	db.Search	docs/getting-started/installation.md:131	6	
+H9-01575	procedure	db.SetSearchReranker	docs/features/cross-encoder-reranking.md:198	1	
+H9-01576	procedure	db.UpdateNodeEmbedding	docs/user-guides/vector-search.md:354	1	
+H9-01577	procedure	db.WithQueryEmbeddingSnapshot	docs/architecture/query-embedder-readiness.md:41	1	
+H9-01578	procedure	db.awaitIndex	docs/neo4j-migration/cypher-compatibility.md:131	1	
+H9-01579	procedure	db.awaitIndexes	docs/neo4j-migration/cypher-compatibility.md:131	1	
+H9-01580	procedure	db.cdc.current	docs/user-guides/change-data-capture.md:42	7	
+H9-01581	procedure	db.cdc.earliest	docs/user-guides/change-data-capture.md:54	4	
+H9-01582	procedure	db.cdc.query	docs/user-guides/change-data-capture.md:45	5	
+H9-01583	procedure	db.clearQueryCaches	docs/neo4j-migration/cypher-compatibility.md:127	1	
+H9-01584	procedure	db.constraints	docs/neo4j-migration/cypher-compatibility.md:103	1	
+H9-01585	procedure	db.create.setNodeVectorProperty	docs/neo4j-migration/cypher-compatibility.md:133	3	
+H9-01586	procedure	db.create.setRelationshipVectorProperty	docs/neo4j-migration/cypher-compatibility.md:133	1	
+H9-01587	procedure	db.index.fulltext.createNodeIndex	docs/skills/vector-search.skill.md:138	2	
+H9-01588	procedure	db.index.fulltext.createRelationshipIndex	docs/skills/vector-search.skill.md:148	1	
+H9-01589	procedure	db.index.fulltext.drop	docs/skills/vector-search.skill.md:154	2	
+H9-01590	procedure	db.index.fulltext.listAvailableAnalyzers	docs/neo4j-migration/cypher-compatibility.md:137	3	
+H9-01591	procedure	db.index.fulltext.queryNodes	docs/development/kmeans-testing.md:79	11	
+H9-01592	procedure	db.index.fulltext.queryRelationships	docs/skills/vector-search.skill.md:166	2	
+H9-01593	procedure	db.index.stats	docs/skills/vector-search.skill.md:178	2	
+H9-01594	procedure	db.index.vector.createNodeIndex	docs/neo4j-migration/cypher-compatibility.md:135	7	
+H9-01595	procedure	db.index.vector.createRelationshipIndex	docs/skills/vector-search.skill.md:40	2	
+H9-01596	procedure	db.index.vector.drop	docs/skills/vector-search.skill.md:50	2	
+H9-01597	procedure	db.index.vector.embed	docs/skills/managed-embeddings.skill.md:131	11	
+H9-01598	procedure	db.index.vector.queryNodes	docs/changes-before-1.1.x.md:1008	86	
+H9-01599	procedure	db.index.vector.queryRelationships	docs/skills/vector-search.skill.md:96	1	
+H9-01600	procedure	db.indexes	docs/neo4j-migration/cypher-compatibility.md:102	3	
+H9-01601	procedure	db.infer	docs/skills/rag-procedures.skill.md:3	14	
+H9-01602	procedure	db.info	docs/neo4j-migration/cypher-compatibility.md:125	3	
+H9-01603	procedure	db.labels	docs/compliance/rbac.md:217	10	
+H9-01604	procedure	db.nornic.config.set	docs/advanced/embeddings/voyage-ai.md:153	2	
+H9-01605	procedure	db.propertyKeys	docs/neo4j-migration/cypher-compatibility.md:100	1	
+H9-01606	procedure	db.relationshipTypes	docs/features/autocomplete-plugin.md:15	5	
+H9-01607	procedure	db.rerank	docs/skills/rag-procedures.skill.md:3	8	
+H9-01608	procedure	db.resampleIndex	docs/neo4j-migration/cypher-compatibility.md:131	1	
+H9-01609	procedure	db.retrieve	docs/api-reference/bolt-protocol.md:222	52	
+H9-01610	procedure	db.retrieveGraph	docs/user-guides/cypher-rag-procedures.md:267	4	
+H9-01611	procedure	db.retrieveRelationships	docs/user-guides/cypher-rag-procedures.md:247	4	
+H9-01612	procedure	db.rretrieve	docs/skills/rag-procedures.skill.md:3	9	
+H9-01613	procedure	db.schema.visualization	docs/neo4j-migration/cypher-compatibility.md:139	1	
+H9-01614	procedure	db.stats.clear	docs/neo4j-migration/cypher-compatibility.md:702	1	
+H9-01615	procedure	db.stats.status	docs/neo4j-migration/cypher-compatibility.md:701	1	
+H9-01616	procedure	db.stats.stop	docs/neo4j-migration/cypher-compatibility.md:702	1	
+H9-01617	procedure	db.temporal.asOf	docs/user-guides/canonical-graph-ledger.md:112	11	
+H9-01618	procedure	db.txlog.byTxId	docs/operations/wal-compaction.md:91	3	
+H9-01619	procedure	db.txlog.entries	docs/operations/wal-compaction.md:81	5	
+H9-01620	procedure	dbms.components	docs/neo4j-migration/cypher-compatibility.md:127	1	
+H9-01621	procedure	dbms.info	docs/neo4j-migration/cypher-compatibility.md:125	2	
+H9-01622	procedure	dbms.listConfig	docs/neo4j-migration/cypher-compatibility.md:141	3	
+H9-01623	procedure	dbms.listConnections	docs/neo4j-migration/cypher-compatibility.md:143	1	
+H9-01624	procedure	dbms.procedures	docs/features/stored-procedure-parity.md:15	6	
+H9-01625	procedure	gds.alpha.linkprediction.adamicAdar	docs/features/link-prediction.md:26	1	
+H9-01626	procedure	gds.alpha.linkprediction.commonNeighbors	docs/features/link-prediction.md:27	1	
+H9-01627	procedure	gds.alpha.linkprediction.preferentialAttachment	docs/features/link-prediction.md:29	1	
+H9-01628	procedure	gds.alpha.linkprediction.resourceAllocation	docs/features/link-prediction.md:28	1	
+H9-01629	procedure	gds.alpha.linkprediction.sameCommunity	docs/features/link-prediction.md:31	1	
+H9-01630	procedure	gds.alpha.linkprediction.totalNeighbors	docs/features/link-prediction.md:30	1	
+H9-01631	procedure	gds.fastRP.stream	docs/api-reference/bolt-protocol.md:61	3	
+H9-01632	procedure	gds.graph.drop	docs/user-guides/graph-traversal.md:431	1	
+H9-01633	procedure	gds.graph.exists	docs/features/link-prediction.md:263	1	
+H9-01634	procedure	gds.graph.list	docs/user-guides/graph-traversal.md:431	1	
+H9-01635	procedure	gds.graph.project	docs/user-guides/graph-traversal.md:418	2	
+H9-01636	procedure	gds.linkPrediction	docs/features/auto-tlp.md:335	1	
+H9-01637	procedure	gds.linkPrediction.adamicAdar.stream	docs/features/link-prediction.md:44	8	
+H9-01638	procedure	gds.linkPrediction.commonNeighbors.stream	docs/features/link-prediction.md:45	6	
+H9-01639	procedure	gds.linkPrediction.jaccard.stream	docs/features/link-prediction.md:48	4	
+H9-01640	procedure	gds.linkPrediction.predict.stream	docs/features/link-prediction.md:49	12	
+H9-01641	procedure	gds.linkPrediction.preferentialAttachment.stream	docs/features/link-prediction.md:47	4	
+H9-01642	procedure	gds.linkPrediction.resourceAllocation.stream	docs/features/link-prediction.md:46	4	
+H9-01643	procedure	gds.util.nodeProperty	docs/user-guides/graph-traversal.md:431	1	
+H9-01644	procedure	gds.version	docs/features/link-prediction.md:34	2	
+H9-01645	procedure	kalman.adaptive.init	docs/api-reference/cypher-functions/README.md:185	4	
+H9-01646	procedure	kalman.adaptive.process	docs/api-reference/cypher-functions/README.md:186	3	
+H9-01647	procedure	kalman.init	docs/api-reference/cypher-functions/README.md:177	4	
+H9-01648	procedure	kalman.predict	docs/api-reference/cypher-functions/README.md:179	5	
+H9-01649	procedure	kalman.process	docs/api-reference/cypher-functions/README.md:178	4	
+H9-01650	procedure	kalman.reset	docs/api-reference/cypher-functions/README.md:181	2	
+H9-01651	procedure	kalman.state	docs/api-reference/cypher-functions/README.md:180	2	
+H9-01652	procedure	kalman.velocity.init	docs/api-reference/cypher-functions/README.md:182	4	
+H9-01653	procedure	kalman.velocity.predict	docs/api-reference/cypher-functions/README.md:184	7	
+H9-01654	procedure	kalman.velocity.process	docs/api-reference/cypher-functions/README.md:183	3	
+H9-01655	procedure	kp.deindexStatus	docs/features/memory-decay.md:223	4	
+H9-01656	procedure	kp.info	docs/project-details.md:242	9	
+H9-01657	procedure	kp.policies	docs/features/memory-decay.md:221	5	
+H9-01658	procedure	kp.profiles	docs/features/memory-decay.md:220	5	
+H9-01659	procedure	kp.resolve	docs/features/memory-decay.md:222	18	
+H9-01660	procedure	kp.suppress	docs/features/memory-decay.md:199	1	
+H9-01661	procedure	kp.unsuppress	docs/features/memory-decay.md:201	1	
+H9-01662	procedure	nornic.touchUser	docs/features/stored-procedure-parity.md:112	3	
+H9-01663	procedure	nornicdb.DefaultConfig	docs/compliance/encryption.md:45	6	
+H9-01664	procedure	nornicdb.LoadPluginsFromDir	docs/development/plugin-host-metadata-api.md:11	3	
+H9-01665	procedure	nornicdb.Open	docs/compliance/encryption.md:49	7	
+H9-01666	procedure	nornicdb.explainScore	docs/observability/knowledge-policy-metrics.md:231	2	
+H9-01667	procedure	temporal.epoch	docs/neo4j-migration/cypher-compatibility.md:59	14	
+H9-01668	procedure	text.locate	docs/api-reference/cypher-functions/README.md:190	3	
+H9-01669	procedure	vector.similarity.cosine	docs/api-reference/cypher-functions/README.md:146	6	
+H9-01670	procedure	vector.similarity.euclidean	docs/api-reference/cypher-functions/README.md:147	3	
+H9-01671	endpoint	DELETE /auth/roles/{name}	docs/compliance/rbac.md:223	1	
+H9-01672	endpoint	DELETE /nornicdb/gdpr/	docs/compliance/rbac.md:453	1	
+H9-01673	endpoint	GET /admin/	docs/compliance/rbac.md:454	1	
+H9-01674	endpoint	GET /admin/config	docs/api-reference/openapi.md:122	3	
+H9-01675	endpoint	GET /admin/databases/config/keys	docs/release-notes-since-v1.0.11.md:568	5	
+H9-01676	endpoint	GET /admin/databases/mydb/config	docs/user-guides/vector-search.md:44	1	
+H9-01677	endpoint	GET /admin/databases/nornic/config	docs/release-notes-since-v1.0.11.md:556	1	
+H9-01678	endpoint	GET /admin/databases/{dbName}/config	docs/operations/configuration.md:182	1	
+H9-01679	endpoint	GET /admin/databases/{db}/mvcc	docs/architecture/mvcc-lifecycle-background-work.md:107	5	
+H9-01680	endpoint	GET /admin/databases/{db}/mvcc/debt	docs/operations/mvcc-lifecycle-compaction.md:167	1	
+H9-01681	endpoint	GET /admin/databases/{db}/mvcc/status	docs/user-guides/mvcc-lifecycle-admin-api.md:30	2	
+H9-01682	endpoint	GET /admin/databases/{name}/config	docs/skills/cypher-queries.skill.md:612	1	
+H9-01683	endpoint	GET /admin/stats	docs/release-notes-since-v1.0.11.md:244	2	
+H9-01684	endpoint	GET /auth/entitlements	docs/compliance/rbac.md:452	4	
+H9-01685	endpoint	GET /auth/me	docs/api-reference/openapi.md:87	2	
+H9-01686	endpoint	GET /auth/oauth/callback	docs/api-reference/openapi.md:90	1	
+H9-01687	endpoint	GET /auth/oauth/redirect	docs/api-reference/openapi.md:89	1	
+H9-01688	endpoint	GET /db/tenant_a/stats	docs/architecture/multi-db-implementation-spec.md:209	1	
+H9-01689	endpoint	GET /db/{composite}	docs/architecture/multi-db-architecture.md:183	2	
+H9-01690	endpoint	GET /gdpr/export	docs/api-reference/openapi.md:128	1	
+H9-01691	endpoint	GET /graphql/playground	docs/api-reference/openapi.md:134	2	
+H9-01692	endpoint	GET /health	docs/api-reference/openapi.md:79	2	
+H9-01693	endpoint	GET /metrics	docs/api-reference/openapi.md:81	2	
+H9-01694	endpoint	GET /mvcc/prune	docs/user-guides/mvcc-lifecycle-admin-api.md:384	1	
+H9-01695	endpoint	GET /nornicdb/decay	docs/api-reference/openapi.md:101	1	
+H9-01696	endpoint	GET /nornicdb/embed/stats	docs/getting-started/installation.md:237	1	
+H9-01697	endpoint	GET /nornicdb/health	docs/skills/cypher-queries.skill.md:612	1	
+H9-01698	endpoint	GET /status	docs/api-reference/openapi.md:80	3	
+H9-01699	endpoint	POST /admin/backup	docs/api-reference/openapi.md:123	2	
+H9-01700	endpoint	POST /admin/databases/{db}/mvcc/pause	docs/architecture/mvcc-lifecycle-background-work.md:108	4	
+H9-01701	endpoint	POST /admin/databases/{db}/mvcc/prune	docs/architecture/mvcc-lifecycle-background-work.md:110	4	
+H9-01702	endpoint	POST /admin/databases/{db}/mvcc/resume	docs/architecture/mvcc-lifecycle-background-work.md:109	3	
+H9-01703	endpoint	POST /admin/databases/{db}/mvcc/schedule	docs/architecture/mvcc-lifecycle-background-work.md:111	4	
+H9-01704	endpoint	POST /api/bifrost/autocomplete	docs/features/autocomplete-plugin.md:70	1	
+H9-01705	endpoint	POST /auth/api-token	docs/api-reference/openapi.md:88	3	
+H9-01706	endpoint	POST /auth/logout	docs/api-reference/openapi.md:86	1	
+H9-01707	endpoint	POST /auth/roles	docs/compliance/rbac.md:214	3	
+H9-01708	endpoint	POST /auth/token	docs/issues-index.md:8	2	
+H9-01709	endpoint	POST /auth/users	docs/compliance/rbac.md:448	1	
+H9-01710	endpoint	POST /db/<db>/tx/<id>	docs/operations/transaction-memory-limits.md:250	1	
+H9-01711	endpoint	POST /db/main/tx/commit	docs/user-guides/multi-database.md:253	1	
+H9-01712	endpoint	POST /db/nornic/tx/commit	docs/development/multi-db-e2e-test.md:68	1	
+H9-01713	endpoint	POST /db/tenant_a/tx/commit	docs/architecture/multi-db-implementation-spec.md:206	2	
+H9-01714	endpoint	POST /db/{database}/tx/commit	docs/api-reference/openapi.md:95	1	
+H9-01715	endpoint	POST /db/{db}/tx/commit	docs/compliance/rbac.md:446	1	
+H9-01716	endpoint	POST /gdpr/delete	docs/api-reference/openapi.md:129	5	
+H9-01717	endpoint	POST /gdpr/export	docs/compliance/gdpr-compliance.md:9	2	
+H9-01718	endpoint	POST /graphql	docs/project-details.md:301	3	
+H9-01719	endpoint	POST /mvcc/prune	docs/user-guides/mvcc-lifecycle-admin-api.md:372	1	
+H9-01720	endpoint	POST /nornicdb/graph/{database}/diff	docs/api-reference/openapi.md:117	1	
+H9-01721	endpoint	POST /nornicdb/graph/{database}/expand	docs/api-reference/openapi.md:114	1	
+H9-01722	endpoint	POST /nornicdb/graph/{database}/neighborhood	docs/api-reference/openapi.md:113	1	
+H9-01723	endpoint	POST /nornicdb/graph/{database}/path	docs/api-reference/openapi.md:115	1	
+H9-01724	endpoint	POST /nornicdb/graph/{database}/temporal	docs/api-reference/openapi.md:116	1	
+H9-01725	endpoint	POST /nornicdb/search	docs/release-notes-since-v1.0.11.md:30	13	
+H9-01726	endpoint	POST /nornicdb/search/rebuild	docs/architecture/multi-db-architecture.md:176	2	
+H9-01727	endpoint	POST /nornicdb/similar	docs/api-reference/openapi.md:100	3	
+H9-01728	endpoint	PUT /admin/databases/<db>/config	docs/operations/transaction-memory-limits.md:24	1	
+H9-01729	endpoint	PUT /admin/databases/nornic/config	docs/release-notes-since-v1.0.11.md:559	1	
+H9-01730	endpoint	PUT /admin/databases/{dbName}/config	docs/operations/configuration.md:182	1	
+H9-01731	endpoint	PUT /admin/databases/{db}/config	docs/features/vector-embeddings.md:139	1	
+H9-01732	endpoint	PUT /admin/databases/{name}/config	docs/operations/configuration.md:366	8	
+H9-01733	endpoint	PUT /auth/access/databases	docs/release-notes-since-v1.0.11.md:387	3	
+H9-01734	endpoint	PUT /auth/access/privileges	docs/compliance/rbac.md:230	2	
+H9-01735	endpoint	PUT /auth/role-entitlements	docs/compliance/rbac.md:168	2	
+H9-01736	step	docs/getting-started/README.md#7	docs/getting-started/README.md:7	1	[installation.md](installation.md)
+H9-01737	step	docs/getting-started/README.md#8	docs/getting-started/README.md:8	1	[quick-start.md](quick-start.md)
+H9-01738	step	docs/getting-started/README.md#9	docs/getting-started/README.md:9	1	[first-queries.md](first-queries.md)
+H9-01739	step	docs/getting-started/first-queries.md#12	docs/getting-started/first-queries.md:12	1	Creating nodes and relationships
+H9-01740	step	docs/getting-started/first-queries.md#13	docs/getting-started/first-queries.md:13	1	Querying graph data
+H9-01741	step	docs/getting-started/first-queries.md#14	docs/getting-started/first-queries.md:14	1	Updating properties
+H9-01742	step	docs/getting-started/first-queries.md#15	docs/getting-started/first-queries.md:15	1	Deleting data
+H9-01743	step	docs/getting-started/first-queries.md#16	docs/getting-started/first-queries.md:16	1	Basic graph patterns
+H9-01744	step	docs/getting-started/first-queries.md#330	docs/getting-started/first-queries.md:330	1	**[Vector Search Guide](../user-guides/vector-search.md)** - Semantic search
+H9-01745	step	docs/getting-started/first-queries.md#331	docs/getting-started/first-queries.md:331	1	**[Complete Examples](../user-guides/complete-examples.md)** - Full applications
+H9-01746	step	docs/getting-started/first-queries.md#332	docs/getting-started/first-queries.md:332	1	**[Cypher Functions Reference](../api-reference/cypher-functions/README.md)** - All functions
+H9-01747	step	docs/getting-started/first-queries.md#333	docs/getting-started/first-queries.md:333	1	**[Advanced Topics](../advanced/README.md)** - K-Means clustering, embeddings, custom functions
+H9-01748	step	docs/getting-started/windows-cuda.md#169	docs/getting-started/windows-cuda.md:169	1	**Verify yzma libraries are present**:
+H9-01749	step	docs/getting-started/windows-cuda.md#179	docs/getting-started/windows-cuda.md:179	1	**Check NORNICDB_LIB environment variable**:
+H9-01750	step	docs/getting-started/windows-cuda.md#186	docs/getting-started/windows-cuda.md:186	1	**Verify GPU is CUDA-capable**:
+H9-01751	step	docs/getting-started/windows-cuda.md#193	docs/getting-started/windows-cuda.md:193	1	**Check CUDA Toolkit version**:
+H9-01752	step	docs/getting-started/windows-cuda.md#200	docs/getting-started/windows-cuda.md:200	1	**Update GPU Drivers**:
+H9-01753	step	docs/getting-started/windows-cuda.md#223	docs/getting-started/windows-cuda.md:223	1	**Use a smaller model**:
+H9-01754	step	docs/getting-started/windows-cuda.md#227	docs/getting-started/windows-cuda.md:227	1	**Close other GPU applications**:
+H9-01755	step	docs/getting-started/windows-cuda.md#232	docs/getting-started/windows-cuda.md:232	1	**Check available VRAM**:
+H9-01756	step	docs/getting-started/windows-cuda.md#243	docs/getting-started/windows-cuda.md:243	1	**Verify GPU is actually being used**:
+H9-01757	step	docs/getting-started/windows-cuda.md#249	docs/getting-started/windows-cuda.md:249	1	**Check Power Mode**:
+H9-01758	step	docs/getting-started/windows-cuda.md#252	docs/getting-started/windows-cuda.md:252	1	**Check thermal throttling**:
+H9-01759	step	docs/getting-started/windows-cuda.md#86	docs/getting-started/windows-cuda.md:86	1	Download and install yzma (one-time only)
+H9-01760	step	docs/getting-started/windows-cuda.md#87	docs/getting-started/windows-cuda.md:87	1	Download CUDA-optimized llama.cpp libraries to `./lib/llama/`
+H9-01761	step	docs/getting-started/windows-cuda.md#88	docs/getting-started/windows-cuda.md:88	1	Show environment variable configuration
+H9-01762	step	docs/getting-started/windows-cuda.md#89	docs/getting-started/windows-cuda.md:89	1	Verify GPU detection
+H9-01763	step	docs/neo4j-migration/README.md#14	docs/neo4j-migration/README.md:14	1	Validate feature parity for your workload: [feature-parity.md](feature-parity.md)
+H9-01764	step	docs/neo4j-migration/README.md#15	docs/neo4j-migration/README.md:15	1	Validate query compatibility: [cypher-compatibility.md](cypher-compatibility.md)
+H9-01765	step	docs/neo4j-migration/README.md#16	docs/neo4j-migration/README.md:16	1	Execute migration procedure: [../migration-notice.md](../migration-notice.md)
+H9-01766	step	docs/neo4j-migration/README.md#17	docs/neo4j-migration/README.md:17	1	Run application smoke tests against Bolt/HTTP APIs: [../api-reference/README.md](../api-reference/README.md)
+H9-01767	step	docs/neo4j-migration/cypher-compatibility.md#729	docs/neo4j-migration/cypher-compatibility.md:729	1	Parse the first MATCH clause to extract variable bindings
+H9-01768	step	docs/neo4j-migration/cypher-compatibility.md#730	docs/neo4j-migration/cypher-compatibility.md:730	1	Resolve which `nodePatternInfo` each variable maps to
+H9-01769	step	docs/neo4j-migration/cypher-compatibility.md#731	docs/neo4j-migration/cypher-compatibility.md:731	1	Find actual nodes matching those patterns
+H9-01770	step	docs/neo4j-migration/cypher-compatibility.md#732	docs/neo4j-migration/cypher-compatibility.md:732	1	Use those specific nodes for shortestPath calculation
+H9-01771	step	docs/operations/backup-restore.md#88	docs/operations/backup-restore.md:88	1	Record binary version/build commit, method, digest, completion result, and required keys/configuration.
+H9-01772	step	docs/operations/backup-restore.md#89	docs/operations/backup-restore.md:89	1	Restore to a separate directory/volume without production traffic.
+H9-01773	step	docs/operations/backup-restore.md#90	docs/operations/backup-restore.md:90	1	Verify databases, account access, constraints/indexes, counts, representative properties, and application invariants.
+H9-01774	step	docs/operations/backup-restore.md#91	docs/operations/backup-restore.md:91	1	Exercise writes/reads, reopen the DB, and verify search readiness separately.
+H9-01775	step	docs/operations/backup-restore.md#92	docs/operations/backup-restore.md:92	1	Measure duration, replay work, and peak memory for the real dataset. There is no implementation-supplied recovery-time objective.
+H9-01776	step	docs/operations/configuration.md#1188	docs/operations/configuration.md:1188	1	**Reject invalid values** (e.g., negative cache sizes)
+H9-01777	step	docs/operations/configuration.md#1189	docs/operations/configuration.md:1189	1	**Apply sensible defaults** for missing settings
+H9-01778	step	docs/operations/configuration.md#1190	docs/operations/configuration.md:1190	1	**Log warnings** for potentially problematic combinations
+H9-01779	step	docs/operations/configuration.md#1191	docs/operations/configuration.md:1191	1	**Fail fast** on critical configuration errors
+H9-01780	step	docs/operations/configuration.md#21	docs/operations/configuration.md:21	1	`NORNICDB_CONFIG` (explicit path)
+H9-01781	step	docs/operations/configuration.md#22	docs/operations/configuration.md:22	1	`~/.nornicdb/config.yaml`
+H9-01782	step	docs/operations/configuration.md#23	docs/operations/configuration.md:23	1	next to the binary: `config.yaml` or `nornicdb.yaml`
+H9-01783	step	docs/operations/configuration.md#24	docs/operations/configuration.md:24	1	current working directory: `config.yaml` or `nornicdb.yaml`
+H9-01784	step	docs/operations/configuration.md#25	docs/operations/configuration.md:25	1	container mount path: `/config/nornicdb.yaml` or `/config/config.yaml`
+H9-01785	step	docs/operations/configuration.md#26	docs/operations/configuration.md:26	1	OS user config dirs:
+H9-01786	step	docs/operations/configuration.md#332	docs/operations/configuration.md:332	1	**Built-in defaults** — bm25=true, vector=true, both warming=startup.
+H9-01787	step	docs/operations/configuration.md#333	docs/operations/configuration.md:333	1	**Global config** — `cfg.Memory.Search*` populated by YAML and env vars (`NORNICDB_SEARCH_*`).
+H9-01788	step	docs/operations/configuration.md#334	docs/operations/configuration.md:334	1	**Explicit process overrides** — supported command-line flags explicitly supplied to `nornicdb serve`.
+H9-01789	step	docs/operations/configuration.md#335	docs/operations/configuration.md:335	1	**Persisted per-database settings** — admin API values and values seeded from the YAML `databases:` block.
+H9-01790	step	docs/operations/configuration.md#756	docs/operations/configuration.md:756	1	**GPU brute-force** – when GPU is enabled and vector count is in `[NORNICDB_VECTOR_GPU_BRUTE_MIN_N, NORNICDB_VECTOR_GPU_BRUTE_MAX_N]`. Its GPU copy of the vecto
+H9-01791	step	docs/operations/configuration.md#757	docs/operations/configuration.md:757	1	**CPU brute-force** – only when `NORNICDB_VECTOR_CPU_BRUTE_MAX_N` is greater than 0 and vector count is below that value.
+H9-01792	step	docs/operations/configuration.md#758	docs/operations/configuration.md:758	1	**Cluster-based** (IVF-HNSW or k-means) – when clustering is enabled and built.
+H9-01793	step	docs/operations/configuration.md#759	docs/operations/configuration.md:759	1	**Global HNSW** – default strategy when neither GPU brute-force, CPU brute-force opt-in, nor clustering is chosen.
+H9-01794	step	docs/operations/configuration.md#829	docs/operations/configuration.md:829	1	Build/load an IVF/PQ index (coarse lists + compressed codes).
+H9-01795	step	docs/operations/configuration.md#830	docs/operations/configuration.md:830	1	Probe a bounded number of lists (`nprobe`) for approximate candidates.
+H9-01796	step	docs/operations/configuration.md#831	docs/operations/configuration.md:831	1	Score candidates in compressed space.
+H9-01797	step	docs/operations/configuration.md#832	docs/operations/configuration.md:832	1	Re-rank a bounded top window using exact vectors for result quality.
+H9-01798	step	docs/operations/configuration.md#892	docs/operations/configuration.md:892	1	**Per-query working-set memory** (`heap delta`, MiB), averaged from the same runs:
+H9-01799	step	docs/operations/configuration.md#927	docs/operations/configuration.md:927	1	**Index-size economics** (how many embeddings fit per node):
+H9-01800	step	docs/operations/durability.md#68	docs/operations/durability.md:68	1	Startup validates WAL format before opening or migrating storage. Supported historical formats require an authorized storage upgrade; unknown future formats fai
+H9-01801	step	docs/operations/durability.md#69	docs/operations/durability.md:69	1	With usable Badger storage, startup replays accepted semantic transactions and buffered commits before traffic. Persisted transaction identities prevent already
+H9-01802	step	docs/operations/durability.md#70	docs/operations/durability.md:70	1	A valid one-use clean-shutdown marker permits reuse of temporal indexes and MVCC heads. It is consumed before service resumes. An unclean start uses conservativ
+H9-01803	step	docs/operations/durability.md#71	docs/operations/durability.md:71	1	A qualifying Badger corruption/open failure can trigger reconstruction from a valid snapshot and subsequent WAL entries, or sufficient WAL-only history. This is
+H9-01804	step	docs/operations/durability.md#72	docs/operations/durability.md:72	1	Search services load compatible checkpoints or rebuild indexes. Graph recovery does not imply semantic search is warm.
+H9-01805	step	docs/operations/durability.md#84	docs/operations/durability.md:84	1	Stop restart loops. Preserve the complete data directory, matching WAL, search files, configuration, and external replication directory.
+H9-01806	step	docs/operations/durability.md#85	docs/operations/durability.md:85	1	Record the binary version, error, disk space, mount type, and termination reason. Process termination and machine power failure are different failure models.
+H9-01807	step	docs/operations/durability.md#86	docs/operations/durability.md:86	1	Diagnose using a copy. Do not delete or truncate WAL, sealed segments, dictionaries, or snapshots to make startup succeed.
+H9-01808	step	docs/operations/durability.md#87	docs/operations/durability.md:87	1	Restore a verified backup to an isolated target if recovery cannot establish a valid store. Validate counts and application invariants before traffic.
+H9-01809	step	docs/operations/environment-variables.md#11	docs/operations/environment-variables.md:11	1	**Built-in defaults** baked into `pkg/config.LoadDefaults`.
+H9-01810	step	docs/operations/environment-variables.md#12	docs/operations/environment-variables.md:12	1	**Global config** from YAML (`memory.search_*` and similar blocks) and env vars (`NORNICDB_*`).
+H9-01811	step	docs/operations/environment-variables.md#13	docs/operations/environment-variables.md:13	1	**Explicit process overrides** from flags explicitly supplied to `nornicdb serve`.
+H9-01812	step	docs/operations/environment-variables.md#14	docs/operations/environment-variables.md:14	1	**Persisted per-database settings** from the YAML `databases:` map (seeded on first boot only) and the admin API (`PUT /admin/databases/{name}/config`).
+H9-01813	step	docs/operations/mvcc-lifecycle-compaction.md#100	docs/operations/mvcc-lifecycle-compaction.md:100	1	`high_exit`: `0.8 * high_enter`
+H9-01814	step	docs/operations/mvcc-lifecycle-compaction.md#101	docs/operations/mvcc-lifecycle-compaction.md:101	1	`critical_enter`: `max(20 GiB, 0.35 * data_dir_free_space)`
+H9-01815	step	docs/operations/mvcc-lifecycle-compaction.md#102	docs/operations/mvcc-lifecycle-compaction.md:102	1	`critical_exit`: `0.8 * critical_enter`
+H9-01816	step	docs/operations/mvcc-lifecycle-compaction.md#106	docs/operations/mvcc-lifecycle-compaction.md:106	1	enter window: 30 s sustained breach
+H9-01817	step	docs/operations/mvcc-lifecycle-compaction.md#107	docs/operations/mvcc-lifecycle-compaction.md:107	1	exit window: 120 s sustained below exit threshold
+H9-01818	step	docs/operations/mvcc-lifecycle-compaction.md#183	docs/operations/mvcc-lifecycle-compaction.md:183	1	Manager scaffolding and config.
+H9-01819	step	docs/operations/mvcc-lifecycle-compaction.md#184	docs/operations/mvcc-lifecycle-compaction.md:184	1	Reader registry and watermark computation.
+H9-01820	step	docs/operations/mvcc-lifecycle-compaction.md#185	docs/operations/mvcc-lifecycle-compaction.md:185	1	Planner and apply with version fences.
+H9-01821	step	docs/operations/mvcc-lifecycle-compaction.md#186	docs/operations/mvcc-lifecycle-compaction.md:186	1	Prioritisation, fairness, and cost model.
+H9-01822	step	docs/operations/mvcc-lifecycle-compaction.md#187	docs/operations/mvcc-lifecycle-compaction.md:187	1	Pressure bands and admission enforcement.
+H9-01823	step	docs/operations/mvcc-lifecycle-compaction.md#188	docs/operations/mvcc-lifecycle-compaction.md:188	1	Metrics and status endpoint.
+H9-01824	step	docs/operations/mvcc-lifecycle-compaction.md#189	docs/operations/mvcc-lifecycle-compaction.md:189	1	Emergency mode and ceiling-aware budget adjustment.
+H9-01825	step	docs/operations/mvcc-lifecycle-compaction.md#190	docs/operations/mvcc-lifecycle-compaction.md:190	1	Legacy maintenance methods delegating into the lifecycle subsystem.
+H9-01826	step	docs/operations/mvcc-lifecycle-compaction.md#226	docs/operations/mvcc-lifecycle-compaction.md:226	1	Run before/after benchmarks with the same dataset, config, and hardware.
+H9-01827	step	docs/operations/mvcc-lifecycle-compaction.md#227	docs/operations/mvcc-lifecycle-compaction.md:227	1	Include cache-warm and cache-busted runs.
+H9-01828	step	docs/operations/mvcc-lifecycle-compaction.md#228	docs/operations/mvcc-lifecycle-compaction.md:228	1	Report p50/p95/p99 read latency, p50/p95/p99 write latency, throughput, allocs/op, and storage-growth slope.
+H9-01829	step	docs/operations/mvcc-lifecycle-compaction.md#229	docs/operations/mvcc-lifecycle-compaction.md:229	1	Publish results with confidence intervals.
+H9-01830	step	docs/operations/mvcc-lifecycle-compaction.md#25	docs/operations/mvcc-lifecycle-compaction.md:25	1	Bound storage growth while preserving current temporal semantics.
+H9-01831	step	docs/operations/mvcc-lifecycle-compaction.md#26	docs/operations/mvcc-lifecycle-compaction.md:26	1	Make retention pressure actionable, not just observable.
+H9-01832	step	docs/operations/mvcc-lifecycle-compaction.md#27	docs/operations/mvcc-lifecycle-compaction.md:27	1	Avoid global compaction stalls caused by long-running readers.
+H9-01833	step	docs/operations/mvcc-lifecycle-compaction.md#28	docs/operations/mvcc-lifecycle-compaction.md:28	1	Provide predictable operator behavior under normal and emergency pressure.
+H9-01834	step	docs/operations/mvcc-lifecycle-compaction.md#29	docs/operations/mvcc-lifecycle-compaction.md:29	1	Ensure fairness across tenants/workloads.
+H9-01835	step	docs/operations/mvcc-lifecycle-compaction.md#33	docs/operations/mvcc-lifecycle-compaction.md:33	1	No breaking changes to existing snapshot-read semantics.
+H9-01836	step	docs/operations/mvcc-lifecycle-compaction.md#34	docs/operations/mvcc-lifecycle-compaction.md:34	1	No removal of retained-floor behavior.
+H9-01837	step	docs/operations/mvcc-lifecycle-compaction.md#35	docs/operations/mvcc-lifecycle-compaction.md:35	1	No mandatory tiered-history rollout.
+H9-01838	step	docs/operations/mvcc-lifecycle-compaction.md#99	docs/operations/mvcc-lifecycle-compaction.md:99	1	`high_enter`: `max(5 GiB, 0.15 * data_dir_free_space)`
+H9-01839	step	docs/operations/troubleshooting.md#109	docs/operations/troubleshooting.md:109	1	**Check user role:**
+H9-01840	step	docs/operations/troubleshooting.md#118	docs/operations/troubleshooting.md:118	1	**Check endpoint permissions:**
+H9-01841	step	docs/operations/troubleshooting.md#133	docs/operations/troubleshooting.md:133	1	**Enable query caching:**
+H9-01842	step	docs/operations/troubleshooting.md#138	docs/operations/troubleshooting.md:138	1	**Check query complexity:**
+H9-01843	step	docs/operations/troubleshooting.md#147	docs/operations/troubleshooting.md:147	1	**Add indexes:**
+H9-01844	step	docs/operations/troubleshooting.md#152	docs/operations/troubleshooting.md:152	1	**Enable parallel execution:**
+H9-01845	step	docs/operations/troubleshooting.md#182	docs/operations/troubleshooting.md:182	1	**Do not delete your data directory.** Instead, back it up first.
+H9-01846	step	docs/operations/troubleshooting.md#184	docs/operations/troubleshooting.md:184	1	**Use snapshot + WAL recovery (Neo4j-style “tx log recovery”)**
+H9-01847	step	docs/operations/troubleshooting.md#212	docs/operations/troubleshooting.md:212	1	**If recovery can’t run**
+H9-01848	step	docs/operations/troubleshooting.md#228	docs/operations/troubleshooting.md:228	1	**Limit parallel workers:**
+H9-01849	step	docs/operations/troubleshooting.md#233	docs/operations/troubleshooting.md:233	1	**Check for expensive queries:**
+H9-01850	step	docs/operations/troubleshooting.md#239	docs/operations/troubleshooting.md:239	1	**Check embedding queue:**
+H9-01851	step	docs/operations/troubleshooting.md#253	docs/operations/troubleshooting.md:253	1	**Check volume mount:**
+H9-01852	step	docs/operations/troubleshooting.md#258	docs/operations/troubleshooting.md:258	1	**Check data directory:**
+H9-01853	step	docs/operations/troubleshooting.md#263	docs/operations/troubleshooting.md:263	1	**Check disk space:**
+H9-01854	step	docs/operations/troubleshooting.md#276	docs/operations/troubleshooting.md:276	1	**Restart with auto-recovery:**
+H9-01855	step	docs/operations/troubleshooting.md#279	docs/operations/troubleshooting.md:279	1	**Restore from backup:**
+H9-01856	step	docs/operations/troubleshooting.md#282	docs/operations/troubleshooting.md:282	1	**Rebuild search indexes:**
+H9-01857	step	docs/operations/troubleshooting.md#298	docs/operations/troubleshooting.md:298	1	**Check embedding service:**
+H9-01858	step	docs/operations/troubleshooting.md#304	docs/operations/troubleshooting.md:304	1	**Check configuration:**
+H9-01859	step	docs/operations/troubleshooting.md#311	docs/operations/troubleshooting.md:311	1	**Check pending queue:**
+H9-01860	step	docs/operations/troubleshooting.md#316	docs/operations/troubleshooting.md:316	1	**Trigger regeneration:**
+H9-01861	step	docs/operations/troubleshooting.md#32	docs/operations/troubleshooting.md:32	1	**Check if server is running:**
+H9-01862	step	docs/operations/troubleshooting.md#327	docs/operations/troubleshooting.md:327	1	**Check logs:**
+H9-01863	step	docs/operations/troubleshooting.md#332	docs/operations/troubleshooting.md:332	1	**Check image:**
+H9-01864	step	docs/operations/troubleshooting.md#337	docs/operations/troubleshooting.md:337	1	**Check resources:**
+H9-01865	step	docs/operations/troubleshooting.md#346	docs/operations/troubleshooting.md:346	1	**Fix volume permissions:**
+H9-01866	step	docs/operations/troubleshooting.md#351	docs/operations/troubleshooting.md:351	1	**Run as root (not recommended):**
+H9-01867	step	docs/operations/troubleshooting.md#37	docs/operations/troubleshooting.md:37	1	**Check bind address:**
+H9-01868	step	docs/operations/troubleshooting.md#43	docs/operations/troubleshooting.md:43	1	**Check ports:**
+H9-01869	step	docs/operations/troubleshooting.md#48	docs/operations/troubleshooting.md:48	1	**Check firewall:**
+H9-01870	step	docs/operations/troubleshooting.md#62	docs/operations/troubleshooting.md:62	1	**Check rate limiting:**
+H9-01871	step	docs/operations/troubleshooting.md#68	docs/operations/troubleshooting.md:68	1	**Increase limits:**
+H9-01872	step	docs/operations/troubleshooting.md#84	docs/operations/troubleshooting.md:84	1	**Check token:**
+H9-01873	step	docs/operations/troubleshooting.md#91	docs/operations/troubleshooting.md:91	1	**Check auth is disabled (dev only):**
+H9-01874	step	docs/operations/troubleshooting.md#96	docs/operations/troubleshooting.md:96	1	**Check JWT secret:**
+H9-01875	step	docs/operations/wal-compaction.md#33	docs/operations/wal-compaction.md:33	1	Acquires the mutation barrier and checks that accepted native publication permits a snapshot.
+H9-01876	step	docs/operations/wal-compaction.md#34	docs/operations/wal-compaction.md:34	1	Skips unchanged intervals after a completed compaction.
+H9-01877	step	docs/operations/wal-compaction.md#35	docs/operations/wal-compaction.md:35	1	Captures the WAL sequence/checkpoint and flushes acknowledged write-behind generations into Badger.
+H9-01878	step	docs/operations/wal-compaction.md#36	docs/operations/wal-compaction.md:36	1	Streams entities to a temporary snapshot, syncs it, renames it, and applies platform directory-sync policy.
+H9-01879	step	docs/operations/wal-compaction.md#37	docs/operations/wal-compaction.md:37	1	Calls `ManageSnapshot(ctx, sequence, storage.WALSnapshotTruncate)` to retire covered history.
+H9-01880	step	docs/operations/wal-compaction.md#38	docs/operations/wal-compaction.md:38	1	Prunes snapshot files after successful compaction.
+H9-01881	step	docs/skills/neo4j-migration.skill.md#127	docs/skills/neo4j-migration.skill.md:127	1	**Stand up an empty NornicDB instance.** No bootstrap; the migration writes the schema.
+H9-01882	step	docs/skills/neo4j-migration.skill.md#128	docs/skills/neo4j-migration.skill.md:128	1	**Dry-run** with `--dry-run` and a single label / type to confirm DDL maps cleanly:
+H9-01883	step	docs/skills/neo4j-migration.skill.md#132	docs/skills/neo4j-migration.skill.md:132	1	**Schema-only pass** (`--skip-nodes --skip-edges`) once. Verify with `SHOW CONSTRAINTS` / `SHOW INDEXES` on NornicDB.
+H9-01884	step	docs/skills/neo4j-migration.skill.md#133	docs/skills/neo4j-migration.skill.md:133	1	**Cold corpus pass** while Neo4j is still serving. Use `--labels` to chunk the migration if your dataset is large.
+H9-01885	step	docs/skills/neo4j-migration.skill.md#134	docs/skills/neo4j-migration.skill.md:134	1	**Pause writes** on Neo4j (consumer-side queue drain or read-only mode).
+H9-01886	step	docs/skills/neo4j-migration.skill.md#135	docs/skills/neo4j-migration.skill.md:135	1	**Top-up pass** to capture any deltas — node phase is idempotent (`MERGE`), edge phase needs `--skip-nodes --skip-edges` then a re-run on just the touched types
+H9-01887	step	docs/skills/neo4j-migration.skill.md#136	docs/skills/neo4j-migration.skill.md:136	1	**Promote labels** with the per-label promotion Cypher above.
+H9-01888	step	docs/skills/neo4j-migration.skill.md#137	docs/skills/neo4j-migration.skill.md:137	1	**Cut read traffic over to NornicDB.**
+H9-01889	step	docs/skills/neo4j-migration.skill.md#138	docs/skills/neo4j-migration.skill.md:138	1	**Decommission Neo4j** once you're satisfied; keep it read-only for the rollback window.
+H9-01890	step	docs/skills/neo4j-migration.skill.md#14	docs/skills/neo4j-migration.skill.md:14	1	**Schema** — constraints, then indexes (vector and fulltext last). Idempotent via `IF NOT EXISTS`.
+H9-01891	step	docs/skills/neo4j-migration.skill.md#15	docs/skills/neo4j-migration.skill.md:15	1	**Nodes** — `UNWIND $rows MERGE (n:_Migrated {_neo4j_id: row.id}) SET n += row.props` per label, keyset-paginated by `elementId`. Hits [`UnwindSimpleMergeBatch`
+H9-01892	step	docs/skills/neo4j-migration.skill.md#16	docs/skills/neo4j-migration.skill.md:16	1	**Edges** — `UNWIND $rows MATCH (a) MATCH (b) CREATE (a)-[:T]->(b)` per relationship type. Hits [`UnwindMultiMatchCreateBatch`](cypher-queries.skill.md#multi-ma
+H9-01893	step	docs/skills/qdrant-migration.skill.md#14	docs/skills/qdrant-migration.skill.md:14	1	**Enable the gRPC server on NornicDB.** Off by default:
+H9-01894	step	docs/skills/qdrant-migration.skill.md#19	docs/skills/qdrant-migration.skill.md:19	1	**Match dimension limits.** If your source has vectors above `4096`, raise `NORNICDB_QDRANT_GRPC_MAX_VECTOR_DIM` before running.
+H9-01895	step	docs/skills/qdrant-migration.skill.md#20	docs/skills/qdrant-migration.skill.md:20	1	**Match auth.** If your source enforces auth, your migration script needs an API key (Qdrant) and your target needs the same if `Auth.Enabled=true`.
+H9-01896	step	docs/skills/qdrant-migration.skill.md#91	docs/skills/qdrant-migration.skill.md:91	1	**Enable NornicDB gRPC** with the env vars above.
+H9-01897	step	docs/skills/qdrant-migration.skill.md#92	docs/skills/qdrant-migration.skill.md:92	1	**Dry-run** with `--dry-run` against a representative subset to confirm collection configs port cleanly.
+H9-01898	step	docs/skills/qdrant-migration.skill.md#93	docs/skills/qdrant-migration.skill.md:93	1	**Migrate cold collections first** (highest cardinality, lowest QPS). Verify counts before moving to hot ones.
+H9-01899	step	docs/skills/qdrant-migration.skill.md#94	docs/skills/qdrant-migration.skill.md:94	1	**Drain in-flight writes on Qdrant** (or pause the writer fleet) before migrating hot collections.
+H9-01900	step	docs/skills/qdrant-migration.skill.md#95	docs/skills/qdrant-migration.skill.md:95	1	**Re-run with `--skip-existing`** to top up any incremental writes that arrived between dry-run and cutover.
+H9-01901	step	docs/skills/qdrant-migration.skill.md#96	docs/skills/qdrant-migration.skill.md:96	1	**Flip read traffic** to NornicDB once `count` parity is observed for every collection.
+H9-01902	step	docs/skills/qdrant-migration.skill.md#97	docs/skills/qdrant-migration.skill.md:97	1	**Keep Qdrant up read-only for a rollback window**; the migration is non-destructive on the source.
+H9-01903	step	docs/skills/qdrant-migration.skill.md#98	docs/skills/qdrant-migration.skill.md:98	1	**Decommission** when satisfied.
+H9-01904	step	docs/user-guides/vector-index-upgrade.md#26	docs/user-guides/vector-index-upgrade.md:26	1	Stop the fixed database cleanly.
+H9-01905	step	docs/user-guides/vector-index-upgrade.md#27	docs/user-guides/vector-index-upgrade.md:27	1	Move the derived `<dataDir>/search` directory outside the data directory,
+H9-01906	step	docs/user-guides/vector-index-upgrade.md#31	docs/user-guides/vector-index-upgrade.md:31	1	Start the older binary with the same data directory and let it rebuild
