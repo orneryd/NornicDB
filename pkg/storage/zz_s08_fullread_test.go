@@ -21,6 +21,7 @@ func TestS08FullReadScripts(t *testing.T) {
 	}
 	for _, args := range commands {
 		cmd := exec.Command("bash", args...); cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "REPRO_KEEP=1")
 		out, runErr := cmd.CombinedOutput(); text := string(out)
 		found := false
 		for _, line := range strings.Split(text, "\n") {
@@ -32,6 +33,11 @@ func TestS08FullReadScripts(t *testing.T) {
 			fmt.Printf("S08_DEBUG cwd=%q repo=%q script=%q size=%d statErr=%v exit=%v output_bytes=%d\n", wd, repo, args[0], size, statErr, runErr, len(out))
 			t.Fatalf("%s emitted no RESULT/refused_starts line (exit %v):\n%s", strings.Join(args, " "), runErr, text)
 		}
-		if strings.Contains(text, "RESULT=HARNESS-ERROR") { t.Fatalf("%s harness error (exit %v)", strings.Join(args, " "), runErr) }
+		if strings.Contains(text, "RESULT=HARNESS-ERROR") {
+			lines := strings.Split(text, "\n")
+			if len(lines) > 80 { lines = lines[len(lines)-80:] }
+			fmt.Printf("S08_SCRIPT_DIAGNOSTIC %s\n%s\n", strings.Join(args, " "), strings.Join(lines, "\n"))
+			t.Fatalf("%s harness error (exit %v)", strings.Join(args, " "), runErr)
+		}
 	}
 }
