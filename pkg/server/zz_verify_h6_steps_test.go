@@ -165,7 +165,7 @@ loop:
 					self[funcs[0]+" "+places[0]]++
 					seen := map[string]bool{}
 					for _, fn := range funcs {
-						if (strings.HasPrefix(fn, "pkg/") || strings.Contains(fn, "badger")) && !seen[fn] {
+						if (strings.HasPrefix(fn, "pkg/") || strings.Contains(fn, "badger") || strings.HasPrefix(fn, "runtime.gc") || strings.HasPrefix(fn, "runtime.mallocgc")) && !strings.HasPrefix(fn, "pkg/bolt") && !seen[fn] {
 							seen[fn] = true
 							incl[fn]++
 						}
@@ -190,8 +190,8 @@ loop:
 	record["runtime"] = verifyH6RuntimeDelta(before, after)
 	record["samples"] = samples
 	record["executor_states"] = states
-	record["self_top"] = verifyH6Top(self, 12)
-	record["inclusive_top"] = verifyH6Top(incl, 25)
+	record["self_top"] = verifyH6Top(self, 25)
+	record["inclusive_top"] = verifyH6Top(incl, 70)
 	record["background_top"] = verifyH6Top(background, 8)
 	if err != nil {
 		record["error"] = err.Error()
@@ -377,5 +377,48 @@ func TestVerifyH6CacheProof(t *testing.T) {
 			h.Close(t)
 			_ = os.RemoveAll(dir)
 		}
+	}
+}
+
+// TestVerifyH6CacheProfile: T06 at each scale with the node cache cap raised
+// (VERIFY_H6_CACHE_BIG, default 1,000,000), stack-sampled as in
+// TestVerifyH6Steps, to show where index creation spends the time that the
+// node cache does not explain.
+//
+// Run: VERIFY_H6=1 [VERIFY_H6_SCALES=1,16,64]
+//      go test ./pkg/server -run '^TestVerifyH6CacheProfile$' -count=1 -timeout=60m -v
+func TestVerifyH6CacheProfile(t *testing.T) {
+	if os.Getenv("VERIFY_H6") == "" {
+		t.Skip("set VERIFY_H6=1")
+	}
+	scales := []int{1, 16, 64}
+	if v := os.Getenv("VERIFY_H6_SCALES"); v != "" {
+		scales = nil
+		for _, s := range strings.Split(v, ",") {
+			n, _ := strconv.Atoi(s)
+			scales = append(scales, n)
+		}
+	}
+	big := huntEnvInt("VERIFY_H6_CACHE_BIG", 1000000)
+	worker, _ := os.Hostname()
+	base, err := os.MkdirTemp(huntEnv("HUNT_TMP", os.TempDir()), "verify-h6-cprof-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	var unique int64
+	for _, f := range scales {
+		dir := filepath.Join(base, fmt.Sprintf("x%d", f))
+		h := huntOpen(t, dir, huntOptions{QueryCache: true, NodeCacheMaxEntries: big})
+		huntH6Build(t, h, f)
+		for rep := 0; rep < 4; rep++ {
+			unique++
+			name := fmt.Sprintf("hunt_h6_p%d", unique)
+			q := fmt.Sprintf("CREATE INDEX %s FOR (n:G) ON (n.s)", name)
+			verifyH6Sampled(t, map[string]any{"template": "T06big", "cache": big, "scale": f, "rep": rep, "query": q, "worker": worker}, verifyH6Bolt(h, q, nil))
+			_ = h.Run(routeBoltAuto, "DROP INDEX "+name+" IF EXISTS", nil, 10*time.Minute)
+		}
+		h.Close(t)
+		_ = os.RemoveAll(dir)
 	}
 }
