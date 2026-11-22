@@ -80,7 +80,7 @@ type norStaticClaim struct {
 	reconstructed bool
 }
 
-var nor79StaticClaims = []norStaticClaim{
+var nor79StaticClaimsS3 = []norStaticClaim{
 	{
 		// The parameter's value makes "$i * 2" an Integer, so toUpper has no
 		// String argument: Neo4j rejects at compile time.
@@ -176,7 +176,7 @@ func TestNor79To82StaticClaims(t *testing.T) {
 		number string
 		claims []norStaticClaim
 	}{
-		{"NOR-79", nor79StaticClaims},
+		{"NOR-79", nor79StaticClaimsS3},
 		{"NOR-80", nor80StaticClaims},
 		{"NOR-81", nor81StaticClaims},
 		{"NOR-82", nor82StaticClaims},
