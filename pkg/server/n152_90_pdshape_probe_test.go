@@ -54,7 +54,7 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	boltServer := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), nil, srv.GetDatabaseManager())
+	boltServer := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), searchNodeWireExecutor{server: srv}, srv.GetDatabaseManager())
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- boltServer.Serve(listener) }()
 	t.Cleanup(func() { _ = boltServer.Close(); <-serveDone })
