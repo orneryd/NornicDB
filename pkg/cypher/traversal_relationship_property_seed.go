@@ -2,14 +2,12 @@ package cypher
 
 import (
 	"context"
-	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // relationshipPropertySeedEdge resolves a one-hop match whose relationship
-// carries inline equality properties a declared relationship uniqueness or
-// relationship key constraint indexes, such as
+// carries inline equality properties a declared relationship RANGE index covers, such as
 //
 //	MATCH (a)-[r:PD_RELATION {id: $id}]->(b)
 //
@@ -17,7 +15,7 @@ import (
 // index (storage.RelationshipPropertyEqualityLookup) instead of enumerating the
 // type's relationships (relationshipTypeSeedNodes). none reports that the
 // indexed values select no relationship, so the pattern matches nothing; ok is
-// false for every other shape, no indexed constraint, or a lookup the index
+// false for every other shape, no covering index, or a lookup the index
 // cannot answer, and the type index keeps its existing role.
 //
 // The relationship is handed to the traversal as a pinned relationship, so its
@@ -49,15 +47,11 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 		return nil, false, false, nil
 	}
 	relationshipType := relationship.Types[0]
-	constraints, err := schema.GetConstraintsForLabels(ctx, []string{relationshipType}, storage.ConstraintUnique, storage.ConstraintRelationshipKey)
+	properties, indexed, err := schema.RelationshipEqualityIndexProperties(ctx, relationshipType, relationship.Properties)
 	if err != nil {
 		return nil, false, false, err
 	}
-	properties, constrained, err := relationshipConstraintIndexProperties(ctx, constraints, relationshipType, relationship.Properties)
-	if err != nil {
-		return nil, false, false, err
-	}
-	if !constrained {
+	if !indexed {
 		return nil, false, false, nil
 	}
 	values := make([]interface{}, len(properties))
@@ -77,39 +71,9 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 	case 1:
 		return edges[0], false, true, nil
 	default:
-		// Two relationships of one type carrying one constrained value contradict
-		// the constraint this index serves. Keep the complete pattern evaluation
-		// rather than choosing one of them.
+		// The pinned-edge path consumes one relationship. Ordinary indexes may
+		// select several: preserve complete pattern evaluation instead of choosing
+		// one or imposing uniqueness that the declaration does not require.
 		return nil, false, false, nil
 	}
-}
-
-// relationshipConstraintIndexProperties chooses the shortest complete unique
-// key: every eligible key selects at most one relationship. Property-order ties
-// are lexical, so selection is deterministic without allocating/sorting candidates.
-func relationshipConstraintIndexProperties(ctx context.Context, constraints []storage.Constraint, relationshipType string, patternProperties map[string]interface{}) ([]string, bool, error) {
-	var selected []string
-	for _, constraint := range constraints {
-		if err := ctx.Err(); err != nil {
-			return nil, false, err
-		}
-		if constraint.EffectiveEntityType() != storage.ConstraintEntityRelationship || constraint.Label != relationshipType ||
-			(constraint.Type != storage.ConstraintUnique && constraint.Type != storage.ConstraintRelationshipKey) || len(constraint.Properties) == 0 {
-			continue
-		}
-		bound := true
-		for _, property := range constraint.Properties {
-			if err := ctx.Err(); err != nil {
-				return nil, false, err
-			}
-			if patternProperties[property] == nil {
-				bound = false
-				break
-			}
-		}
-		if bound && (selected == nil || len(constraint.Properties) < len(selected) || len(constraint.Properties) == len(selected) && slices.Compare(constraint.Properties, selected) < 0) {
-			selected = constraint.Properties
-		}
-	}
-	return selected, selected != nil, nil
 }

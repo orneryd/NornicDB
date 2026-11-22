@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -30,12 +31,13 @@ type f25CatalogReceiptProbe struct {
 	submitted                 chan struct{}
 	beforeSubmit              func()
 	closeStarted              chan struct{}
+	closeObserved             sync.Once
 }
 
 func (e *f25CatalogReceiptProbe) GetInnerEngine() storage.Engine { return e.Engine }
 func (e *f25CatalogReceiptProbe) Close() error {
 	if e.closeStarted != nil {
-		close(e.closeStarted)
+		e.closeObserved.Do(func() { close(e.closeStarted) })
 	}
 	return e.Engine.Close()
 }

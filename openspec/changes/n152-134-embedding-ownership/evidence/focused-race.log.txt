@@ -1,0 +1,70 @@
+=== RUN   TestCachedEmbedderCloseClosesWrapped
+--- PASS: TestCachedEmbedderCloseClosesWrapped (0.00s)
+=== RUN   TestCachedEmbedder_Dimensions
+--- PASS: TestCachedEmbedder_Dimensions (0.00s)
+=== RUN   TestCachedEmbedder_Model
+--- PASS: TestCachedEmbedder_Model (0.00s)
+=== RUN   TestCachedEmbedder_Clear
+--- PASS: TestCachedEmbedder_Clear (0.00s)
+=== RUN   TestCachedEmbedder_Stats_HitRate
+--- PASS: TestCachedEmbedder_Stats_HitRate (0.00s)
+=== RUN   TestCachedEmbeddingOwnershipConcurrentMiss
+--- PASS: TestCachedEmbeddingOwnershipConcurrentMiss (0.00s)
+=== RUN   TestCachedEmbeddingOwnershipBatchMissResults
+--- PASS: TestCachedEmbeddingOwnershipBatchMissResults (0.00s)
+=== RUN   TestNOR381CachedVectorsBelongToEachResult
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/single/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/single/hit
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/batch/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/batch/hit
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_single/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_single/hit
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_batch/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_batch/hit
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_fallback_single/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_fallback_single/hit
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_fallback_batch/miss
+=== RUN   TestNOR381CachedVectorsBelongToEachResult/typed_fallback_batch/hit
+--- PASS: TestNOR381CachedVectorsBelongToEachResult (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/single/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/single/hit (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/batch/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/batch/hit (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_single/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_single/hit (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_batch/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_batch/hit (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_fallback_single/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_fallback_single/hit (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_fallback_batch/miss (0.00s)
+    --- PASS: TestNOR381CachedVectorsBelongToEachResult/typed_fallback_batch/hit (0.00s)
+=== RUN   TestNOR381DuplicateCachedBatchResultsAreIndependent
+=== RUN   TestNOR381DuplicateCachedBatchResultsAreIndependent/plain
+=== RUN   TestNOR381DuplicateCachedBatchResultsAreIndependent/typed
+--- PASS: TestNOR381DuplicateCachedBatchResultsAreIndependent (0.00s)
+    --- PASS: TestNOR381DuplicateCachedBatchResultsAreIndependent/plain (0.00s)
+    --- PASS: TestNOR381DuplicateCachedBatchResultsAreIndependent/typed (0.00s)
+=== RUN   TestCachedEmbedderBatchesChunksAcrossDocuments
+--- PASS: TestCachedEmbedderBatchesChunksAcrossDocuments (0.00s)
+=== RUN   TestCachedEmbedder_CacheHit
+--- PASS: TestCachedEmbedder_CacheHit (0.00s)
+=== RUN   TestCachedEmbedder_TypedCacheSeparatesQueryAndDocument
+--- PASS: TestCachedEmbedder_TypedCacheSeparatesQueryAndDocument (0.00s)
+=== RUN   TestCachedEmbedder_BatchCaching
+--- PASS: TestCachedEmbedder_BatchCaching (0.00s)
+=== RUN   TestCachedEmbedder_LRUEviction
+--- PASS: TestCachedEmbedder_LRUEviction (0.00s)
+=== RUN   TestCachedEmbedder_Concurrent
+--- PASS: TestCachedEmbedder_Concurrent (0.00s)
+=== RUN   TestCachedEmbedder_ChunkText
+--- PASS: TestCachedEmbedder_ChunkText (0.00s)
+=== RUN   TestCachedEmbedder_Embed_BaseError
+--- PASS: TestCachedEmbedder_Embed_BaseError (0.00s)
+=== RUN   TestCachedEmbedder_EmbedBatch_BaseError
+--- PASS: TestCachedEmbedder_EmbedBatch_BaseError (0.00s)
+=== RUN   TestCachedEmbedder_ChunkText_BaseError
+--- PASS: TestCachedEmbedder_ChunkText_BaseError (0.00s)
+=== RUN   TestCheckEmbeddingsAndCacheRefusesUnusable
+--- PASS: TestCheckEmbeddingsAndCacheRefusesUnusable (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/embed	1.477s
