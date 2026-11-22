@@ -123,18 +123,23 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 						// One un-warmed search start and pull, explicitly reported
 						// apart from the 30 warm samples.
 						coldPage, coldFirst := call(request(""))
-						if coldPage.more {
-							_, _ = call(request(coldPage.qid))
+						for coldPage.more {
+							coldPage, _ = call(request(coldPage.qid))
 						}
 						firstSamples := make([]time.Duration, 0, 30)
-						continuationSamples := make([]time.Duration, 0, 30)
+						continuationSamples := make(map[int][]time.Duration)
 						for i := 0; i < 30; i++ {
 							first, firstElapsed := call(request(""))
 							firstSamples = append(firstSamples, firstElapsed)
 							require.True(t, first.more, "warm start must have a continuation page")
-							continuation, continuationElapsed := call(request(first.qid))
-							continuationSamples = append(continuationSamples, continuationElapsed)
-							require.NotEmpty(t, continuation.ids)
+							pageNumber := 2
+							for first.more {
+								continuation, continuationElapsed := call(request(first.qid))
+								continuationSamples[pageNumber] = append(continuationSamples[pageNumber], continuationElapsed)
+								require.NotEmpty(t, continuation.ids)
+								first = continuation
+								pageNumber++
+							}
 						}
 						// Drain one independent stream and fingerprint all returned IDs.
 						page, _ := call(request(""))
@@ -154,8 +159,15 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 							_, exists := want[id]
 							require.True(t, exists, "unexpected id %s", id)
 						}
-						fmt.Printf("N152_90_PROBE {\"fixture\":%q,\"rule\":%q,\"n\":%d,\"cold_first_ms\":%.3f,\"warm_first\":%s,\"warm_continuation\":%s,\"rows\":%d,\"ids_sha256\":%q}\n",
-							name, rule.name, pageSize, float64(coldFirst.Microseconds())/1000, n15290Summary(firstSamples), n15290Summary(continuationSamples), len(ids), n15290IDHash(ids))
+						var continuationJSON strings.Builder
+						for pageNumber := 2; pageNumber <= len(continuationSamples)+1; pageNumber++ {
+							if pageNumber > 2 {
+								continuationJSON.WriteByte(',')
+							}
+							fmt.Fprintf(&continuationJSON, "\"page_%d\":%s", pageNumber, n15290Summary(continuationSamples[pageNumber]))
+						}
+						fmt.Printf("N152_90_PROBE {\"fixture\":%q,\"rule\":%q,\"n\":%d,\"cold_first_ms\":%.3f,\"warm_first\":%s,\"warm_continuation\":{%s},\"rows\":%d,\"ids_sha256\":%q}\n",
+							name, rule.name, pageSize, float64(coldFirst.Microseconds())/1000, n15290Summary(firstSamples), continuationJSON.String(), len(ids), n15290IDHash(ids))
 					})
 				}
 			}
