@@ -540,6 +540,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 			if created {
 				result.Stats.RelationshipsCreated = 1
+				pdmWithdrawDeleted(ctx, store, edge) // DIAGNOSTIC (repro only)
 				countCreatedEntity(result.Stats, nil, edge.Properties)
 				e.notifyEdgeMutated(ctx, string(edge.ID))
 				e.notifyNodeMutated(ctx, string(edge.StartNode))
