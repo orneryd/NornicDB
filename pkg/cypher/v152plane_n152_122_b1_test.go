@@ -51,59 +51,59 @@ import (
 )
 
 const (
-	nor315NilProcedureName     = "nor315.nilResult"
-	nor315EmptyProcedureName   = "nor315.emptyResult"
-	nor315FailingProcedureName = "nor315.nilResultError"
-	nor315YieldColumn          = "value"
+	portedNor315NilProcedureName     = "portedNor315.nilResult"
+	portedNor315EmptyProcedureName   = "portedNor315.emptyResult"
+	portedNor315FailingProcedureName = "portedNor315.nilResultError"
+	portedNor315YieldColumn          = "value"
 )
 
-// nor315NilHandler returns no result and no error: the exact handler the
+// portedNor315NilHandler returns no result and no error: the exact handler the
 // pending defect reports.
-func nor315NilHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+func portedNor315NilHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 	return nil, nil
 }
 
-// nor315EmptyHandler returns a valid, explicitly empty result over the
+// portedNor315EmptyHandler returns a valid, explicitly empty result over the
 // declared column: the declared-empty control, distinct from (nil, nil).
-func nor315EmptyHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
-	return &ExecuteResult{Columns: []string{nor315YieldColumn}, Rows: [][]interface{}{}}, nil
+func portedNor315EmptyHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+	return &ExecuteResult{Columns: []string{portedNor315YieldColumn}, Rows: [][]interface{}{}}, nil
 }
 
-// nor315FailingHandler reports a failure: the control that keeps an error an
+// portedNor315FailingHandler reports a failure: the control that keeps an error an
 // error instead of an empty result.
-func nor315FailingHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
-	return nil, errors.New("nor315 handler failed")
+func portedNor315FailingHandler(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+	return nil, errors.New("portedNor315 handler failed")
 }
 
-// nor315ProcedureSpec declares arity 0 and one INTEGER output named value, so
+// portedNor315ProcedureSpec declares arity 0 and one INTEGER output named value, so
 // the declaration-fact cases read one registration.
-func nor315ProcedureSpec(name string) ProcedureSpec {
+func portedNor315ProcedureSpec(name string) ProcedureSpec {
 	return ProcedureSpec{
 		Name:      name,
-		Signature: name + "() :: (" + nor315YieldColumn + " :: INTEGER)",
+		Signature: name + "() :: (" + portedNor315YieldColumn + " :: INTEGER)",
 		Mode:      ProcedureModeRead,
 		MinArgs:   0,
 		MaxArgs:   0,
-		Returns:   []ProcedureColumn{{Name: nor315YieldColumn, Type: "INTEGER"}},
+		Returns:   []ProcedureColumn{{Name: portedNor315YieldColumn, Type: "INTEGER"}},
 	}
 }
 
-// nor315Register publishes handler under name for the duration of the test
+// portedNor315Register publishes handler under name for the duration of the test
 // through the scoped registration owner and returns its invocation counter.
-func nor315Register(t *testing.T, name string, handler ProcedureHandler) *atomic.Int64 {
+func portedNor315Register(t *testing.T, name string, handler ProcedureHandler) *atomic.Int64 {
 	t.Helper()
 	var invocations atomic.Int64
-	registerProcedureForTest(t, nor315ProcedureSpec(name), func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+	registerProcedureForTest(t, portedNor315ProcedureSpec(name), func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 		invocations.Add(1)
 		return handler(ctx, exec, cypher, args)
 	})
 	return &invocations
 }
 
-// nor315RequireEmptyResult runs query and requires the declared empty result:
+// portedNor315RequireEmptyResult runs query and requires the declared empty result:
 // the procedure's columns and no rows, never a missing result (a panic fails
 // the test run on its own).
-func nor315RequireEmptyResult(t *testing.T, exec *StorageExecutor, query string, columns []string) {
+func portedNor315RequireEmptyResult(t *testing.T, exec *StorageExecutor, query string, columns []string) {
 	t.Helper()
 	result, err := exec.Execute(context.Background(), query, nil)
 	require.NoError(t, err, query)
@@ -114,8 +114,8 @@ func nor315RequireEmptyResult(t *testing.T, exec *StorageExecutor, query string,
 
 // A handler's (nil, nil) is the declared empty result in every invocation form
 // where YIELD is legal, on both parsers.
-func TestNilResultProcedureCallServesDeclaredEmptyResultOnBothParsers(t *testing.T) {
-	calls := nor315Register(t, nor315NilProcedureName, nor315NilHandler)
+func TestPortedNilResultProcedureCallServesDeclaredEmptyResultOnBothParsers(t *testing.T) {
+	calls := portedNor315Register(t, portedNor315NilProcedureName, portedNor315NilHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
@@ -126,43 +126,43 @@ func TestNilResultProcedureCallServesDeclaredEmptyResultOnBothParsers(t *testing
 		}{
 			{
 				name:    "no yield",
-				query:   "CALL " + nor315NilProcedureName + "()",
-				columns: []string{nor315YieldColumn},
+				query:   "CALL " + portedNor315NilProcedureName + "()",
+				columns: []string{portedNor315YieldColumn},
 			},
 			{
 				name:    "yield column",
-				query:   "CALL " + nor315NilProcedureName + "() YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-				columns: []string{nor315YieldColumn},
+				query:   "CALL " + portedNor315NilProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+				columns: []string{portedNor315YieldColumn},
 			},
 			{
 				name:    "yield column alias",
-				query:   "CALL " + nor315NilProcedureName + "() YIELD " + nor315YieldColumn + " AS kept RETURN kept",
+				query:   "CALL " + portedNor315NilProcedureName + "() YIELD " + portedNor315YieldColumn + " AS kept RETURN kept",
 				columns: []string{"kept"},
 			},
 			{
 				name:    "yield wildcard",
-				query:   "CALL " + nor315NilProcedureName + "() YIELD *",
-				columns: []string{nor315YieldColumn},
+				query:   "CALL " + portedNor315NilProcedureName + "() YIELD *",
+				columns: []string{portedNor315YieldColumn},
 			},
 			{
 				name:    "yield tail pipeline",
-				query:   "CALL " + nor315NilProcedureName + "() YIELD " + nor315YieldColumn + " WITH " + nor315YieldColumn + " WHERE " + nor315YieldColumn + " > 0 RETURN " + nor315YieldColumn + " ORDER BY " + nor315YieldColumn + " LIMIT 5",
-				columns: []string{nor315YieldColumn},
+				query:   "CALL " + portedNor315NilProcedureName + "() YIELD " + portedNor315YieldColumn + " WITH " + portedNor315YieldColumn + " WHERE " + portedNor315YieldColumn + " > 0 RETURN " + portedNor315YieldColumn + " ORDER BY " + portedNor315YieldColumn + " LIMIT 5",
+				columns: []string{portedNor315YieldColumn},
 			},
 			{
 				name:    "in query pipeline",
-				query:   "UNWIND [1, 2] AS seed CALL " + nor315NilProcedureName + "() YIELD " + nor315YieldColumn + " RETURN seed, " + nor315YieldColumn,
-				columns: []string{"seed", nor315YieldColumn},
+				query:   "UNWIND [1, 2] AS seed CALL " + portedNor315NilProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN seed, " + portedNor315YieldColumn,
+				columns: []string{"seed", portedNor315YieldColumn},
 			},
 			{
 				name:    "call subquery",
-				query:   "CALL { CALL " + nor315NilProcedureName + "() YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn + " } RETURN " + nor315YieldColumn,
-				columns: []string{nor315YieldColumn},
+				query:   "CALL { CALL " + portedNor315NilProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn + " } RETURN " + portedNor315YieldColumn,
+				columns: []string{portedNor315YieldColumn},
 			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				before := calls.Load()
-				nor315RequireEmptyResult(t, exec, tc.query, tc.columns)
+				portedNor315RequireEmptyResult(t, exec, tc.query, tc.columns)
 				require.Greater(t, calls.Load(), before, "%s: the handler ran", tc.query)
 			})
 		}
@@ -172,8 +172,8 @@ func TestNilResultProcedureCallServesDeclaredEmptyResultOnBothParsers(t *testing
 // The declared-empty control: a handler that returns a valid empty result of
 // its own keeps exactly those columns and rows, on both parsers and in every
 // invocation form.
-func TestEmptyResultProcedureCallControlOnBothParsers(t *testing.T) {
-	nor315Register(t, nor315EmptyProcedureName, nor315EmptyHandler)
+func TestPortedEmptyResultProcedureCallControlOnBothParsers(t *testing.T) {
+	portedNor315Register(t, portedNor315EmptyProcedureName, portedNor315EmptyHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
@@ -182,15 +182,15 @@ func TestEmptyResultProcedureCallControlOnBothParsers(t *testing.T) {
 			query   string
 			columns []string
 		}{
-			{name: "no yield", query: "CALL " + nor315EmptyProcedureName + "()", columns: []string{nor315YieldColumn}},
-			{name: "yield column", query: "CALL " + nor315EmptyProcedureName + "() YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn, columns: []string{nor315YieldColumn}},
-			{name: "yield wildcard", query: "CALL " + nor315EmptyProcedureName + "() YIELD *", columns: []string{nor315YieldColumn}},
-			{name: "yield tail pipeline", query: "CALL " + nor315EmptyProcedureName + "() YIELD " + nor315YieldColumn + " WITH " + nor315YieldColumn + " RETURN " + nor315YieldColumn, columns: []string{nor315YieldColumn}},
-			{name: "in query pipeline", query: "UNWIND [1] AS seed CALL " + nor315EmptyProcedureName + "() YIELD " + nor315YieldColumn + " RETURN seed, " + nor315YieldColumn, columns: []string{"seed", nor315YieldColumn}},
-			{name: "call subquery", query: "CALL { CALL " + nor315EmptyProcedureName + "() YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn + " } RETURN " + nor315YieldColumn, columns: []string{nor315YieldColumn}},
+			{name: "no yield", query: "CALL " + portedNor315EmptyProcedureName + "()", columns: []string{portedNor315YieldColumn}},
+			{name: "yield column", query: "CALL " + portedNor315EmptyProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn, columns: []string{portedNor315YieldColumn}},
+			{name: "yield wildcard", query: "CALL " + portedNor315EmptyProcedureName + "() YIELD *", columns: []string{portedNor315YieldColumn}},
+			{name: "yield tail pipeline", query: "CALL " + portedNor315EmptyProcedureName + "() YIELD " + portedNor315YieldColumn + " WITH " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn, columns: []string{portedNor315YieldColumn}},
+			{name: "in query pipeline", query: "UNWIND [1] AS seed CALL " + portedNor315EmptyProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN seed, " + portedNor315YieldColumn, columns: []string{"seed", portedNor315YieldColumn}},
+			{name: "call subquery", query: "CALL { CALL " + portedNor315EmptyProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn + " } RETURN " + portedNor315YieldColumn, columns: []string{portedNor315YieldColumn}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				nor315RequireEmptyResult(t, exec, tc.query, tc.columns)
+				portedNor315RequireEmptyResult(t, exec, tc.query, tc.columns)
 			})
 		}
 	})
@@ -199,21 +199,21 @@ func TestEmptyResultProcedureCallControlOnBothParsers(t *testing.T) {
 // The error control: a handler that reports a failure still fails the call on
 // both parsers, with YIELD and without it, instead of becoming an empty
 // result.
-func TestFailingProcedureHandlerStaysAnErrorOnBothParsers(t *testing.T) {
-	nor315Register(t, nor315FailingProcedureName, nor315FailingHandler)
+func TestPortedFailingProcedureHandlerStaysAnErrorOnBothParsers(t *testing.T) {
+	portedNor315Register(t, portedNor315FailingProcedureName, portedNor315FailingHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
 		for _, query := range []string{
-			"CALL " + nor315FailingProcedureName + "()",
-			"CALL " + nor315FailingProcedureName + "() YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-			"CALL " + nor315FailingProcedureName + "() YIELD *",
-			"CALL " + nor315FailingProcedureName + "() YIELD " + nor315YieldColumn + " WITH " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-			"UNWIND [1] AS seed CALL " + nor315FailingProcedureName + "() YIELD " + nor315YieldColumn + " RETURN seed, " + nor315YieldColumn,
+			"CALL " + portedNor315FailingProcedureName + "()",
+			"CALL " + portedNor315FailingProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+			"CALL " + portedNor315FailingProcedureName + "() YIELD *",
+			"CALL " + portedNor315FailingProcedureName + "() YIELD " + portedNor315YieldColumn + " WITH " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+			"UNWIND [1] AS seed CALL " + portedNor315FailingProcedureName + "() YIELD " + portedNor315YieldColumn + " RETURN seed, " + portedNor315YieldColumn,
 		} {
 			t.Run(query, func(t *testing.T) {
 				result, err := exec.Execute(context.Background(), query, nil)
-				require.ErrorContains(t, err, "nor315 handler failed", query)
+				require.ErrorContains(t, err, "portedNor315 handler failed", query)
 				require.Nil(t, result, query)
 			})
 		}
@@ -223,28 +223,28 @@ func TestFailingProcedureHandlerStaysAnErrorOnBothParsers(t *testing.T) {
 // EXPLAIN plans the call from the declaration without invoking the handler, and
 // PROFILE invokes it and serves the same declared empty result: neither mode
 // panics on the (nil, nil) handler, and neither invents rows.
-func TestNilResultProcedureExplainAndProfileOnBothParsers(t *testing.T) {
-	calls := nor315Register(t, nor315NilProcedureName, nor315NilHandler)
+func TestPortedNilResultProcedureExplainAndProfileOnBothParsers(t *testing.T) {
+	calls := portedNor315Register(t, portedNor315NilProcedureName, portedNor315NilHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
 		t.Run("explain", func(t *testing.T) {
 			before := calls.Load()
 			result, err := exec.Execute(context.Background(),
-				"EXPLAIN CALL "+nor315NilProcedureName+"() YIELD "+nor315YieldColumn+" RETURN "+nor315YieldColumn, nil)
+				"EXPLAIN CALL "+portedNor315NilProcedureName+"() YIELD "+portedNor315YieldColumn+" RETURN "+portedNor315YieldColumn, nil)
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			require.Equal(t, []string{nor315YieldColumn}, result.Columns)
+			require.Equal(t, []string{portedNor315YieldColumn}, result.Columns)
 			require.Empty(t, result.Rows)
 			require.Equal(t, before, calls.Load(), "EXPLAIN must not invoke the handler")
 		})
 		t.Run("profile", func(t *testing.T) {
 			before := calls.Load()
 			result, err := exec.Execute(context.Background(),
-				"PROFILE CALL "+nor315NilProcedureName+"() YIELD "+nor315YieldColumn+" RETURN "+nor315YieldColumn, nil)
+				"PROFILE CALL "+portedNor315NilProcedureName+"() YIELD "+portedNor315YieldColumn+" RETURN "+portedNor315YieldColumn, nil)
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			require.Equal(t, []string{nor315YieldColumn}, result.Columns)
+			require.Equal(t, []string{portedNor315YieldColumn}, result.Columns)
 			require.Empty(t, result.Rows)
 			require.Greater(t, calls.Load(), before, "PROFILE runs the statement, so the handler ran")
 		})
@@ -254,16 +254,16 @@ func TestNilResultProcedureExplainAndProfileOnBothParsers(t *testing.T) {
 // A wrong arity is the compile-time owner's rejection in every mode and on
 // both parsers, before the handler runs: the (nil, nil) handler never turns a
 // declaration error into an empty result.
-func TestNilResultProcedureArityRejectedBeforeHandlerOnBothParsers(t *testing.T) {
-	calls := nor315Register(t, nor315NilProcedureName, nor315NilHandler)
+func TestPortedNilResultProcedureArityRejectedBeforeHandlerOnBothParsers(t *testing.T) {
+	calls := portedNor315Register(t, portedNor315NilProcedureName, portedNor315NilHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
 		for _, query := range []string{
-			"CALL " + nor315NilProcedureName + "(1) YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-			"EXPLAIN CALL " + nor315NilProcedureName + "(1) YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-			"PROFILE CALL " + nor315NilProcedureName + "(1) YIELD " + nor315YieldColumn + " RETURN " + nor315YieldColumn,
-			"UNWIND [1] AS seed CALL " + nor315NilProcedureName + "(1) YIELD " + nor315YieldColumn + " RETURN seed",
+			"CALL " + portedNor315NilProcedureName + "(1) YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+			"EXPLAIN CALL " + portedNor315NilProcedureName + "(1) YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+			"PROFILE CALL " + portedNor315NilProcedureName + "(1) YIELD " + portedNor315YieldColumn + " RETURN " + portedNor315YieldColumn,
+			"UNWIND [1] AS seed CALL " + portedNor315NilProcedureName + "(1) YIELD " + portedNor315YieldColumn + " RETURN seed",
 		} {
 			t.Run(query, func(t *testing.T) {
 				before := calls.Load()
@@ -281,14 +281,14 @@ func TestNilResultProcedureArityRejectedBeforeHandlerOnBothParsers(t *testing.T)
 // panic. See the file comment: the compile-time owner does not yet decide the
 // YIELD column, so RUN and PROFILE answer this after the handler ran and
 // EXPLAIN plans it; those orders are recorded here, not asserted as required.
-func TestNilResultProcedureYieldDeclarationAnswersWithoutPanicOnBothParsers(t *testing.T) {
-	calls := nor315Register(t, nor315NilProcedureName, nor315NilHandler)
+func TestPortedNilResultProcedureYieldDeclarationAnswersWithoutPanicOnBothParsers(t *testing.T) {
+	calls := portedNor315Register(t, portedNor315NilProcedureName, portedNor315NilHandler)
 
 	forEachParser(t, func(t *testing.T) {
 		exec := newCallScopeExecutor(t)
 		for _, query := range []string{
-			"CALL " + nor315NilProcedureName + "() YIELD missing RETURN missing",
-			"PROFILE CALL " + nor315NilProcedureName + "() YIELD missing RETURN missing",
+			"CALL " + portedNor315NilProcedureName + "() YIELD missing RETURN missing",
+			"PROFILE CALL " + portedNor315NilProcedureName + "() YIELD missing RETURN missing",
 		} {
 			t.Run(query, func(t *testing.T) {
 				before := calls.Load()
@@ -302,7 +302,7 @@ func TestNilResultProcedureYieldDeclarationAnswersWithoutPanicOnBothParsers(t *t
 		}
 
 		t.Run("yield wildcard in pipeline", func(t *testing.T) {
-			query := "UNWIND [1] AS seed CALL " + nor315NilProcedureName + "() YIELD * RETURN seed"
+			query := "UNWIND [1] AS seed CALL " + portedNor315NilProcedureName + "() YIELD * RETURN seed"
 			before := calls.Load()
 			result, err := exec.Execute(context.Background(), query, nil)
 			requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
@@ -311,7 +311,7 @@ func TestNilResultProcedureYieldDeclarationAnswersWithoutPanicOnBothParsers(t *t
 		})
 
 		t.Run("explain unknown yield column", func(t *testing.T) {
-			query := "EXPLAIN CALL " + nor315NilProcedureName + "() YIELD missing RETURN missing"
+			query := "EXPLAIN CALL " + portedNor315NilProcedureName + "() YIELD missing RETURN missing"
 			before := calls.Load()
 			result, err := exec.Execute(context.Background(), query, nil)
 			require.Equal(t, before, calls.Load(), "%s: EXPLAIN must not invoke the handler", query)

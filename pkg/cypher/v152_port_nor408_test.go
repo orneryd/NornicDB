@@ -12,12 +12,12 @@ import (
 
 // Embedding the concrete engine preserves its optional read capabilities.
 // Count real adjacency work without changing the selected storage contract.
-type nor408WorkEngine struct {
+type portedNor408WorkEngine struct {
 	*storage.NamespacedEngine
 	adjacencyReads atomic.Int64
 }
 
-func (s *nor408WorkEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
+func (s *portedNor408WorkEngine) ReadAdjacentEdges(ctx context.Context, request storage.AdjacentEdgeRead) ([]*storage.Edge, error) {
 	s.adjacencyReads.Add(1)
 	return s.NamespacedEngine.ReadAdjacentEdges(ctx, request)
 }
@@ -26,14 +26,14 @@ func (s *nor408WorkEngine) ReadAdjacentEdges(ctx context.Context, request storag
 // and unrelated nodes bringing the total to 1,000 or 49,000. Every two
 // attachments share a parent; the requested forty children have one sibling.
 // This does not purport to reconstruct the unavailable heavy production data.
-func nor408Fixture(t testing.TB, total int) *StorageExecutor {
-	exec, _ := nor408WorkFixture(t, total)
+func portedNor408Fixture(t testing.TB, total int) *StorageExecutor {
+	exec, _ := portedNor408WorkFixture(t, total)
 	return exec
 }
 
-func nor408WorkFixture(t testing.TB, total int) (*StorageExecutor, *nor408WorkEngine) {
+func portedNor408WorkFixture(t testing.TB, total int) (*StorageExecutor, *portedNor408WorkEngine) {
 	t.Helper()
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor408")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "portedNor408")
 	ctx := context.Background()
 	for i := 0; i < total; i++ {
 		label := "Unrelated"
@@ -46,14 +46,14 @@ func nor408WorkFixture(t testing.TB, total int) (*StorageExecutor, *nor408WorkEn
 	for i := 0; i < 142; i++ {
 		require.NoError(t, store.CreateEdge(ctx, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("a%d", i)), Type: "ATTACHMENT_OF", StartNode: storage.NodeID(fmt.Sprintf("n%d", i)), EndNode: storage.NodeID(fmt.Sprintf("n%d", 200+i/2))}))
 	}
-	work := &nor408WorkEngine{NamespacedEngine: store}
+	work := &portedNor408WorkEngine{NamespacedEngine: store}
 	exec := NewStorageExecutor(work, QueryCachePolicy{MaxEntries: 0, TTL: 0})
-	_, err := exec.Execute(ctx, "CREATE INDEX nor408_id FOR (d:PDDocument) ON (d.id)", nil)
+	_, err := exec.Execute(ctx, "CREATE INDEX portedNor408_id FOR (d:PDDocument) ON (d.id)", nil)
 	require.NoError(t, err)
 	return exec, work
 }
 
-func nor408Query(optional, right, oneHop bool) string {
+func portedNor408Query(optional, right, oneHop bool) string {
 	clause := "MATCH "
 	if optional {
 		clause = "OPTIONAL MATCH "
@@ -71,7 +71,7 @@ func nor408Query(optional, right, oneHop bool) string {
 	return "UNWIND $ids AS id MATCH (d:PDDocument {id: id}) " + clause + pattern + " WHERE sibling.id <> d.id RETURN d.id AS id, sibling.id AS sibling ORDER BY id, sibling"
 }
 
-func nor408IDs(n int) []interface{} {
+func portedNor408IDs(n int) []interface{} {
 	ids := make([]interface{}, n)
 	for i := range ids {
 		ids[i] = int64(i)
@@ -79,7 +79,7 @@ func nor408IDs(n int) []interface{} {
 	return ids
 }
 
-func nor408Expected(n int, oneHop bool) [][]interface{} {
+func portedNor408Expected(n int, oneHop bool) [][]interface{} {
 	rows := make([][]interface{}, n)
 	for i := range rows {
 		sibling := i ^ 1
@@ -91,20 +91,20 @@ func nor408Expected(n int, oneHop bool) [][]interface{} {
 	return rows
 }
 
-func TestNOR408BoundAttachmentOrientations(t *testing.T) {
+func TestPortedNOR408BoundAttachmentOrientations(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
 		for _, total := range []int{1000, 49000} {
 			t.Run(fmt.Sprintf("nodes%d", total), func(t *testing.T) {
-				exec := nor408Fixture(t, total)
+				exec := portedNor408Fixture(t, total)
 				for _, count := range []int{1, 10, 40} {
 					for _, optional := range []bool{false, true} {
 						for _, oneHop := range []bool{false, true} {
 							for _, right := range []bool{false, true} {
 								t.Run(fmt.Sprintf("ids%d/optional%t/oneHop%t/right%t", count, optional, oneHop, right), func(t *testing.T) {
-									result, err := exec.Execute(t.Context(), nor408Query(optional, right, oneHop), map[string]interface{}{"ids": nor408IDs(count)})
+									result, err := exec.Execute(t.Context(), portedNor408Query(optional, right, oneHop), map[string]interface{}{"ids": portedNor408IDs(count)})
 									require.NoError(t, err)
 									require.Equal(t, []string{"id", "sibling"}, result.Columns)
-									require.Equal(t, nor408Expected(count, oneHop), result.Rows)
+									require.Equal(t, portedNor408Expected(count, oneHop), result.Rows)
 								})
 							}
 						}
@@ -115,9 +115,9 @@ func TestNOR408BoundAttachmentOrientations(t *testing.T) {
 	})
 }
 
-func TestNOR408BoundAttachmentWorkDoesNotExpandUnboundPopulation(t *testing.T) {
+func TestPortedNOR408BoundAttachmentWorkDoesNotExpandUnboundPopulation(t *testing.T) {
 	forEachParser(t, func(t *testing.T) {
-		exec, work := nor408WorkFixture(t, 1000)
+		exec, work := portedNor408WorkFixture(t, 1000)
 		for _, count := range []int{1, 10, 40} {
 			for _, optional := range []bool{false, true} {
 				for _, oneHop := range []bool{false, true} {
@@ -125,9 +125,9 @@ func TestNOR408BoundAttachmentWorkDoesNotExpandUnboundPopulation(t *testing.T) {
 						reads := [2]int64{}
 						for index, right := range []bool{false, true} {
 							work.adjacencyReads.Store(0)
-							result, err := exec.Execute(t.Context(), nor408Query(optional, right, oneHop), map[string]interface{}{"ids": nor408IDs(count)})
+							result, err := exec.Execute(t.Context(), portedNor408Query(optional, right, oneHop), map[string]interface{}{"ids": portedNor408IDs(count)})
 							require.NoError(t, err)
-							require.Equal(t, nor408Expected(count, oneHop), result.Rows)
+							require.Equal(t, portedNor408Expected(count, oneHop), result.Rows)
 							reads[index] = work.adjacencyReads.Load()
 						}
 						t.Logf("left adjacency reads=%d; right=%d", reads[0], reads[1])

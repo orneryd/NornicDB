@@ -8,9 +8,9 @@ import (
 
 // An invalid output name is a declaration error. EXPLAIN must reject it, and
 // execution modes must reject it before calling the registered handler.
-func TestNOR315UnknownYieldRejectedBeforeInvocationInEveryMode(t *testing.T) {
-	const name = "nor315.yieldAdmission"
-	calls := nor315Register(t, name, nor315EmptyHandler)
+func TestPortedNOR315UnknownYieldRejectedBeforeInvocationInEveryMode(t *testing.T) {
+	const name = "portedNor315.yieldAdmission"
+	calls := portedNor315Register(t, name, portedNor315EmptyHandler)
 	forEachParser(t, func(t *testing.T) {
 		for _, mode := range []string{"", "EXPLAIN ", "PROFILE "} {
 			t.Run(mode+"registered procedure", func(t *testing.T) {
