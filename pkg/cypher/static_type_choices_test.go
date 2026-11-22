@@ -57,3 +57,16 @@ func TestStaticTypeChoicesMaterializedAlternativesAreIsolated(t *testing.T) {
 	require.Equal(t, "Float or Integer", typedOperand("Float or Integer").proved().typeName())
 	require.Equal(t, "String", typedOperand("String").proved().typeName())
 }
+
+// Canonical ordering must survive operator-result construction and the existing
+// list-element reader, including Any at each level of the union.
+func TestStaticCanonicalTypeOrderAnyAlternatives(t *testing.T) {
+	input := []string{"List<Date>", "Date", "List<Any>", "String", "Any", "List<String>", "Node", "Map"}
+	original := slices.Clone(input)
+	require.Equal(t, []string{"Any", "String", "Date", "List<Any>", "List<String>", "List<Date>", "Node", "Map"}, canonicalTypeOrder(input))
+	require.Equal(t, original, input, "ordering must not mutate the producer's alternatives")
+	result := signatureOperand([]string{"Date", "List<Date>", "List<Any>"})
+	require.Equal(t, "Date, List<Any> or List<Date>", result.typeName())
+	require.Equal(t, "Any or Date", result.elementOperand().typeName())
+	require.Equal(t, []string{"Date", "List<Date>", "Node", "Map"}, canonicalTypeOrder([]string{"Node", "List<Date>", "Map", "Date"}))
+}

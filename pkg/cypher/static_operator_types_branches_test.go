@@ -19,11 +19,16 @@ func TestCheckOperatorBranches(t *testing.T) {
 		fails       bool
 	}{
 		{op: '+', left: known("Date"), right: known("List<T>"), want: "List<T>"},
+		{op: '+', left: known("Date"), right: staticOperand{}, want: "Date, List<Any> or List<Date>"},
+		{op: '+', left: staticOperand{}, right: known("Date"), want: "Date, List<Any> or List<Date>"},
+		{op: '+', left: known("Date"), right: known("Duration"), want: "Date"},
+		{op: '+', left: known("Duration"), right: known("Date"), want: "Date"},
+		{op: '+', left: known("Duration"), right: known("Duration"), want: "Duration"},
 		// Neo4j adds a duration to a duration or a temporal value, and a list
 		// to either side.
 		// Neo4j adds a duration to a duration or a temporal value, and a list
 		// to either side.
-		{op: '+', left: known("Duration"), right: staticOperand{}, want: "Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>"},
+		{op: '+', left: known("Duration"), right: staticOperand{}, want: "Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration>"},
 		{op: '-', left: staticOperand{}, right: known("Integer"), want: "Float or Integer"},
 		{op: '*', left: staticOperand{}, right: known("Float"), want: "Float or Duration"},
 		{op: '/', left: known("Integer"), right: staticOperand{}, want: "Float or Integer"},

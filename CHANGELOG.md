@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Route native CALL bodies with importing `WITH ... USE` through the same graph-selection reader as composite queries, preserving imported variables and existing graph errors.
 
+- Preserve possible list element types when adding an unknown property to temporal values, so incompatible string consumers reject before execution while valid list consumers remain accepted.
+
 - Keep Adamic-Adar and resource-allocation scores bit-identical for equal contribution multisets by adding their common-neighbour terms in degree order, so repeated link-prediction queries keep the documented target-ID tie selection and top-K candidates.
 
 - Preserve relationships and every promoted source label in the documented Neo4j migration, keep reruns idempotent, and reject incomplete target batches.

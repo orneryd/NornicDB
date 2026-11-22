@@ -254,7 +254,11 @@ func checkSingleOperator(op byte, left, right staticOperand, cypher25 bool) (sta
 		if right.excludes(isDurationOrNumberTypeName) {
 			return staticOperand{}, operandMismatch(right, "Duration or List<T>")
 		}
-		return left, nil
+		if right.known() {
+			return left, nil
+		}
+		// An unknown right operand can be a list: preserve that alternative
+		// through the same result-type owner used for an unknown left operand.
 	case left.duration():
 		if right.temporal() || right.duration() {
 			return right, nil
@@ -323,9 +327,9 @@ func additionResultTypes(left, right staticOperand) []string {
 	case known.numeric():
 		return []string{"Float", "Integer", "String", "List<T>"}
 	case known.duration():
-		return []string{"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime", "List<T>"}
+		return []string{"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime", "List<Any>", "List<Duration>"}
 	case known.temporal():
-		return []string{known.typeName(), "List<T>"}
+		return []string{known.typeName(), "List<Any>", "List<" + known.typeName() + ">"}
 	}
 	return []string{"List<T>"}
 }
