@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 
@@ -30,7 +31,13 @@ func TestPropertyIndexNonNilMembershipTransitions(t *testing.T) {
 				value           interface{}
 				member, ordered bool
 			}{
-				{nil, false, true}, {[]byte{1, 2}, true, false}, {int64(2), true, true}, {[]interface{}{int64(1), int64(2)}, true, false}, {[]byte{3}, true, false}, {nil, false, true},
+				{nil, false, true},
+				{[]byte{1, 2}, true, false},
+				{int64(2), true, true},
+				{[]interface{}{int64(1), int64(2)}, true, false},
+				{[]interface{}{math.NaN(), "key"}, true, false},
+				{[]byte{3}, true, false},
+				{nil, false, true},
 			} {
 				next := &Node{ID: previous.ID, Labels: previous.Labels, Properties: map[string]interface{}{"value": step.value}}
 				switch owner {

@@ -580,7 +580,7 @@ func TestEdgeMetaStore_GetLatest_WithError(t *testing.T) {
 }
 
 // TestEdgeMetaStore_FilterSemantics pins the shared newest-first filtered-scan
-// kernel (filterMetasLocked): newest-first result order, limit application,
+// kernel (filterMetas): newest-first result order, limit application,
 // and copy-on-escape (mutating a returned record must not touch the store).
 func TestEdgeMetaStore_FilterSemantics(t *testing.T) {
 	cleanup := config.WithEdgeProvenanceEnabled()
@@ -611,7 +611,7 @@ func TestEdgeMetaStore_FilterSemantics(t *testing.T) {
 	all, err := store.GetBySignalType(ctx, string(SignalSimilarity), 0)
 	require.NoError(t, err)
 	require.Len(t, all, 5)
-	require.Equal(t, "origin-4", all[0].Origin, "filterMetasLocked must scan newest-first")
+	require.Equal(t, "origin-4", all[0].Origin, "filterMetas must scan newest-first")
 	require.Equal(t, "origin-0", all[4].Origin)
 
 	// Limit applies before the copy loop ends.
