@@ -57,6 +57,46 @@ type gapS08ApplyLog struct {
 	mu       sync.Mutex
 	spans    []gapS08Span
 	inflight atomic.Int64
+
+	force         bool
+	armed         atomic.Bool
+	held          atomic.Bool
+	replayStarted chan struct{}
+	startOnce     sync.Once
+	forcedOps     int
+}
+
+// gapS08Versions lists the keys with a committed version in (from, to].
+func gapS08Versions(b *BadgerEngine, from, to uint64) map[string][]uint64 {
+	out := map[string][]uint64{}
+	scan := b.db.DB.NewTransactionAt(^uint64(0), false)
+	defer scan.Discard()
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = false
+	it := scan.NewIterator(opts)
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		v := it.Item().Version()
+		if v > from && v <= to {
+			k := string(it.Item().KeyCopy(nil))
+			out[k] = append(out[k], v)
+		}
+	}
+	return out
+}
+
+func gapS08Classes(keys map[string][]uint64) string {
+	c := map[string]int{}
+	for k := range keys {
+		c[fmt.Sprintf("0x%02x", k[0])]++
+	}
+	var parts []string
+	for k, n := range c {
+		parts = append(parts, fmt.Sprintf("%s x%d", k, n))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
 }
 
 func (l *gapS08ApplyLog) wrap(b *BadgerEngine) {
@@ -66,6 +106,17 @@ func (l *gapS08ApplyLog) wrap(b *BadgerEngine) {
 	orig := b.writeBehind.apply
 	b.writeBehind.apply = func(buf *CommitBuffer) error {
 		l.inflight.Add(1)
+		// Forced overlap (GAPS08_FORCE): the first generation apply that starts
+		// after the snapshot restore waits until a buffered_commit replay has
+		// started, then 5 ms more, so it commits inside that replay.
+		if l.force && l.armed.Load() && l.held.CompareAndSwap(false, true) {
+			select {
+			case <-l.replayStarted:
+				time.Sleep(5 * time.Millisecond)
+				l.forcedOps = buf.ops
+			case <-time.After(5 * time.Second):
+			}
+		}
 		s := gapS08Span{start: time.Now(), ops: buf.ops, vBefore: b.db.DB.MaxVersion()}
 		err := orig(buf)
 		s.end, s.err, s.vAfter = time.Now(), err, b.db.DB.MaxVersion()
@@ -343,6 +394,7 @@ func gapS08Recover(ctx context.Context, t *testing.T, iter int, destination Engi
 		return result, err
 	}
 	b, _ := UnwrapEngine(destination).(*BadgerEngine)
+	log.armed.Store(true)
 	err := VisitWALEntriesAfterFromDir(ctx, walDir, snapshotSeq, func(entry WALEntry) error {
 		if entry.Operation == OpCheckpoint {
 			result.Skipped++
@@ -358,6 +410,9 @@ func gapS08Recover(ctx context.Context, t *testing.T, iter int, destination Engi
 		}
 		vStart := b.db.DB.MaxVersion()
 		t0 := time.Now()
+		if entry.Operation == OpBufferedCommit && log.replayStarted != nil {
+			log.startOnce.Do(func() { close(log.replayStarted) })
+		}
 		rerr := replayWALEntry(ctx, destination, entry)
 		t1 := time.Now()
 		var sampled map[*badger.Txn]string
@@ -397,12 +452,31 @@ func gapS08Recover(ctx context.Context, t *testing.T, iter int, destination Engi
 				fmt.Printf("GAPS08 iter=%d seq=%d replay-txn#%d registered_in=%s %s\n", iter, entry.Sequence, n, where, gapS08Explain(b, txn, log))
 			}
 			log.mu.Lock()
+			applyKeys := map[string][]uint64{}
 			for i, s := range log.spans {
 				if s.start.Before(t1) && s.end.After(t0) {
 					fmt.Printf("GAPS08 iter=%d seq=%d overlapping apply#%d ops=%d start=%+dus end=%+dus versions=%d..%d err=%v\n", iter, entry.Sequence, i, s.ops, s.start.Sub(t0).Microseconds(), s.end.Sub(t0).Microseconds(), s.vBefore+1, s.vAfter, s.err)
+					for k, vs := range gapS08Versions(b, s.vBefore, s.vAfter) {
+						applyKeys[k] = append(applyKeys[k], vs...)
+					}
 				}
 			}
 			log.mu.Unlock()
+			// Replay the same entry again on the now quiescent engine: the keys
+			// it writes, against the keys the overlapping apply wrote.
+			v0 := b.db.DB.MaxVersion()
+			again := replayWALEntry(ctx, destination, entry)
+			v1 := b.db.DB.MaxVersion()
+			replayKeys := gapS08Versions(b, v0, v1)
+			var both []string
+			for k, vs := range replayKeys {
+				if avs, ok := applyKeys[k]; ok {
+					both = append(both, fmt.Sprintf("{key=%q apply_versions=%v replay_versions=%v}", gapS08Key([]byte(k)), avs, vs))
+				}
+			}
+			sort.Strings(both)
+			fmt.Printf("GAPS08 iter=%d seq=%d KEYS apply_wrote=%d [%s] replay_retry_err=%v replay_wrote=%d [%s] BOTH=%d %s\n",
+				iter, entry.Sequence, len(applyKeys), gapS08Classes(applyKeys), again, len(replayKeys), gapS08Classes(replayKeys), len(both), strings.Join(both, " "))
 		}
 		return nil
 	})
@@ -462,7 +536,7 @@ func TestGapS08ConflictKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		log := &gapS08ApplyLog{}
+		log := &gapS08ApplyLog{force: os.Getenv("GAPS08_FORCE") == "1", replayStarted: make(chan struct{})}
 		log.wrap(fresh)
 		res, rerr := gapS08Recover(ctx, t, i, fresh, filepath.Join(data, "wal"), snaps[len(snaps)-1], log)
 		fmt.Printf("GAPS08 iter=%d applied=%d skipped=%d failed=%d err=%v applies=%d\n", i, res.Applied, res.Skipped, res.Failed, rerr, len(log.spans))
