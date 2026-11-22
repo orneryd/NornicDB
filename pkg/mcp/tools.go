@@ -178,7 +178,7 @@ func getDiscoverTool(defaultDatabase string) Tool {
 			},
 			"depth": map[string]interface{}{
 				"type":        "integer",
-				"description": "Graph traversal depth for related context (1-3). Higher = more context but slower.",
+				"description": "Graph traversal depth for related context (1-3): 1 publishes no related nodes, 2 publishes one hop, and 3 publishes two hops. Higher = more context but slower.",
 				"default":     1,
 				"minimum":     1,
 				"maximum":     3,

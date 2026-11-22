@@ -1062,8 +1062,17 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 				continue
 			}
 			props := toInterfaceMap(snode.Properties)
-			if len(nodeTypes) > 0 && !containsLabel(snode.Labels, nodeTypes[0]) {
-				continue
+			if len(nodeTypes) > 0 {
+				matchesRequestedType := false
+				for _, nodeType := range nodeTypes {
+					if containsLabel(snode.Labels, nodeType) {
+						matchesRequestedType = true
+						break
+					}
+				}
+				if !matchesRequestedType {
+					continue
+				}
 			}
 			if len(tags) > 0 {
 				nodeTags := getStringSliceProp(props, "tags")
