@@ -51,9 +51,9 @@ func l7019Start(t *testing.T, binary, dir, hp, bp string) (*exec.Cmd, chan error
 		log.Close()
 		t.Fatal(err)
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	t.Cleanup(func() { _ = cmd.Process.Kill(); <-exited; _ = log.Close() })
+	exited, waited := make(chan error, 1), make(chan struct{})
+	go func() { exited <- cmd.Wait(); close(waited) }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-waited; _ = log.Close() })
 	return cmd, exited, logPath
 }
 
