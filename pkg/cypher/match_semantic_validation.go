@@ -36,7 +36,7 @@ func (e *StorageExecutor) validateMatchSemanticScopes(ctx context.Context, cyphe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	cacheable := e.matchSemanticValidationCache != nil && len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
+	cacheable := !hasConditionalFrames(ctx) && e.matchSemanticValidationCache != nil && len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
 	key := semanticCacheKey(cypher, cypher25)
 	parent, _ := ctx.Value(nativeFunctionInputsKey{}).(*nativeFunctionInputs)
 	generation := globalProcedureRegistry.generation.Load()
@@ -1717,7 +1717,11 @@ func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []queryBody
 					}
 					for _, column := range pipelineReturnSourceColumns(ctx, strings.TrimSpace(last.text)) {
 						if column == name {
-							return false
+							// Only compiler-emitted conditional frames are transparent.
+							// A user-written nested CALL keeps its existing rejection.
+							if !generatedConditionalCall(ctx, clause) || !callSubqueryReturnsOuterUnchanged(ctx, []queryBodyBranch{innerBranch}, name) {
+								return false
+							}
 						}
 					}
 				}
