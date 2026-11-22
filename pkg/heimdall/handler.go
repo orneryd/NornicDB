@@ -467,7 +467,7 @@ func (h *Handler) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		ResolvedAccess:     ResolvedAccessResolverFromContext(r.Context()),
 	}
 
-	result, err := ExecuteAction("heimdall_autocomplete_suggest", ctx)
+	result, err := ExecuteAction(autocompleteActionName, ctx)
 	if err != nil {
 		h.writeLocalizedError(w, r, localization.HeimdallAutocompleteFailed(err), http.StatusInternalServerError)
 		return
@@ -542,84 +542,18 @@ Complete Cypher query (one line only):`,
 				schemaContext.String(),
 				req.Query)
 
-			// Use raw prompt for direct completion with stricter parameters to prevent repetition
+			// Bound completion by token count and model EOS. Text stop strings can
+			// occur inside Cypher quotes and truncate output before extraction.
 			slmResult, err := h.manager.Generate(r.Context(), prompt, GenerateParams{
 				MaxTokens:   128, // Reduced to prevent repetition
 				Temperature: 0.2, // Lower temperature for more focused output
 				TopP:        0.8,
 				TopK:        20,
-				StopTokens:  []string{"The user", "They are", "I need to", "IMPORTANT", "Rules:", "Available", "Complete query:", "\n\n\n"},
 			})
 			if err == nil && slmResult != "" {
-				// Clean up the suggestion - extract only the first valid Cypher query
-				cleanSuggestion := strings.TrimSpace(slmResult)
-
-				// Remove markdown code blocks
-				cleanSuggestion = strings.TrimPrefix(cleanSuggestion, "```cypher")
-				cleanSuggestion = strings.TrimPrefix(cleanSuggestion, "```")
-				cleanSuggestion = strings.TrimSuffix(cleanSuggestion, "```")
-				cleanSuggestion = strings.TrimSpace(cleanSuggestion)
-
-				// Split by newlines and extract the first complete query
-				lines := strings.Split(cleanSuggestion, "\n")
-				cypherKeywordRegex := regexp.MustCompile(`^(MATCH|CREATE|MERGE|DELETE|SET|RETURN|WITH|UNWIND|CALL|LOAD|START|UNION|OPTIONAL)`)
-				instructionPattern := regexp.MustCompile(`(?i)^(IMPORTANT|Rules?:|Available|Complete)`)
-
-				var queryParts []string
-				foundQuery := false
-
-				for _, line := range lines {
-					line = strings.TrimSpace(line)
-					if line == "" {
-						continue
-					}
-
-					// Stop immediately if we hit instruction patterns
-					if instructionPattern.MatchString(line) {
-						break
-					}
-
-					// If we found a query line, start collecting
-					if cypherKeywordRegex.MatchString(line) {
-						// If we already found a query and hit another one, stop (prevent repetition)
-						if foundQuery {
-							break
-						}
-						foundQuery = true
-						queryParts = []string{line}
-					} else if foundQuery {
-						// Continue collecting query parts until we hit an instruction or another query
-						if instructionPattern.MatchString(line) || cypherKeywordRegex.MatchString(line) {
-							break
-						}
-						queryParts = append(queryParts, line)
-					}
-				}
-
-				if len(queryParts) > 0 {
-					cleanSuggestion = strings.Join(queryParts, " ")
-					// Remove any remaining instruction text using regex
-					cleanSuggestion = regexp.MustCompile(`(?i)\s+(IMPORTANT|Rules?:|Available|Complete).*$`).ReplaceAllString(cleanSuggestion, "")
-					// Strip trailing model prose (e.g. "The user is a student..." or "They are asking for help...")
-					proseStart := regexp.MustCompile(`(?i)\s+(The user|They are|I need to|I don't know|So they|Probably not|correct syntax|asking for help).*$`)
-					cleanSuggestion = proseStart.ReplaceAllString(cleanSuggestion, "")
-					cleanSuggestion = strings.TrimSpace(cleanSuggestion)
-
-					// Remove any repetition patterns (query repeated multiple times)
-					// Split by common delimiters and take the first unique query
-					parts := regexp.MustCompile(`\s{2,}|\n{2,}`).Split(cleanSuggestion, -1)
-					if len(parts) > 0 {
-						cleanSuggestion = parts[0]
-					}
-
-					// Only use if it's a valid improvement and doesn't contain instruction text
-					if cleanSuggestion != "" &&
-						len(cleanSuggestion) > len(req.Query) &&
-						cleanSuggestion != req.Query &&
-						!strings.Contains(strings.ToUpper(cleanSuggestion), "IMPORTANT") &&
-						!strings.Contains(strings.ToUpper(cleanSuggestion), "RULES") {
-						suggestion = cleanSuggestion
-					}
+				cleanSuggestion := extractAutocompleteCypher(slmResult)
+				if cleanSuggestion != "" && len(cleanSuggestion) > len(req.Query) && cleanSuggestion != req.Query {
+					suggestion = cleanSuggestion
 				}
 			}
 		}

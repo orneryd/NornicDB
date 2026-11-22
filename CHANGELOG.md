@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Preserve quoted Cypher in autocomplete suggestions through model-response cleanup and browser selection, and connect the endpoint to the bundled Watcher action.
 - Match Neo4j final-sigma casing in `lower()` and `toLower()`, including long strings and supplementary Unicode characters.
 - Return EXPLAIN headers for SHOW PROCEDURES and SHOW FUNCTIONS, and reject malformed index targets without executing schema changes or binding OPTIONS values.
 
