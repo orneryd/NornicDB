@@ -1,0 +1,35 @@
+=== RUN   TestCachedEmbeddingOwnershipConcurrentMiss
+    cached_embedder_ownership_boundaries_test.go:65: 
+        	Error Trace:	/private/tmp/n152-134-embedding-ownership/pkg/embed/cached_embedder_ownership_boundaries_test.go:65
+        	Error:      	Not equal: 
+        	            	expected: []float32{1, 2, 3}
+        	            	actual  : []float32{99, 2, 3}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1,3 +1,3 @@
+        	            	 ([]float32) (len=3) {
+        	            	- (float32) 1,
+        	            	+ (float32) 99,
+        	            	  (float32) 2,
+        	Test:       	TestCachedEmbeddingOwnershipConcurrentMiss
+--- FAIL: TestCachedEmbeddingOwnershipConcurrentMiss (0.00s)
+=== RUN   TestCachedEmbeddingOwnershipBatchMissResults
+    cached_embedder_ownership_boundaries_test.go:90: 
+        	Error Trace:	/private/tmp/n152-134-embedding-ownership/pkg/embed/cached_embedder_ownership_boundaries_test.go:90
+        	Error:      	Not equal: 
+        	            	expected: []float32{1, 2, 3}
+        	            	actual  : []float32{99, 2, 3}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1,3 +1,3 @@
+        	            	 ([]float32) (len=3) {
+        	            	- (float32) 1,
+        	            	+ (float32) 99,
+        	            	  (float32) 2,
+        	Test:       	TestCachedEmbeddingOwnershipBatchMissResults
+--- FAIL: TestCachedEmbeddingOwnershipBatchMissResults (0.00s)
+FAIL
