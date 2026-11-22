@@ -127,6 +127,30 @@ func (h *dmgHTTP) run(statement string, params map[string]any) dmgOutcome {
 	return out
 }
 
+// post sends one JSON request to path and returns status and body.
+func (h *dmgHTTP) post(path string, body any) (int, string) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		h.t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.token)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { _ = recover() }()
+		h.router.ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(dmgDeadline):
+		return 0, "HANG"
+	}
+	return rec.Code, rec.Body.String()
+}
+
 type dmgBolt struct {
 	driver   neo4j.DriverWithContext
 	database string
@@ -749,6 +773,15 @@ func TestV152DamagedBodyD2D3PointReadsAndErrors(t *testing.T) {
 			searchStatus := dmgWaitSearch(t, env)
 			searchResult, found := dmgSearch(env, "zebrafind")
 			t.Logf("D3 SEARCH %s status=%s | %s | healthy nodes found=%v", variant, searchStatus, searchResult, found)
+			httpCode, httpBody := env.http.post("/nornicdb/search", map[string]any{"query": "zebrafind", "limit": 10})
+			failedPhase := strings.Contains(httpBody, "\"phase\":\"failed\"")
+			if len(httpBody) > 700 {
+				httpBody = httpBody[:700] + "..."
+			}
+			t.Logf("D3 HTTPSEARCH %s POST /nornicdb/search: status=%d body=%s", variant, httpCode, httpBody)
+			if variant == "damaged" && httpCode == http.StatusServiceUnavailable && failedPhase {
+				t.Errorf("DEFECT3 HTTP search answers 503 'being built' (retryable) while the build has failed")
+			}
 			if variant == "control-undamaged" && len(found) != 2 {
 				t.Errorf("CONTROL search did not find both healthy nodes: %s", searchResult)
 			}
