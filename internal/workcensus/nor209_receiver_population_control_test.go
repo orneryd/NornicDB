@@ -108,3 +108,23 @@ func drive(c *counter) {
 		t.Fatalf("receiver_types must select the method and omit the plain function: %v", nor209Codes(inventory.Members))
 	}
 }
+
+func TestNor209FieldSelectorCountsDeclarations(t *testing.T) {
+	const source = `package nor209fixture
+
+type record struct{ name string }
+
+func readName(r record) string { return r.name }
+func writeName(r *record, value string) { r.name = value }
+`
+	cfg := nor209CensusConfig(t, source, []Selector{{
+		Kind:         "field",
+		Node:         "field",
+		Names:        []string{"name"},
+		Reachability: "all",
+	}})
+	inventory := mustExtract(t, cfg)
+	if len(inventory.Members) != 1 || !strings.Contains(inventory.Members[0].Code, "name string") {
+		t.Fatalf("field selector must select the declared field once: %v", nor209Codes(inventory.Members))
+	}
+}
