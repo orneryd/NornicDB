@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/providerbatch"
 	"github.com/orneryd/nornicdb/internal/rerankwire"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -327,6 +328,10 @@ type rerankResponseWire struct {
 
 // Rerank calls Voyage's reranker endpoint.
 func (c *Client) Rerank(ctx context.Context, query string, documents []string, opts RerankOptions) (*RerankResponse, error) {
+	return c.rerank(ctx, query, documents, opts, nil)
+}
+
+func (c *Client) rerank(ctx context.Context, query string, documents []string, opts RerankOptions, usage *rerankWindowUsage) (*RerankResponse, error) {
 	if len(documents) == 0 {
 		return &RerankResponse{}, nil
 	}
@@ -349,6 +354,15 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []string, o
 	if err := c.postJSON(ctx, pathRerank, req, &wire); err != nil {
 		return nil, err
 	}
+	// The provider completed this request, so its own total is billable whether
+	// or not the answer is usable. Record it before the wire owner validates the
+	// payload; a request that produced no response reports nothing.
+	providerbatch.RecordUsage(ctx, "rerank", "voyage", model, len(documents), wire.Usage.TotalTokens)
+	if usage != nil {
+		usage.requests++
+		usage.totalTokens += wire.Usage.TotalTokens
+	}
+
 	accepted, err := rerankwire.AcceptVoyage(wire.Data, wire.Results, len(documents))
 	if err != nil {
 		return nil, err
