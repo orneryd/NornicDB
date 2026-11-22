@@ -176,6 +176,37 @@ func (source *Source) Window(start, end int) *Source {
 	return &Source{Original: source.Original, Text: source.Text[start:end], parent: source, base: start}
 }
 
+// SpanInAncestor maps an unchanged token extent to a retained ancestor view.
+// Unlike OriginalSpan it stops at that exact view. Replaced token bytes and
+// unrelated source lineages have no identity in the ancestor and are declined.
+func (source *Source) SpanInAncestor(ancestor *Source, span Span) (Span, bool) {
+	for view := source; view != nil; view = view.parent {
+		if span.Start < 0 || span.End < span.Start || span.End > len(view.Text) {
+			return Span{}, false
+		}
+		if view == ancestor {
+			return span, true
+		}
+		if view.parent == nil {
+			return Span{}, false
+		}
+		for _, edit := range view.Edits {
+			if edit.Accepted.Start < span.End && edit.Accepted.End > span.Start {
+				return Span{}, false
+			}
+		}
+		local := *view
+		local.parent = nil
+		local.Original = view.parent.Text
+		var ok bool
+		span, ok = local.OriginalSpan(span, SourceExactBoundaries)
+		if !ok {
+			return Span{}, false
+		}
+	}
+	return Span{}, false
+}
+
 // OriginalText maps one accepted byte extent to its original spelling. A strict
 // boundary consumer may supply its established recovery policy when a span
 // intersects a rewrite; extent consumers pass nil and never invent source text.

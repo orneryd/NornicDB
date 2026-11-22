@@ -101,6 +101,16 @@ func (r *structureRewriter) edit(start, end int, text string) {
 	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text})
 }
 
+// editConditionalCalls records provenance at the emission site, never from
+// generated identifier spelling or from a user-supplied CALL's shape.
+func (r *structureRewriter) editConditionalCalls(start, end int, text string, calls ...int) {
+	edit := labelRewriteEdit{start: start, end: end, text: text}
+	for _, call := range calls {
+		edit.conditionalCalls = append(edit.conditionalCalls, cyphertext.Span{Start: call, End: call + len("CALL")})
+	}
+	r.edits = append(r.edits, edit)
+}
+
 // rewrittenRegionText materializes the exact execution edits for a region
 // before asking the schema owner about it. Query composition is lowered by this
 // rewriter once; the schema owner never receives half-lowered conditional text.
@@ -382,13 +392,16 @@ func (r *structureRewriter) conditional(start, end int) error {
 			cases.WriteString(" ELSE " + number)
 		}
 	}
-	cases.WriteString(" END] AS " + whenBranchVariable + " CALL (*) { ")
+	cases.WriteString(" END] AS " + whenBranchVariable + " ")
+	outerCall := cases.Len()
+	cases.WriteString("CALL (*) { ")
 	for index, branch := range branches {
 		guard := "FILTER " + whenBranchVariable + " = " + strconv.Itoa(index+1) + " "
 		if index == 0 {
-			r.edit(branch.keywordStart, branch.bodyStart, cases.String()+guard+"CALL (*) { ")
+			r.editConditionalCalls(branch.keywordStart, branch.bodyStart, cases.String()+guard+"CALL (*) { ", outerCall, cases.Len()+len(guard))
 		} else {
-			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " }"+returnColumnsText(columns)+" UNION ALL "+guard+"CALL (*) { ")
+			prefix := " }" + returnColumnsText(columns) + " UNION ALL " + guard
+			r.editConditionalCalls(branches[index-1].bodyEnd, branch.bodyStart, prefix+"CALL (*) { ", len(prefix))
 		}
 	}
 	last := branches[len(branches)-1].bodyEnd

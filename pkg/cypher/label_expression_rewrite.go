@@ -46,6 +46,8 @@ import (
 type labelRewriteEdit struct {
 	start, end int
 	text       string
+	// conditionalCalls marks only CALL keywords emitted by conditional lowering.
+	conditionalCalls []cyphertext.Span
 }
 
 type labelExpressionRewriter struct {
@@ -142,6 +144,9 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
+		for _, span := range edit.conditionalCalls {
+			rewrite.conditionalCalls = append(rewrite.conditionalCalls, cyphertext.Span{Start: canonStart + span.Start, End: canonStart + span.End})
+		}
 		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.start, End: edit.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = edit.end
 	}
