@@ -479,6 +479,11 @@ type ClusterConnection struct {
 	writeTimeout time.Duration
 	maxMsgSize   int
 
+	// forwardMu owns active forwarding and idle read-deadline transitions.
+	// It never covers handler execution or socket writes.
+	forwardMu   sync.Mutex
+	forwardDone chan struct{}
+
 	// The wire has no request IDs. One complete exchange owns the connection;
 	// waiting callers must not publish until that exchange has retired.
 	rpcGate     chan struct{}
@@ -601,6 +606,12 @@ func (c *ClusterConnection) admitReader() func() {
 // socket is closed and the loop's ticket is released last.
 func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release func()) {
 	defer release()
+	// An inbound reader also inherits the listening owner's context. Link its
+	// connection lifetime explicitly so peer EOF ends in-flight preparation.
+	ctx, cancel := context.WithCancel(ctx)
+	stopConnection := lifecycle.AfterFuncJoined(c.work.Context(), cancel)
+	defer stopConnection()
+	defer cancel()
 	c.connected.Store(true)
 	defer func() {
 		c.connected.Store(false)
@@ -624,11 +635,7 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release fun
 		default:
 		}
 
-		readTimeout := c.readTimeout
-		if readTimeout <= 0 {
-			readTimeout = 30 * time.Second
-		}
-		c.resources.conn.SetReadDeadline(time.Now().Add(readTimeout))
+		c.prepareReadDeadline()
 		msg := new(ClusterMessage)
 		err := transferClusterMessage(msg, c.reader, nil, c.maxMsgSize)
 		if err != nil {
@@ -661,6 +668,12 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release fun
 		}
 		c.rpcMu.Unlock()
 
+		// Responses above remain readable while a forwarded request runs. The
+		// next inbound request waits for the preceding reply to be flushed.
+		if !c.awaitForward(ctx) {
+			return
+		}
+
 		// No pending RPC: treat as inbound request.
 		if c.transport == nil {
 			continue
@@ -674,30 +687,11 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context, release fun
 			continue
 		}
 
-		resp, err := handler(ctx, msg.NodeID, msg)
-		if err != nil {
-			c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Handler error: %v", err)
-			continue
-		}
-		if resp == nil {
-			continue
-		}
-
-		c.signMessage(resp)
-		c.resources.mu.Lock()
-		writeTimeout := c.writeTimeout
-		if writeTimeout <= 0 {
-			writeTimeout = 10 * time.Second
-		}
-		c.resources.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		werr := transferClusterMessage(resp, nil, c.writer, 0)
-		if werr == nil {
-			werr = c.writer.Flush()
-		}
-		c.resources.mu.Unlock()
-
-		if werr != nil {
-			c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Write error to %s: %v", c.addr, werr)
+		if msg.Type == ClusterMsgForwardApply {
+			if !c.startForward(ctx, msg, handler) {
+				return
+			}
+		} else if !c.dispatchRequest(ctx, msg, handler) {
 			return
 		}
 	}
@@ -739,7 +733,17 @@ func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, 
 	if cmd == nil {
 		return localizedError(localization.ReplicationRPCCommandRequired(), nil)
 	}
-	result, err := exchangeClusterRPC[forwardApplyResponse](c, ctx, ClusterMsgForwardApply, cmd, "command", "forward apply response")
+	// Establish the budget before serialization or waiting for the RPC gate.
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	request := forwardApplyRequest{Command: *cmd}
+	if deadline, bounded := ctx.Deadline(); bounded {
+		request.DeadlineUnixNano = deadline.UnixNano()
+	}
+	result, err := exchangeClusterRPC[forwardApplyResponse](c, ctx, ClusterMsgForwardApply, &request, "command", "forward apply response")
 	if err != nil {
 		return err
 	}

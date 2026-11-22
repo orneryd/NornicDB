@@ -157,9 +157,14 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 	if h, ok := r.(forwardApplyHandler); ok {
 		t.RegisterHandler(ClusterMsgForwardApply, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 			_ = nodeID
-			var cmd Command
-			if err := storage.DecodeCommandPayload(msg.Payload, &cmd); err != nil {
+			var request forwardApplyRequest
+			if err := storage.DecodeCommandPayload(msg.Payload, &request); err != nil {
 				return nil, localizedError(localization.ReplicationRPCDecodeFailed("forward apply", err), err)
+			}
+			if request.DeadlineUnixNano != 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, time.Unix(0, request.DeadlineUnixNano))
+				defer cancel()
 			}
 			timeout := 30 * time.Second
 			if deadline, ok := ctx.Deadline(); ok {
@@ -167,7 +172,10 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 					timeout = d
 				}
 			}
-			err := h.HandleForwardApply(ctx, &cmd, timeout)
+			err := ctx.Err()
+			if err == nil {
+				err = h.HandleForwardApply(ctx, &request.Command, timeout)
+			}
 			respPayload := forwardApplyResponse{}
 			if err != nil {
 				respPayload.Err = err.Error()
