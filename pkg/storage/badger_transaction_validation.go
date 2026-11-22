@@ -1060,8 +1060,9 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 			return err
 		}
 	}
+	var temporalRead temporalValidationRead
 	for _, edge := range tx.pendingEdges {
-		if err := tx.validateEdgeConstraints(ctx, edge); err != nil {
+		if err := tx.validateEdgeConstraints(ctx, edge, &temporalRead); err != nil {
 			return err
 		}
 	}
@@ -1075,7 +1076,7 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 // ctx is the lifetime of the committed enumerations the checks perform, like
 // validateNodeConstraints': a commit passes the commit preparation context and
 // a terminated statement stops inside the canonical bulk reader.
-func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge) error {
+func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge, temporalRead *temporalValidationRead) error {
 	if edge == nil || edge.Type == "" {
 		return nil
 	}
@@ -1112,7 +1113,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 				return err
 			}
 		case ConstraintTemporal:
-			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace, temporalRead); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -1240,12 +1241,40 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 	return nil
 }
 
+// temporalValidationRead retains only the last stored relationship type for
+// one validation pass. The oracle cut is sampled before reading, so any
+// publication during the scan makes the result ineligible for later reuse.
+type temporalValidationRead struct {
+	edgeType string
+	readCut  uint64
+	edges    []*Edge
+}
+
+func (r *temporalValidationRead) get(ctx context.Context, engine *BadgerEngine, edgeType string) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cut := engine.db.oracle.published.Load()
+	if r.edgeType == edgeType && r.readCut == cut {
+		if err := engine.pendingNamespaceConflict(""); err != nil {
+			return nil, err
+		}
+		return r.edges, nil
+	}
+	edges, err := engine.GetStoredEdgesByType(ctx, edgeType)
+	if err != nil {
+		return nil, err
+	}
+	*r = temporalValidationRead{edgeType: edgeType, readCut: cut, edges: edges}
+	return edges, nil
+}
+
 // checkEdgeTemporalConstraint checks temporal no-overlap constraints for an edge in a transaction.
 // The namespace parameter filters committed edges to the same database namespace.
 // Supports composite key properties: all properties except the last 2 form the key.
 // ctx is the lifetime of the committed edge enumeration (see
 // validateEdgeConstraints).
-func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
+func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, edge *Edge, c Constraint, namespace string, temporalRead *temporalValidationRead) error {
 	if len(c.Properties) < 3 {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
@@ -1294,7 +1323,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, ed
 
 	// Check against committed edges (filtered by namespace) on the read's
 	// lifetime (ctx).
-	existingEdges, err := tx.engine.GetStoredEdgesByType(ctx, edge.Type)
+	existingEdges, err := temporalRead.get(ctx, tx.engine, edge.Type)
 	if err != nil {
 		return err
 	}
