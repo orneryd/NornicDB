@@ -268,7 +268,7 @@ func TestCloseoutL3_N152_8_NodeAssignmentSemantics(t *testing.T) {
 	if len(got.Src) != 2 || len(got.Own) != 2 {
 		t.Fatalf("control failed: %+v", got)
 	}
-	if len(got.Plain) != 2 {
-		t.Errorf("plain-assignment copy keeps %v of %v", got.Plain, got.Src)
+	if len(got.Plain) != 1 {
+		t.Errorf("plain-assignment should drop the __proto__ own key: got %v from %v", got.Plain, got.Src)
 	}
 }
