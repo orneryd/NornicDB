@@ -57,8 +57,8 @@ func TestAPOCWordInitialValuesNOR207(t *testing.T) {
 	}
 }
 
-// These are the byte-for-byte d663 converter values retained by Nornic2's
-// allocation. Their known APOC discrepancies remain tracked by NOR-282.
+// N152-68 replaces four historical bug expectations with the pinned APOC
+// values while preserving both row-program modes and other NOR207 controls.
 func TestAPOCNameConverterGuardNOR207(t *testing.T) {
 	require.NoError(t, apoc.Initialize(apocstorage.NewInMemoryStorage(), nil))
 	handlers := map[string]interface{}{}
@@ -76,10 +76,10 @@ func TestAPOCNameConverterGuardNOR207(t *testing.T) {
 			{"hello ßeta", "helloßeta", "Helloßeta"},
 			{"hello ǳungla", "helloǲungla", "Helloǲungla"},
 			{"hello 𐐨abc", "hello𐐀abc", "Hello𐐀abc"},
-			{"ßeta world", "ßetaWorld", "ßetaWorld"},
-			{"ǳungla world", "ǳunglaWorld", "ǲunglaWorld"},
-			{"𐐨abc world", "𐐨abcWorld", "𐐀abcWorld"},
-			{"hello foo.bar", "helloFoo.Bar", "HelloFoo.Bar"},
+			{"ßeta world", "ßetaWorld", "SSetaWorld"},
+			{"ǳungla world", "ǳunglaWorld", "ǱunglaWorld"},
+			{"𐐨abc world", "𐐀abcWorld", "𐐀abcWorld"},
+			{"hello foo.bar", "helloFooBar", "HelloFooBar"},
 			{"hello_world", "helloWorld", "HelloWorld"},
 		} {
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, tc.input), func(t *testing.T) {
