@@ -108,8 +108,10 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 							idsAny, ok := idsValue.([]any)
 							require.True(t, ok, "%T", idsValue)
 							page := n15290Page{}
-							page.qid, _ = record.Get("qid").(string)
-							page.more, _ = record.Get("has_more").(bool)
+							qidValue, _ := record.Get("qid")
+							page.qid, _ = qidValue.(string)
+							hasMoreValue, _ := record.Get("has_more")
+							page.more, _ = hasMoreValue.(bool)
 							for _, id := range idsAny {
 								page.ids = append(page.ids, id.(string))
 							}
