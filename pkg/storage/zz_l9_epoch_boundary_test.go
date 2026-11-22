@@ -35,11 +35,15 @@ func TestEI4R11EpochStartupRefusalKeepsPendingKey(t *testing.T) {
 	walDir := filepath.Join(dir, "wal")
 	require.NoError(t, os.MkdirAll(walDir, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(walDir, "wal.log"), raw, 0600))
+	before := walDirDigest(t, walDir)
 	for attempt := 1; attempt <= 2; attempt++ {
 		require.NoError(t, ValidateWALFormat(walDir, WALValidateV4Upgrade), "the preflight used by nornicdb.Open")
 		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()})
 		if engine != nil { _ = engine.Close() }
 		require.ErrorContains(t, err, "property dictionary epoch exceeds maximum frame size")
+		_, backupErr := os.Stat(walDir + v4WALBackupSuffix)
+		require.ErrorIs(t, backupErr, os.ErrNotExist, "failed conversion must not publish a backup")
+		require.Equal(t, before, walDirDigest(t, walDir), "failed conversion must preserve WAL files")
 		read, readErr := badger.Open(badger.DefaultOptions(dir).WithReadOnly(true).WithLogger(nil))
 		require.NoError(t, readErr)
 		pendingErr := read.View(func(tx *badger.Txn) error { _, err := tx.Get(v4WALRecoveryKey); return err })

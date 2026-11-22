@@ -274,4 +274,3 @@ func TestSearchMaterializedNodeRepeatedDeliveryIsDetached(t *testing.T) {
 		nor309RequireDetachedDelivery(t, store.engine, page.Results, nor309FirstHit, nor309StoredHit(t, store.engine, nor309FirstHit, nil))
 	})
 }
-

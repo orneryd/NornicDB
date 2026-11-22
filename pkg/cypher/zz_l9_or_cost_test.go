@@ -9,7 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestL9IndexedORInsideAND(t *testing.T) {
+func l9OrCostFixture(t *testing.T) *StorageExecutor {
+	t.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "l9or")
 	nodes := make([]*storage.Node, 1000)
 	for i := range nodes {
@@ -27,6 +28,12 @@ func TestL9IndexedORInsideAND(t *testing.T) {
 		_, err := executor.Execute(ctx, fmt.Sprintf("CREATE INDEX or_%s FOR (n:O) ON (n.%s)", prop, prop), nil)
 		require.NoError(t, err)
 	}
+	return executor
+}
+
+func TestL9IndexedORInsideAND(t *testing.T) {
+	executor := l9OrCostFixture(t)
+	ctx := t.Context()
 	for _, shape := range []struct {
 		name, predicate string
 		count int64
