@@ -1,12 +1,15 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -15,10 +18,14 @@ import (
 type pdW161Fixture struct {
 	t    *testing.T
 	exec *StorageExecutor
+	ref  *pdW161Reference
 }
 
 func newPDW161Fixture(t *testing.T) pdW161Fixture {
 	t.Helper()
+	if uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI"); uri != "" {
+		return newPDW161Reference(t, uri)
+	}
 	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
@@ -27,9 +34,122 @@ func newPDW161Fixture(t *testing.T) pdW161Fixture {
 	return f
 }
 
+type pdW161Reference struct {
+	session neo4j.SessionWithContext
+	tx      neo4j.ExplicitTransaction
+	names   *strings.Replacer
+}
+
+func newPDW161Reference(t *testing.T, uri string) pdW161Fixture {
+	t.Helper()
+	driver, err := neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, driver.Close(context.Background())) })
+	session := driver.NewSession(t.Context(), neo4j.SessionConfig{DatabaseName: "neo4j"})
+	t.Cleanup(func() { require.NoError(t, session.Close(context.Background())) })
+	prefix := "W161G2_" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_"
+	names := strings.NewReplacer(
+		"PDGraphNode", prefix+"PDGraphNode", "PDEntity", prefix+"PDEntity", "PDIdentity", prefix+"PDIdentity",
+		"PD_RELATION", prefix+"PD_RELATION", "PROBE", prefix+"PROBE",
+		"pd_graph_node_id", prefix+"graph_node_id", "pd_relation_id", prefix+"relation_id",
+	)
+	f := pdW161Fixture{t: t, ref: &pdW161Reference{session: session, names: names}}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if f.ref.tx != nil {
+			_ = f.ref.tx.Rollback(ctx)
+			f.ref.tx = nil
+		}
+		for {
+			deleted, err := f.ref.execute(ctx, "MATCH (n:PDGraphNode) WITH n LIMIT 2000 DETACH DELETE n RETURN count(*)", nil)
+			if !assertNoPDW161CleanupError(t, err) || deleted.Rows[0][0] == int64(0) {
+				break
+			}
+		}
+		_, err := f.ref.execute(ctx, "DROP CONSTRAINT pd_relation_id IF EXISTS", nil)
+		assertNoPDW161CleanupError(t, err)
+		_, err = f.ref.execute(ctx, "DROP CONSTRAINT pd_graph_node_id IF EXISTS", nil)
+		assertNoPDW161CleanupError(t, err)
+	})
+	t.Logf("PDW161REFERENCE version=%v", f.run("CALL dbms.components() YIELD versions RETURN versions[0]", nil).Rows)
+	f.run("CREATE CONSTRAINT pd_graph_node_id FOR (n:PDGraphNode) REQUIRE n.id IS UNIQUE", nil)
+	return f
+}
+
+func assertNoPDW161CleanupError(t *testing.T, err error) bool {
+	t.Helper()
+	if err != nil {
+		t.Errorf("Neo4j fixture cleanup: %v", err)
+	}
+	return err == nil
+}
+
+func (r *pdW161Reference) execute(ctx context.Context, query string, params map[string]any) (*ExecuteResult, error) {
+	switch query {
+	case "BEGIN":
+		tx, err := r.session.BeginTransaction(ctx)
+		r.tx = tx
+		return nil, err
+	case "COMMIT", "ROLLBACK":
+		tx := r.tx
+		r.tx = nil
+		if tx == nil {
+			return nil, nil
+		}
+		if query == "COMMIT" {
+			return nil, tx.Commit(ctx)
+		}
+		return nil, tx.Rollback(ctx)
+	}
+	query = r.names.Replace(query)
+	var result neo4j.ResultWithContext
+	var err error
+	if r.tx != nil {
+		result, err = r.tx.Run(ctx, query, params)
+	} else {
+		result, err = r.session.Run(ctx, query, params)
+	}
+	if err != nil {
+		return nil, err
+	}
+	res := &ExecuteResult{Stats: &QueryStats{}}
+	for result.Next(ctx) {
+		res.Rows = append(res.Rows, result.Record().Values)
+	}
+	if err := result.Err(); err != nil {
+		return nil, err
+	}
+	summary, err := result.Consume(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res.Stats.NodesCreated = summary.Counters().NodesCreated()
+	res.Stats.RelationshipsCreated = summary.Counters().RelationshipsCreated()
+	if profile := summary.Profile(); profile != nil {
+		res.Metadata = map[string]interface{}{"plan": pdW161ReferencePlan(profile)}
+	}
+	return res, nil
+}
+
+func pdW161ReferencePlan(p neo4j.ProfiledPlan) string {
+	children := make([]string, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		children = append(children, pdW161ReferencePlan(child))
+	}
+	return fmt.Sprintf("%s(rows=%d,hits=%d)[%s]", p.Operator(), p.Records(), p.DbHits(), strings.Join(children, ","))
+}
+
+func (f pdW161Fixture) execute(query string, params map[string]any) (*ExecuteResult, error) {
+	if f.ref != nil {
+		return f.ref.execute(f.t.Context(), query, params)
+	}
+	return f.exec.Execute(f.t.Context(), query, params)
+}
+
 func (f pdW161Fixture) run(query string, params map[string]any) *ExecuteResult {
 	f.t.Helper()
-	res, err := f.exec.Execute(f.t.Context(), query, params)
+	res, err := f.execute(query, params)
 	require.NoError(f.t, err, "%s", query)
 	return res
 }
@@ -87,13 +207,13 @@ func TestPDW161Relationships(t *testing.T) {
 				require.Equal(t, [][]any{{int64(size * 2), int64(size)}}, f.run(check, nil).Rows)
 			}
 			f.run("BEGIN", nil)
-			_, err := f.exec.Execute(t.Context(), "MATCH (a:PDGraphNode {id: 'n1'}) MATCH (b:PDGraphNode {id: 'n5'}) CREATE (a)-[:PD_RELATION {id: 'a1'}]->(b)", nil)
+			_, err := f.execute("MATCH (a:PDGraphNode {id: 'n1'}) MATCH (b:PDGraphNode {id: 'n5'}) CREATE (a)-[:PD_RELATION {id: 'a1'}]->(b)", nil)
 			if err == nil {
-				_, err = f.exec.Execute(t.Context(), "COMMIT", nil)
+				_, err = f.execute("COMMIT", nil)
 			}
 			require.Error(t, err)
 			t.Logf("PDW161 item=3 size=%d duplicate_refused=%v", size, err)
-			_, _ = f.exec.Execute(t.Context(), "ROLLBACK", nil)
+			_, _ = f.execute("ROLLBACK", nil)
 		})
 	}
 }
@@ -158,6 +278,11 @@ func TestPDW161LabelOrder(t *testing.T) {
 					res := f.timed(6, size, verb+"_"+labels, query, params)
 					require.ElementsMatch(t, expected, res.Rows)
 					require.Zero(t, res.Stats.NodesCreated)
+					if f.ref != nil && verb == "MERGE" {
+						profiled := f.run("PROFILE "+query, params)
+						require.ElementsMatch(t, expected, profiled.Rows)
+						t.Logf("PDW161REFERENCE item=6 size=%d labels=%s plan=%s", size, labels, profiled.Metadata["plan"])
+					}
 				}
 			}
 		})
