@@ -62,8 +62,12 @@ func TestPR1826VerifyReplacementDemandCache(t *testing.T) {
 		if v.Kind() == reflect.Slice && v.Len() > 0 { v = reflect.ValueOf(v.Index(0).Interface()) }
 		if v.Kind() == reflect.Ptr { v = v.Elem() }
 		field := v.FieldByName("Properties")
-		if field.IsValid() && field.Kind() == reflect.Map { return int64(field.Len()), nil }
-		return int64(0), nil
+		if field.IsValid() && field.Kind() == reflect.Map {
+			keys := make([]interface{}, 0, field.Len())
+			for _, key := range field.MapKeys() { keys = append(keys, key.Interface()) }
+			return keys, nil
+		}
+		return []interface{}{}, nil
 	}, fn.OpaqueReads, fn.ArgumentInputImage)
 	stale, staleErr := exec.Execute(t.Context(), query, nil)
 	fresh, freshErr := exec.Execute(t.Context(), "MATCH (m:VReg {key:'one'}) RETURN size(tail([m,m])) AS v", nil)
@@ -91,6 +95,15 @@ func TestPR1826VerifyManagedVectorNode(t *testing.T) {
 	exec.SetSearchService(service)
 	query := "MATCH (n:VEntity) RETURN {node:n} AS x, vector.similarity.cosine(n.emb,$q) AS score ORDER BY score DESC LIMIT 2"
 	result, err := exec.Execute(t.Context(), query, map[string]any{"q": []float64{1, 0, 0}})
-	t.Logf("OBS r1_f6 managed_vector rows=%#v err=%v fastpath=%v", result, err, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	if result != nil {
+		for i, row := range result.Rows {
+			if len(row) == 0 { continue }
+			outer, ok := row[0].(map[string]interface{})
+			if !ok { t.Logf("OBS r1_f6 managed_vector row=%d value=%#v", i, row[0]); continue }
+			node, ok := outer["node"].(*storage.Node)
+			if ok { t.Logf("OBS r1_f6 managed_vector row=%d node_properties=%#v score=%#v", i, node.Properties, row[1]) }
+		}
+	}
+	t.Logf("OBS r1_f6 managed_vector err=%v fastpath=%v", err, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 }
 
