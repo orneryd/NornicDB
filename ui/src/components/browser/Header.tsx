@@ -14,7 +14,6 @@ import { BASE_PATH, joinBasePath } from "../../utils/basePath";
 import {Button} from "../common/Button";
 import {MessageCircle} from "lucide-react";
 import {useAssistantAvailability} from "../common/AssistantAvailability";
-import {ServerStatus} from "../common/ServerStatus";
 
 interface HeaderProps {
   workspace?: boolean;
@@ -165,7 +164,6 @@ export function Header({
             </button>
           )}
 
-          <ServerStatus />
         </div>
       </div>
       {logoutError && (

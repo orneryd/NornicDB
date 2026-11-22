@@ -32,6 +32,7 @@ export interface AuthConfig {
 
 export interface DatabaseStats {
   status: string;
+  startup?: { phase: string; search_ready_databases: number; search_building_databases: number };
   server: {
     uptime_seconds: number;
     requests: number;
@@ -1171,8 +1172,9 @@ class NornicDBClient {
     await this.closeBoltDriver();
   }
 
-  async getHealth(): Promise<{ status: string; time: string }> {
-    const res = await fetch(joinBasePath(BASE_PATH, "/health"));
+  async getHealth(signal?: AbortSignal): Promise<{ status: string; time: string }> {
+    const res = await fetch(joinBasePath(BASE_PATH, "/health"), { cache: "no-store", signal });
+    if (!res.ok) throw new Error(`Health unavailable (HTTP ${res.status})`);
     return await res.json();
   }
 

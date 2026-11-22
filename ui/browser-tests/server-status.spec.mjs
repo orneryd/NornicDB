@@ -40,11 +40,11 @@ test('the status owner polls once and cleans up when changing pages',async({page
  expect(requests).toBe(1);
  await page.clock.fastForward(5000);await expect.poll(()=>requests).toBe(2);
  await page.getByRole('navigation',{name:'Application'}).getByRole('link',{name:'Databases',exact:true}).click();
- await expect(page).toHaveURL(/\/databases\//);await expect.poll(()=>requests).toBe(3);
- await page.clock.fastForward(5000);await expect.poll(()=>requests).toBe(4);
+ await expect(page).toHaveURL(/\/databases\//);expect(requests).toBe(2);
+ await page.clock.fastForward(5000);await expect.poll(()=>requests).toBe(3);
  failed=true;await page.clock.fastForward(5000);
  await expect(page.locator('.header-server-connection')).toHaveText('Disconnected');
- expect(requests).toBe(5);
+ expect(requests).toBe(4);
 });
 
 test('the shared header popover fits mobile without moving the header',async({page})=>{
@@ -60,4 +60,31 @@ test('the shared header popover fits mobile without moving the header',async({pa
   expect((await header.boundingBox()).height).toBe(before.height);
   if(path==='/databases')await page.screenshot({path:'review/prototype/33-shared-server-status-mobile.png'});
  }
+});
+
+test('shared status distinguishes warming, readiness, and unavailable status', async ({ page }) => {
+  await page.clock.install();
+  await fixture(page);
+  let phase = 'search_warming';
+  let statusAvailable = true;
+  let healthAvailable = true;
+  await page.route('**/status', route => route.fulfill(statusAvailable
+    ? { json: { status: 'running', startup: { phase, search_ready_databases: 0, search_building_databases: 1 }, server: { uptime_seconds: 60, requests: 0, errors: 0, active: 0 }, database: { nodes: 1, edges: 0 } } }
+    : { status: 503, json: {} }));
+  await page.route('**/health', route => route.fulfill({ status: healthAvailable ? 200 : 503, json: { status: healthAvailable ? 'healthy' : 'unavailable' } }));
+  await page.goto('/');
+  const indicator = page.locator('.header-server-connection');
+  await expect(indicator).toHaveText('Connected · Search warming');
+  await page.goto('/demos');
+  await expect(indicator).toHaveCount(1);
+  await expect(indicator).toHaveText('Connected · Search warming');
+  phase = 'ready';
+  await page.clock.fastForward(5000);
+  await expect(indicator).toHaveText('Connected');
+  statusAvailable = false;
+  await page.clock.fastForward(5000);
+  await expect(indicator).toHaveText('Connected · Status unavailable');
+  healthAvailable = false;
+  await page.clock.fastForward(5000);
+  await expect(indicator).toHaveText('Disconnected');
 });
