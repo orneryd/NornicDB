@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Accept map projections in correlated pattern-property comparisons while preserving scalar correlation and invalid projection receiver errors.
+
 - Reject unknown declared procedure YIELD outputs before RUN, PROFILE, or EXPLAIN invokes a handler, while preserving dynamic procedure result headers.
 - Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
 
