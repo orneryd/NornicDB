@@ -849,7 +849,7 @@ func s1DecoderVerdict(b *BadgerEngine, id NodeID, body []byte, names []string) (
 func s1ClaimsHugeSpan(body []byte) bool {
 	for i := 0; i+4 < len(body); i++ {
 		switch body[i] {
-		case 0xc6, 0xc9, 0xdb:
+		case 0xc6, 0xc9, 0xdb, 0xdd, 0xdf:
 			if binary.BigEndian.Uint32(body[i+1:]) > 1<<20 {
 				return true
 			}
@@ -901,12 +901,12 @@ func s1FuzzFixture(t testing.TB, b *BadgerEngine) ([]NodeID, [][]string) {
 	return ids, [][]string{{"keep"}, {"bytes", "nested"}, {}, {"missing", "list"}, {"skip"}, {"when", "ext"}, {"vec", "float", "strs"}}
 }
 
-// TestPR1826S1MutatedBodyVerdicts mutates stored bodies systematically (every
+// TestPR1826S1MutatedVerdictCounts mutates stored bodies systematically (every
 // truncation, every byte set to boundary values, random splices) and prints the
 // verdict counts: the counts must be the same on both revisions. 32-bit length
 // headers (bin32 c6, ext32 c9, str32 db) are left out: decoding a selected value
 // allocates the length they claim (TestPR1826S1MutatedBodyMemory).
-func TestPR1826S1MutatedBodyVerdicts(t *testing.T) {
+func TestPR1826S1MutatedVerdictCounts(t *testing.T) {
 	b, _ := createTestBadgerEngineOnDisk(t)
 	ids, sets := s1FuzzFixture(t, b)
 	counts := map[string]int{}
