@@ -104,7 +104,7 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 
 	q := strings.TrimSpace(query)
 	if max := r.cfg.MaxQueryChars; max > 0 && len(q) > max {
-		q = q[:max]
+		q = boundedPrefix(q, max)
 	}
 
 	// Build prompt.
@@ -168,7 +168,7 @@ Rules:
 		sb.WriteString(fmt.Sprintf("%d) id=%s bi_score=%.6f\n", i, c.ID, c.Score))
 		doc := strings.TrimSpace(c.Content)
 		if len(doc) > maxDoc {
-			doc = doc[:maxDoc]
+			doc = boundedPrefix(doc, maxDoc)
 		}
 		sb.WriteString(doc)
 		sb.WriteString("\n---\n")
