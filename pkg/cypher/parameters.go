@@ -639,19 +639,45 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(params, cypher25) })
+		cache.once.Do(func() { cache.rows = parameterRowsOf(ctx, params, cypher25) })
 		return cache.rows
 	}
-	return parameterRowsOf(params, cypher25)
+	return parameterRowsOf(ctx, params, cypher25)
 }
 
 // cypher25RowValues are the row values of a Cypher 25 statement without
 // parameters (shared; never modified).
 var cypher25RowValues = map[string]interface{}{cypher25RowKey: true}
 
-func parameterRowsOf(params map[string]interface{}, cypher25 bool) map[string]interface{} {
+type pdW161ParameterTraceKey struct{}
+
+type pdW161ParameterTrace struct {
+	input                []interface{}
+	reuse, ready         bool
+	cached               interface{}
+	conversions, reused  int
+	listElementsVisited  int64
+}
+
+func parameterRowsOf(ctx context.Context, params map[string]interface{}, cypher25 bool) map[string]interface{} {
 	rows := make(map[string]interface{}, len(params)+1)
+	trace, _ := ctx.Value(pdW161ParameterTraceKey{}).(*pdW161ParameterTrace)
 	for name, value := range params {
+		if trace != nil && name == "rows" && sameParameterValue(value, trace.input) {
+			if trace.reuse && trace.ready {
+				trace.reused++
+				rows["$"+name] = trace.cached
+				continue
+			}
+			trace.conversions++
+			trace.listElementsVisited += int64(len(trace.input))
+			rows["$"+name] = parameterRowValue(value)
+			if trace.reuse {
+				trace.cached = rows["$"+name]
+				trace.ready = true
+			}
+			continue
+		}
 		rows["$"+name] = parameterRowValue(value)
 	}
 	if cypher25 {

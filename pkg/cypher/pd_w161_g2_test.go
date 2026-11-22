@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -158,6 +159,54 @@ func TestPDW161LabelOrder(t *testing.T) {
 					res := f.timed(6, size, verb+"_"+labels, query, params)
 					require.ElementsMatch(t, expected, res.Rows)
 					require.Zero(t, res.Stats.NodesCreated)
+				}
+			}
+		})
+	}
+}
+
+func TestPDW161ComputedParameterMaterialization(t *testing.T) {
+	for _, size := range []int{2000, 8000} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			f := newPDW161Fixture(t)
+			for _, form := range []struct {
+				name, action, expression string
+				exists                   bool
+			}{
+				{"match_plain", "ON MATCH SET", "row.kept", true},
+				{"match_case", "ON MATCH SET", "CASE WHEN row.carried THEN row.value ELSE n.value END", true},
+				{"create_plain", "ON CREATE SET", "row.kept", false},
+				{"create_case", "ON CREATE SET", "CASE WHEN row.carried THEN row.value ELSE 'old' END", false},
+				{"standalone_case", "SET", "CASE WHEN row.carried THEN row.value ELSE n.value END", true},
+			} {
+				for _, reuse := range []bool{false, true} {
+					prefix := fmt.Sprintf("%s-%t-", form.name, reuse)
+					if form.exists {
+						f.fill(size, "CREATE (:PDGraphNode:PDEntity {id: $prefix + toString(i), value: 'old'})", map[string]any{"prefix": prefix})
+					}
+					rows := make([]any, size)
+					for i := range rows {
+						value := "v" + strconv.Itoa(i)
+						kept := "old"
+						if i%2 == 0 {
+							kept = value
+						}
+						rows[i] = map[string]any{"id": prefix + strconv.Itoa(i), "value": value, "carried": i%2 == 0, "kept": kept}
+					}
+					trace := &pdW161ParameterTrace{input: rows, reuse: reuse}
+					ctx := context.WithValue(t.Context(), pdW161ParameterTraceKey{}, trace)
+					params := map[string]any{"rows": rows}
+					statement := "UNWIND $rows AS row MERGE (n:PDGraphNode {id: row.id}) " + form.action + " n.value = " + form.expression + " RETURN count(n) AS n"
+					f.run("BEGIN", nil)
+					start := time.Now()
+					result, err := f.exec.Execute(ctx, statement, params)
+					elapsed := time.Since(start)
+					require.NoError(t, err)
+					require.Equal(t, [][]any{{int64(size)}}, result.Rows)
+					f.run("COMMIT", nil)
+					require.Equal(t, [][]any{{int64(size)}}, f.run("UNWIND $rows AS row MATCH (n:PDGraphNode {id: row.id}) WHERE n.value = row.kept RETURN count(n) AS n", params).Rows)
+					t.Logf("PDW161ACTION size=%d variant=%s reuse=%t conversions=%d reused=%d list_elements_visited=%d statement_ms=%.3f",
+						size, form.name, reuse, trace.conversions, trace.reused, trace.listElementsVisited, float64(elapsed)/float64(time.Millisecond))
 				}
 			}
 		})
