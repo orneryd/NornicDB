@@ -17,7 +17,7 @@ const pdW161DirectWhere = "NOT (EXISTS { MATCH (:PDW161Document {id: node.docume
 func TestPDW161Item8TypedTraversalInRetainedWhere(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutor(store)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	service := search.NewService(store, 3, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	exec.SetSearchService(service)
@@ -49,7 +49,9 @@ func TestPDW161Item8TypedTraversalInRetainedWhere(t *testing.T) {
 	type outcome struct {
 		pages, rows int
 		total       time.Duration
+		first       time.Duration
 		pageTimes   []time.Duration
+		ids         []string
 	}
 	measure := func(label, where string) outcome {
 		out := outcome{}
@@ -60,13 +62,19 @@ func TestPDW161Item8TypedTraversalInRetainedWhere(t *testing.T) {
 			result, err := exec.Execute(ctx, "PROFILE "+request, params)
 			elapsed := time.Since(start)
 			require.NoError(t, err, label)
+			if out.pages == 0 {
+				out.first = elapsed
+			}
 			out.total += elapsed
 			out.pageTimes = append(out.pageTimes, elapsed)
 			page := retainedWherePageFromMap(t, result.Rows[0][0])
 			out.rows += len(page.ids)
+			out.ids = append(out.ids, page.ids...)
 			out.pages++
 			if out.pages == 1 {
-				t.Logf("PD_W161_CAUSE item=8 form=%s rows=%d profile=%+v", label, len(page.ids), result.Metadata["plan"])
+				plan, ok := result.Metadata["plan"].(*ExecutionPlan)
+				require.True(t, ok, "profile plan: %T", result.Metadata["plan"])
+				t.Logf("PD_W161_CAUSE item=8 form=%s rows=%d profile=%+v", label, len(page.ids), Neo4jPlanMap(plan, true))
 			}
 			if !page.more {
 				break
@@ -76,9 +84,9 @@ func TestPDW161Item8TypedTraversalInRetainedWhere(t *testing.T) {
 			params = map[string]interface{}{"qid": page.qid}
 		}
 		sort.Slice(out.pageTimes, func(i, j int) bool { return out.pageTimes[i] < out.pageTimes[j] })
-		t.Logf("PD_W161_RESULT item=8 form=%s docs=%d links_per_doc=%d rows=%d pages=%d first_ms=%.3f median_ms=%.3f max_ms=%.3f total_ms=%.3f",
+		t.Logf("PD_W161_RESULT item=8 form=%s docs=%d links_per_doc=%d rows=%d pages=%d first_page_ms=%.3f median_page_ms=%.3f max_page_ms=%.3f total_ms=%.3f",
 			label, documents, degree, out.rows, out.pages,
-			float64(out.pageTimes[0].Microseconds())/1000,
+			float64(out.first.Microseconds())/1000,
 			float64(out.pageTimes[len(out.pageTimes)/2].Microseconds())/1000,
 			float64(out.pageTimes[len(out.pageTimes)-1].Microseconds())/1000,
 			float64(out.total.Microseconds())/1000)
@@ -87,4 +95,7 @@ func TestPDW161Item8TypedTraversalInRetainedWhere(t *testing.T) {
 	stored := measure("stored_verdict", pdW161StoredWhere)
 	direct := measure("typed_one_hop_retained_where", pdW161DirectWhere)
 	require.Equal(t, stored.rows, direct.rows, "stored and direct rules must return the same candidate set")
+	sort.Strings(stored.ids)
+	sort.Strings(direct.ids)
+	require.Equal(t, stored.ids, direct.ids, "stored and direct rules must return the same source IDs")
 }

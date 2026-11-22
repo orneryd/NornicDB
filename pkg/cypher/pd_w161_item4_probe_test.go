@@ -49,7 +49,9 @@ func TestPDW161Item4KeyedRelationshipShapes(t *testing.T) {
 					require.NoError(t, err, tc.name)
 					rows = len(res.Rows)
 					if rep == 0 {
-						t.Logf("PD_W161_CAUSE item=4 shape=%s size=%d result_rows=%d plan=%+v", tc.name, n, rows, res.Metadata["plan"])
+						plan, ok := res.Metadata["plan"].(*ExecutionPlan)
+						require.True(t, ok, "profile plan: %T", res.Metadata["plan"])
+						t.Logf("PD_W161_CAUSE item=4 shape=%s size=%d result_rows=%d plan=%+v", tc.name, n, rows, Neo4jPlanMap(plan, true))
 					}
 				}
 				t.Logf("PD_W161_RESULT item=4 shape=%s size=%d repeats=3 elapsed_ms=%.3f", tc.name, n, float64(elapsed.Microseconds())/3000)
