@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Reject unknown declared procedure YIELD outputs before RUN, PROFILE, or EXPLAIN invokes a handler, while preserving dynamic procedure result headers.
+
 - Match Neo4j admission of `timestamp()` in quantifiers and other typed expressions by preserving its pre-semantic property type uncertainty, while keeping ordinary scalar list-source errors.
 
 - Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
