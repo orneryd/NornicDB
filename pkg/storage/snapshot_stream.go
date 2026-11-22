@@ -127,6 +127,8 @@ func saveSnapshotFile(path string, write func(io.Writer) error) error {
 	if err != nil {
 		return fmt.Errorf("wal: failed to create snapshot file: %w", err)
 	}
+	fmt.Printf("P26DIAG SNAP %s writer created %s (0 bytes)
+", time.Now().Format("15:04:05.000000"), filepath.Base(tmpPath))
 	removeTemp := true
 	defer func() {
 		_ = file.Close()
@@ -146,6 +148,8 @@ func saveSnapshotFile(path string, write func(io.Writer) error) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("wal: failed to rename snapshot: %w", err)
 	}
+	fmt.Printf("P26DIAG SNAP %s writer published %s
+", time.Now().Format("15:04:05.000000"), filepath.Base(path))
 	removeTemp = false
 	if err := syncDir(dir); err != nil {
 		return fmt.Errorf("wal: failed to sync snapshot directory: %w", err)
@@ -182,7 +186,13 @@ func readSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor
 	var metadata SnapshotMetadata
 	buffered := bufio.NewReader(reader)
 	magic := make([]byte, len(streamSnapshotMagic))
-	if _, err := io.ReadFull(buffered, magic); err != nil || string(magic) != streamSnapshotMagic {
+	if n, err := io.ReadFull(buffered, magic); err != nil || string(magic) != streamSnapshotMagic {
+		name := ""
+		if file, ok := reader.(*os.File); ok {
+			name = filepath.Base(file.Name())
+		}
+		fmt.Printf("P26DIAG SNAP %s reader of %s got %d header bytes %q: %v
+", time.Now().Format("15:04:05.000000"), name, n, magic[:n], err)
 		return metadata, fmt.Errorf("invalid streaming snapshot header")
 	}
 	version, err := buffered.ReadByte()
