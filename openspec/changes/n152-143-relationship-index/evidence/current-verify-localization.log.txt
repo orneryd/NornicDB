@@ -1,0 +1,60 @@
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.wUAEa0xkRR/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.wUAEa0xkRR/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.wUAEa0xkRR/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.wUAEa0xkRR/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base d6bd9270e9181b967b4549a17ae549736c80d124 (merge base with moved-base), head 59990ef2ca2a42f3d033e5833cd7c645d1ac4bb3
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.D8ed9q1X0F/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.D8ed9q1X0F/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.D8ed9q1X0F/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.D8ed9q1X0F/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base 846f2f869bd4c53c0c104a00275cffe1e8f61ff7 (merge base with moved-base), head 94d1c60398a2484bb7833c1a1a32aff0248d647c
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: relative verifier override survives fixture directory changes
+verify fix/n152-143-relationship-index @ f77ec7706  against origin/release/v1.5.2 (merge base f77ec7706, 38 changed files)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+  localization  run   localization catalogs: tests, generated manifest up to date, catalog check
+  ui            skip  (not selected)
+  llama-libs    skip  (not selected)
+  build         skip  (not selected)
+  tests         skip  (not selected)
+  allocations   skip  (not selected)
+  conformance   skip  (not selected)
+  differential  skip  (not selected)
+  docs          skip  (not selected)
+
+▶ localization  localization catalogs: tests, generated manifest up to date, catalog check
+ok  	github.com/orneryd/nornicdb/pkg/localization	4.060s
+ok  	github.com/orneryd/nornicdb/scripts/localization_catalog	0.281s
+ok  	github.com/orneryd/nornicdb/scripts/localization_inventory	0.241s
+
+verify summary  fix/n152-143-relationship-index @ f77ec7706  (0m 9s)
+  localization  pass     9s   
+  ui            skip
+  llama-libs    skip
+  build         skip
+  tests         skip
+  allocations   skip
+  conformance   skip
+  differential  skip
+  docs          skip
+logs: /private/tmp/n152-143-relationship-index/.verify/runs/20261121-201153  (also .verify/latest)
+All checks passed.

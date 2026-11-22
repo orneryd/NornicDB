@@ -1,0 +1,45 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/cypher
+cpu: Apple M2 Max
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-false-2         	     100	     66482 ns/op	   18092 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-false-2         	     100	     66964 ns/op	   18090 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-false-2         	     100	     66302 ns/op	   18091 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-false-2         	     100	     66175 ns/op	   18090 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-false-2         	     100	     65321 ns/op	   18258 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-true-2          	     100	     66775 ns/op	   18111 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-true-2          	     100	     66385 ns/op	   18111 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-true-2          	     100	     66135 ns/op	   18111 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-true-2          	     100	     66335 ns/op	   18111 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-8/explicit-true-2          	     100	     66186 ns/op	   18112 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-false-2       	     100	     67825 ns/op	   18089 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-false-2       	     100	     67450 ns/op	   18088 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-false-2       	     100	     67295 ns/op	   18088 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-false-2       	     100	     67172 ns/op	   18089 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-false-2       	     100	     67468 ns/op	   18089 B/op	     290 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-true-2        	     100	     65699 ns/op	   18110 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-true-2        	     100	     67443 ns/op	   18110 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-true-2        	     100	     67345 ns/op	   18111 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-true-2        	     100	     67884 ns/op	   18110 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/nornic/unrelated-512/explicit-true-2        	     100	     67676 ns/op	   18110 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-false-2          	     100	     66040 ns/op	   18217 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-false-2          	     100	     65672 ns/op	   18216 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-false-2          	     100	     66588 ns/op	   18217 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-false-2          	     100	     65758 ns/op	   18217 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-false-2          	     100	     66066 ns/op	   18219 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-true-2           	     100	     66415 ns/op	   18239 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-true-2           	     100	     66127 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-true-2           	     100	     66040 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-true-2           	     100	     66017 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-8/explicit-true-2           	     100	     66451 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-false-2        	     100	     67537 ns/op	   18217 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-false-2        	     100	     67593 ns/op	   18216 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-false-2        	     100	     67480 ns/op	   18216 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-false-2        	     100	     67406 ns/op	   18216 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-false-2        	     100	     66163 ns/op	   18216 B/op	     291 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-true-2         	     100	     67688 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-true-2         	     100	     67598 ns/op	   18240 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-true-2         	     100	     68708 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-true-2         	     100	     68151 ns/op	   18238 B/op	     292 allocs/op
+BenchmarkNOR42OrdinaryRelationshipEquality/antlr/unrelated-512/explicit-true-2         	     100	     67680 ns/op	   18238 B/op	     292 allocs/op
+PASS

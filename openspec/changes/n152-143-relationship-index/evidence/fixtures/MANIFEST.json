@@ -1,0 +1,113 @@
+{
+  "description_html_bytes": 56493,
+  "description_html_sha256": "6694171cac36822bb74b40eba09627a185a60ec768b36135b2dcb707f2f58c3c",
+  "extraction": "html.unescape(<pre> inner HTML), single <code>\u2026</code> wrapper removed, written as UTF-8 bytes",
+  "fixtures": [
+    {
+      "bytes": 13296,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/testdata/repo/pkg/cypher/relationship_property_equality_scope_test.go",
+      "html_span": [
+        4150,
+        17481
+      ],
+      "index": 0,
+      "label": "pkg/cypher/relationship_property_equality_scope_test.go",
+      "sha256": "492cb46fe761f34a25697a1bbf9d53c87629bf222d255bf2dabdceed419bf889"
+    },
+    {
+      "bytes": 3350,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/testdata/repo/pkg/storage/relationship_property_equality_surrogate_test.go",
+      "html_span": [
+        17550,
+        20936
+      ],
+      "index": 1,
+      "label": "pkg/storage/relationship_property_equality_surrogate_test.go",
+      "sha256": "3e6716999af861d80aef3b4d6a224b963ed4d8684421f42bef996a7f6483b88d"
+    },
+    {
+      "bytes": 1364,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/tmp/nor42-parent-checks.sh",
+      "html_span": [
+        20972,
+        22360
+      ],
+      "index": 2,
+      "label": "/tmp/nor42-parent-checks.sh",
+      "sha256": "ef4b6fc0157c4f62a1800afcd004c7b1cd655294db120ceaee66b0681785be7c"
+    },
+    {
+      "bytes": 1427,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/tmp/nor42-linux-checks.sh",
+      "html_span": [
+        22395,
+        23846
+      ],
+      "index": 3,
+      "label": "/tmp/nor42-linux-checks.sh",
+      "sha256": "2f84f829f1400f47c366e85cd7c130f2b56bd0fbc6cb19b7fe038a6ca4c97d04"
+    },
+    {
+      "bytes": 14406,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/tmp/nor42-parent-macos.log.txt",
+      "html_span": [
+        23882,
+        38312
+      ],
+      "index": 4,
+      "label": "/tmp/nor42-parent-macos.log",
+      "sha256": "12bfe131c2396b5d515f1d84f23476819b41d747cbb19a850ab4c6a9a904192f"
+    },
+    {
+      "bytes": 1800,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/tmp/nor42-parent-defect-macos.log.txt",
+      "html_span": [
+        38355,
+        40179
+      ],
+      "index": 5,
+      "label": "/tmp/nor42-parent-defect-macos.log",
+      "sha256": "b1d005882306f1f626e3ea2305b9d54be68bcd1150a277cd1e10bcf968a0952d"
+    },
+    {
+      "bytes": 15956,
+      "code_wrapper_removed": true,
+      "evidence_path": "fixtures/tmp/nor42-parent-linux.log.txt",
+      "html_span": [
+        40501,
+        56481
+      ],
+      "index": 6,
+      "label": "/tmp/nor42-parent-linux.log",
+      "sha256": "166be3d48c5745cdf065379ff346c390bcb4e9405d871fc7fe9c7344910126b1"
+    }
+  ],
+  "issue": {
+    "archived_at": null,
+    "created_at": "2026-11-18T16:53:33.241502Z",
+    "created_by": "09db2bd5-39de-40c9-9098-9f921e3598e3",
+    "deleted_at": null,
+    "id": "b486164a-6189-4d13-b315-de618f17ee9a",
+    "labels": [
+      "45e2e682-19bc-48a8-a133-126e8d299a13"
+    ],
+    "name": "NOR-42 \u00b7 Use relationship equality indexes consistently",
+    "priority": "medium",
+    "project": "02564fe1-72c5-416b-83e6-a13d299d12be",
+    "sequence_id": 143,
+    "state": "0117d221-c69f-49b1-a4f5-431ac3897348",
+    "updated_at": "2026-11-19T19:01:26.724179Z",
+    "updated_by": "09db2bd5-39de-40c9-9098-9f921e3598e3",
+    "workspace": "a7d5921b-62f0-4df2-9b56-fbc57b3625a5"
+  },
+  "ticket_bytes": 58869,
+  "ticket_copy": "ticket/n152-143-ticket.json",
+  "ticket_sha256": "956abdb3d981c84df7c44f14f53e58ab3ffb97907c430e8c39121b350450e5dc",
+  "ticket_source": "/tmp/n152-143-ticket.json"
+}

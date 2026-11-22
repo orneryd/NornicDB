@@ -50,6 +50,7 @@ type relationshipEqualityAccessFixture struct {
 type relationshipEqualityFixtureOptions struct {
 	unrelatedRelationships int
 	durabilityStack        bool
+	ordinaryIndex          bool
 }
 
 func newRelationshipEqualityAccessFixture(t testing.TB, settings relationshipEqualityFixtureOptions) *relationshipEqualityAccessFixture {
@@ -95,7 +96,11 @@ func populateRelationshipEqualityFixture(t testing.TB, store storage.Engine, set
 	}
 	createRelationship("target", "r289999")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
-	_, err := exec.Execute(ctx, "CREATE CONSTRAINT pd_relation_id IF NOT EXISTS FOR ()-[r:PD_RELATION]-() REQUIRE r.id IS UNIQUE", nil)
+	declaration := "CREATE CONSTRAINT pd_relation_id IF NOT EXISTS FOR ()-[r:PD_RELATION]-() REQUIRE r.id IS UNIQUE"
+	if settings.ordinaryIndex {
+		declaration = relationshipEqualityOrdinaryIndexDeclaration
+	}
+	_, err := exec.Execute(ctx, declaration, nil)
 	require.NoError(t, err)
 	return &relationshipEqualityAccessFixture{exec: exec}
 }
