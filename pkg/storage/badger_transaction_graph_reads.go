@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"context"
 	"errors"
 	"fmt"
@@ -530,15 +531,17 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	// buffered commit after the pinned snapshot, so the engine's latest
 	// (overlaid) stream is used and no extra overlay merge runs here.
 	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
+	fmt.Printf("P26DIAG F4 label stream of %s: readTS=%v snapshot pinned=%t writeBehind=%t -> reads the engine's latest state: %t\n", label, tx.readTS, tx.snapshotTx != nil, tx.engine != nil && tx.engine.writeBehind != nil, engineOverlaid)
 
 	// A whole node the stream hands out is also the one a later write of
 	// the node takes as its old version (snapshotLabelNodeByID), so the
 	// caller gets a copy it may change (#965). A projected node is only
 	// read: nothing writes it back.
 	forCaller := func(node *Node) *Node {
-		if properties == nil {
+		if properties == nil || os.Getenv("P26_BYPASS") == "F5" {
 			return copyNode(node)
 		}
+		fmt.Printf("P26DIAG F5 projected image %p of %s delivered without a copy; kept for the transaction\n", node, node.ID)
 		return node
 	}
 	// The live visibility layer settles a row when the stream delivers it, not

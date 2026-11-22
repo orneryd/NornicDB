@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
@@ -60,6 +61,7 @@ func (reader relationshipEndpointReader) readRetained(ctx context.Context, id st
 	if err != nil || node == nil || properties == nil {
 		return node, err
 	}
+	fmt.Printf("P26DIAG R11 endpoint %s read with %d properties, keeps only %q\n", id, len(node.Properties), properties)
 	var selected map[string]interface{}
 	if len(properties) > 0 {
 		selected = node.Properties

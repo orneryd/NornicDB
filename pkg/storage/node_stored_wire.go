@@ -1,5 +1,11 @@
 package storage
 
+import (
+	"errors"
+	"fmt"
+	"os"
+)
+
 import "github.com/vmihailenco/msgpack/v5"
 
 // EncodeMsgpack preserves the stored node map independently of its in-memory
@@ -107,6 +113,12 @@ func (node *Node) DecodeMsgpack(dec *msgpack.Decoder) error {
 		case "ChunkEmbeddings":
 			err = dec.Decode(&node.ChunkEmbeddings)
 		case "EmbedMeta":
+			if code, peekErr := dec.PeekCode(); peekErr == nil {
+				fmt.Printf("P26DIAG F6 EmbedMeta header %02x\n", code)
+				if code == 0xdf && os.Getenv("P26_BYPASS") == "F6" {
+					return errors.New("map length beyond the body")
+				}
+			}
 			err = dec.Decode(&node.EmbedMeta)
 		case "EmbeddingsStoredSeparately":
 			err = dec.Decode(&metadata.EmbeddingsStoredSeparately)

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"fmt"
+	"os"
 	"context"
 	"errors"
 	"strings"
@@ -66,9 +68,21 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		live := append([]storage.NodeID(nil), ids...)
 		ids, err = wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
 		if err != nil {
 			return nil, err
+		}
+		var snapshot []storage.NodeID
+		_ = wrapper.tx.StreamNodesByLabelProjected(ctx, label, nil, func(n *storage.Node) error {
+			if held, ok := n.Properties[property]; ok && fmt.Sprint(held) == fmt.Sprint(value) {
+				snapshot = append(snapshot, n.ID)
+			}
+			return nil
+		})
+		fmt.Printf("P26DIAG F3 index %s(%s)=%v live postings=%v after own pending=%v; nodes of the transaction's snapshot with that value=%v\n", label, property, value, live, ids, snapshot)
+		if os.Getenv("P26_BYPASS") == "F3" {
+			ids = snapshot
 		}
 	}
 	// A PROFILE statement counts the entries this lookup returned and the one

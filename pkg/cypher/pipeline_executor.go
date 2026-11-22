@@ -22,6 +22,9 @@ package cypher
 // than reparsing patterns from scratch.
 
 import (
+	"fmt"
+	"os"
+	"regexp"
 	"context"
 	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -216,6 +219,19 @@ func pipelineNodePropertyDemand(ctx context.Context, variable, whereClause strin
 	}
 	properties = append(properties, tail...)
 	sort.Strings(properties)
+	if bare := regexp.MustCompile(`(^|[^.\w$])` + regexp.QuoteMeta(variable) + `(\s*[^.\s\w]|$)`); variable != "" {
+		for index, text := range consumers {
+			if index > 0 && strings.Contains(strings.ToUpper(text), " AS "+strings.ToUpper(variable)) {
+				continue
+			}
+			if at := bare.FindString(text); at != "" {
+				fmt.Printf("P26DIAG R11 variable=%s demand=%q complete=true, but clause %d uses the variable itself: %q (at %q)\n", variable, properties, index, text, at)
+				if os.Getenv("P26_BYPASS") == "R11" {
+					return nil, false
+				}
+			}
+		}
+	}
 	return slices.Compact(properties), true
 }
 
@@ -1728,6 +1744,9 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
 	if pathVariable != "" {
+		if os.Getenv("P26_BYPASS") == "F2" {
+			hint.readTail = nil
+		}
 		// p = (n:L): the node pattern is what follows the assignment. Parsed
 		// with the assignment, its variable was "p = (n" and it matched no
 		// node.
@@ -2014,6 +2033,7 @@ func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePa
 		properties = e.scanRequiredProperties(ctx, properties, nodePattern.variable, whereClause)
 	}
 	projection, projected := pipelineLabelScanProjection(ctx, nodePattern, whereClause, hint.readTail)
+	fmt.Printf("P26DIAG F2 label scan variable=%s labels=%v where=%q projection=%q projected=%t\n", nodePattern.variable, nodePattern.labels, whereClause, projection, projected)
 	if !projected {
 		projection = nil
 	}

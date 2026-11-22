@@ -1,6 +1,7 @@
 package knowledgepolicy
 
 import (
+	"fmt"
 	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
@@ -295,6 +296,7 @@ func selectPromotionProfile(rules []CompiledPromotionRule, accessMeta *AccessMet
 	var selected *PromotionProfileDef
 	for _, rule := range rules {
 		value, err := evalOnAccessExpression(rule.Predicate, ctx)
+		fmt.Printf("P26DIAG F1B rule=%q value=%v error=%v\n", rule.Predicate, value, err)
 		if err != nil || !truthy(value) || rule.Profile == nil {
 			continue
 		}

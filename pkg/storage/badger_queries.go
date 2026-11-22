@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"os"
 	"context"
 	"errors"
 	"fmt"
@@ -855,6 +856,12 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 		projected = copyNode(&source)
 	}
 
+	if len(node.ChunkEmbeddings) != len(projected.ChunkEmbeddings) {
+		fmt.Printf("P26DIAG R9 projected copy of %s drops %d chunk vectors, metadata %v, projection %q\n", node.ID, len(node.ChunkEmbeddings), projected.EmbedMeta, properties)
+		if os.Getenv("P26_BYPASS") == "R9" && len(projected.EmbedMeta) == 0 {
+			projected.EmbedMeta = map[string]any{"chunk_count": len(node.ChunkEmbeddings)}
+		}
+	}
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {

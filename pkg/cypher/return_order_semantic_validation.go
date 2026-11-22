@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
@@ -331,6 +332,7 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 			continue
 		}
 		if cursor < len(expression) && expression[cursor] == ':' {
+			fmt.Printf("P26DIAG R11 reference %q skipped: followed by ':' in %q\n", name, expression)
 			continue
 		}
 		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
@@ -344,6 +346,7 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 		// A keyword-named variable (where.id, #894) is still a variable when
 		// a property access follows it; a keyword is never followed by '.'.
 		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
+			fmt.Printf("P26DIAG R11 reference %q skipped: keyword spelling in %q\n", name, expression)
 			continue
 		}
 		propertyName, hasProperty := "", false

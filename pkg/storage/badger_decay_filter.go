@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+	"os"
 	"context"
 	"strings"
 	"time"
@@ -198,6 +200,18 @@ func (b *BadgerEngine) filterEntityByDecay(v readVisibility, entity any, nowNano
 		res = scorer.ScoreEdgeWithProperties(entityID, entityType, entityProps, accessMeta, createdAtNanos, versionAtNanos, nowNanos)
 	} else {
 		res = scorer.ScoreNodeWithProperties(entityID, labels, entityProps, accessMeta, createdAtNanos, versionAtNanos, nowNanos)
+		if len(labels) > 0 && strings.HasPrefix(labels[0], "Fact") {
+			whole, readErr := b.readNodeMetadata(context.Background(), NodeID(entityID), storedRead, nodeItemBodyOnly)
+			if readErr == nil && whole != nil {
+				wholeRes := scorer.ScoreNodeWithProperties(entityID, labels, whole.Properties, accessMeta, createdAtNanos, versionAtNanos, nowNanos)
+				fmt.Printf("P26DIAG F1 id=%s image=%v promotion=%q suppressed=%t | stored=%v promotion=%q suppressed=%t\n", entityID, entityProps, res.AppliedPromotionProfileName, res.SuppressionEligible, whole.Properties, wholeRes.AppliedPromotionProfileName, wholeRes.SuppressionEligible)
+				if os.Getenv("P26_BYPASS") == "F1" {
+					res = wholeRes
+				}
+			} else {
+				fmt.Printf("P26DIAG F1 id=%s image=%v stored read: %v\n", entityID, entityProps, readErr)
+			}
+		}
 	}
 
 	if res.NoDecay && visibilitySuppressed {
