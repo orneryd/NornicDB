@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
 
 - Match Neo4j admission of `timestamp()` in quantifiers and other typed expressions by preserving its pre-semantic property type uncertainty, while keeping ordinary scalar list-source errors.
+- Admit CASE expressions containing COUNT subqueries as DELETE targets while preserving undefined-variable checks and null-target behavior.
 
 - Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
 
