@@ -268,8 +268,8 @@
     "sha256": "5f387abbb012e3b281a53bffda6ddcaeb817410753d6e6d734d911d51886834a"
   },
   "pkg/heimdall/handler.go:Handler.handleAutocomplete": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "2b95a1376c320fc8e99371062dd014fe4a8baba0b446450f64ef5a35f62e2a7e"
+    "reason": "Typed autocomplete request with a query string and integer cursor position. The JSON calls and DTO are unchanged by #1933, which changes the action name and model response framing.",
+    "sha256": "585a6df2c2b6f3c6d06de6c8c73902c00a32cf7955b094fe78c45b9ee77438da"
   },
   "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
     "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
