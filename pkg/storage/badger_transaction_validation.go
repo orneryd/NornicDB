@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
+
+var PDW161UniqueCalls, PDW161UniquePendingVisits atomic.Int64
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Context) error {
 	if err := tx.validateEmptyAdjacencyLocked(ctx); err != nil {
@@ -1180,6 +1183,8 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
 	}
 
+	PDW161UniqueCalls.Add(1)
+	PDW161UniquePendingVisits.Add(int64(len(tx.pendingEdges)))
 	for id, otherEdge := range tx.pendingEdges {
 		if id == edge.ID || otherEdge.Type != edge.Type {
 			continue

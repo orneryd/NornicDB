@@ -5,10 +5,13 @@ package storage
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
+
+var PDW161PairCalls, PDW161PairPendingVisits atomic.Int64
 
 // EdgeMatchReadPolicy selects the committed view used for relationship matching.
 // Ordinary reads retain their transaction snapshot; MERGE resolves against the
@@ -333,6 +336,8 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 		return nil, err
 	}
 	now := DecayScoringTime()
+	PDW161PairCalls.Add(1)
+	PDW161PairPendingVisits.Add(int64(len(pendingEdges)))
 	for _, edge := range pendingEdges {
 		if err := ctx.Err(); err != nil {
 			return nil, err

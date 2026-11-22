@@ -10,9 +10,13 @@ import (
 	"sort"
 
 	"strings"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+var pdW161MergeSeekCalls, pdW161FirstIdentity, pdW161IndexedHits, pdW161MergeScanVisits, pdW161EqualityCalls atomic.Int64
+var pdW161UseIndexedSecond atomic.Bool
 
 func mergeNodeHasLabels(node *storage.Node, labels []string) bool {
 	for _, label := range labels {
@@ -429,6 +433,7 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 		// The read's population is the pattern label's own: the same label the
 		// scan below would read.
 		label := nodeScanLabels(ctx, store, labels)[0]
+		pdW161EqualityCalls.Add(1)
 		candidates, complete, lookupErr := lookup.LookupNodesByEquality(ctx, label, props)
 		if lookupErr != nil {
 			return nil, false, lookupErr
@@ -462,6 +467,7 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 	}
 
 	matches = make([]*storage.Node, 0, len(candidates))
+	pdW161MergeScanVisits.Add(int64(len(candidates)))
 	for _, candidate := range candidates {
 		if mergeNodeMatches(candidate, labels, props) {
 			matches = append(matches, candidate)
@@ -489,6 +495,13 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 		return nil, false, nil
 	}
 	label := labels[0]
+	pdW161MergeSeekCalls.Add(1)
+	if label == "PDIdentity" && len(labels) == 2 && labels[1] == "PDGraphNode" {
+		pdW161FirstIdentity.Add(1)
+		if pdW161UseIndexedSecond.Load() {
+			label = labels[1]
+		}
+	}
 	for _, prop := range mergePropertyNamesSorted(props) {
 		nodeID, valueFound, constraintExists, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, label, prop, props[prop])
 		if err != nil {
@@ -498,6 +511,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 			continue
 		}
 		if valueFound {
+			pdW161IndexedHits.Add(1)
 			e.markMergeSchemaLookupUsed()
 			return []storage.NodeID{nodeID}, true, nil
 		}

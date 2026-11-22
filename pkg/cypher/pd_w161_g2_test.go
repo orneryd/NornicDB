@@ -1,12 +1,17 @@
 package cypher
 
 import (
+	"bytes"
 	"fmt"
+	"runtime/pprof"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/pprof/profile"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -48,16 +53,94 @@ func (f pdW161Fixture) fill(size int, pattern string, params map[string]any) {
 func (f pdW161Fixture) timed(item, size int, variant string, query string, params map[string]any) *ExecuteResult {
 	f.t.Helper()
 	f.run("BEGIN", nil)
+	before := pdW161Counters()
+	var cpu bytes.Buffer
+	profileAction := item == 5 && size == 8000
+	if profileAction {
+		require.NoError(f.t, pprof.StartCPUProfile(&cpu))
+		defer pprof.StopCPUProfile()
+	}
 	start := time.Now()
 	result := f.run(query, params)
 	statement := time.Since(start)
+	afterStatement := pdW161Counters()
+	if profileAction {
+		pprof.StopCPUProfile()
+		pdW161Profile(f.t, variant, &cpu)
+	}
 	start = time.Now()
 	f.run("COMMIT", nil)
 	commit := time.Since(start)
+	afterCommit := pdW161Counters()
+	f.t.Logf("PDW161CAUSE item=%d size=%d variant=%s statement=%v commit=%v fields=[pair_calls pair_pending_visits unique_calls unique_pending_slots merge_schema_probes first_identity unique_hits merge_equality_probes merge_scan_candidates]",
+		item, size, variant, pdW161CounterDelta(afterStatement, before), pdW161CounterDelta(afterCommit, afterStatement))
 	f.t.Logf("PDW161 item=%d size=%d variant=%s statement_ms=%.3f commit_ms=%.3f relationships_created=%d rows=%d",
 		item, size, variant, float64(statement)/float64(time.Millisecond), float64(commit)/float64(time.Millisecond),
 		result.Stats.RelationshipsCreated, len(result.Rows))
 	return result
+}
+
+func pdW161Counters() [9]int64 {
+	return [9]int64{
+		storage.PDW161PairCalls.Load(), storage.PDW161PairPendingVisits.Load(),
+		storage.PDW161UniqueCalls.Load(), storage.PDW161UniquePendingVisits.Load(),
+		pdW161MergeSeekCalls.Load(), pdW161FirstIdentity.Load(), pdW161IndexedHits.Load(),
+		pdW161EqualityCalls.Load(), pdW161MergeScanVisits.Load(),
+	}
+}
+
+func pdW161CounterDelta(after, before [9]int64) [9]int64 {
+	for i := range after {
+		after[i] -= before[i]
+	}
+	return after
+}
+
+func pdW161Profile(t *testing.T, variant string, cpu *bytes.Buffer) {
+	t.Helper()
+	p, err := profile.ParseData(cpu.Bytes())
+	require.NoError(t, err)
+	byLeaf, byCaller := make(map[string]int64), make(map[string]int64)
+	var total int64
+	for _, sample := range p.Sample {
+		weight := sample.Value[len(sample.Value)-1]
+		total += weight
+		seen := make(map[string]bool)
+		leaf := true
+		for _, location := range sample.Location {
+			for _, line := range location.Line {
+				name := strings.TrimPrefix(line.Function.Name, "github.com/orneryd/nornicdb/")
+				where := fmt.Sprintf("%s @ %s:%d", name, line.Function.Filename, line.Line)
+				if leaf {
+					byLeaf[where] += weight
+					leaf = false
+				}
+				if !seen[where] {
+					byCaller[where] += weight
+					seen[where] = true
+				}
+			}
+		}
+	}
+	t.Logf("PDW161PROFILE variant=%s sampled_cpu=%s", variant, time.Duration(total))
+	for _, table := range []struct {
+		kind string
+		data map[string]int64
+	}{{"leaf", byLeaf}, {"stack", byCaller}} {
+		names := make([]string, 0, len(table.data))
+		for key := range table.data {
+			names = append(names, key)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if table.data[names[i]] == table.data[names[j]] {
+				return names[i] < names[j]
+			}
+			return table.data[names[i]] > table.data[names[j]]
+		})
+		for _, name := range names[:min(24, len(names))] {
+			t.Logf("PDW161PROFILE variant=%s %s cpu=%s %s", variant, table.kind, time.Duration(table.data[name]), name)
+		}
+	}
 }
 
 func TestPDW161Relationships(t *testing.T) {
@@ -157,6 +240,14 @@ func TestPDW161LabelOrder(t *testing.T) {
 					res := f.timed(6, size, verb+"_"+labels, query, params)
 					require.ElementsMatch(t, expected, res.Rows)
 					require.Zero(t, res.Stats.NodesCreated)
+					if verb == "MERGE" && labels == "PDIdentity:PDGraphNode" {
+						pdW161UseIndexedSecond.Store(true)
+						t.Cleanup(func() { pdW161UseIndexedSecond.Store(false) })
+						res = f.timed(6, size, "MERGE_unindexed_first_diagnostic_second_label_probe", query, params)
+						pdW161UseIndexedSecond.Store(false)
+						require.ElementsMatch(t, expected, res.Rows)
+						require.Zero(t, res.Stats.NodesCreated)
+					}
 				}
 			}
 		})
