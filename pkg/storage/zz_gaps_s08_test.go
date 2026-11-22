@@ -32,7 +32,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,7 +146,7 @@ func gapS08StartSampler(b *BadgerEngine, existing map[*badger.Txn]bool) *gapS08S
 				}
 			}
 			s.mu.Unlock()
-			runtime.Gosched()
+			time.Sleep(100 * time.Microsecond)
 		}
 	}()
 	return s
@@ -365,6 +364,19 @@ func gapS08Recover(ctx context.Context, t *testing.T, iter int, destination Engi
 		if sampler != nil {
 			sampled = sampler.finish()
 		}
+		if rerr == nil && entry.Operation == OpBufferedCommit {
+			deadline := time.Now().Add(10 * time.Second)
+			for log.inflight.Load() > 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			fmt.Printf("GAPS08 iter=%d OK entry seq=%d op=%v replay_us=%d pending_at_start=%d overlapping_applies=%d sampled_txns=%d\n",
+				iter, entry.Sequence, entry.Operation, t1.Sub(t0).Microseconds(), pending, log.overlapping(t0, t1), len(sampled))
+			n := 0
+			for txn, where := range sampled {
+				n++
+				fmt.Printf("GAPS08 iter=%d seq=%d OK replay-txn#%d registered_in=%s %s\n", iter, entry.Sequence, n, where, gapS08Explain(b, txn, log))
+			}
+		}
 		if rerr == nil {
 			result.Applied++
 		} else if errors.Is(rerr, ErrAlreadyExists) {
@@ -412,7 +424,7 @@ func TestGapS08ConflictKey(t *testing.T) {
 	root := filepath.Join("/work/tnrun/v152-upg", area)
 	_ = os.RemoveAll(root)
 	defer os.RemoveAll(root)
-	failed := 0
+	failed, plainFailed := 0, 0
 	ctx := context.Background()
 	for i := 0; i < n; i++ {
 		work := filepath.Join(root, strconv.Itoa(i))
@@ -428,6 +440,19 @@ func TestGapS08ConflictKey(t *testing.T) {
 		if len(snaps) == 0 {
 			t.Fatalf("no snapshot in %s", data)
 		}
+		plain, err := NewBadgerEngineWithOptions(gapS08Options(filepath.Join(work, "plain")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pres, perr := RecoverIntoEngine(ctx, plain, filepath.Join(data, "wal"), snaps[len(snaps)-1])
+		fmt.Printf("GAPS08 iter=%d PLAIN RecoverIntoEngine applied=%d skipped=%d failed=%d err=%v\n", i, pres.Applied, pres.Skipped, pres.Failed, perr)
+		for _, e := range pres.Errors {
+			fmt.Printf("GAPS08 iter=%d PLAIN error seq=%d op=%v err=%v\n", i, e.Sequence, e.Operation, e.Error)
+		}
+		if pres.Failed > 0 {
+			plainFailed++
+		}
+		_ = plain.Close()
 		fresh, err := NewBadgerEngineWithOptions(gapS08Options(filepath.Join(work, "fresh")))
 		if err != nil {
 			t.Fatal(err)
@@ -442,5 +467,5 @@ func TestGapS08ConflictKey(t *testing.T) {
 		_ = fresh.Close()
 		_ = os.RemoveAll(work)
 	}
-	fmt.Printf("GAPS08 SUMMARY iterations=%d failed=%d\n", n, failed)
+	fmt.Printf("GAPS08 SUMMARY iterations=%d instrumented_failed=%d plain_failed=%d\n", n, failed, plainFailed)
 }

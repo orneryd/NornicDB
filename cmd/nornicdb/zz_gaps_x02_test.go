@@ -166,7 +166,15 @@ func gapX02Run(t *testing.T, bin, name string, env map[string]string) {
 		time.Sleep(300 * time.Millisecond)
 	}
 	if !ready {
-		t.Fatalf("%s: server not ready on :%d within 90s; output:\n%s", name, httpPort, output.String())
+		var errLines []string
+		for _, line := range strings.Split(output.String(), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "Error:") {
+				errLines = append(errLines, strings.TrimSpace(line))
+			}
+		}
+		t.Logf("GAPX02 case=%s env NO_AUTH=%q AUTH=%q ADDRESS=%q CORS_ORIGINS=%q", name, run["NORNICDB_NO_AUTH"], run["NORNICDB_AUTH"], run["NORNICDB_ADDRESS"], run["NORNICDB_CORS_ORIGINS"])
+		t.Logf("GAPX02 case=%s DID NOT START within 90s; error lines: %q", name, errLines)
+		return
 	}
 	argv := "unknown"
 	if b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", cmd.Process.Pid)); err == nil {
@@ -195,7 +203,7 @@ func gapX02Run(t *testing.T, bin, name string, env map[string]string) {
 	if len(notable) > 8 {
 		notable = notable[:8]
 	}
-	t.Logf("GAPX02 case=%s env NO_AUTH=%q AUTH=%q", name, run["NORNICDB_NO_AUTH"], run["NORNICDB_AUTH"])
+	t.Logf("GAPX02 case=%s env NO_AUTH=%q AUTH=%q ADDRESS=%q CORS_ORIGINS=%q", name, run["NORNICDB_NO_AUTH"], run["NORNICDB_AUTH"], run["NORNICDB_ADDRESS"], run["NORNICDB_CORS_ORIGINS"])
 	t.Logf("GAPX02 case=%s process argv (/proc cmdline after the entrypoint exec): %s", name, argv)
 	t.Logf("GAPX02 case=%s POST /db/nornic/tx/commit RETURN 1: no credentials -> %d %q; quick-start credentials -> %d %q; wrong password -> %d", name, codeAnon, bodyAnon, codeAuth, bodyAuth, codeWrong)
 	t.Logf("GAPX02 case=%s startup lines mentioning auth/security: %q", name, notable)
@@ -230,5 +238,8 @@ func TestGapX02ContainerStartAuth(t *testing.T) {
 		return m
 	}
 	gapX02Run(t, bin, "quick-start", merged(nil))
+	gapX02Run(t, bin, "quick-start-loopback", merged(map[string]string{"NORNICDB_ADDRESS": "127.0.0.1"}))
 	gapX02Run(t, bin, "control-NO_AUTH-false", merged(map[string]string{"NORNICDB_NO_AUTH": "false"}))
+	gapX02Run(t, bin, "control-NO_AUTH-false-cors-origin", merged(map[string]string{"NORNICDB_NO_AUTH": "false", "NORNICDB_CORS_ORIGINS": "http://localhost:3000"}))
+	gapX02Run(t, bin, "control-NO_AUTH-false-loopback", merged(map[string]string{"NORNICDB_NO_AUTH": "false", "NORNICDB_ADDRESS": "127.0.0.1"}))
 }

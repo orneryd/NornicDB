@@ -13,6 +13,8 @@ package nornicdb
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +35,7 @@ func gapS08StartConfig() *Config {
 	cfg.Database.AllowStorageUpgrade = true
 	cfg.Database.AsyncWritesEnabled = true
 	cfg.Database.StrictDurability = false
+	cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	return cfg
 }
 
@@ -73,11 +76,12 @@ func TestGapS08DamagedV150AsyncStart(t *testing.T) {
 		}
 		start := time.Now()
 		db2, err := Open(data, gapS08StartConfig())
+		backups, _ := filepath.Glob(data + ".corrupted-*")
 		if err != nil {
 			refused++
-			fmt.Printf("GAPS08S iter=%d damaged-start REFUSED after %v err=%v\n", i, time.Since(start), err)
+			fmt.Printf("GAPS08S iter=%d damaged-start REFUSED after %v recovery_backups=%d err=%v\n", i, time.Since(start), len(backups), err)
 		} else {
-			fmt.Printf("GAPS08S iter=%d damaged-start ok after %v\n", i, time.Since(start))
+			fmt.Printf("GAPS08S iter=%d damaged-start ok after %v recovery_backups=%d\n", i, time.Since(start), len(backups))
 			_ = db2.Close()
 		}
 		_ = os.RemoveAll(work)
