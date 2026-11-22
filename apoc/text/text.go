@@ -12,8 +12,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Join joins a list of strings with a delimiter.
@@ -186,18 +189,20 @@ func SwapCase(text string) string {
 //	apoc.text.camelCase('hello world') => 'helloWorld'
 //	apoc.text.camelCase('hello_world') => 'helloWorld'
 func CamelCase(text string) string {
-	words := splitWords(text)
-	if len(words) == 0 {
-		return ""
+	words := strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !(r >= '0' && r <= '9') })
+	var out strings.Builder
+	for _, word := range words {
+		appendInitialCase(&out, cypherfn.LowerCaseText(word), unicode.ToTitle)
 	}
-
-	var result strings.Builder
-	result.WriteString(strings.ToLower(words[0]))
-	for i := 1; i < len(words); i++ {
-		// Name conversion retains its existing token titlecasing policy.
-		result.WriteString(strings.Title(strings.ToLower(words[i])))
+	result := out.String()
+	if result == "" {
+		return result
 	}
-	return result.String()
+	r, width := cyphertext.ReadCodepoint(result, 0)
+	if r > 0xffff {
+		return result
+	}
+	return cypherfn.LowerCaseText(result[:width]) + result[width:]
 }
 
 // SnakeCase converts text to snake_case.
@@ -219,22 +224,22 @@ func SnakeCase(text string) string {
 // Example:
 //
 //	apoc.text.upperCamelCase('hello world') => 'HelloWorld'
-func UpperCamelCase(text string) string {
-	words := splitWords(text)
-	var result strings.Builder
-	for _, word := range words {
-		result.WriteString(strings.Title(strings.ToLower(word)))
-	}
-	return result.String()
-}
+func UpperCamelCase(text string) string { return Capitalize(CamelCase(text)) }
 
-// Clean removes extra whitespace and trims.
-//
-// Example:
-//
-//	apoc.text.clean('  hello   world  ') => 'hello world'
+var cleanReplacements = strings.NewReplacer("Ä", "Ae", "Ü", "Ue", "Ö", "Oe", "ä", "ae", "ü", "ue", "ö", "oe", "ß", "ss")
+
+// Clean removes non-alphanumeric characters after APOC's umlaut substitutions
+// and canonical decomposition, then lowercases the remaining text.
+// For example, Clean("É a λ-42!") returns "eaλ42".
 func Clean(text string) string {
-	return strings.Join(strings.Fields(text), " ")
+	decomposed := norm.NFD.String(cleanReplacements.Replace(text))
+	var out strings.Builder
+	for _, r := range decomposed {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			out.WriteRune(r)
+		}
+	}
+	return cypherfn.LowerCaseText(out.String())
 }
 
 // Comparecleanstrings compares two strings after cleaning.
@@ -243,7 +248,7 @@ func Clean(text string) string {
 //
 //	apoc.text.compareCleaned('  Hello  ', 'hello') => true
 func CompareCleaned(text1, text2 string) bool {
-	return Clean(strings.ToLower(text1)) == Clean(strings.ToLower(text2))
+	return Clean(text1) == Clean(text2)
 }
 
 // Distance calculates Levenshtein distance between two strings.
@@ -533,51 +538,26 @@ func Rtrim(text string) string {
 	return strings.TrimRight(text, " \t\n\r")
 }
 
-// Urlencode encodes a string for use in URLs.
-//
-// Example:
-//
-//	apoc.text.urlencode('hello world') => 'hello+world'
-func Urlencode(text string) string {
-	return strings.ReplaceAll(text, " ", "+")
-}
-
-// Urldecode decodes a URL-encoded string.
-//
-// Example:
-//
-//	apoc.text.urldecode('hello+world') => 'hello world'
-func Urldecode(text string) string {
-	return strings.ReplaceAll(text, "+", " ")
-}
-
-// Base64Encode encodes a string to base64.
-//
-// Example:
-//
-//	apoc.text.base64Encode('hello') => 'aGVsbG8='
-func Base64Encode(text string) string {
-	// Note: In production, use encoding/base64
-	return text // Placeholder
-}
-
-// Base64Decode decodes a base64 string.
-//
-// Example:
-//
-//	apoc.text.base64Decode('aGVsbG8=') => 'hello'
-func Base64Decode(text string) string {
-	// Note: In production, use encoding/base64
-	return text // Placeholder
-}
-
 // IndexOf returns the index of the first occurrence of a substring.
 //
 // Example:
 //
 //	apoc.text.indexOf('hello world', 'world') => 6
 func IndexOf(text, substring string) int {
-	return strings.Index(text, substring)
+	at := strings.Index(text, substring)
+	if at < 0 {
+		return -1
+	}
+	units := 0
+	for pos := 0; pos < at; {
+		r, width := cyphertext.ReadCodepoint(text, pos)
+		units++
+		if r > 0xffff {
+			units++
+		}
+		pos += width
+	}
+	return units
 }
 
 // IndexesOf returns all indexes of a substring.

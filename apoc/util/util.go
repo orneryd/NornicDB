@@ -9,10 +9,13 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"fmt"
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math/rand"
+	"net/url"
 	"strings"
 	"time"
+
+	apoctext "github.com/orneryd/nornicdb/apoc/text"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Sleep pauses execution for a duration in milliseconds.
@@ -412,8 +415,7 @@ func DecompressWithAlgorithm(data []byte, algorithm string) string {
 //
 //	apoc.util.encodeBase64('hello') => 'aGVsbG8='
 func EncodeBase64(text string) string {
-	// Note: In production, use encoding/base64
-	return text // Placeholder
+	return apoctext.Base64Encode(text)
 }
 
 // DecodeBase64 decodes a base64 string.
@@ -422,17 +424,16 @@ func EncodeBase64(text string) string {
 //
 //	apoc.util.decodeBase64('aGVsbG8=') => 'hello'
 func DecodeBase64(encoded string) string {
-	// Note: In production, use encoding/base64
-	return encoded // Placeholder
+	return apoctext.Base64Decode(encoded)
 }
 
 // EncodeURL encodes a string for use in URLs.
 //
 // Example:
 //
-//	apoc.util.encodeURL('hello world') => 'hello+world'
+//	apoc.util.encodeURL('hello world') => 'hello%20world'
 func EncodeURL(text string) string {
-	return strings.ReplaceAll(text, " ", "+")
+	return strings.ReplaceAll(url.QueryEscape(text), "+", "%20")
 }
 
 // DecodeURL decodes a URL-encoded string.
@@ -441,7 +442,7 @@ func EncodeURL(text string) string {
 //
 //	apoc.util.decodeURL('hello+world') => 'hello world'
 func DecodeURL(encoded string) string {
-	return strings.ReplaceAll(encoded, "+", " ")
+	return apoctext.Urldecode(encoded)
 }
 
 // Now returns the current timestamp in milliseconds.

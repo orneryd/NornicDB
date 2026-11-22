@@ -1,0 +1,14 @@
+{
+  "nor282_reference_test.go": {
+    "sha256": "3984bdc526a61fe3145a81b59af972776a9368f1c6de7329b24a0ae8a7e60d30",
+    "archive": "~/.codex/artifacts/n152-68-20261121/checkpoint/evidence/testdata/nor282_reference_test.go"
+  },
+  "nor282_url_base64_test.go": {
+    "sha256": "63300760cc7cc297dc66647f757acd64d4fb1802a34f0f87995620a4cfc9335b",
+    "archive": "~/.codex/artifacts/n152-68-20261121/checkpoint/evidence/testdata/nor282_url_base64_test.go"
+  },
+  "apoc_text_nor282_public_test.go": {
+    "sha256": "2206351ba52ffc748146be96412bc57d7815f4ca78ab315188b894fa1b575d0f",
+    "archive": "~/.codex/artifacts/n152-68-20261121/checkpoint/evidence/testdata/apoc_text_nor282_public_test.go"
+  }
+}

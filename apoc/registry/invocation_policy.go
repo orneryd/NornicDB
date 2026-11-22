@@ -12,6 +12,13 @@ import (
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
+// CheckedTextFunction marks a registered text operation whose checked result
+// is admitted by the closed root APOC argument policy. The named signature
+// avoids also admitting unrelated string/error handlers such as XML functions.
+// Invocation and error transport still belong to Callable.
+// For example, register a decoder as CheckedTextFunction(decodeText).
+type CheckedTextFunction func(string) (string, error)
+
 // ArgumentPolicy preserves a consumer's accepted arguments without exposing a
 // second invoker. All policies bind into Callable.InvokeValues.
 type ArgumentPolicy uint8
@@ -38,6 +45,8 @@ const (
 // These are signature metadata, never invocable functions. Root APOC's
 // supported surface stays closed; Cypher preserves its text-to-number rules.
 var apocArgumentPlans = map[reflect.Type][]argumentBinding{
+	reflect.TypeOf(CheckedTextFunction(nil)):                                                    {stringArgument},
+	reflect.TypeOf((func(interface{}) (interface{}, error))(nil)):                               {declaredArgument},
 	reflect.TypeOf((func([]*apocexport.Node, []*apocexport.Relationship) (string, error))(nil)): {declaredArgument, declaredArgument},
 	reflect.TypeOf((func([]interface{}) float64)(nil)):                                          {listArgument},
 	reflect.TypeOf((func([]interface{}) interface{})(nil)):                                      {listArgument},
