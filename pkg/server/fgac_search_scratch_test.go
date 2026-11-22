@@ -1100,10 +1100,24 @@ func (env *fsEnv) toState(state string) {
 // unique-constraint lookup that decides finding 1.
 func (env *fsEnv) settle(state string) {
 	if fsEmbedded {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		code, _, body := env.http.do(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true&database="+fsDB, env.admin, nil)
+		env.t.Logf("DIAG [%s] embed trigger: %d %.300s", state, code, body)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		err := env.server.db.WaitForEmbeddings(ctx)
 		cancel()
-		env.t.Logf("DIAG [%s] embeddings settled: err=%v pending=%d", state, err, env.server.db.PendingEmbeddingsCount())
+		store, _ := env.server.dbManager.GetStorage(fsDB)
+		count := 0
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if svc, svcErr := env.server.db.GetOrCreateSearchService(fsDB, store); svcErr == nil {
+				count = svc.EmbeddingCount()
+			}
+			if count >= 5 {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		env.t.Logf("DIAG [%s] embeddings settled: err=%v pending=%d searchEmbeddingCount=%d", state, err, env.server.db.PendingEmbeddingsCount(), count)
 		_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
 	}
 	store, err := env.server.dbManager.GetStorage(fsDB)
@@ -1122,8 +1136,12 @@ func (env *fsEnv) settle(state string) {
 	}
 	if fsEmbedded {
 		if store != nil {
-			nodes, _ := store.GetNodesByLabel(context.Background(), "Person")
-			for _, node := range nodes {
+			listed, _ := store.GetNodesByLabel(context.Background(), "Person")
+			for _, item := range listed {
+				node, err := store.GetNode(context.Background(), item.ID)
+				if err != nil {
+					continue
+				}
 				probe := &fsHashEmbedder{dims: 1024}
 				hiddenTerm, _ := probe.Embed(context.Background(), "zqxkeyword")
 				visibleTerm, _ := probe.Embed(context.Background(), "alpha")
