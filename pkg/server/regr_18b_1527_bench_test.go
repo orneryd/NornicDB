@@ -52,7 +52,7 @@ type regrEnv struct {
 	basic  string
 }
 
-func regrStart(b *testing.B) *regrEnv {
+func regrStart(b testing.TB) *regrEnv {
 	b.Helper()
 	s, authenticator := setupTestServerWithDatabaseConfig(b, func(c *nornicdb.Config) {
 		// The application's deployment settings that bear on these paths.
@@ -128,7 +128,7 @@ var regrSchema = []string{
 	"CREATE INDEX pd_owed_since IF NOT EXISTS FOR (n:PDOwed) ON (n.since)",
 }
 
-func (e *regrEnv) setup(b *testing.B, statements ...string) {
+func (e *regrEnv) setup(b testing.TB, statements ...string) {
 	b.Helper()
 	for _, statement := range statements {
 		if _, err := e.boltAuto(context.Background(), statement, nil); err != nil {
@@ -137,7 +137,7 @@ func (e *regrEnv) setup(b *testing.B, statements ...string) {
 	}
 }
 
-func (e *regrEnv) fill(b *testing.B, count int, statement string) {
+func (e *regrEnv) fill(b testing.TB, count int, statement string) {
 	b.Helper()
 	for from := 0; from < count; from += 2000 {
 		to := min(from+2000, count) - 1
