@@ -1,0 +1,94 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestEncodeNodeV1Body_LargeEmbeddingsAreExternalized
+--- PASS: TestEncodeNodeV1Body_LargeEmbeddingsAreExternalized (0.00s)
+=== RUN   TestEncodeNodeV1Body_PreservesExistingChunkCount
+--- PASS: TestEncodeNodeV1Body_PreservesExistingChunkCount (0.00s)
+=== RUN   TestTransactionNodeUpdateChunkPersistence
+=== RUN   TestTransactionNodeUpdateChunkPersistence/grow/rollback=false
+=== RUN   TestTransactionNodeUpdateChunkPersistence/grow/rollback=true
+=== RUN   TestTransactionNodeUpdateChunkPersistence/shrink/rollback=false
+=== RUN   TestTransactionNodeUpdateChunkPersistence/shrink/rollback=true
+=== RUN   TestTransactionNodeUpdateChunkPersistence/invalidate/rollback=false
+=== RUN   TestTransactionNodeUpdateChunkPersistence/invalidate/rollback=true
+--- PASS: TestTransactionNodeUpdateChunkPersistence (0.49s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/grow/rollback=false (0.09s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/grow/rollback=true (0.09s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/shrink/rollback=false (0.08s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/shrink/rollback=true (0.07s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/invalidate/rollback=false (0.09s)
+    --- PASS: TestTransactionNodeUpdateChunkPersistence/invalidate/rollback=true (0.08s)
+=== RUN   TestEmbeddingChunkDecodesReuseOnlyIdenticalValues
+--- PASS: TestEmbeddingChunkDecodesReuseOnlyIdenticalValues (0.00s)
+=== RUN   TestEmbeddingChunkDecodesStayBounded
+--- PASS: TestEmbeddingChunkDecodesStayBounded (0.02s)
+=== RUN   TestEmbeddingChunkDecodesKeepNoChunkKey
+--- PASS: TestEmbeddingChunkDecodesKeepNoChunkKey (0.10s)
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/small_inline
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/values_equal_to_the_limit,_metadata_nil
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/one_value_over_the_limit,_metadata_nil
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/far_over_the_limit,_metadata_without_chunk_count
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/far_over_the_limit,_metadata_with_chunk_count,_named_vectors
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/text_just_under_the_limit,_few_values
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/text_just_over_the_limit,_few_values
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/text_over_the_limit,_no_vectors
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/metadata_that_cannot_be_encoded,_far_over_the_limit
+=== RUN   TestEncodeNodeInTxnMatchesMeasuredEncoding/metadata_that_cannot_be_encoded,_inline
+--- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding (0.02s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/small_inline (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/values_equal_to_the_limit,_metadata_nil (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/one_value_over_the_limit,_metadata_nil (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/far_over_the_limit,_metadata_without_chunk_count (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/far_over_the_limit,_metadata_with_chunk_count,_named_vectors (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/text_just_under_the_limit,_few_values (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/text_just_over_the_limit,_few_values (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/text_over_the_limit,_no_vectors (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/metadata_that_cannot_be_encoded,_far_over_the_limit (0.00s)
+    --- PASS: TestEncodeNodeInTxnMatchesMeasuredEncoding/metadata_that_cannot_be_encoded,_inline (0.00s)
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/direct_CreateNode
+    embedding_encode_metadata_ownership_test.go:71: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/BulkCreateNodes
+    embedding_encode_metadata_ownership_test.go:79: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/explicit_transaction_CreateNode
+    embedding_encode_metadata_ownership_test.go:92: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_CreateNode
+    embedding_encode_metadata_ownership_test.go:102: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_UpdateNode
+    embedding_encode_metadata_ownership_test.go:117: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_node_inside_the_inline_limit
+    embedding_encode_metadata_ownership_test.go:138: stored inline: chunks=3, no stored chunk_count
+--- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned (0.04s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/direct_CreateNode (0.01s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/BulkCreateNodes (0.01s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/explicit_transaction_CreateNode (0.01s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_CreateNode (0.01s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_UpdateNode (0.01s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_node_inside_the_inline_limit (0.00s)
+=== RUN   TestMigrateV1ToV2_RewritesAllNodes
+--- PASS: TestMigrateV1ToV2_RewritesAllNodes (0.06s)
+=== RUN   TestMigrateV1ToV2_RewritesAllEdges
+--- PASS: TestMigrateV1ToV2_RewritesAllEdges (0.05s)
+=== RUN   TestMigrateV1ToV2_PreservesPropertiesRoundTrip
+--- PASS: TestMigrateV1ToV2_PreservesPropertiesRoundTrip (0.05s)
+=== RUN   TestMigrateV1ToV2_Idempotent
+--- PASS: TestMigrateV1ToV2_Idempotent (0.05s)
+=== RUN   TestMigrateV1ToV2_HandlesPreCompactGobEdges
+--- PASS: TestMigrateV1ToV2_HandlesPreCompactGobEdges (0.05s)
+=== RUN   TestMigrateV1ToV2_RejectsNodeMissingNamespace
+--- PASS: TestMigrateV1ToV2_RejectsNodeMissingNamespace (0.05s)
+=== RUN   TestMigrateV1ToV2_RejectsCorruptNodeBody
+--- PASS: TestMigrateV1ToV2_RejectsCorruptNodeBody (0.05s)
+=== RUN   TestMigrateV1ToV2_RejectsEmptyEdgeBody
+--- PASS: TestMigrateV1ToV2_RejectsEmptyEdgeBody (0.06s)
+=== RUN   TestMigrateV1ToV2_VersionBumpIsLastWrite
+--- PASS: TestMigrateV1ToV2_VersionBumpIsLastWrite (0.06s)
+=== RUN   TestMigrateV1ToV2_ResumableAfterPartialPass
+--- PASS: TestMigrateV1ToV2_ResumableAfterPartialPass (0.07s)
+=== RUN   TestMigrateV1ToV2_BatchIteratesPastBoundary
+--- PASS: TestMigrateV1ToV2_BatchIteratesPastBoundary (0.14s)
+=== RUN   TestPropertyUpdateKeepsUnchangedSidecarRecords
+--- PASS: TestPropertyUpdateKeepsUnchangedSidecarRecords (0.16s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	2.686s

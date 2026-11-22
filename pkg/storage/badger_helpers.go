@@ -4,6 +4,7 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -1063,10 +1064,13 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		metadata.EmbeddingsStoredSeparately = true
 		bodyCopy.SetRuntimeMetadata(metadata)
 	}
-	if bodyCopy.EmbedMeta == nil {
-		bodyCopy.EmbedMeta = make(map[string]any)
-	}
 	if _, hasChunkCount := bodyCopy.EmbedMeta["chunk_count"]; !hasChunkCount {
+		// The shallow body copy still shares caller metadata. Only this new
+		// entry belongs to the encoded body; existing values remain read-only.
+		bodyCopy.EmbedMeta = maps.Clone(bodyCopy.EmbedMeta)
+		if bodyCopy.EmbedMeta == nil {
+			bodyCopy.EmbedMeta = make(map[string]any)
+		}
 		bodyCopy.EmbedMeta["chunk_count"] = chunkCount
 	}
 
