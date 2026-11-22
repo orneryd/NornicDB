@@ -1672,8 +1672,8 @@
     },
     {
       "path": "user-guides/change-data-capture.md",
-      "sha256": "fc8e6ca6d368c3ba82c5ea554d2f5acb297c216b7b568186c127435acb8284da",
-      "bytes": 8253
+      "sha256": "b8670a70932f23def65ea7dc8aa39ffcef547c2ad96d04fa780acce1c2cbc098",
+      "bytes": 8533
     },
     {
       "path": "user-guides/clustering.md",
