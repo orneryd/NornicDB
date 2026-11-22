@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestNOR280PublicCSVLabelRoundTrip(t *testing.T) {
+func TestN15220NOR280PublicCSVLabelRoundTrip(t *testing.T) {
 	for _, subject := range []struct {
 		name          string
 		labels        []string

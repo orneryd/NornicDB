@@ -32,34 +32,34 @@ import (
 )
 
 const (
-	nor302ProbePluginName  = "nor302probe"
-	nor302ProbeAction      = "heimdall_" + nor302ProbePluginName + "_memory_write"
-	nor302ProbeActionReply = "NOR-302 probe action reply"
-	nor302ProbeFailure     = "nor302 injected session memory write failure"
+	n15226nor302ProbePluginName  = "n15226nor302probe"
+	n15226nor302ProbeAction      = "heimdall_" + n15226nor302ProbePluginName + "_memory_write"
+	n15226nor302ProbeActionReply = "NOR-302 probe action reply"
+	n15226nor302ProbeFailure     = "n15226nor302 injected session memory write failure"
 )
 
-var errNOR302ProbeMemory = errors.New(nor302ProbeFailure)
+var errNOR302ProbeMemory = errors.New(n15226nor302ProbeFailure)
 
-// nor302MemoryFailingRouter is the public DatabaseRouter the probe hook writes
+// n15226nor302MemoryFailingRouter is the public DatabaseRouter the probe hook writes
 // through. Every session-memory write fails, as it would against a refusing or
 // unhealthy database.
-type nor302MemoryFailingRouter struct {
+type n15226nor302MemoryFailingRouter struct {
 	mu      sync.Mutex
 	queries []string
 }
 
-func (r *nor302MemoryFailingRouter) DefaultDatabaseName() string { return "default" }
+func (r *n15226nor302MemoryFailingRouter) DefaultDatabaseName() string { return "default" }
 
-func (r *nor302MemoryFailingRouter) ResolveDatabase(nameOrAlias string) (string, error) {
+func (r *n15226nor302MemoryFailingRouter) ResolveDatabase(nameOrAlias string) (string, error) {
 	if nameOrAlias == "" {
 		return "default", nil
 	}
 	return nameOrAlias, nil
 }
 
-func (r *nor302MemoryFailingRouter) ListDatabases() []string { return []string{"default"} }
+func (r *n15226nor302MemoryFailingRouter) ListDatabases() []string { return []string{"default"} }
 
-func (r *nor302MemoryFailingRouter) Query(_ context.Context, _ string, cypher string, _ map[string]interface{}) ([]map[string]interface{}, error) {
+func (r *n15226nor302MemoryFailingRouter) Query(_ context.Context, _ string, cypher string, _ map[string]interface{}) ([]map[string]interface{}, error) {
 	r.mu.Lock()
 	r.queries = append(r.queries, cypher)
 	r.mu.Unlock()
@@ -69,20 +69,20 @@ func (r *nor302MemoryFailingRouter) Query(_ context.Context, _ string, cypher st
 	return nil, nil
 }
 
-func (r *nor302MemoryFailingRouter) Stats(context.Context, string) (DatabaseStats, error) {
+func (r *n15226nor302MemoryFailingRouter) Stats(context.Context, string) (DatabaseStats, error) {
 	return DatabaseStats{}, nil
 }
 
-func (r *nor302MemoryFailingRouter) Discover(context.Context, string, string, []string, int, int) (*DiscoverResult, error) {
+func (r *n15226nor302MemoryFailingRouter) Discover(context.Context, string, string, []string, int, int) (*DiscoverResult, error) {
 	return &DiscoverResult{}, nil
 }
 
-// nor302ProbePlugin persists session memory in PostExecute, as the reported
+// n15226nor302ProbePlugin persists session memory in PostExecute, as the reported
 // coding plugin does, and queues the failure notice the ticket requires. The
 // hook is gated so a test can observe the handler's notification drain without
 // racing the worker pool.
-type nor302ProbePlugin struct {
-	router *nor302MemoryFailingRouter
+type n15226nor302ProbePlugin struct {
+	router *n15226nor302MemoryFailingRouter
 
 	started  chan struct{}
 	release  chan struct{}
@@ -95,9 +95,9 @@ type nor302ProbePlugin struct {
 	status   SubsystemStatus
 }
 
-func newNOR302ProbePlugin() *nor302ProbePlugin {
-	return &nor302ProbePlugin{
-		router:   &nor302MemoryFailingRouter{},
+func newNOR302ProbePlugin() *n15226nor302ProbePlugin {
+	return &n15226nor302ProbePlugin{
+		router:   &n15226nor302MemoryFailingRouter{},
 		started:  make(chan struct{}),
 		release:  make(chan struct{}),
 		finished: make(chan struct{}),
@@ -105,12 +105,12 @@ func newNOR302ProbePlugin() *nor302ProbePlugin {
 	}
 }
 
-func (p *nor302ProbePlugin) Name() string        { return nor302ProbePluginName }
-func (p *nor302ProbePlugin) Version() string     { return "1.0.0" }
-func (p *nor302ProbePlugin) Type() string        { return PluginTypeHeimdall }
-func (p *nor302ProbePlugin) Description() string { return "NOR-302 post-execute notification probe" }
+func (p *n15226nor302ProbePlugin) Name() string        { return n15226nor302ProbePluginName }
+func (p *n15226nor302ProbePlugin) Version() string     { return "1.0.0" }
+func (p *n15226nor302ProbePlugin) Type() string        { return PluginTypeHeimdall }
+func (p *n15226nor302ProbePlugin) Description() string { return "NOR-302 post-execute notification probe" }
 
-func (p *nor302ProbePlugin) Initialize(ctx SubsystemContext) error {
+func (p *n15226nor302ProbePlugin) Initialize(ctx SubsystemContext) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.database = ctx.Database
@@ -118,63 +118,63 @@ func (p *nor302ProbePlugin) Initialize(ctx SubsystemContext) error {
 	return nil
 }
 
-func (p *nor302ProbePlugin) Start() error {
+func (p *n15226nor302ProbePlugin) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.status = StatusRunning
 	return nil
 }
 
-func (p *nor302ProbePlugin) Stop() error {
+func (p *n15226nor302ProbePlugin) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.status = StatusStopped
 	return nil
 }
 
-func (p *nor302ProbePlugin) Shutdown() error { return nil }
+func (p *n15226nor302ProbePlugin) Shutdown() error { return nil }
 
-func (p *nor302ProbePlugin) Status() SubsystemStatus {
+func (p *n15226nor302ProbePlugin) Status() SubsystemStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.status
 }
 
-func (p *nor302ProbePlugin) Health() SubsystemHealth {
+func (p *n15226nor302ProbePlugin) Health() SubsystemHealth {
 	return SubsystemHealth{Status: p.Status(), Healthy: true, LastCheck: time.Now()}
 }
 
-func (p *nor302ProbePlugin) Metrics() map[string]interface{} { return map[string]interface{}{} }
+func (p *n15226nor302ProbePlugin) Metrics() map[string]interface{} { return map[string]interface{}{} }
 
-func (p *nor302ProbePlugin) Config() map[string]interface{} {
+func (p *n15226nor302ProbePlugin) Config() map[string]interface{} {
 	return map[string]interface{}{"summary_scope": "coding_session"}
 }
 
-func (p *nor302ProbePlugin) Configure(map[string]interface{}) error { return nil }
+func (p *n15226nor302ProbePlugin) Configure(map[string]interface{}) error { return nil }
 
-func (p *nor302ProbePlugin) ConfigSchema() map[string]interface{} {
+func (p *n15226nor302ProbePlugin) ConfigSchema() map[string]interface{} {
 	return map[string]interface{}{"type": "object"}
 }
 
-func (p *nor302ProbePlugin) Actions() map[string]ActionFunc {
+func (p *n15226nor302ProbePlugin) Actions() map[string]ActionFunc {
 	return map[string]ActionFunc{
 		"memory_write": {
 			Description: "Record the probe action result",
 			Category:    "coding",
 			Handler: func(ActionContext) (*ActionResult, error) {
-				return &ActionResult{Success: true, Message: nor302ProbeActionReply}, nil
+				return &ActionResult{Success: true, Message: n15226nor302ProbeActionReply}, nil
 			},
 		},
 	}
 }
 
-func (p *nor302ProbePlugin) Summary() string { return "NOR-302 post-execute notification probe" }
+func (p *n15226nor302ProbePlugin) Summary() string { return "NOR-302 post-execute notification probe" }
 
-func (p *nor302ProbePlugin) RecentEvents(int) []SubsystemEvent { return nil }
+func (p *n15226nor302ProbePlugin) RecentEvents(int) []SubsystemEvent { return nil }
 
 // PostExecute performs the late session-memory write. Its outcome is reported
 // through the existing post-execute notification queue.
-func (p *nor302ProbePlugin) PostExecute(ctx *PostExecuteContext) {
+func (p *n15226nor302ProbePlugin) PostExecute(ctx *PostExecuteContext) {
 	p.startOne.Do(func() { close(p.started) })
 	<-p.release
 
@@ -203,7 +203,7 @@ func (p *nor302ProbePlugin) PostExecute(ctx *PostExecuteContext) {
 	close(p.finished)
 }
 
-func (p *nor302ProbePlugin) waitStarted(t *testing.T) {
+func (p *n15226nor302ProbePlugin) waitStarted(t *testing.T) {
 	t.Helper()
 	select {
 	case <-p.started:
@@ -212,11 +212,11 @@ func (p *nor302ProbePlugin) waitStarted(t *testing.T) {
 	}
 }
 
-func (p *nor302ProbePlugin) releaseHook() {
+func (p *n15226nor302ProbePlugin) releaseHook() {
 	p.relOne.Do(func() { close(p.release) })
 }
 
-func (p *nor302ProbePlugin) waitFinished(t *testing.T) {
+func (p *n15226nor302ProbePlugin) waitFinished(t *testing.T) {
 	t.Helper()
 	select {
 	case <-p.finished:
@@ -227,7 +227,7 @@ func (p *nor302ProbePlugin) waitFinished(t *testing.T) {
 
 // newNOR302Probe registers the probe plugin for one parser run and owns the
 // hook's async work: the cleanup always releases and joins it.
-func newNOR302Probe(t *testing.T) *nor302ProbePlugin {
+func newNOR302Probe(t *testing.T) *n15226nor302ProbePlugin {
 	t.Helper()
 	ResetSubsystemManagerForTests()
 	t.Cleanup(ResetSubsystemManagerForTests)
@@ -265,7 +265,7 @@ func serveNOR302PromptParser(t *testing.T) *httptest.ResponseRecorder {
 	t.Helper()
 	generator := NewMockGenerator("/test/model.gguf")
 	generator.streamFunc = func(_ context.Context, _ string, _ GenerateParams, callback func(string) error) error {
-		return callback(`{"action": "` + nor302ProbeAction + `", "params": {}}`)
+		return callback(`{"action": "` + n15226nor302ProbeAction + `", "params": {}}`)
 	}
 	manager := newTestManager(generator)
 	require.False(t, manager.SupportsTools(), "the prompt parser serves providers without native tool calls")
@@ -285,7 +285,7 @@ func serveNOR302NativeToolParser(t *testing.T) *httptest.ResponseRecorder {
 						"tool_calls": []map[string]interface{}{{
 							"id":       "call_1",
 							"type":     "function",
-							"function": map[string]interface{}{"name": nor302ProbeAction, "arguments": "{}"},
+							"function": map[string]interface{}{"name": n15226nor302ProbeAction, "arguments": "{}"},
 						}},
 					},
 					"finish_reason": "tool_calls",
@@ -309,16 +309,16 @@ func serveNOR302NativeToolParser(t *testing.T) *httptest.ResponseRecorder {
 	return serveNOR302Chat(t, NewHandler(manager, manager.config, &mockDBRouter{}, &mockMetricsReader{}), "test")
 }
 
-// TestNOR302PostExecuteFailureNoticeReachesBothParsers asserts acceptance
+// TestN15226NOR302PostExecuteFailureNoticeReachesBothParsers asserts acceptance
 // criterion 2 for both model-response parsers: the original successful action
 // outcome is unchanged and the separate memory-not-saved notice is delivered.
-func TestNOR302PostExecuteFailureNoticeReachesBothParsers(t *testing.T) {
+func TestN15226NOR302PostExecuteFailureNoticeReachesBothParsers(t *testing.T) {
 	cases := []struct {
 		name      string
 		serve     func(*testing.T) *httptest.ResponseRecorder
 		wantReply string
 	}{
-		{name: "json action envelope parser", serve: serveNOR302PromptParser, wantReply: nor302ProbeActionReply},
+		{name: "json action envelope parser", serve: serveNOR302PromptParser, wantReply: n15226nor302ProbeActionReply},
 		{name: "native tool-call parser", serve: serveNOR302NativeToolParser, wantReply: "probe answer"},
 	}
 
@@ -337,7 +337,7 @@ func TestNOR302PostExecuteFailureNoticeReachesBothParsers(t *testing.T) {
 			// The hook's own outcome must reach the same reply.
 			if assert.Contains(t, body, "Session memory was not saved",
 				"AC-2: the post-execute notification path must deliver the separate memory-not-saved failure notice") {
-				assert.Contains(t, body, nor302ProbeFailure,
+				assert.Contains(t, body, n15226nor302ProbeFailure,
 					"the delivered notice must carry the actual persistence failure, not only a generic line")
 			}
 

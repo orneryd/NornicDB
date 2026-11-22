@@ -15,50 +15,50 @@ import (
 )
 
 const (
-	nor309Query            = "nor309"
-	nor309FirstHit         = storage.NodeID("nor309-a")
-	nor309SecondHit        = storage.NodeID("nor309-b")
-	nor309InjectedProperty = "injected_by_caller"
-	nor309Database         = "session"
+	n15274nor309Query            = "n15274nor309"
+	n15274nor309FirstHit         = storage.NodeID("n15274nor309-a")
+	n15274nor309SecondHit        = storage.NodeID("n15274nor309-b")
+	n15274nor309InjectedProperty = "injected_by_caller"
+	n15274nor309Database         = "session"
 )
 
-// batchlessEngine hides the embedding-free batch reader that the wrapped engine
+// n15274BatchlessEngine hides the embedding-free batch reader that the wrapped engine
 // forwards, so a search hit is read one id at a time: the branch an embedded
 // engine without that optional capability takes.
-type batchlessEngine struct{ storage.Engine }
+type n15274BatchlessEngine struct{ storage.Engine }
 
-// nor309Store is the supported embedded fixture: two stored hits whose labels
+// n15274nor309Store is the supported embedded fixture: two stored hits whose labels
 // and supported nested property values are what a delivery must detach, the
 // engine the search reads them from, and the search service retaining the hits.
-type nor309Store struct {
+type n15274nor309Store struct {
 	engine  storage.Engine
 	service *Service
 }
 
-func newNOR309Store(t *testing.T, wrap func(storage.Engine) storage.Engine) *nor309Store {
+func newNOR309Store(t *testing.T, wrap func(storage.Engine) storage.Engine) *n15274nor309Store {
 	t.Helper()
 	engine := newNamespacedEngine(t)
 	if wrap != nil {
 		engine = wrap(engine)
 	}
 	for _, node := range []*storage.Node{
-		nor309Node(nor309FirstHit, "nor309 anchored nor309"),
-		nor309Node(nor309SecondHit, "nor309 secondary"),
+		n15274nor309Node(n15274nor309FirstHit, "n15274nor309 anchored n15274nor309"),
+		n15274nor309Node(n15274nor309SecondHit, "n15274nor309 secondary"),
 	} {
 		_, err := engine.CreateNode(t.Context(), node)
 		require.NoError(t, err)
 	}
 	service := NewService(engine, DefaultVectorDimensions, nil)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	for _, id := range []storage.NodeID{nor309FirstHit, nor309SecondHit} {
+	for _, id := range []storage.NodeID{n15274nor309FirstHit, n15274nor309SecondHit} {
 		indexed, err := engine.GetNode(t.Context(), id)
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(indexed))
 	}
-	return &nor309Store{engine: engine, service: service}
+	return &n15274nor309Store{engine: engine, service: service}
 }
 
-func nor309Node(id storage.NodeID, content string) *storage.Node {
+func n15274nor309Node(id storage.NodeID, content string) *storage.Node {
 	return &storage.Node{
 		ID:     id,
 		Labels: []string{"Document"},
@@ -70,16 +70,16 @@ func nor309Node(id storage.NodeID, content string) *storage.Node {
 	}
 }
 
-func nor309SearchOptions(selection []string) *SearchOptions {
+func n15274nor309SearchOptions(selection []string) *SearchOptions {
 	options := DefaultSearchOptions()
 	options.Limit = 5
 	options.IncludeProperties = selection
 	return options
 }
 
-// nor309DeliveryExpectation is what a stored hit's delivery must keep, read back
+// n15274nor309DeliveryExpectation is what a stored hit's delivery must keep, read back
 // through the engine so the expectation is the value that was actually stored.
-type nor309DeliveryExpectation struct {
+type n15274nor309DeliveryExpectation struct {
 	labels     []string
 	properties map[string]any
 	created    time.Time
@@ -88,9 +88,9 @@ type nor309DeliveryExpectation struct {
 	database   string
 }
 
-// nor309StoredHit reads the stored value of id. A non-nil selection keeps only
+// n15274nor309StoredHit reads the stored value of id. A non-nil selection keeps only
 // the projected property keys a caller asked for.
-func nor309StoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, selection []string) nor309DeliveryExpectation {
+func n15274nor309StoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, selection []string) n15274nor309DeliveryExpectation {
 	t.Helper()
 	stored, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func nor309StoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, sel
 		}
 		properties = projected
 	}
-	return nor309DeliveryExpectation{
+	return n15274nor309DeliveryExpectation{
 		labels:     slices.Clone(stored.Labels),
 		properties: properties,
 		created:    stored.CreatedAt,
@@ -113,9 +113,9 @@ func nor309StoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, sel
 	}
 }
 
-// nor309ResultValue is the value and order a search response must keep while a
+// n15274nor309ResultValue is the value and order a search response must keep while a
 // caller works with one of its deliveries.
-type nor309ResultValue struct {
+type n15274nor309ResultValue struct {
 	ID             string
 	NodeID         string
 	Labels         []string
@@ -129,14 +129,14 @@ type nor309ResultValue struct {
 	RRFScore       float64
 }
 
-func nor309ResultValues(results []SearchResult) []nor309ResultValue {
-	values := make([]nor309ResultValue, len(results))
+func n15274nor309ResultValues(results []SearchResult) []n15274nor309ResultValue {
+	values := make([]n15274nor309ResultValue, len(results))
 	for index, result := range results {
 		var properties map[string]any
 		if result.Properties != nil {
 			properties, _ = storage.CopyValue(result.Properties, nil).(map[string]any)
 		}
-		values[index] = nor309ResultValue{
+		values[index] = n15274nor309ResultValue{
 			ID:             result.ID,
 			NodeID:         string(result.NodeID),
 			Labels:         slices.Clone(result.Labels),
@@ -153,10 +153,10 @@ func nor309ResultValues(results []SearchResult) []nor309ResultValue {
 	return values
 }
 
-// nor309MutateDelivery changes what the caller owns after delivery: the label
+// n15274nor309MutateDelivery changes what the caller owns after delivery: the label
 // list, a supported nested property map, a supported nested property list and a
 // new top-level property.
-func nor309MutateDelivery(t *testing.T, delivered *storage.Node) {
+func n15274nor309MutateDelivery(t *testing.T, delivered *storage.Node) {
 	t.Helper()
 	require.NotEmpty(t, delivered.Labels, "the delivery carries the hit's label list")
 	delivered.Labels[0] = "Mutated"
@@ -172,14 +172,14 @@ func nor309MutateDelivery(t *testing.T, delivered *storage.Node) {
 	default:
 		t.Fatalf("the delivery carries its supported nested property list, got %T", delivered.Properties["tags"])
 	}
-	delivered.Properties[nor309InjectedProperty] = "caller"
+	delivered.Properties[n15274nor309InjectedProperty] = "caller"
 }
 
-// nor309RequireDetachedDelivery proves one hit's delivery contract: a repeated
+// n15274nor309RequireDetachedDelivery proves one hit's delivery contract: a repeated
 // delivery of the same hit and the hit retained in the results keep the value
 // that was read after the caller changed the first delivery, every field the
 // holder writes explicitly is still written, and storage is untouched.
-func nor309RequireDetachedDelivery(t *testing.T, engine storage.Engine, results []SearchResult, id storage.NodeID, want nor309DeliveryExpectation) {
+func n15274nor309RequireDetachedDelivery(t *testing.T, engine storage.Engine, results []SearchResult, id storage.NodeID, want n15274nor309DeliveryExpectation) {
 	t.Helper()
 	position := -1
 	for index := range results {
@@ -189,7 +189,7 @@ func nor309RequireDetachedDelivery(t *testing.T, engine storage.Engine, results 
 		}
 	}
 	require.NotEqual(t, -1, position, "the results hold the fixture hit")
-	before := nor309ResultValues(results)
+	before := n15274nor309ResultValues(results)
 	retained := results[position]
 
 	first := retained.MaterializedNode()
@@ -199,16 +199,16 @@ func nor309RequireDetachedDelivery(t *testing.T, engine storage.Engine, results 
 	require.Equal(t, id, first.ID, "the delivery carries the hit's node id")
 	require.True(t, first.CreatedAt.Equal(want.created), "the delivery carries the read's creation time")
 	require.True(t, first.UpdatedAt.Equal(want.updated), "the delivery carries the read's update time")
-	nor309MutateDelivery(t, first)
+	n15274nor309MutateDelivery(t, first)
 
-	second := retained.MaterializedNode(nor309Database)
+	second := retained.MaterializedNode(n15274nor309Database)
 	// The caller-visible leaks of this reproduction are asserted independently so
 	// one run reports all of them: labels, supported nested property values, a new
 	// top-level property, and the retained response the caller is still holding.
 	assert.Equal(t, want.labels, second.Labels, "a repeated delivery must not observe the caller's label change")
 	assert.Equal(t, want.properties, second.Properties, "a repeated delivery must not observe the caller's nested property change")
-	assert.NotContains(t, second.Properties, nor309InjectedProperty, "a repeated delivery must not observe the caller's new property")
-	assert.Equal(t, before, nor309ResultValues(results), "materializing a hit changed the retained results or their order")
+	assert.NotContains(t, second.Properties, n15274nor309InjectedProperty, "a repeated delivery must not observe the caller's new property")
+	assert.Equal(t, before, n15274nor309ResultValues(results), "materializing a hit changed the retained results or their order")
 
 	require.Equal(t, id, second.ID, "every delivery writes the hit's node id")
 	require.Nil(t, second.ChunkEmbeddings, "managed vectors stay in storage")
@@ -218,13 +218,13 @@ func nor309RequireDetachedDelivery(t *testing.T, engine storage.Engine, results 
 	require.Equal(t, want.embedMeta, second.EmbedMeta, "every delivery keeps the read's embedding metadata")
 	provenance := want.database
 	if provenance == "" {
-		provenance = nor309Database
+		provenance = n15274nor309Database
 	}
 	require.Equal(t, provenance, second.RuntimeMetadata().Database, "a database context supplies provenance only when the hit has none")
-	nor309RequireStoredHit(t, engine, id, want)
+	n15274nor309RequireStoredHit(t, engine, id, want)
 }
 
-func nor309RequireStoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, want nor309DeliveryExpectation) {
+func n15274nor309RequireStoredHit(t *testing.T, engine storage.Engine, id storage.NodeID, want n15274nor309DeliveryExpectation) {
 	t.Helper()
 	stored, err := engine.GetNode(t.Context(), id)
 	require.NoError(t, err)
@@ -232,38 +232,38 @@ func nor309RequireStoredHit(t *testing.T, engine storage.Engine, id storage.Node
 	for property, value := range want.properties {
 		require.Equal(t, value, stored.Properties[property], "the stored property %q is unchanged", property)
 	}
-	require.NotContains(t, stored.Properties, nor309InjectedProperty, "the caller's new property never reaches storage")
+	require.NotContains(t, stored.Properties, n15274nor309InjectedProperty, "the caller's new property never reaches storage")
 }
 
 func TestSearchMaterializedNodeRepeatedDeliveryIsDetached(t *testing.T) {
 	t.Run("public hit over the storage batch read", func(t *testing.T) {
 		store := newNOR309Store(t, nil)
 		require.True(t, store.service.supportsBatchNodesWithoutEmbeddings(), "the default fixture reads its hits through the storage batch reader")
-		response, err := store.service.Search(t.Context(), nor309Query, nil, nor309SearchOptions(nil))
+		response, err := store.service.Search(t.Context(), n15274nor309Query, nil, n15274nor309SearchOptions(nil))
 		require.NoError(t, err)
 		require.Len(t, response.Results, 2, "both stored hits match the query")
-		nor309RequireDetachedDelivery(t, store.engine, response.Results, nor309FirstHit, nor309StoredHit(t, store.engine, nor309FirstHit, nil))
+		n15274nor309RequireDetachedDelivery(t, store.engine, response.Results, n15274nor309FirstHit, n15274nor309StoredHit(t, store.engine, n15274nor309FirstHit, nil))
 	})
 
 	t.Run("public hit with projected properties", func(t *testing.T) {
 		store := newNOR309Store(t, nil)
 		selection := []string{"meta", "tags"}
-		response, err := store.service.Search(t.Context(), nor309Query, nil, nor309SearchOptions(selection))
+		response, err := store.service.Search(t.Context(), n15274nor309Query, nil, n15274nor309SearchOptions(selection))
 		require.NoError(t, err)
 		require.Len(t, response.Results, 2, "both stored hits match the query")
 		for _, result := range response.Results {
 			require.Nil(t, result.sourceNode.Properties, "a projected hit retains metadata without its property payload")
 		}
-		nor309RequireDetachedDelivery(t, store.engine, response.Results, nor309FirstHit, nor309StoredHit(t, store.engine, nor309FirstHit, selection))
+		n15274nor309RequireDetachedDelivery(t, store.engine, response.Results, n15274nor309FirstHit, n15274nor309StoredHit(t, store.engine, n15274nor309FirstHit, selection))
 	})
 
 	t.Run("public hit over the point-read fallback", func(t *testing.T) {
-		store := newNOR309Store(t, func(engine storage.Engine) storage.Engine { return &batchlessEngine{Engine: engine} })
+		store := newNOR309Store(t, func(engine storage.Engine) storage.Engine { return &n15274BatchlessEngine{Engine: engine} })
 		require.False(t, store.service.supportsBatchNodesWithoutEmbeddings(), "the wrapped engine hides the batch reader, so hits are read one id at a time")
-		response, err := store.service.Search(t.Context(), nor309Query, nil, nor309SearchOptions(nil))
+		response, err := store.service.Search(t.Context(), n15274nor309Query, nil, n15274nor309SearchOptions(nil))
 		require.NoError(t, err)
 		require.Len(t, response.Results, 2, "both stored hits match the query")
-		nor309RequireDetachedDelivery(t, store.engine, response.Results, nor309FirstHit, nor309StoredHit(t, store.engine, nor309FirstHit, nil))
+		n15274nor309RequireDetachedDelivery(t, store.engine, response.Results, n15274nor309FirstHit, n15274nor309StoredHit(t, store.engine, n15274nor309FirstHit, nil))
 	})
 
 	t.Run("lazy continuation page", func(t *testing.T) {
@@ -272,10 +272,10 @@ func TestSearchMaterializedNodeRepeatedDeliveryIsDetached(t *testing.T) {
 		page, err := store.service.SearchTextContinuation(t.Context(), "", DefaultSearchOptions(), request, nil, nil, nil, ChunkedSearchErrorPolicy{})
 		require.NoError(t, err)
 		require.Len(t, page.Results, 2, "the page materializes both stored hits")
-		require.Equal(t, []string{string(nor309FirstHit), string(nor309SecondHit)}, []string{page.Results[0].ID, page.Results[1].ID}, "the page enumerates the stored hits in id order")
+		require.Equal(t, []string{string(n15274nor309FirstHit), string(n15274nor309SecondHit)}, []string{page.Results[0].ID, page.Results[1].ID}, "the page enumerates the stored hits in id order")
 		require.NotEmpty(t, page.Results[0].Properties, "the page hydrated the row from storage")
 		require.NotEmpty(t, page.Results[0].Labels, "the page hydrated the row from storage")
-		nor309RequireDetachedDelivery(t, store.engine, page.Results, nor309FirstHit, nor309StoredHit(t, store.engine, nor309FirstHit, nil))
+		n15274nor309RequireDetachedDelivery(t, store.engine, page.Results, n15274nor309FirstHit, n15274nor309StoredHit(t, store.engine, n15274nor309FirstHit, nil))
 	})
 }
 

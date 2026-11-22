@@ -31,7 +31,7 @@ import (
 // scalar control that passes today; the failures are confined to nested
 // reference values.
 
-func nor279NestedMetadata() map[string]interface{} {
+func n15219nor279NestedMetadata() map[string]interface{} {
 	return map[string]interface{}{
 		"origin_file": "docs/design.md",
 		"nested": map[string]interface{}{
@@ -43,9 +43,9 @@ func nor279NestedMetadata() map[string]interface{} {
 	}
 }
 
-// nor279MutateNestedMetadata writes through every reference member reachable
+// n15219nor279MutateNestedMetadata writes through every reference member reachable
 // from md, so any holder still aliasing it observes the write.
-func nor279MutateNestedMetadata(t *testing.T, md map[string]interface{}) {
+func n15219nor279MutateNestedMetadata(t *testing.T, md map[string]interface{}) {
 	t.Helper()
 	if md == nil {
 		return
@@ -71,30 +71,30 @@ func nor279MutateNestedMetadata(t *testing.T, md map[string]interface{}) {
 	holders[0]["tenant"] = "mutated"
 }
 
-// nor279DeepCopyMetadata returns an independent copy of a fixture metadata
+// n15219nor279DeepCopyMetadata returns an independent copy of a fixture metadata
 // map. Expectations must not share nested values with any value under test, or
 // a write through the value under test would also change the expectation.
-func nor279DeepCopyMetadata(md map[string]interface{}) map[string]interface{} {
+func n15219nor279DeepCopyMetadata(md map[string]interface{}) map[string]interface{} {
 	if md == nil {
 		return nil
 	}
 	out := make(map[string]interface{}, len(md))
 	for k, v := range md {
-		out[k] = nor279DeepCopyFixtureValue(v)
+		out[k] = n15219nor279DeepCopyFixtureValue(v)
 	}
 	return out
 }
 
-// nor279DeepCopyFixtureValue copies exactly the value shapes the metadata
+// n15219nor279DeepCopyFixtureValue copies exactly the value shapes the metadata
 // fixture builds; scalars are immutable and are shared by value.
-func nor279DeepCopyFixtureValue(v interface{}) interface{} {
+func n15219nor279DeepCopyFixtureValue(v interface{}) interface{} {
 	switch value := v.(type) {
 	case map[string]interface{}:
-		return nor279DeepCopyMetadata(value)
+		return n15219nor279DeepCopyMetadata(value)
 	case []interface{}:
 		out := make([]interface{}, len(value))
 		for i := range value {
-			out[i] = nor279DeepCopyFixtureValue(value[i])
+			out[i] = n15219nor279DeepCopyFixtureValue(value[i])
 		}
 		return out
 	case []string:
@@ -104,7 +104,7 @@ func nor279DeepCopyFixtureValue(v interface{}) interface{} {
 	case []map[string]interface{}:
 		out := make([]map[string]interface{}, len(value))
 		for i := range value {
-			out[i] = nor279DeepCopyMetadata(value[i])
+			out[i] = n15219nor279DeepCopyMetadata(value[i])
 		}
 		return out
 	default:
@@ -114,12 +114,12 @@ func nor279DeepCopyFixtureValue(v interface{}) interface{} {
 
 // --- EdgeMetaStore ----------------------------------------------------------
 
-var nor279EdgeBaseTime = time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+var n15219nor279EdgeBaseTime = time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
 
-// nor279EdgeMetaRecord builds a fully deterministic record; every record
+// n15219nor279EdgeMetaRecord builds a fully deterministic record; every record
 // shares the same edge key so per-key ordering is observable.
-func nor279EdgeMetaRecord(i int) EdgeMeta {
-	metadata := nor279NestedMetadata()
+func n15219nor279EdgeMetaRecord(i int) EdgeMeta {
+	metadata := n15219nor279NestedMetadata()
 	metadata["record"] = i
 	return EdgeMeta{
 		EdgeID:        fmt.Sprintf("edge-%d", i),
@@ -132,20 +132,20 @@ func nor279EdgeMetaRecord(i int) EdgeMeta {
 		Origin:        fmt.Sprintf("origin-%d", i),
 		SessionID:     "session-1",
 		Materialized:  i%2 == 0,
-		Timestamp:     nor279EdgeBaseTime.Add(time.Duration(i) * time.Minute),
+		Timestamp:     n15219nor279EdgeBaseTime.Add(time.Duration(i) * time.Minute),
 		Metadata:      metadata,
 	}
 }
 
-func nor279EdgeMetaRecords(n int) []EdgeMeta {
+func n15219nor279EdgeMetaRecords(n int) []EdgeMeta {
 	records := make([]EdgeMeta, n)
 	for i := range records {
-		records[i] = nor279EdgeMetaRecord(i)
+		records[i] = n15219nor279EdgeMetaRecord(i)
 	}
 	return records
 }
 
-func nor279RequireEdgeMeta(t *testing.T, got, want *EdgeMeta, label string) {
+func n15219nor279RequireEdgeMeta(t *testing.T, got, want *EdgeMeta, label string) {
 	t.Helper()
 	require.NotNilf(t, got, "%s: record missing", label)
 
@@ -158,9 +158,9 @@ func nor279RequireEdgeMeta(t *testing.T, got, want *EdgeMeta, label string) {
 		"%s: metadata must preserve the written shape and must not observe writes through another holder", label)
 }
 
-// nor279RequireEdgeMetaStoreState asserts GetHistory order and fidelity,
+// n15219nor279RequireEdgeMetaStoreState asserts GetHistory order and fidelity,
 // GetLatest identity and Export order/fidelity of the retained evidence.
-func nor279RequireEdgeMetaStoreState(t *testing.T, store *EdgeMetaStore, ctx context.Context, want []EdgeMeta, label string) {
+func n15219nor279RequireEdgeMetaStoreState(t *testing.T, store *EdgeMetaStore, ctx context.Context, want []EdgeMeta, label string) {
 	t.Helper()
 	require.NotEmptyf(t, want, "%s: expectation set must not be empty", label)
 
@@ -168,73 +168,73 @@ func nor279RequireEdgeMetaStoreState(t *testing.T, store *EdgeMetaStore, ctx con
 	require.NoErrorf(t, err, "%s: GetHistory returned an error", label)
 	require.Lenf(t, history, len(want), "%s: GetHistory must return every record for the edge in append order", label)
 	for i := range want {
-		nor279RequireEdgeMeta(t, history[i], &want[i], fmt.Sprintf("%s: GetHistory[%d]", label, i))
+		n15219nor279RequireEdgeMeta(t, history[i], &want[i], fmt.Sprintf("%s: GetHistory[%d]", label, i))
 	}
 
 	latest, err := store.GetLatest(ctx, want[0].Src, want[0].Dst, want[0].Label)
 	require.NoErrorf(t, err, "%s: GetLatest returned an error", label)
-	nor279RequireEdgeMeta(t, latest, &want[len(want)-1], label+": GetLatest")
+	n15219nor279RequireEdgeMeta(t, latest, &want[len(want)-1], label+": GetLatest")
 
 	exported := store.Export()
 	require.Lenf(t, exported, len(want), "%s: Export must return every record in insert order", label)
 	for i := range want {
-		nor279RequireEdgeMeta(t, exported[i], &want[i], fmt.Sprintf("%s: Export[%d]", label, i))
+		n15219nor279RequireEdgeMeta(t, exported[i], &want[i], fmt.Sprintf("%s: Export[%d]", label, i))
 	}
 }
 
-// nor279SeedEdgeMetaStore writes the first three deterministic records and
+// n15219nor279SeedEdgeMetaStore writes the first three deterministic records and
 // leaves them unmodified afterwards.
-func nor279SeedEdgeMetaStore(t *testing.T, ctx context.Context) *EdgeMetaStore {
+func n15219nor279SeedEdgeMetaStore(t *testing.T, ctx context.Context) *EdgeMetaStore {
 	t.Helper()
 	store := NewEdgeMetaStore()
-	for _, record := range nor279EdgeMetaRecords(3) {
+	for _, record := range n15219nor279EdgeMetaRecords(3) {
 		require.NoError(t, store.Append(ctx, record))
 	}
 	return store
 }
 
-type nor279EdgeMetaPath int
+type n15219nor279EdgeMetaPath int
 
 const (
-	nor279EdgeAppend nor279EdgeMetaPath = iota
-	nor279EdgeImport
-	nor279EdgeGetHistory
-	nor279EdgeGetLatest
-	nor279EdgeExport
-	nor279EdgeRoundTrip
+	n15219nor279EdgeAppend n15219nor279EdgeMetaPath = iota
+	n15219nor279EdgeImport
+	n15219nor279EdgeGetHistory
+	n15219nor279EdgeGetLatest
+	n15219nor279EdgeExport
+	n15219nor279EdgeRoundTrip
 )
 
-func TestNor279EdgeMetaStoreNestedMetadataOwnership(t *testing.T) {
+func TestN15219Nor279EdgeMetaStoreNestedMetadataOwnership(t *testing.T) {
 	defer config.WithEdgeProvenanceEnabled()()
 
 	ctx := context.Background()
 	cases := []struct {
 		name string
-		path nor279EdgeMetaPath
+		path n15219nor279EdgeMetaPath
 	}{
-		{"AppendDetachesCallerMetadata", nor279EdgeAppend},
-		{"ImportDetachesCallerMetadata", nor279EdgeImport},
-		{"GetHistoryDetachesReturnedMetadata", nor279EdgeGetHistory},
-		{"GetLatestDetachesReturnedMetadata", nor279EdgeGetLatest},
-		{"ExportDetachesReturnedMetadata", nor279EdgeExport},
-		{"ExportImportRoundTripPreservesNestedMetadata", nor279EdgeRoundTrip},
+		{"AppendDetachesCallerMetadata", n15219nor279EdgeAppend},
+		{"ImportDetachesCallerMetadata", n15219nor279EdgeImport},
+		{"GetHistoryDetachesReturnedMetadata", n15219nor279EdgeGetHistory},
+		{"GetLatestDetachesReturnedMetadata", n15219nor279EdgeGetLatest},
+		{"ExportDetachesReturnedMetadata", n15219nor279EdgeExport},
+		{"ExportImportRoundTripPreservesNestedMetadata", n15219nor279EdgeRoundTrip},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			nor279RunEdgeMetaCase(t, ctx, tc.path)
+			n15219nor279RunEdgeMetaCase(t, ctx, tc.path)
 		})
 	}
 }
 
-func nor279RunEdgeMetaCase(t *testing.T, ctx context.Context, path nor279EdgeMetaPath) {
+func n15219nor279RunEdgeMetaCase(t *testing.T, ctx context.Context, path n15219nor279EdgeMetaPath) {
 	t.Helper()
 
 	switch path {
-	case nor279EdgeAppend:
-		store := nor279SeedEdgeMetaStore(t, ctx)
-		ingress := nor279EdgeMetaRecord(3)
-		want := nor279EdgeMetaRecords(4)
+	case n15219nor279EdgeAppend:
+		store := n15219nor279SeedEdgeMetaStore(t, ctx)
+		ingress := n15219nor279EdgeMetaRecord(3)
+		want := n15219nor279EdgeMetaRecords(4)
 		require.NoError(t, store.Append(ctx, ingress))
 
 		// Scalar control: value fields are already copied, which localizes the
@@ -246,13 +246,13 @@ func nor279RunEdgeMetaCase(t *testing.T, ctx context.Context, path nor279EdgeMet
 		require.Equalf(t, want[3].Score, history[3].Score,
 			"Append: scalar field ingress must not be observable after the write")
 
-		nor279MutateNestedMetadata(t, ingress.Metadata)
-		nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Append: caller mutation after write")
+		n15219nor279MutateNestedMetadata(t, ingress.Metadata)
+		n15219nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Append: caller mutation after write")
 
-	case nor279EdgeImport:
-		store := nor279SeedEdgeMetaStore(t, ctx)
-		ingress := nor279EdgeMetaRecord(3)
-		want := nor279EdgeMetaRecords(4)
+	case n15219nor279EdgeImport:
+		store := n15219nor279SeedEdgeMetaStore(t, ctx)
+		ingress := n15219nor279EdgeMetaRecord(3)
+		want := n15219nor279EdgeMetaRecords(4)
 		require.Equal(t, 1, store.Import([]*EdgeMeta{&ingress}), "Import must report the imported record count")
 		require.Equal(t, 4, store.Size(), "Import must append to the retained records")
 
@@ -260,66 +260,66 @@ func nor279RunEdgeMetaCase(t *testing.T, ctx context.Context, path nor279EdgeMet
 		require.Equalf(t, want[3].EdgeID, store.Export()[3].EdgeID,
 			"Import: imported record identity must be copied")
 
-		nor279MutateNestedMetadata(t, ingress.Metadata)
-		nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Import: caller mutation after import")
+		n15219nor279MutateNestedMetadata(t, ingress.Metadata)
+		n15219nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Import: caller mutation after import")
 
-	case nor279EdgeGetHistory:
-		store := nor279SeedEdgeMetaStore(t, ctx)
-		want := nor279EdgeMetaRecords(3)
+	case n15219nor279EdgeGetHistory:
+		store := n15219nor279SeedEdgeMetaStore(t, ctx)
+		want := n15219nor279EdgeMetaRecords(3)
 
 		history, err := store.GetHistory(ctx, want[0].Src, want[0].Dst, want[0].Label)
 		require.NoError(t, err)
 		require.Len(t, history, 3)
 		for i := range want {
-			nor279RequireEdgeMeta(t, history[i], &want[i], fmt.Sprintf("GetHistory pristine[%d]", i))
+			n15219nor279RequireEdgeMeta(t, history[i], &want[i], fmt.Sprintf("GetHistory pristine[%d]", i))
 		}
 
-		nor279MutateNestedMetadata(t, history[0].Metadata)
+		n15219nor279MutateNestedMetadata(t, history[0].Metadata)
 		// A returned record must also be independent from the other returned
 		// records, not only from the store.
-		nor279RequireEdgeMeta(t, history[1], &want[1],
+		n15219nor279RequireEdgeMeta(t, history[1], &want[1],
 			"GetHistory: mutation of one result must not affect another result")
 
-		nor279RequireEdgeMetaStoreState(t, store, ctx, want, "GetHistory: caller mutation of a returned record")
+		n15219nor279RequireEdgeMetaStoreState(t, store, ctx, want, "GetHistory: caller mutation of a returned record")
 
-	case nor279EdgeGetLatest:
-		store := nor279SeedEdgeMetaStore(t, ctx)
-		want := nor279EdgeMetaRecords(3)
+	case n15219nor279EdgeGetLatest:
+		store := n15219nor279SeedEdgeMetaStore(t, ctx)
+		want := n15219nor279EdgeMetaRecords(3)
 
 		latest, err := store.GetLatest(ctx, want[0].Src, want[0].Dst, want[0].Label)
 		require.NoError(t, err)
-		nor279RequireEdgeMeta(t, latest, &want[2], "GetLatest pristine")
+		n15219nor279RequireEdgeMeta(t, latest, &want[2], "GetLatest pristine")
 
-		nor279MutateNestedMetadata(t, latest.Metadata)
-		nor279RequireEdgeMetaStoreState(t, store, ctx, want, "GetLatest: caller mutation of the returned record")
+		n15219nor279MutateNestedMetadata(t, latest.Metadata)
+		n15219nor279RequireEdgeMetaStoreState(t, store, ctx, want, "GetLatest: caller mutation of the returned record")
 
-	case nor279EdgeExport:
-		store := nor279SeedEdgeMetaStore(t, ctx)
-		want := nor279EdgeMetaRecords(3)
+	case n15219nor279EdgeExport:
+		store := n15219nor279SeedEdgeMetaStore(t, ctx)
+		want := n15219nor279EdgeMetaRecords(3)
 
 		exported := store.Export()
 		require.Len(t, exported, 3)
 		for i := range want {
-			nor279RequireEdgeMeta(t, exported[i], &want[i], fmt.Sprintf("Export pristine[%d]", i))
+			n15219nor279RequireEdgeMeta(t, exported[i], &want[i], fmt.Sprintf("Export pristine[%d]", i))
 		}
 
 		exported[0].EdgeID = "mutated"
 		require.Equalf(t, want[0].EdgeID, store.Export()[0].EdgeID,
 			"Export: exported record fields must be copies")
 
-		nor279MutateNestedMetadata(t, exported[1].Metadata)
-		nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Export: caller mutation of an exported record")
+		n15219nor279MutateNestedMetadata(t, exported[1].Metadata)
+		n15219nor279RequireEdgeMetaStoreState(t, store, ctx, want, "Export: caller mutation of an exported record")
 
-	case nor279EdgeRoundTrip:
-		source := nor279SeedEdgeMetaStore(t, ctx)
-		want := nor279EdgeMetaRecords(3)
+	case n15219nor279EdgeRoundTrip:
+		source := n15219nor279SeedEdgeMetaStore(t, ctx)
+		want := n15219nor279EdgeMetaRecords(3)
 		exported := source.Export()
 
 		dest := NewEdgeMetaStore()
 		require.Equal(t, 3, dest.Import(exported), "Import must report the imported record count")
 
 		// Fidelity and ordering before any mutation.
-		nor279RequireEdgeMetaStoreState(t, dest, ctx, want, "Export/Import round trip fidelity")
+		n15219nor279RequireEdgeMetaStoreState(t, dest, ctx, want, "Export/Import round trip fidelity")
 		require.Equal(t, source.Stats().TotalRecords, dest.Stats().TotalRecords,
 			"Export/Import round trip must preserve the total record count")
 		require.Equal(t, source.Stats().TotalMaterialized, dest.Stats().TotalMaterialized,
@@ -327,10 +327,10 @@ func nor279RunEdgeMetaCase(t *testing.T, ctx context.Context, path nor279EdgeMet
 		require.Equal(t, source.UniqueEdgeCount(), dest.UniqueEdgeCount(),
 			"Export/Import round trip must preserve the unique edge count")
 
-		nor279MutateNestedMetadata(t, exported[0].Metadata)
-		nor279RequireEdgeMetaStoreState(t, source, ctx, want,
+		n15219nor279MutateNestedMetadata(t, exported[0].Metadata)
+		n15219nor279RequireEdgeMetaStoreState(t, source, ctx, want,
 			"Export/Import round trip: mutating an exported record must not affect the source store")
-		nor279RequireEdgeMetaStoreState(t, dest, ctx, want,
+		n15219nor279RequireEdgeMetaStoreState(t, dest, ctx, want,
 			"Export/Import round trip: mutating the imported slice must not affect the importing store")
 	}
 }
@@ -350,7 +350,7 @@ func TestNor279EdgeMetaNilAndEmptyMetadataControls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewEdgeMetaStore()
-			record := nor279EdgeMetaRecord(0)
+			record := n15219nor279EdgeMetaRecord(0)
 			record.Metadata = tc.metadata
 			require.NoError(t, store.Append(ctx, record))
 
@@ -392,7 +392,7 @@ func TestNor279EdgeMetaNilAndEmptyMetadataControls(t *testing.T) {
 
 // --- NodeConfigStore --------------------------------------------------------
 
-func nor279NodeConfigFixture(nodeID string) *NodeConfig {
+func n15219nor279NodeConfigFixture(nodeID string) *NodeConfig {
 	cfg := NewNodeConfig(nodeID)
 	cfg.CreatedAt = time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
 	cfg.UpdatedAt = cfg.CreatedAt
@@ -408,13 +408,13 @@ func nor279NodeConfigFixture(nodeID string) *NodeConfig {
 	cfg.TrustLevel = TrustLevelHigh
 	cfg.MinConfidence = 0.35
 	cfg.Cooldown = 5 * time.Second
-	cfg.Metadata = nor279NestedMetadata()
+	cfg.Metadata = n15219nor279NestedMetadata()
 	return cfg
 }
 
-// nor279NodeConfigExpectation returns an independent expectation built from
+// n15219nor279NodeConfigExpectation returns an independent expectation built from
 // seed, so a write through any value under test cannot alter it.
-func nor279NodeConfigExpectation(seed *NodeConfig) *NodeConfig {
+func n15219nor279NodeConfigExpectation(seed *NodeConfig) *NodeConfig {
 	want := *seed
 	want.PinList = append([]string(nil), seed.PinList...)
 	want.DenyList = append([]string(nil), seed.DenyList...)
@@ -422,13 +422,13 @@ func nor279NodeConfigExpectation(seed *NodeConfig) *NodeConfig {
 	for k, v := range seed.LabelConfigs {
 		want.LabelConfigs[k] = v
 	}
-	want.Metadata = nor279DeepCopyMetadata(seed.Metadata)
+	want.Metadata = n15219nor279DeepCopyMetadata(seed.Metadata)
 	return &want
 }
 
-// nor279MutateNodeConfig writes through every reference member of a fixture
+// n15219nor279MutateNodeConfig writes through every reference member of a fixture
 // config. The fixture supplies non-empty lists and maps.
-func nor279MutateNodeConfig(t *testing.T, cfg *NodeConfig) {
+func n15219nor279MutateNodeConfig(t *testing.T, cfg *NodeConfig) {
 	t.Helper()
 	require.NotNilf(t, cfg, "NOR279 fixture: config missing")
 
@@ -438,13 +438,13 @@ func nor279MutateNodeConfig(t *testing.T, cfg *NodeConfig) {
 	cfg.DenyList = append(cfg.DenyList, "mutated")
 	cfg.LabelConfigs["relates_to"] = LabelConfig{Label: "relates_to", MaxEdges: 99}
 	cfg.LabelConfigs["injected"] = LabelConfig{Label: "injected"}
-	nor279MutateNestedMetadata(t, cfg.Metadata)
+	n15219nor279MutateNestedMetadata(t, cfg.Metadata)
 }
 
-// nor279RequireNodeConfig compares every retained field. UpdatedAt is excluded
+// n15219nor279RequireNodeConfig compares every retained field. UpdatedAt is excluded
 // because Set intentionally stamps the write time; round-trip cases assert it
 // separately.
-func nor279RequireNodeConfig(t *testing.T, got, want *NodeConfig, label string) {
+func n15219nor279RequireNodeConfig(t *testing.T, got, want *NodeConfig, label string) {
 	t.Helper()
 	require.NotNilf(t, got, "%s: config missing", label)
 
@@ -467,9 +467,9 @@ func nor279RequireNodeConfig(t *testing.T, got, want *NodeConfig, label string) 
 	require.Equalf(t, want.Disabled, got.Disabled, "%s: Disabled", label)
 }
 
-// nor279FindNodeConfig locates a config in an Export result, whose order is
+// n15219nor279FindNodeConfig locates a config in an Export result, whose order is
 // map-iteration order and therefore not asserted.
-func nor279FindNodeConfig(t *testing.T, configs []*NodeConfig, nodeID string) *NodeConfig {
+func n15219nor279FindNodeConfig(t *testing.T, configs []*NodeConfig, nodeID string) *NodeConfig {
 	t.Helper()
 	for _, cfg := range configs {
 		if cfg != nil && cfg.NodeID == nodeID {
@@ -480,45 +480,45 @@ func nor279FindNodeConfig(t *testing.T, configs []*NodeConfig, nodeID string) *N
 	return nil
 }
 
-type nor279NodeConfigPath int
+type n15219nor279NodeConfigPath int
 
 const (
-	nor279NodeSet nor279NodeConfigPath = iota
-	nor279NodeImport
-	nor279NodeGet
-	nor279NodeGetOrCreate
-	nor279NodeExportPath
-	nor279NodeRoundTrip
+	n15219nor279NodeSet n15219nor279NodeConfigPath = iota
+	n15219nor279NodeImport
+	n15219nor279NodeGet
+	n15219nor279NodeGetOrCreate
+	n15219nor279NodeExportPath
+	n15219nor279NodeRoundTrip
 )
 
 func TestNor279NodeConfigStoreNestedOwnership(t *testing.T) {
 	cases := []struct {
 		name string
-		path nor279NodeConfigPath
+		path n15219nor279NodeConfigPath
 	}{
-		{"SetDetachesCallerConfig", nor279NodeSet},
-		{"ImportDetachesCallerConfig", nor279NodeImport},
-		{"GetDetachesReturnedConfig", nor279NodeGet},
-		{"GetOrCreateDetachesReturnedConfig", nor279NodeGetOrCreate},
-		{"ExportDetachesReturnedConfig", nor279NodeExportPath},
-		{"ExportImportRoundTripPreservesNestedFields", nor279NodeRoundTrip},
+		{"SetDetachesCallerConfig", n15219nor279NodeSet},
+		{"ImportDetachesCallerConfig", n15219nor279NodeImport},
+		{"GetDetachesReturnedConfig", n15219nor279NodeGet},
+		{"GetOrCreateDetachesReturnedConfig", n15219nor279NodeGetOrCreate},
+		{"ExportDetachesReturnedConfig", n15219nor279NodeExportPath},
+		{"ExportImportRoundTripPreservesNestedFields", n15219nor279NodeRoundTrip},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			nor279RunNodeConfigCase(t, tc.path)
+			n15219nor279RunNodeConfigCase(t, tc.path)
 		})
 	}
 }
 
-func nor279RunNodeConfigCase(t *testing.T, path nor279NodeConfigPath) {
+func n15219nor279RunNodeConfigCase(t *testing.T, path n15219nor279NodeConfigPath) {
 	t.Helper()
 
 	switch path {
-	case nor279NodeSet:
+	case n15219nor279NodeSet:
 		store := NewNodeConfigStore()
-		ingress := nor279NodeConfigFixture("node-set")
-		want := nor279NodeConfigExpectation(ingress)
+		ingress := n15219nor279NodeConfigFixture("node-set")
+		want := n15219nor279NodeConfigExpectation(ingress)
 		store.Set(*ingress)
 
 		// Scalar control: the value parameter already isolates scalars.
@@ -526,40 +526,40 @@ func nor279RunNodeConfigCase(t *testing.T, path nor279NodeConfigPath) {
 		require.Equalf(t, want.MaxOutEdges, store.Get("node-set").MaxOutEdges,
 			"Set: scalar field ingress must not be observable after the write")
 
-		nor279MutateNodeConfig(t, ingress)
-		nor279RequireNodeConfig(t, store.Get("node-set"), want, "Set: caller mutation after write")
-		nor279RequireNodeConfig(t, nor279FindNodeConfig(t, store.Export(), "node-set"), want,
+		n15219nor279MutateNodeConfig(t, ingress)
+		n15219nor279RequireNodeConfig(t, store.Get("node-set"), want, "Set: caller mutation after write")
+		n15219nor279RequireNodeConfig(t, n15219nor279FindNodeConfig(t, store.Export(), "node-set"), want,
 			"Set: caller mutation after write (Export)")
 
-	case nor279NodeImport:
+	case n15219nor279NodeImport:
 		store := NewNodeConfigStore()
-		ingress := nor279NodeConfigFixture("node-import")
-		want := nor279NodeConfigExpectation(ingress)
+		ingress := n15219nor279NodeConfigFixture("node-import")
+		want := n15219nor279NodeConfigExpectation(ingress)
 		require.Equal(t, 1, store.Import([]*NodeConfig{ingress}), "Import must report the imported config count")
 
 		ingress.NodeID = "mutated"
 		require.NotNilf(t, store.Get("node-import"), "Import: imported config identity must be copied")
 
-		nor279MutateNodeConfig(t, ingress)
-		nor279RequireNodeConfig(t, store.Get("node-import"), want, "Import: caller mutation after import")
-		nor279RequireNodeConfig(t, nor279FindNodeConfig(t, store.Export(), "node-import"), want,
+		n15219nor279MutateNodeConfig(t, ingress)
+		n15219nor279RequireNodeConfig(t, store.Get("node-import"), want, "Import: caller mutation after import")
+		n15219nor279RequireNodeConfig(t, n15219nor279FindNodeConfig(t, store.Export(), "node-import"), want,
 			"Import: caller mutation after import (Export)")
 
-	case nor279NodeGet:
+	case n15219nor279NodeGet:
 		store := NewNodeConfigStore()
-		seed := nor279NodeConfigFixture("node-get")
-		want := nor279NodeConfigExpectation(seed)
+		seed := n15219nor279NodeConfigFixture("node-get")
+		want := n15219nor279NodeConfigExpectation(seed)
 		store.Set(*seed)
 
 		got := store.Get("node-get")
-		nor279RequireNodeConfig(t, got, want, "Get pristine")
+		n15219nor279RequireNodeConfig(t, got, want, "Get pristine")
 
-		nor279MutateNodeConfig(t, got)
-		nor279RequireNodeConfig(t, store.Get("node-get"), want, "Get: caller mutation of the returned config")
-		nor279RequireNodeConfig(t, nor279FindNodeConfig(t, store.Export(), "node-get"), want,
+		n15219nor279MutateNodeConfig(t, got)
+		n15219nor279RequireNodeConfig(t, store.Get("node-get"), want, "Get: caller mutation of the returned config")
+		n15219nor279RequireNodeConfig(t, n15219nor279FindNodeConfig(t, store.Export(), "node-get"), want,
 			"Get: caller mutation of the returned config (Export)")
 
-	case nor279NodeGetOrCreate:
+	case n15219nor279NodeGetOrCreate:
 		// Newly created config: the returned default must not alias retained state.
 		store := NewNodeConfigStore()
 		created := store.GetOrCreate("node-created")
@@ -572,47 +572,47 @@ func nor279RunNodeConfigCase(t *testing.T, path nor279NodeConfigPath) {
 			"GetOrCreate: writes through the returned new config must not reach retained state (PinList)")
 
 		// Existing config: nested members must be detached as well.
-		seed := nor279NodeConfigFixture("node-existing")
-		want := nor279NodeConfigExpectation(seed)
+		seed := n15219nor279NodeConfigFixture("node-existing")
+		want := n15219nor279NodeConfigExpectation(seed)
 		store.Set(*seed)
 
 		existing := store.GetOrCreate("node-existing")
-		nor279RequireNodeConfig(t, existing, want, "GetOrCreate existing pristine")
+		n15219nor279RequireNodeConfig(t, existing, want, "GetOrCreate existing pristine")
 
-		nor279MutateNodeConfig(t, existing)
-		nor279RequireNodeConfig(t, store.Get("node-existing"), want,
+		n15219nor279MutateNodeConfig(t, existing)
+		n15219nor279RequireNodeConfig(t, store.Get("node-existing"), want,
 			"GetOrCreate existing: caller mutation of the returned config")
 
-	case nor279NodeExportPath:
+	case n15219nor279NodeExportPath:
 		store := NewNodeConfigStore()
-		seedA := nor279NodeConfigFixture("node-a")
-		seedB := nor279NodeConfigFixture("node-b")
-		wantA := nor279NodeConfigExpectation(seedA)
-		wantB := nor279NodeConfigExpectation(seedB)
+		seedA := n15219nor279NodeConfigFixture("node-a")
+		seedB := n15219nor279NodeConfigFixture("node-b")
+		wantA := n15219nor279NodeConfigExpectation(seedA)
+		wantB := n15219nor279NodeConfigExpectation(seedB)
 		store.Set(*seedA)
 		store.Set(*seedB)
 
 		exported := store.Export()
 		require.Len(t, exported, 2, "Export must return every config")
 		for _, want := range []*NodeConfig{wantA, wantB} {
-			nor279RequireNodeConfig(t, nor279FindNodeConfig(t, exported, want.NodeID), want,
+			n15219nor279RequireNodeConfig(t, n15219nor279FindNodeConfig(t, exported, want.NodeID), want,
 				"Export pristine "+want.NodeID)
 		}
 
-		exportedA := nor279FindNodeConfig(t, exported, "node-a")
+		exportedA := n15219nor279FindNodeConfig(t, exported, "node-a")
 		exportedA.NodeID = "mutated"
 		require.NotNilf(t, store.Get("node-a"), "Export: exported config fields must be copies")
 
-		nor279MutateNodeConfig(t, nor279FindNodeConfig(t, exported, "node-b"))
-		nor279RequireNodeConfig(t, store.Get("node-b"), wantB,
+		n15219nor279MutateNodeConfig(t, n15219nor279FindNodeConfig(t, exported, "node-b"))
+		n15219nor279RequireNodeConfig(t, store.Get("node-b"), wantB,
 			"Export: caller mutation of an exported config")
 
-	case nor279NodeRoundTrip:
+	case n15219nor279NodeRoundTrip:
 		source := NewNodeConfigStore()
-		seedA := nor279NodeConfigFixture("node-a")
-		seedB := nor279NodeConfigFixture("node-b")
-		wantA := nor279NodeConfigExpectation(seedA)
-		wantB := nor279NodeConfigExpectation(seedB)
+		seedA := n15219nor279NodeConfigFixture("node-a")
+		seedB := n15219nor279NodeConfigFixture("node-b")
+		wantA := n15219nor279NodeConfigExpectation(seedA)
+		wantB := n15219nor279NodeConfigExpectation(seedB)
 		source.Set(*seedA)
 		source.Set(*seedB)
 
@@ -625,15 +625,15 @@ func nor279RunNodeConfigCase(t *testing.T, path nor279NodeConfigPath) {
 		// Fidelity and ordering before any mutation.
 		for _, want := range []*NodeConfig{wantA, wantB} {
 			got := dest.Get(want.NodeID)
-			nor279RequireNodeConfig(t, got, want, "Export/Import round trip fidelity "+want.NodeID)
-			require.Equalf(t, nor279FindNodeConfig(t, exported, want.NodeID).UpdatedAt, got.UpdatedAt,
+			n15219nor279RequireNodeConfig(t, got, want, "Export/Import round trip fidelity "+want.NodeID)
+			require.Equalf(t, n15219nor279FindNodeConfig(t, exported, want.NodeID).UpdatedAt, got.UpdatedAt,
 				"Export/Import round trip must preserve UpdatedAt for %s", want.NodeID)
 		}
 
-		nor279MutateNodeConfig(t, nor279FindNodeConfig(t, exported, "node-a"))
-		nor279RequireNodeConfig(t, source.Get("node-a"), wantA,
+		n15219nor279MutateNodeConfig(t, n15219nor279FindNodeConfig(t, exported, "node-a"))
+		n15219nor279RequireNodeConfig(t, source.Get("node-a"), wantA,
 			"Export/Import round trip: mutating an exported config must not affect the source store")
-		nor279RequireNodeConfig(t, dest.Get("node-a"), wantA,
+		n15219nor279RequireNodeConfig(t, dest.Get("node-a"), wantA,
 			"Export/Import round trip: mutating an exported config must not affect the importing store")
 	}
 }
@@ -705,7 +705,7 @@ func BenchmarkNor279EdgeMetaGetHistoryNestedMetadata(b *testing.B) {
 
 	store := NewEdgeMetaStore()
 	ctx := context.Background()
-	for _, record := range nor279EdgeMetaRecords(64) {
+	for _, record := range n15219nor279EdgeMetaRecords(64) {
 		if err := store.Append(ctx, record); err != nil {
 			b.Fatal(err)
 		}
@@ -722,7 +722,7 @@ func BenchmarkNor279EdgeMetaGetHistoryNestedMetadata(b *testing.B) {
 
 func BenchmarkNor279NodeConfigGetNestedMetadata(b *testing.B) {
 	store := NewNodeConfigStore()
-	store.Set(*nor279NodeConfigFixture("node-a"))
+	store.Set(*n15219nor279NodeConfigFixture("node-a"))
 
 	b.ReportAllocs()
 	b.ResetTimer()
