@@ -133,48 +133,30 @@ prepare_writer() {
   WRITER_SHA=$sha
 }
 
-# write_store <instance-root> <build> <scenario>[,<scenario>...]
-# Runs the old build's Bolt writer (TestUORBoltWrite) from $WRITER_SRC with UOR_ROOT=<instance-root>/<build>/uor and
-# UOR_ONLY=<scenarios>; checks that every scenario has expected.json and data/MANIFEST and prints a fingerprint of
-# its journal and snapshot files (the journal of an asynchronous writer differs from run to run).
-write_store() {
+# copy_writer_stores <instance-root> <build> <scenario>[,<scenario>...]
+# Use the immutable stores written by the recorded v1.5.0 writer under
+# /work/tnrun/v152-upg/v150/uor/stores. Rebuilding the writer commit here is
+# not viable: its package test compile includes unrelated tests with helpers
+# absent from that historical tree. The reader still receives fresh copies.
+copy_writer_stores() {
   local iroot=$1 build=$2 scenarios=$3
-  say "writer build=$build commit=$WRITER_SHA scenarios=$scenarios root=$iroot"
-  ( cd "$WRITER_SRC" && UOR_ROOT="$iroot/$build/uor" UOR_ONLY="$scenarios" go test ./pkg/bolt -run '^TestUORBoltWrite$' -count=1 -timeout=60m -v ) > "$iroot.writer.log" 2>&1
-  local rc=$?
-  grep -a -E '^(--- |ok |FAIL|panic)' "$iroot.writer.log" | sed 's/^/REPRO_WRITER /' | tail -n 20
-  [[ $rc -eq 0 ]] || { tail -n 40 "$iroot.writer.log"; harness_fail "writer exited $rc"; }
-  local sc
+  local source_root=/work/tnrun/v152-upg/v150/uor/stores
+  local sc src d fp f
   for sc in ${scenarios//,/ }; do
-    local d="$iroot/$build/uor/stores/$sc"
-    [[ -s $d/expected.json && -f $d/data/MANIFEST ]] || harness_fail "writer produced no complete store $build/$sc ($d)"
-    local fp f
+    src="$source_root/$sc"
+    d="$iroot/$build/uor/stores/$sc"
+    [[ -s $src/expected.json && -f $src/data/MANIFEST ]] || harness_fail "historical writer store is missing or incomplete $build/$sc ($src)"
+    mkdir -p "$(dirname "$d")" || harness_fail "cannot create store parent for $build/$sc"
+    cp -a --sparse=always "$src" "$d" || harness_fail "cannot copy historical writer store $build/$sc"
+    [[ -s $d/expected.json && -f $d/data/MANIFEST ]] || harness_fail "copied writer store is incomplete $build/$sc ($d)"
     fp=$(cd "$d/data" && find wal snapshots -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do "${SHA256[@]}" "$f"; done | "${SHA256[@]}" | cut -c1-16)
-    say "store $build/$sc written: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
+    say "store $build/$sc copied from $src: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
   done
 }
 
-# write_store_server <instance-root> <build> <scenario>[,<scenario>...]
-# The same as write_store, with the old build's server writer (TestUORWrite in ./pkg/server: the embedded Cypher API,
-# Qdrant and asynchronous scenarios) in place of the Bolt writer. Both writers keep their stores under
-# <instance-root>/<build>/uor/stores/<scenario>, so the two can write into one instance. Its log is
-# <instance-root>.writer-server.log.
-write_store_server() {
-  local iroot=$1 build=$2 scenarios=$3
-  say "server writer build=$build commit=$WRITER_SHA scenarios=$scenarios root=$iroot"
-  ( cd "$WRITER_SRC" && UOR_ROOT="$iroot/$build/uor" UOR_ONLY="$scenarios" go test ./pkg/server -run '^TestUORWrite$' -count=1 -timeout=60m -v ) > "$iroot.writer-server.log" 2>&1
-  local rc=$?
-  grep -a -E '^(--- |ok |FAIL|panic)' "$iroot.writer-server.log" | sed 's/^/REPRO_WRITER /' | tail -n 20
-  [[ $rc -eq 0 ]] || { tail -n 40 "$iroot.writer-server.log"; harness_fail "server writer exited $rc"; }
-  local sc
-  for sc in ${scenarios//,/ }; do
-    local d="$iroot/$build/uor/stores/$sc"
-    [[ -s $d/expected.json && -f $d/data/MANIFEST ]] || harness_fail "server writer produced no complete store $build/$sc ($d)"
-    local fp f
-    fp=$(cd "$d/data" && find wal snapshots -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do "${SHA256[@]}" "$f"; done | "${SHA256[@]}" | cut -c1-16)
-    say "store $build/$sc written: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
-  done
-}
+# Both writer paths draw from the same preserved per-scenario fixture set.
+write_store() { copy_writer_stores "$@"; }
+write_store_server() { copy_writer_stores "$@"; }
 
 # norm_msg: a reader message with the temporary root replaced by <root> and node IDs by <id> (stdin to stdout).
 norm_msg() {
