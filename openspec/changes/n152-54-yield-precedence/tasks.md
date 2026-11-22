@@ -4,9 +4,11 @@
 - [x] Preserve canonical SyntaxError and align the diagnostic headline with the reference.
 - [x] Use scoped registry cleanup, preserve standalone/named/missing-variable controls, update changelog.
 - [x] Run focused regression and affected embedding-frame tests on final source (PASS, 4.949s).
-- [ ] Parent: run meaningful focused race checks after source handoff.
+- [x] Parent: pass focused race checks on final rebased runtime/test source (4.746s); exact command in evidence.md.
 - [x] Attempt staged duplicate checker and record its actual result and limitations (analysis remains unavailable).
-- [ ] Parent: independent integrated review, canonical release verification, push, and PR.
+- [x] Parent: independent source review, update to current release, and broad procedure/APOC regression checks.
+- [x] Parent: run canonical verification plan and selected localization checks; full scope and skips in evidence.md.
+- [ ] Full release verification and graph candidate analysis remain pending.
 
 Duplicate check receipts:
 - `python3 scripts/code_intelligence.py check-staged`: exit 1, missing Python dependencies (`/tmp/n152-54-duplicate.log`).
