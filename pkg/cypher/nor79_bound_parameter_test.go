@@ -78,7 +78,7 @@ func TestNOR79BoundParameterOriginalMatrix(t *testing.T) {
 	}
 }
 
-func TestNor79ParameterAwareConstructorClaims(t *testing.T) {
+func TestNOR79BoundParameterConstructorClaims(t *testing.T) {
 	var oracle struct {
 		Population       int    `json:"population"`
 		PopulationSha256 string `json:"populationSha256"`
