@@ -18,6 +18,7 @@ package nornicdb_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"path/filepath"
 	"sort"
@@ -215,3 +216,132 @@ func TestGapD10SearchesDuringBuild(t *testing.T) {
 }
 
 func r0(s []string) []string { return s }
+
+// TestGapD10RowsDuringBuild: are the rows Cypher's vector query returns
+// during the build correct? 20 fixed query vectors; every call carries a new
+// $nonce so the query-result cache is never hit. During the build each
+// vector's first answer is kept; after the build each vector is asked again.
+// Both are compared with the exact top-300 by cosine similarity, computed in
+// the test from the seeded vectors (same generator and seed as the store).
+func TestGapD10RowsDuringBuild(t *testing.T) {
+	gapQ07Embeddings = false
+	gapQ07Env(t)
+	dir := filepath.Join(t.TempDir(), "data")
+	gapQ07Seed(t, dir)
+	// Exact ground truth from the seed's generator.
+	gen := rand.New(rand.NewSource(11))
+	stored := make([][]float64, gapQ07Nodes)
+	for i := 0; i < gapQ07Nodes; i++ {
+		_ = gapQ07Text(gen, gapQ07TextWords)
+		stored[i] = gapQ07Vector(gen)
+	}
+	cos := func(a, b []float64) float64 {
+		var d, na, nb float64
+		for i := range a {
+			d += a[i] * b[i]
+			na += a[i] * a[i]
+			nb += b[i] * b[i]
+		}
+		if na == 0 || nb == 0 {
+			return 0
+		}
+		return d / (sqrt(na) * sqrt(nb))
+	}
+	qr := rand.New(rand.NewSource(99))
+	const nq = 20
+	queries := make([][]float64, nq)
+	exact := make([]map[string]bool, nq)
+	for q := 0; q < nq; q++ {
+		queries[q] = gapQ07Vector(qr)
+		type sc struct {
+			id string
+			s  float64
+		}
+		all := make([]sc, gapQ07Nodes)
+		for i := range stored {
+			all[i] = sc{fmt.Sprintf("s%d", i), cos(queries[q], stored[i])}
+		}
+		sort.Slice(all, func(i, j int) bool { return all[i].s > all[j].s })
+		exact[q] = map[string]bool{}
+		for _, x := range all[:300] {
+			exact[q][x.id] = true
+		}
+	}
+	db, err := nornicdb.Open(dir, gapQ07Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	svc, err := db.GetOrCreateSearchService("nornic", db.GetStorage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) && !svc.BuildInProgress() && !svc.IsReady() {
+		time.Sleep(2 * time.Millisecond)
+	}
+	nonce := 0
+	ask := func(q int) ([]string, error, float64) {
+		nonce++
+		start := time.Now()
+		res, err := db.ExecuteCypher(context.Background(), "CALL db.index.vector.queryNodes('doc_vec', 300, $v) YIELD node, score RETURN node.id AS id, score, $nonce AS nonce", map[string]any{"v": queries[q], "nonce": nonce})
+		ms := float64(time.Since(start).Microseconds()) / 1000
+		if err != nil {
+			return nil, err, ms
+		}
+		ids := make([]string, 0, len(res.Rows))
+		for _, r := range res.Rows {
+			ids = append(ids, fmt.Sprint(r[0]))
+		}
+		return ids, nil, ms
+	}
+	recall := func(q int, ids []string) int {
+		n := 0
+		for _, id := range ids {
+			if exact[q][id] {
+				n++
+			}
+		}
+		return n
+	}
+	during := make([][]string, nq)
+	duringMs := []float64{}
+	asked := 0
+	for svc.BuildInProgress() || !svc.IsReady() {
+		q := asked % nq
+		ids, err, ms := ask(q)
+		asked++
+		if err != nil {
+			t.Logf("GAPD10R during-build q=%d error: %v", q, err)
+			continue
+		}
+		duringMs = append(duringMs, ms)
+		if during[q] == nil {
+			during[q] = ids
+		}
+	}
+	sort.Float64s(duringMs)
+	afterMs := []float64{}
+	for q := 0; q < nq; q++ {
+		ids, err, ms := ask(q)
+		if err != nil {
+			t.Fatalf("after build q=%d: %v", q, err)
+		}
+		afterMs = append(afterMs, ms)
+		rd := -1
+		if during[q] != nil {
+			rd = recall(q, during[q])
+		}
+		t.Logf("GAPD10R q=%d exact_top300_found: during_build=%d/300 (rows %d) after_build=%d/300 (rows %d)", q, rd, len(during[q]), recall(q, ids), len(ids))
+	}
+	sort.Float64s(afterMs)
+	med := func(v []float64) float64 {
+		if len(v) == 0 {
+			return 0
+		}
+		return v[len(v)/2]
+	}
+	t.Logf("GAPD10R summary calls_during_build=%d median_ms_during=%.1f median_ms_after=%.1f", len(duringMs), med(duringMs), med(afterMs))
+}
+
+func sqrt(x float64) float64 { return math.Sqrt(x) }
