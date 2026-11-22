@@ -1,0 +1,6 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/storage	17.292s
+# github.com/orneryd/nornicdb/pkg/cypher.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/cypher	67.284s

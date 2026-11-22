@@ -1,0 +1,6 @@
+{
+  "nor287_native_count_error_acceptance_test.go": "e100f020235282d9fb5918d84e8660b37f5cb051f1eeb947cb196e4b663d14ac",
+  "nor287_status_metrics_count_error_acceptance_test.go": "e0193aac2d09697eb6bd998df5205a6d71784865b7dd0ec41f3c493f0f422cb7",
+  "nor287_native_count_fixture_test.go": "22d32d1eaab9b2ad3f1401551741fe7f69c7902e3e6f031a7c3fd1b83d2bb9ab",
+  "nor287_heimdall_count_error_contract_test.go": "22c5dbcc4b43b6c5571e21f19701d88faebff9385e90d0e1a714384cd1dff2b7"
+}

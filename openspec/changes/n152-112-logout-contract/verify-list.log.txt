@@ -1,0 +1,26 @@
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base 167a7749beccbe890f27a56aaa43a6ad66664cef (merge base with moved-base), head e72d590ee86602de4f1e9359a4eeb8d2c8b869b8
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base e4d9f0a57703ca30cc4f0eaa3d5d052baf194387 (merge base with moved-base), head c741b34fc7fbdd2cd41faa468954f483711c24db
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: relative verifier override survives fixture directory changes
+fetching release/v1.5.2 from origin ...
+verify fix/n152-112-logout-contract @ f77ec7706  against origin/release/v1.5.2 (merge base f77ec7706, 3 changed files)
+  localization  skip  (no changes under ci paths)
+  ui            skip  (no changes under ci paths)
+  llama-libs    skip  (no changes under ci paths)
+  build         skip  (no changes under ci paths)
+  tests         skip  (no changes under ci paths)
+  allocations   run   allocation ratchet against the merge base (fixed-count workloads, 1% B/op tolerance)
+  conformance   run   make cypher-conformance (pinned TCK corpus + regressions)
+  differential  run   make cypher-differential (fixed corpus vs pinned Neo4j; needs Docker)
+  docs          run   VitePress build and corpus, search and graph contracts

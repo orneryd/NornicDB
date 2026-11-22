@@ -106,8 +106,12 @@ func BenchmarkMatchUnwindMatchRelationshipMerge(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := exec.Execute(ctx, query, params); err != nil {
+		result, err := exec.Execute(ctx, query, params)
+		if err != nil {
 			b.Fatal(err)
+		}
+		if len(result.Rows) != 0 {
+			b.Fatalf("unexpected row count: %d", len(result.Rows))
 		}
 	}
 }
