@@ -1,0 +1,134 @@
+# github.com/orneryd/nornicdb/pkg/multidb.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup/without_observer
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup/with_close_observer
+--- PASS: TestNOR360CatalogProbeCloseAndRegisteredCleanup (0.05s)
+    --- PASS: TestNOR360CatalogProbeCloseAndRegisteredCleanup/without_observer (0.03s)
+    --- PASS: TestNOR360CatalogProbeCloseAndRegisteredCleanup/with_close_observer (0.02s)
+=== RUN   TestF25CompositeCatalogPublicationPrototype
+=== RUN   TestF25CompositeCatalogPublicationPrototype/create/rejected
+=== RUN   TestF25CompositeCatalogPublicationPrototype/create/preaccept-cancelled
+=== RUN   TestF25CompositeCatalogPublicationPrototype/create/applied-ack-error
+=== RUN   TestF25CompositeCatalogPublicationPrototype/create/pending-applied
+=== RUN   TestF25CompositeCatalogPublicationPrototype/create/pending-discarded
+=== RUN   TestF25CompositeCatalogPublicationPrototype/add/rejected
+=== RUN   TestF25CompositeCatalogPublicationPrototype/add/preaccept-cancelled
+=== RUN   TestF25CompositeCatalogPublicationPrototype/add/applied-ack-error
+=== RUN   TestF25CompositeCatalogPublicationPrototype/add/pending-applied
+=== RUN   TestF25CompositeCatalogPublicationPrototype/add/pending-discarded
+=== RUN   TestF25CompositeCatalogPublicationPrototype/remove/rejected
+=== RUN   TestF25CompositeCatalogPublicationPrototype/remove/preaccept-cancelled
+=== RUN   TestF25CompositeCatalogPublicationPrototype/remove/applied-ack-error
+=== RUN   TestF25CompositeCatalogPublicationPrototype/remove/pending-applied
+=== RUN   TestF25CompositeCatalogPublicationPrototype/remove/pending-discarded
+=== RUN   TestF25CompositeCatalogPublicationPrototype/drop/rejected
+=== RUN   TestF25CompositeCatalogPublicationPrototype/drop/preaccept-cancelled
+=== RUN   TestF25CompositeCatalogPublicationPrototype/drop/applied-ack-error
+=== RUN   TestF25CompositeCatalogPublicationPrototype/drop/pending-applied
+=== RUN   TestF25CompositeCatalogPublicationPrototype/drop/pending-discarded
+--- PASS: TestF25CompositeCatalogPublicationPrototype (1.82s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/create/rejected (0.10s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/create/preaccept-cancelled (0.08s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/create/applied-ack-error (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/create/pending-applied (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/create/pending-discarded (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/add/rejected (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/add/preaccept-cancelled (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/add/applied-ack-error (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/add/pending-applied (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/add/pending-discarded (0.08s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/remove/rejected (0.08s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/remove/preaccept-cancelled (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/remove/applied-ack-error (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/remove/pending-applied (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/remove/pending-discarded (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/drop/rejected (0.10s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/drop/preaccept-cancelled (0.10s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/drop/applied-ack-error (0.10s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/drop/pending-applied (0.09s)
+    --- PASS: TestF25CompositeCatalogPublicationPrototype/drop/pending-discarded (0.10s)
+=== RUN   TestF25OtherCatalogPublicationPrototype
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-database/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-database/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-database/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-database/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-database/pending-discarded
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-alias/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-alias/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-alias/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-alias/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/create-alias/pending-discarded
+=== RUN   TestF25OtherCatalogPublicationPrototype/drop-alias/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/drop-alias/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/drop-alias/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/drop-alias/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/drop-alias/pending-discarded
+=== RUN   TestF25OtherCatalogPublicationPrototype/status/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/status/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/status/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/status/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/status/pending-discarded
+=== RUN   TestF25OtherCatalogPublicationPrototype/limits/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/limits/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/limits/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/limits/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/limits/pending-discarded
+=== RUN   TestF25OtherCatalogPublicationPrototype/option/rejected
+=== RUN   TestF25OtherCatalogPublicationPrototype/option/preaccept-cancelled
+=== RUN   TestF25OtherCatalogPublicationPrototype/option/applied-ack-error
+=== RUN   TestF25OtherCatalogPublicationPrototype/option/pending-applied
+=== RUN   TestF25OtherCatalogPublicationPrototype/option/pending-discarded
+--- PASS: TestF25OtherCatalogPublicationPrototype (3.01s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-database/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-database/preaccept-cancelled (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-database/applied-ack-error (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-database/pending-applied (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-database/pending-discarded (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-alias/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-alias/preaccept-cancelled (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-alias/applied-ack-error (0.12s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-alias/pending-applied (0.11s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/create-alias/pending-discarded (0.09s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/drop-alias/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/drop-alias/preaccept-cancelled (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/drop-alias/applied-ack-error (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/drop-alias/pending-applied (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/drop-alias/pending-discarded (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/status/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/status/preaccept-cancelled (0.09s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/status/applied-ack-error (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/status/pending-applied (0.09s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/status/pending-discarded (0.09s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/limits/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/limits/preaccept-cancelled (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/limits/applied-ack-error (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/limits/pending-applied (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/limits/pending-discarded (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/option/rejected (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/option/preaccept-cancelled (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/option/applied-ack-error (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/option/pending-applied (0.10s)
+    --- PASS: TestF25OtherCatalogPublicationPrototype/option/pending-discarded (0.10s)
+=== RUN   TestF25StandardDropCompletionPrototype
+=== RUN   TestF25StandardDropCompletionPrototype/rejected
+=== RUN   TestF25StandardDropCompletionPrototype/preaccept-cancelled
+=== RUN   TestF25StandardDropCompletionPrototype/applied-ack-error
+=== RUN   TestF25StandardDropCompletionPrototype/pending-applied
+=== RUN   TestF25StandardDropCompletionPrototype/pending-discarded
+--- PASS: TestF25StandardDropCompletionPrototype (0.69s)
+    --- PASS: TestF25StandardDropCompletionPrototype/rejected (0.14s)
+    --- PASS: TestF25StandardDropCompletionPrototype/preaccept-cancelled (0.12s)
+    --- PASS: TestF25StandardDropCompletionPrototype/applied-ack-error (0.12s)
+    --- PASS: TestF25StandardDropCompletionPrototype/pending-applied (0.14s)
+    --- PASS: TestF25StandardDropCompletionPrototype/pending-discarded (0.16s)
+=== RUN   TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority
+=== RUN   TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority/1
+=== RUN   TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority/2
+--- PASS: TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority (0.06s)
+    --- PASS: TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority/1 (0.03s)
+    --- PASS: TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority/2 (0.02s)
+=== RUN   TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache
+--- PASS: TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache (0.01s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/multidb	7.575s

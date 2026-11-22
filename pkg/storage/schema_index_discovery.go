@@ -2,7 +2,61 @@ package storage
 
 import (
 	"context"
+	"slices"
 )
+
+// RelationshipEqualityIndexProperties selects a complete relationship RANGE
+// key from the schema catalog. Constraint-owned keys retain priority; within
+// each class, the shortest key wins and property-order ties are lexical.
+// The returned names are detached from the catalog. A dropped declaration can
+// no longer select retained derived postings; surviving declarations can.
+func (sm *SchemaManager) RelationshipEqualityIndexProperties(ctx context.Context, relationshipType string, boundProperties map[string]interface{}) ([]string, bool, error) {
+	if err := sm.mu.RLockContext(ctx); err != nil {
+		return nil, false, err
+	}
+	defer sm.mu.RUnlock()
+	var selected []string
+	selectedOwned := false
+	for _, index := range sm.rangeIndexes {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		if defaultConstraintEntityType(index.EntityType) != ConstraintEntityRelationship || index.effectiveKind() != IndexKindRange || index.Label != relationshipType {
+			continue
+		}
+		owned := index.OwningConstraint != ""
+		if owned {
+			constraint := sm.constraints[index.OwningConstraint]
+			if constraint.Type != ConstraintUnique && constraint.Type != ConstraintRelationshipKey {
+				continue
+			}
+		}
+		properties := index.Properties
+		if len(properties) == 0 && index.Property != "" {
+			properties = []string{index.Property}
+		}
+		if len(properties) == 0 || selectedOwned && !owned {
+			continue
+		}
+		complete := true
+		for _, property := range properties {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			if boundProperties[property] == nil {
+				complete = false
+				break
+			}
+		}
+		if complete && (selected == nil || owned && !selectedOwned || len(properties) < len(selected) || len(properties) == len(selected) && slices.Compare(properties, selected) < 0) {
+			selected, selectedOwned = properties, owned
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return slices.Clone(selected), selected != nil, nil
+}
 
 // compositeKeyIndexLocked returns the equality index on exactly label's
 // properties (in order), owned or standalone, or nil. The caller holds sm.mu.
