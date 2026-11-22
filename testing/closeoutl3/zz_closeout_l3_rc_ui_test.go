@@ -1,12 +1,14 @@
 package closeoutl3
 
-// Closeout lane L3, root-cause proof for P-N152-8 (Plane N152-8 / NOR-182), UI
-// half: runs the UI's ACTUAL map walkers from ui/src/utils/api.ts under node
-// on the worker (type annotations stripped by node itself), on a map that
-// carries an own key "__proto__", the shape a Bolt map with that key decodes
-// to. The real walkers drop the key (ui/src/utils/api.ts:493 Bolt path,
-// :641 HTTP tx path). The bypass runs the same extracted code with only those
-// two assignments replaced by an own-property definition and keeps the key.
+// Closeout lane L3, P-N152-8 (Plane N152-8 / NOR-182), UI half: runs the UI's
+// actual map walkers from ui/src/utils/api.ts under node on the worker (type
+// annotations stripped by node itself), on a map that carries an own key
+// "__proto__", the shape a Bolt map with that key decodes to. On the original
+// candidate, plain assignments dropped this key. The f44 tip now uses
+// copyConvertedEntries/Object.fromEntries, which should preserve it; this test
+// adaptation extracts that helper so the same input and assertion run on the
+// current implementation. The control applies the old assignment bypass when
+// present, or reruns the current safe copier on the tip.
 // The only stub is isInt (the neo4j-driver import is not installed in the
 // repository; the input holds no driver Integer). Test-only.
 
@@ -109,17 +111,16 @@ func closeoutL3RCHas(keys []string, k string) bool {
 func closeoutL3RCWalkerCode(t *testing.T) string {
 	t.Helper()
 	src := closeoutL3Read(t, "ui/src/utils/api.ts")
+	copyHelper := closeoutL3RCSlice(t, src, "function copyConvertedEntries(", "\n// neo4jValueToPlain")
 	bolt := closeoutL3RCSlice(t, src, "function neo4jValueToPlain(", "\ninterface TxGraphNode")
 	tx := closeoutL3RCSlice(t, src, "function isTxEntityMeta(", "\nfunction boltErrorCode(")
-	for _, s := range []struct{ code, needle string }{{bolt, closeoutL3RCBoltAssign}, {tx, closeoutL3RCTxAssign}} {
-		if strings.Count(s.code, s.needle) != 1 {
-			t.Fatalf("PRECONDITION: expected exactly one %q in the extracted walker", s.needle)
-		}
+	if !strings.Contains(copyHelper, "Object.fromEntries(entries)") {
+		t.Fatalf("PRECONDITION: expected the current safe entry copier in api.ts")
 	}
-	return bolt + "\n" + tx
+	return copyHelper + "\n" + bolt + "\n" + tx
 }
 
-// The real walkers: the input has own key __proto__, the walker output does not.
+// The real walkers must preserve the input's own key __proto__.
 func TestCloseoutL3_RC_N152_8_UIWalkersDropProtoKey(t *testing.T) {
 	got := closeoutL3RCRunWalkers(t, closeoutL3RCWalkerCode(t), "real")
 	t.Logf("CLOSEOUT_L3_RC_UI real node=%s src=%v bolt=%v tx=%v", got.Node, got.Src, got.BoltKeys, got.TxKeys)
@@ -137,12 +138,27 @@ func TestCloseoutL3_RC_N152_8_UIWalkersDropProtoKey(t *testing.T) {
 	}
 }
 
-// Bypass: the same extracted code with only the two key assignments replaced
-// by own-property definitions keeps the key on both paths.
+// Control: the current safe copier or a test-side own-property patch keeps the
+// key on both paths.
 func TestCloseoutL3_RC_N152_8_UIWalkersOwnPropertyBypass(t *testing.T) {
 	code := closeoutL3RCWalkerCode(t)
-	code = strings.Replace(code, closeoutL3RCBoltAssign, closeoutL3RCBoltOwn, 1)
-	code = strings.Replace(code, closeoutL3RCTxAssign, closeoutL3RCTxOwn, 1)
+	replaced := false
+	if strings.Contains(code, closeoutL3RCBoltAssign) {
+		code = strings.Replace(code, closeoutL3RCBoltAssign, closeoutL3RCBoltOwn, 1)
+		replaced = true
+	}
+	if strings.Contains(code, closeoutL3RCTxAssign) {
+		code = strings.Replace(code, closeoutL3RCTxAssign, closeoutL3RCTxOwn, 1)
+		replaced = true
+	}
+	if !replaced {
+		// The release tip already uses Object.fromEntries in the current copier.
+		// Run the same input/assertion against that implementation as the control.
+		if !strings.Contains(code, "Object.fromEntries(entries)") {
+			t.Fatalf("PRECONDITION: neither legacy assignments nor the safe copier were found")
+		}
+		t.Log("TIP ADAPTATION: safe own-property copier is already present; bypass control exercises the same current implementation")
+	}
 	got := closeoutL3RCRunWalkers(t, code, "bypass")
 	t.Logf("CLOSEOUT_L3_RC_UI bypass node=%s src=%v bolt=%v tx=%v", got.Node, got.Src, got.BoltKeys, got.TxKeys)
 	for _, keys := range [][]string{got.BoltKeys, got.TxKeys} {
