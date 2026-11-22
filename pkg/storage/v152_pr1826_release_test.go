@@ -258,3 +258,12 @@ func TestV152P26ProjectedHasEmbedding(t *testing.T) {
 		require.NoError(t, tx.Rollback())
 	}
 }
+
+// TestV152P26StorageAll runs the tests above as one named test.
+func TestV152P26StorageAll(t *testing.T) {
+	t.Run("WriteBehindSnapshot", TestV152P26WriteBehindSnapshot)
+	t.Run("StreamSharesImage", TestV152P26StreamSharesImage)
+	t.Run("OneByteAllocation", TestV152P26OneByteAllocation)
+	t.Run("NumericListEstimate", TestV152P26NumericListEstimate)
+	t.Run("ProjectedHasEmbedding", TestV152P26ProjectedHasEmbedding)
+}
