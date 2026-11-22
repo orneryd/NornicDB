@@ -1245,17 +1245,20 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 // one validation pass. The oracle cut is sampled before reading, so any
 // publication during the scan makes the result ineligible for later reuse.
 type temporalValidationRead struct {
-	edgeType string
-	readCut  uint64
-	edges    []*Edge
+	edgeType  string
+	namespace string
+	readCut   uint64
+	edges     []*Edge
+	pending   map[pendingTemporalScope]pendingTemporalEdges
 }
 
-func (r *temporalValidationRead) get(ctx context.Context, engine *BadgerEngine, edgeType string) ([]*Edge, error) {
+func (r *temporalValidationRead) get(ctx context.Context, tx *BadgerTransaction, edgeType, namespace string) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	engine := tx.engine
 	cut := engine.db.oracle.published.Load()
-	if r.edgeType == edgeType && r.readCut == cut {
+	if r.edgeType == edgeType && r.namespace == namespace && r.readCut == cut {
 		if err := engine.pendingNamespaceConflict(""); err != nil {
 			return nil, err
 		}
@@ -1265,8 +1268,22 @@ func (r *temporalValidationRead) get(ctx context.Context, engine *BadgerEngine, 
 	if err != nil {
 		return nil, err
 	}
-	*r = temporalValidationRead{edgeType: edgeType, readCut: cut, edges: edges}
-	return edges, nil
+	// Stored reads own their materialized slice. Retain only rows this
+	// transaction has not deleted or replaced, and only in the target scope.
+	kept := edges[:0]
+	prefix := namespace + ":"
+	var cancel bulkReadCancellation
+	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		if !tx.committedEdgeSupersededLocked(edge.ID) && (namespace == "" || strings.HasPrefix(string(edge.ID), prefix)) {
+			kept = append(kept, edge)
+		}
+	}
+	clear(edges[len(kept):])
+	r.edgeType, r.namespace, r.readCut, r.edges = edgeType, namespace, cut, kept
+	return kept, nil
 }
 
 // checkEdgeTemporalConstraint checks temporal no-overlap constraints for an edge in a transaction.
@@ -1299,39 +1316,30 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, ed
 	}
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 
-	// Check against pending edges in this transaction
-	nsPrefix := namespace + ":"
-	for id, otherEdge := range tx.pendingEdges {
-		if id == edge.ID || otherEdge.Type != edge.Type {
-			continue
+	if len(tx.pendingEdges) > 1 || (len(tx.pendingEdges) == 1 && tx.pendingEdges[edge.ID] == nil) {
+		pending, err := temporalRead.pendingTemporalEdges(ctx, tx, pendingTemporalScope{
+			namespace: namespace, edgeType: edge.Type, start: startProp, end: endProp,
+		})
+		if err != nil {
+			return err
 		}
-		if namespace != "" && !strings.HasPrefix(string(id), nsPrefix) {
-			continue
-		}
-		if !edgeTemporalCompositeKeyMatch(otherEdge, keyProps, keyVals) {
-			continue
-		}
-		otherStart, otherEnd, otherHasEnd, ok := ReadTemporalBounds(otherEdge.Properties[startProp], otherEdge.Properties[endProp])
-		if !ok {
-			continue
-		}
-		if intervalsOverlap(newInterval, temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd}) {
-			message := localization.StorageValidationTemporalEdgeOverlap(string(id), keyVals)
-			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+		for _, other := range pending.overlapping(newInterval) {
+			if other.edge.ID != edge.ID && intervalsOverlap(newInterval, other.interval) &&
+				edgeTemporalCompositeKeyMatch(other.edge, keyProps, keyVals) {
+				message := localization.StorageValidationTemporalEdgeOverlap(string(other.edge.ID), keyVals)
+				return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+			}
 		}
 	}
 
 	// Check against committed edges (filtered by namespace) on the read's
 	// lifetime (ctx).
-	existingEdges, err := temporalRead.get(ctx, tx.engine, edge.Type)
+	existingEdges, err := temporalRead.get(ctx, tx, edge.Type, namespace)
 	if err != nil {
 		return err
 	}
 	for _, existingEdge := range existingEdges {
-		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
+		if existingEdge.ID == edge.ID {
 			continue
 		}
 		if !edgeTemporalCompositeKeyMatch(existingEdge, keyProps, keyVals) {
