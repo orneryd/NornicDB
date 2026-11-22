@@ -57,7 +57,7 @@ func staticAlternativesOf(operand staticOperand) map[string]bool {
 // function of staticFunctionDerivations is exercised here.
 func TestStaticAlternativesNeverCollapse(t *testing.T) {
 	for name, input := range staticAlternativeInputs() {
-		scope := typeScope{"v": input}.static(false)
+		scope := typeScope{"v": input}.static(false, nil)
 		checker := staticOperatorChecker{scope: scope}
 		for _, expression := range staticValueConstructors {
 			result, err := checker.check(t.Context(), expression)
@@ -77,7 +77,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 		}
 	}
 	for expression := range staticCollapsingConstructors {
-		result, err := (staticOperatorChecker{scope: typeScope{"v": staticAlternativeInputs()["Integer or String"]}.static(false)}).check(t.Context(), expression)
+		result, err := (staticOperatorChecker{scope: typeScope{"v": staticAlternativeInputs()["Integer or String"]}.static(false, nil)}).check(t.Context(), expression)
 		require.NoError(t, err, expression)
 		require.Equal(t, "List<T>", result.typeName(), "%s is a documented collapse", expression)
 	}
@@ -94,7 +94,7 @@ func TestStaticAlternativesNeverCollapse(t *testing.T) {
 // Neo4j's own: a CASE whose branches mix a temporal value or duration with a
 // list of other values ("Duration or List<T>").
 func TestStaticCaseTemporalListWidening(t *testing.T) {
-	checker := staticOperatorChecker{scope: typeScope{}.static(false)}
+	checker := staticOperatorChecker{scope: typeScope{}.static(false, nil)}
 	for expression, want := range map[string]string{
 		"CASE WHEN true THEN duration('PT1S') ELSE [1] END":        "Duration or List<T>",
 		"CASE WHEN true THEN [duration('PT1S')] ELSE [1] END":      "List<T>",

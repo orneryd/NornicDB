@@ -843,6 +843,7 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	node := clause.source.syntax
 	name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 	procedure, found := globalProcedureRegistry.Get(name)
+	yield := yieldFromSyntax(node)
 	// A CALL the selected graph owns is admitted by that graph's own registry: a
 	// registration of the same name here declares neither its arity nor the
 	// columns its yields carry. Every other CALL keeps the local registry's arity
@@ -854,8 +855,16 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 				return
 			}
 		}
+		// Returns is the admission contract. A display signature can describe
+		// placeholder outputs (CREATE PROCEDURE uses value for a dynamic body),
+		// so signature-only metadata still validates the actual result at runtime.
+		if yield != nil && !yield.yieldAll && len(procedure.Spec.Returns) > 0 {
+			if err := validateYieldColumnsExist(columnNames(procedure.Spec.Returns), yield); err != nil {
+				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, clause.source.start, err)
+				return
+			}
+		}
 	}
-	yield := yieldFromSyntax(node)
 	outputs := projectedProcedureNodeNames(node)
 	if !found || clause.participantOwned {
 		if !found && !clause.branch.graph.selected {

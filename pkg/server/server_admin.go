@@ -44,8 +44,15 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		nodeCount, _ := storage.NodeCount(r.Context())
-		edgeCount, _ := storage.EdgeCount(r.Context())
+		// A failed count read must not be published as a zero: an operator
+		// cannot tell "this database is empty" from "the count could not be
+		// read". The statistics answer fails instead, and the generic
+		// internal error keeps the storage cause out of the response.
+		nodeCount, edgeCount, err := readDatabaseCounts(r.Context(), storage)
+		if err != nil {
+			s.writeInternalServerError(w, r)
+			return
+		}
 
 		totalNodeCount += nodeCount
 		totalEdgeCount += edgeCount

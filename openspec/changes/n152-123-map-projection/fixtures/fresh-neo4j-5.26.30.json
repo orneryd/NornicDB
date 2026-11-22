@@ -1,0 +1,86 @@
+[
+  {
+    "id": "original/RUN",
+    "query": "MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "original/PROFILE",
+    "query": "PROFILE MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": "Plan: \"PROFILE\"\nStatement: \"READ_ONLY\"\nVersion: \"5\"\nPlanner: \"COST\"\nRuntime: \"SLOTTED\"\nTime: 21\nDbHits: 4\nRows: 0\nMemory (Bytes): 64\n"
+  },
+  {
+    "id": "original/EXPLAIN",
+    "query": "EXPLAIN MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": "Plan: \"EXPLAIN\"\nStatement: \"READ_ONLY\"\nVersion: \"5\"\nPlanner: \"COST\"\nRuntime: \"SLOTTED\"\nTime: 17\n"
+  },
+  {
+    "id": "split/RUN",
+    "query": "MATCH (a:A) MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "split/PROFILE",
+    "query": "PROFILE MATCH (a:A) MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": "Plan: \"PROFILE\"\nStatement: \"READ_ONLY\"\nVersion: \"5\"\nPlanner: \"COST\"\nRuntime: \"SLOTTED\"\nTime: 43\nDbHits: 4\nRows: 0\nMemory (Bytes): 64\n"
+  },
+  {
+    "id": "split/EXPLAIN",
+    "query": "EXPLAIN MATCH (a:A) MATCH (a)-->(b {k: a{.k}}) RETURN b",
+    "exit_code": 0,
+    "output": "Plan: \"EXPLAIN\"\nStatement: \"READ_ONLY\"\nVersion: \"5\"\nPlanner: \"COST\"\nRuntime: \"SLOTTED\"\nTime: 32\n"
+  },
+  {
+    "id": "scalar",
+    "query": "MATCH (a:A)-->(b:B {k:a.k}) RETURN b.id",
+    "exit_code": 0,
+    "output": "b.id\n\"b\"\n"
+  },
+  {
+    "id": "undefined",
+    "query": "MATCH (a:A) RETURN missing{.k}",
+    "exit_code": 1,
+    "output": "Variable `missing` not defined (line 1, column 20 (offset: 19))\n\"MATCH (a:A) RETURN missing{.k}\"\n                    ^\n"
+  },
+  {
+    "id": "scalar_receiver",
+    "query": "WITH 1 AS a RETURN a{.k}",
+    "exit_code": 1,
+    "output": "Type mismatch: expected Map, Node or Relationship but was Integer (line 1, column 20 (offset: 19))\n\"WITH 1 AS a RETURN a{.k}\"\n                    ^\n"
+  },
+  {
+    "id": "comparison_right",
+    "query": "MATCH (a:A) RETURN {k:7} = a{.k} AS same",
+    "exit_code": 0,
+    "output": "same\nTRUE\n"
+  },
+  {
+    "id": "comparison_left",
+    "query": "MATCH (a:A) RETURN a{.k} = {k:7} AS same",
+    "exit_code": 0,
+    "output": "same\nTRUE\n"
+  },
+  {
+    "id": "nested_operand",
+    "query": "MATCH (a:A) RETURN NOT ({k:8} = a{.k}) AS same",
+    "exit_code": 0,
+    "output": "same\nTRUE\n"
+  },
+  {
+    "id": "malformed_outer_selector",
+    "query": "MATCH (a:A) RETURN head([a{.k}]){.k}",
+    "exit_code": 1,
+    "output": "Invalid input '{': expected an expression, 'FOREACH', ',', 'AS', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' or <EOF> (line 1, column 33 (offset: 32))\n\"MATCH (a:A) RETURN head([a{.k}]){.k}\"\n                                 ^\n"
+  },
+  {
+    "id": "malformed_outer_keyed",
+    "query": "MATCH (a:A) RETURN head([a{.k}]){k:1}",
+    "exit_code": 1,
+    "output": "Invalid input '{': expected an expression, 'FOREACH', ',', 'AS', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH', 'OFFSET', 'OPTIONAL', 'REMOVE', 'RETURN', 'SET', 'SKIP', 'UNION', 'UNWIND', 'USE', 'WITH' or <EOF> (line 1, column 33 (offset: 32))\n\"MATCH (a:A) RETURN head([a{.k}]){k:1}\"\n                                 ^\n"
+  }
+]

@@ -24,6 +24,7 @@ import (
 	"container/list"
 	"context"
 	"hash/fnv"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -37,7 +38,9 @@ import (
 //   - Bounded memory usage (LRU eviction)
 //   - Fast hashing (FNV-1a is non-cryptographic but fast)
 //
-// Thread-safe: All methods can be called from multiple goroutines.
+// Thread-safe: All methods can be called from multiple goroutines. Cached
+// single and batch results own their vectors, independently of retained state
+// and other results, including repeated inputs within a batch.
 type CachedEmbedder struct {
 	base Embedder
 
@@ -51,7 +54,8 @@ type CachedEmbedder struct {
 	misses uint64
 }
 
-// cacheEntry holds a cached embedding with its key
+// cacheEntry holds a private, immutable embedding with its key. Retention and
+// result copies keep caller-owned vectors outside the cache's shared state.
 type cacheEntry struct {
 	key       string
 	embedding []float32
@@ -122,7 +126,7 @@ func (c *CachedEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		entry := elem.Value.(*cacheEntry)
 		c.mu.Unlock()
 
-		return entry.embedding, nil
+		return slices.Clone(entry.embedding), nil
 	}
 	c.mu.RUnlock()
 
@@ -145,7 +149,7 @@ func (c *CachedEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 	// Double-check (another goroutine might have added it)
 	if elem, ok := c.cache[key]; ok {
 		c.lru.MoveToFront(elem)
-		return elem.Value.(*cacheEntry).embedding, nil
+		return slices.Clone(elem.Value.(*cacheEntry).embedding), nil
 	}
 
 	// Evict if at capacity
@@ -154,11 +158,11 @@ func (c *CachedEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 	}
 
 	// Add new entry
-	entry := &cacheEntry{key: key, embedding: embedding}
+	entry := &cacheEntry{key: key, embedding: slices.Clone(embedding)}
 	elem := c.lru.PushFront(entry)
 	c.cache[key] = elem
 
-	return embedding, nil
+	return slices.Clone(embedding), nil
 }
 
 // EmbedBatch generates embeddings for multiple texts with caching.
@@ -205,7 +209,7 @@ func (c *CachedEmbedder) embedBatchWithKeyFunc(ctx context.Context, texts []stri
 		c.mu.RLock()
 		if elem, ok := c.cache[key]; ok {
 			entry := elem.Value.(*cacheEntry)
-			results[i] = entry.embedding
+			results[i] = slices.Clone(entry.embedding)
 			atomic.AddUint64(&c.hits, 1)
 			c.mu.RUnlock()
 
@@ -235,7 +239,7 @@ func (c *CachedEmbedder) embedBatchWithKeyFunc(ctx context.Context, texts []stri
 		c.mu.Lock()
 		for j, embedding := range embeddings {
 			i := misses[j]
-			results[i] = embedding
+			results[i] = slices.Clone(embedding)
 
 			// Cache the result
 			key := hashTextForInputType(missTexts[j], inputType)
@@ -243,7 +247,7 @@ func (c *CachedEmbedder) embedBatchWithKeyFunc(ctx context.Context, texts []stri
 				for c.lru.Len() >= c.maxSize {
 					c.evictOldest()
 				}
-				entry := &cacheEntry{key: key, embedding: embedding}
+				entry := &cacheEntry{key: key, embedding: slices.Clone(embedding)}
 				elem := c.lru.PushFront(entry)
 				c.cache[key] = elem
 			}

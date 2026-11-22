@@ -141,6 +141,12 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 				return nil, err
 			}
 		} else if parsed.isRelationship {
+			// Build before catalog publication: a failed build cannot advertise a
+			// usable declaration or remove one admitted concurrently. The existing
+			// derived owner joins committed writes independently of catalog rows.
+			if err := storage.PrepareDeclaredRelationshipPropertyEqualityIndexForEngine(ctx, e.storage, label, parsed.properties); err != nil {
+				return nil, err
+			}
 			if err := e.storage.GetSchema().AddRangeIndexForEntity(name, label, parsed.properties, entityType); err != nil {
 				return nil, err
 			}

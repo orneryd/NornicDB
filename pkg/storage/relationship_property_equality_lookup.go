@@ -223,12 +223,23 @@ func PrepareRelationshipPropertyEqualityIndexForEngine(ctx context.Context, engi
 	if constraint.Type != ConstraintUnique && constraint.Type != ConstraintRelationshipKey {
 		return nil
 	}
-	if constraint.Label == "" || len(constraint.Properties) == 0 {
+	return PrepareDeclaredRelationshipPropertyEqualityIndexForEngine(ctx, engine, constraint.Label, constraint.Properties)
+}
+
+// PrepareDeclaredRelationshipPropertyEqualityIndexForEngine prepares the shared
+// derived equality index for a relationship RANGE declaration. Constraint and
+// standalone declarations use the same population and committed-write owner.
+// Views without that owner retain the complete scan, as constraint indexes do.
+func PrepareDeclaredRelationshipPropertyEqualityIndexForEngine(ctx context.Context, engine Engine, relationshipType string, properties []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if engine == nil || relationshipType == "" || len(properties) == 0 {
 		return nil
 	}
 	provider, ok := relationshipPropertyEqualityIndexOwnerFor(engine)
 	if !ok {
 		return nil
 	}
-	return provider.BuildRelationshipPropertyEqualityIndex(ctx, namespaceForEngine(engine), constraint.Label, constraint.Properties)
+	return provider.BuildRelationshipPropertyEqualityIndex(ctx, namespaceForEngine(engine), relationshipType, properties)
 }
