@@ -763,7 +763,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	var scopedEdges map[string]authorizedRelationshipHit
 	if scope != nil {
 		scopedEdges = make(map[string]authorizedRelationshipHit, len(bm25))
-		readHit := func(id string) (authorizedRelationshipHit, error) {
+		readHit := func(ctx context.Context, id string) (authorizedRelationshipHit, error) {
 			if cached, ok := scopedEdges[id]; ok {
 				return cached, nil
 			}
@@ -778,7 +778,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		keywords := bm25[:0]
 		for _, candidate := range bm25 {
-			hit, err := readHit(candidate.ID)
+			hit, err := readHit(ctx, candidate.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -790,7 +790,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		bm25 = keywords
 		vectors := vectorHits[:0]
 		for _, candidate := range vectorHits {
-			hit, err := readHit(candidate.id)
+			hit, err := readHit(ctx, candidate.id)
 			if err != nil {
 				return nil, err
 			}
