@@ -9,7 +9,7 @@ import (
 
 // TestNOR360CatalogProbeCloseAndRegisteredCleanup preserves the probe contract:
 // an intentional manager close can precede its fixture boundary's cleanup.
-func TestNOR360CatalogProbeCloseAndRegisteredCleanup(t *testing.T) {
+func TestNOR360CatalogProbeCloseAndRegisteredCleanupPorted(t *testing.T) {
 	for _, observed := range []bool{false, true} {
 		name := "without_observer"
 		if observed {
