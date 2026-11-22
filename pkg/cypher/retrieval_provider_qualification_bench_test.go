@@ -96,8 +96,8 @@ package cypher
 //	go test ./pkg/cypher -run '^$' -v \
 //		-bench '^BenchmarkSearchSourceRetrievalProviderQualification$' -benchtime=24x -timeout 60m
 //
-// Run the correctness controls (about two minutes: one 49K fixture, then only
-// provider round trips):
+// Run the correctness controls on the same 49K corpus using exact vector
+// candidates, with production embedding and reranking clients:
 //
 //	go test ./pkg/cypher -run '^TestSearchSourceRetrievalProviderQualification49K$' -v -count=1
 
@@ -1182,6 +1182,11 @@ func TestSearchSourceRetrievalProviderQualification49K(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the provider qualification builds one 49K corpus; skipped in -short mode")
 	}
+	// The wire, ranked publication and failure assertions use the complete
+	// corpus with exact vector candidates. The benchmark above retains the
+	// default strategy and measures HNSW-backed retrieval separately.
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", strconv.Itoa(nor241Population+1))
+	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", "0")
 	harness := newNOR241Harness(t)
 	provider := harness.provider
 
