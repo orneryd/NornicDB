@@ -8,6 +8,7 @@ import (
 
 	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
+	l2e5311antlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -106,5 +107,43 @@ func TestL2_e53_11_Cause(t *testing.T) {
 			}
 			t.Logf("cause parser=%s prepare=[%s %v] execute=[%s %v]", parser, prepCode, prepErr, execCode, execErr)
 		}()
+	}
+}
+
+// Cause2: the two refusals come from two layers, each called directly here on
+// the same text, without the executor.
+//   - ANTLR grammar (only the ANTLR validator runs it, executor_query_routing.go:510-516):
+//     constraintRequirement's constraintBlock alternative (CypherParser.g4:195,
+//     block = balanced braces :211-213) takes the map literal {x: 1} as a
+//     nested contract block, whose entry `x: 1` is then read as a
+//     constraintBlockEntry (:219-221) and fails; readContractBlocks reports it
+//     (pkg/cypher/antlr/contract_block.go:69, "line L:C unexpected input").
+//   - Storage contract compiler (both parsers reach it when ANTLR is not run):
+//     compileNodeConstraintContractExpression has no map-literal form and
+//     returns "unsupported node predicate" (pkg/storage/constraint_contracts.go:526),
+//     wrapped by ValidateConstraintContractExpressions (:586-598) as
+//     'constraint contract pfmap invalid: predicate "{x: 1}": ...'.
+// The control text { n.age > 0 } passes both.
+func TestL2_e53_11_Cause2(t *testing.T) {
+	for _, c := range []struct {
+		name, statement, expression string
+	}{
+		{"map-literal", l2E53_11MapStatement, "{x: 1}"},
+		{"control", l2E53_11ControlStatement, "n.age > 0"},
+	} {
+		validateErr := l2e5311antlr.Validate(c.statement)
+		parsed, parseErr := l2e5311antlr.Parse(c.statement)
+		var parseDiagnostics []string
+		if parsed != nil {
+			parseDiagnostics = parsed.Errors
+		}
+		storageErr := storage.ValidateConstraintContractExpressions(storage.ConstraintContract{
+			Name:              "pfmap",
+			TargetEntityType:  "node",
+			TargetLabelOrType: "MapNode",
+			Entries:           []storage.ConstraintContractEntry{{Kind: storage.ConstraintContractKindBooleanNode, Expression: c.expression}},
+		})
+		t.Logf("L2CAUSE E53.11 %s antlr.Validate=%v antlr.Parse=(err %v, diagnostics %q) storage.ValidateConstraintContractExpressions(%q)=%v",
+			c.name, validateErr, parseErr, parseDiagnostics, c.expression, storageErr)
 	}
 }

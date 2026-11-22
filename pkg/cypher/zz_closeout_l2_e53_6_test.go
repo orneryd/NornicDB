@@ -97,3 +97,37 @@ func TestL2_e53_6_Cause(t *testing.T) {
 			config.GetParserType(), c.name, f.store.PrefixNodeID("one"), first, second, byLabel, byLabelErr, len(nodes), nodesErr, total, totalErr, len(all), allErr)
 	}
 }
+
+// Cause2 (storage layer only, no executor): BadgerEngine.CreateNode takes the
+// node's namespace from its ID with ParseDatabasePrefix (pkg/storage/
+// badger_nodes.go:185 admitCreatedNode -> pkg/storage/wal_ids.go:8-13, split at
+// the FIRST ':'), so "a:b:one" is counted under namespace "a"
+// (adjustNodeLabelCountsInTxn(txn, dbName, ...) at badger_nodes.go:123 ->
+// badger_label_count.go:191 countDeltaKey(kind, "a", "T", ...)). The
+// namespaced count asks for "a:b" (namespaced.go:786-788 ->
+// NodeCountByLabelInNamespace(ctx, "a:b", "T"), badger_label_count.go:255).
+// This logs the namespace the ID parses to and the label count read under
+// "a:b", under the parsed namespace, and through the namespaced engine, for
+// "a:b" and the control "ab".
+func TestL2_e53_6_Cause2(t *testing.T) {
+	ctx := context.Background()
+	for _, namespace := range []string{"a:b", "ab"} {
+		engine, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+		if err != nil {
+			t.Fatalf("open badger: %v", err)
+		}
+		store := storage.NewNamespacedEngine(engine, namespace)
+		createdID, err := store.CreateNode(ctx, &storage.Node{ID: "one", Labels: []string{"T"}})
+		if err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+		prefixed := store.PrefixNodeID("one")
+		parsedNS, rest, ok := storage.ParseDatabasePrefix(string(prefixed))
+		viaStore, viaStoreErr := store.NodeCountByLabel(ctx, "T")
+		underNamespace, underNamespaceErr := engine.NodeCountByLabelInNamespace(ctx, namespace, "T")
+		underParsed, underParsedErr := engine.NodeCountByLabelInNamespace(ctx, parsedNS, "T")
+		scanned, scanErr := store.GetNodesByLabel(ctx, "T")
+		t.Logf("L2CAUSE E53.6 namespace=%q created=%q stored_id=%q ParseDatabasePrefix=(%q, %q, %t) NodeCountByLabel(namespaced)=%d(%v) NodeCountByLabelInNamespace(%q)=%d(%v) NodeCountByLabelInNamespace(%q)=%d(%v) GetNodesByLabel=%d(%v)",
+			namespace, createdID, prefixed, parsedNS, rest, ok, viaStore, viaStoreErr, namespace, underNamespace, underNamespaceErr, parsedNS, underParsed, underParsedErr, len(scanned), scanErr)
+	}
+}

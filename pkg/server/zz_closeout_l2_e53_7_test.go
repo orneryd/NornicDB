@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 )
@@ -173,5 +174,50 @@ func TestL2_e53_7_Cause(t *testing.T) {
 			break
 		}
 		time.Sleep(time.Second)
+	}
+}
+
+// l2E53_7Registered reports whether the session manager still holds txID,
+// asked as the handler asks (GetForOwner with the request's owner key; with
+// no authentication that is auth.PrincipalID(nil)) and ownerless (Get).
+func (s *l2E53_7Server) l2E53_7Registered(txID string) (bool, bool) {
+	_, owned := s.srv.txSessions.GetForOwner(txID, auth.PrincipalID(nil))
+	_, anyOwner := s.srv.txSessions.Get(txID)
+	return owned, anyOwner
+}
+
+// Cause2: the session is dropped inside the very request that reports
+// TransactionTimedOut, not by the 30 s expiry. The timed-out statement is a
+// failed statement: executeTxStatements returns failed=true and
+// handleExecuteInTransaction calls rollbackRequestTransaction
+// (pkg/server/server_db.go:1798-1800 -> :1667-1668 Lease.RollbackAndDelete),
+// whose manager.rollbackAndDelete (pkg/txsession/manager.go:775) ends in
+// deleteSessionLocked (:841-845: delete(m.sessions, id)); the next request's
+// GetForOwner lookup (server_db.go:1765-1768) then answers 404. The test logs
+// the registration right before and right after the timed-out request and
+// sends the next request at once (no wait), and does the same for an ordinary
+// failing statement (RETURN 1/0) inside the timeout: the same path, the same
+// deletion, the same 404.
+func TestL2_e53_7_Cause2(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		wait      time.Duration
+		statement string
+	}{
+		{"timed-out", l2E53_7FirstWait, "RETURN 1"},
+		{"failing-statement", 0, "RETURN 1/0"},
+	} {
+		s := l2E53_7NewServer(t)
+		txPath := s.open(t)
+		txID := txPath[strings.LastIndex(txPath, "/")+1:]
+		if c.wait > 0 {
+			time.Sleep(c.wait)
+		}
+		ownedBefore, anyBefore := s.l2E53_7Registered(txID)
+		status2, resp2, _ := s.post(txPath, c.statement)
+		ownedAfter, anyAfter := s.l2E53_7Registered(txID)
+		status3, resp3, _ := s.post(txPath, "RETURN 1")
+		t.Logf("L2CAUSE E53.7 %s parser=%s registered_before=(owner %t, any %t) request=[%d %s] registered_after=(owner %t, any %t) next_request_immediately=[%d %s]",
+			c.name, config.GetParserType(), ownedBefore, anyBefore, status2, l2E53_7Code(resp2), ownedAfter, anyAfter, status3, l2E53_7Code(resp3))
 	}
 }
