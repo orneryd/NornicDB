@@ -244,3 +244,20 @@ func (e *p26Env) check(defect, where, q, want string) {
 		e.t.Logf("P26ROW %s %s %s %s %q -> %.200s", defect, where, s.name, verdict, q, got)
 	}
 }
+
+// boltCommit runs one statement in an explicit transaction and commits it.
+func (e *p26Env) boltCommit(q string) string {
+	e.t.Helper()
+	ctx := context.Background()
+	s := e.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: e.database})
+	defer s.Close(ctx)
+	tx, err := s.BeginTransaction(ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	out := p26Collect(tx.Run(ctx, q, nil))
+	if err := tx.Commit(ctx); err != nil {
+		return out + " COMMIT " + err.Error()
+	}
+	return out + " committed"
+}
