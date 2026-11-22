@@ -1,0 +1,74 @@
+# Trimmed excerpt of the archived NOR-78 reproduction logs.
+# Source: N152-145 (NOR-78) description_html, code blocks 3 and 4.
+# Only test-run and failure lines are kept; unrelated INFO log lines are omitted.
+# Nothing in the kept lines is edited.
+
+--- macOS (excerpt) ---
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=1
+    nor78_remote_http_rollback_test.go:84: d=1 statement HTTP=200 errors=[]
+    nor78_remote_http_rollback_test.go:98: d=1 subsequent DELETE HTTP=200 errors=[]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0
+    nor78_remote_http_rollback_test.go:84: d=0 statement HTTP=200 errors=[{Code:Neo.ClientError.Statement.ArithmeticError Message:/ by zero} {Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found
+    nor78_remote_http_rollback_test.go:87: 
+        	Error Trace:	/Users/timothysweet/.codex/worktrees/nor78-v151-remote-rollback/NornicDB/pkg/server/nor78_remote_http_rollback_test.go:87
+        	Error:      	"[{Neo.ClientError.Statement.ArithmeticError / by zero} {Neo.ClientError.Transaction.TransactionNotFound transaction not found\nfailed to rollback remote tx handle 'remote:comp.two': Neo.ClientError.Transaction.TransactionNotFound: transaction not found}]" should have 1 item(s), but has 2
+        	Test:       	TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0
+        	Messages:   	statement failure must not add TransactionNotFound as a cleanup failure
+    nor78_remote_http_rollback_test.go:98: d=0 subsequent DELETE HTTP=404 errors=[{Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found}]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=1
+    nor78_remote_http_rollback_test.go:84: d=1 statement HTTP=200 errors=[]
+    nor78_remote_http_rollback_test.go:98: d=1 subsequent DELETE HTTP=200 errors=[]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0
+    nor78_remote_http_rollback_test.go:84: d=0 statement HTTP=200 errors=[{Code:Neo.ClientError.Statement.ArithmeticError Message:/ by zero} {Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found
+    nor78_remote_http_rollback_test.go:87: 
+        	Error Trace:	/Users/timothysweet/.codex/worktrees/nor78-v151-remote-rollback/NornicDB/pkg/server/nor78_remote_http_rollback_test.go:87
+        	Error:      	"[{Neo.ClientError.Statement.ArithmeticError / by zero} {Neo.ClientError.Transaction.TransactionNotFound transaction not found\nfailed to rollback remote tx handle 'remote:comp.two': Neo.ClientError.Transaction.TransactionNotFound: transaction not found}]" should have 1 item(s), but has 2
+        	Test:       	TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0
+        	Messages:   	statement failure must not add TransactionNotFound as a cleanup failure
+    nor78_remote_http_rollback_test.go:98: d=0 subsequent DELETE HTTP=404 errors=[{Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found}]
+--- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup (1.40s)
+    --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic (0.70s)
+        --- PASS: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=1 (0.03s)
+        --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0 (0.00s)
+    --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr (0.71s)
+        --- PASS: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=1 (0.00s)
+        --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0 (0.00s)
+FAIL	github.com/orneryd/nornicdb/pkg/server	2.313s
+
+--- Linux (excerpt) ---
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=1
+    nor78_remote_http_rollback_test.go:84: d=1 statement HTTP=200 errors=[]
+    nor78_remote_http_rollback_test.go:98: d=1 subsequent DELETE HTTP=200 errors=[]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0
+    nor78_remote_http_rollback_test.go:84: d=0 statement HTTP=200 errors=[{Code:Neo.ClientError.Statement.ArithmeticError Message:/ by zero} {Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found
+    nor78_remote_http_rollback_test.go:87: 
+        	Error Trace:	/workspace/pkg/server/nor78_remote_http_rollback_test.go:87
+        	Error:      	"[{Neo.ClientError.Statement.ArithmeticError / by zero} {Neo.ClientError.Transaction.TransactionNotFound transaction not found\nfailed to rollback remote tx handle 'remote:comp.two': Neo.ClientError.Transaction.TransactionNotFound: transaction not found}]" should have 1 item(s), but has 2
+        	Test:       	TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0
+        	Messages:   	statement failure must not add TransactionNotFound as a cleanup failure
+    nor78_remote_http_rollback_test.go:98: d=0 subsequent DELETE HTTP=404 errors=[{Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found}]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=1
+    nor78_remote_http_rollback_test.go:84: d=1 statement HTTP=200 errors=[]
+    nor78_remote_http_rollback_test.go:98: d=1 subsequent DELETE HTTP=200 errors=[]
+=== RUN   TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0
+    nor78_remote_http_rollback_test.go:84: d=0 statement HTTP=200 errors=[{Code:Neo.ClientError.Statement.ArithmeticError Message:/ by zero} {Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found
+    nor78_remote_http_rollback_test.go:87: 
+        	Error Trace:	/workspace/pkg/server/nor78_remote_http_rollback_test.go:87
+        	Error:      	"[{Neo.ClientError.Statement.ArithmeticError / by zero} {Neo.ClientError.Transaction.TransactionNotFound transaction not found\nfailed to rollback remote tx handle 'remote:comp.two': Neo.ClientError.Transaction.TransactionNotFound: transaction not found}]" should have 1 item(s), but has 2
+        	Test:       	TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0
+        	Messages:   	statement failure must not add TransactionNotFound as a cleanup failure
+    nor78_remote_http_rollback_test.go:98: d=0 subsequent DELETE HTTP=404 errors=[{Code:Neo.ClientError.Transaction.TransactionNotFound Message:transaction not found}]
+--- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup (2.28s)
+    --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic (1.10s)
+        --- PASS: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=1 (0.05s)
+        --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/nornic/d=0 (0.01s)
+    --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr (1.18s)
+        --- PASS: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=1 (0.01s)
+        --- FAIL: TestNOR78CompositeRemoteHTTPErrorCleanup/antlr/d=0 (0.01s)
+FAIL	github.com/orneryd/nornicdb/pkg/server	2.356s

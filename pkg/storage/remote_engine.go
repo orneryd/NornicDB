@@ -17,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/jsontext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -158,10 +159,15 @@ type remoteCypherTx struct {
 	commitURL    string
 	rollbackURL  string
 	closed       bool
+	// QueryCypher alone publishes a decoded HTTP abort. Lease renewal and
+	// completion may read it concurrently; the observed cause is immutable.
+	httpAbort atomic.Pointer[remoteHTTPAbort]
 	// leaseEvery is how often its coordinator renews an HTTP transaction's
 	// remote session (RenewLease); zero for Bolt.
 	leaseEvery time.Duration
 }
+
+type remoteHTTPAbort struct{ cause error }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
 	auth := buildNeo4jAuth(cfg)
@@ -416,7 +422,11 @@ type remoteTxRequest struct {
 }
 
 type remoteTxResponse struct {
-	Results []struct {
+	// Presence is the HTTP transaction API's open-session indicator. Preserve
+	// it even on an error response; errors alone do not establish closure.
+	Transaction jsontext.RawMessage `json:"transaction"`
+	statusCode  int
+	Results     []struct {
 		Columns   []string          `json:"columns"`
 		Stats     *remoteQueryStats `json:"stats"`
 		QueryType string            `json:"query_type"`
@@ -526,9 +536,13 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	if err := valueconvert.PropertyJSON.Unmarshal(respBody, &txResp); err != nil {
 		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
+	txResp.statusCode = resp.StatusCode
 	if len(txResp.Errors) > 0 {
-		first := txResp.Errors[0]
-		return nil, localizedError(localization.StorageRemoteError(first.Code, first.Message), nil)
+		var responseErr error
+		for _, failure := range txResp.Errors {
+			responseErr = compose.Outcomes(responseErr, localizedError(localization.StorageRemoteError(failure.Code, failure.Message), nil))
+		}
+		return &txResp, responseErr
 	}
 	for resultIndex := range txResp.Results {
 		for rowIndex := range txResp.Results[resultIndex].Data {
@@ -699,7 +713,7 @@ func (t *remoteCypherTx) LeaseRenewalInterval() time.Duration { return t.leaseEv
 // ends a coordinator's participant whose session expires unrenewed; its
 // coordinator renews it while its composite transaction lives.
 func (t *remoteCypherTx) RenewLease(ctx context.Context) error {
-	if t.transport == nil {
+	if t.transport == nil || t.httpAbort.Load() != nil {
 		return nil
 	}
 	_, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{Statements: []remoteStatement{}})
@@ -715,7 +729,7 @@ func (t *remoteCypherTx) QueryCypher(ctx context.Context, statement string, para
 			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
 		}
 	}()
-	if t.transport != nil && t.closed {
+	if t.transport != nil && (t.httpAbort.Load() != nil || t.closed) {
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	if t.transport == nil {
@@ -738,6 +752,12 @@ func (t *remoteCypherTx) QueryCypher(ctx context.Context, statement string, para
 		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
+		// A decoded successful HTTP statement response without transaction
+		// metadata confirms retirement. Transport/decode/non-success errors
+		// leave the outcome unknown and still require ordinary rollback.
+		if txResp != nil && txResp.statusCode >= 200 && txResp.statusCode < 300 && len(txResp.Errors) > 0 && len(txResp.Transaction) == 0 {
+			t.httpAbort.Store(&remoteHTTPAbort{cause: err})
+		}
 		return nil, nil, err
 	}
 	if len(txResp.Results) == 0 {
@@ -758,18 +778,22 @@ func (t *remoteCypherTx) Commit(ctx context.Context) error { return t.finish(ctx
 func (t *remoteCypherTx) Rollback(ctx context.Context) error { return t.finish(ctx, false) }
 
 func (t *remoteCypherTx) finish(ctx context.Context, commit bool) (err error) {
-	if t.transport != nil {
-		if t.closed {
-			return nil
-		}
-		t.closed = true
-	}
 	defer func() {
 		if err != nil {
 			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
 		}
 	}()
+	if aborted := t.httpAbort.Load(); aborted != nil {
+		if commit {
+			return aborted.cause
+		}
+		return nil
+	}
 	if t.transport != nil {
+		if t.closed {
+			return nil
+		}
+		t.closed = true
 		method, target, body := http.MethodDelete, t.rollbackURL, interface{}(nil)
 		if commit {
 			method, target, body = http.MethodPost, t.commitURL, remoteTxRequest{Statements: []remoteStatement{}}
