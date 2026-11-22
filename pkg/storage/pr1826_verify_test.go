@@ -26,10 +26,9 @@ func TestPR1826VerifyStorageObservations(t *testing.T) {
 	t.Logf("OBS r1_f8 unique_absent_reads=3000 elapsed=%s", time.Since(start))
 	b.nodeBodyCacheMu.RLock()
 	entry := b.nodeBodyCache[id]
-	coverage := 0
-	if entry != nil { coverage = len(entry.coverage) }
+	entryPresent := entry != nil
 	b.nodeBodyCacheMu.RUnlock()
-	t.Logf("OBS r1_f8 cache_coverage=%d", coverage)
+	t.Logf("OBS r1_f8 cache_entry_present=%v", entryPresent)
 
 	for i := 0; i < 16; i++ {
 		_, err := b.CreateNode(context.Background(), &Node{ID: NodeID(fmt.Sprintf("verify:scan-%d", i)), Labels: []string{"VerifyScan"}, Properties: map[string]any{"vec": vec, "key": fmt.Sprint(i)}})
