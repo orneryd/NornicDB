@@ -189,9 +189,9 @@ func SwapCase(text string) string {
 //	apoc.text.camelCase('hello world') => 'helloWorld'
 //	apoc.text.camelCase('hello_world') => 'helloWorld'
 func CamelCase(text string) string {
-	words := strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !(r >= '0' && r <= '9') })
+	words := strings.FieldsFuncSeq(text, func(r rune) bool { return !unicode.IsLetter(r) && !(r >= '0' && r <= '9') })
 	var out strings.Builder
-	for _, word := range words {
+	for word := range words {
 		appendInitialCase(&out, cypherfn.LowerCaseText(word), unicode.ToTitle)
 	}
 	result := out.String()
