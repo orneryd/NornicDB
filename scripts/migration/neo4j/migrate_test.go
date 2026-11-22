@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	dbconfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -46,7 +47,7 @@ func TestMigrationCompletedGraph(t *testing.T) {
 			previous := dbconfig.GetParserType()
 			dbconfig.SetParserType(parser)
 			t.Cleanup(func() { dbconfig.SetParserType(previous) })
-			raw := storage.NewMemoryEngine()
+			raw := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = raw.Close() })
 			store := storage.NewNamespacedEngine(raw, "migration")
 			exec := cypher.NewStorageExecutor(store)

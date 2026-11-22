@@ -182,11 +182,7 @@ func TestTxlogProcedureErrors(t *testing.T) {
 		{"CALL db.txlog.entries(0)", nil, localization.MessageCypherSpecializedCallsTxlogFromSequencePositive},
 		{"CALL db.txlog.entries(1, -1)", nil, localization.MessageCypherSpecializedCallsTxlogToSequenceNegative},
 		{"CALL db.txlog.entries(3, 2)", nil, localization.MessageCypherSpecializedCallsTxlogSequenceOrder},
-		{"CALL db.txlog.entries($from)", map[string]interface{}{"from": "x"}, localization.MessageCypherSpecializedCallsTxlogArgumentType},
-		{"CALL db.txlog.entries(1, $to)", map[string]interface{}{"to": "x"}, localization.MessageCypherSpecializedCallsTxlogArgumentType},
 		{"CALL db.txlog.byTxId('')", nil, localization.MessageCypherSpecializedCallsTxlogIDEmpty},
-		{"CALL db.txlog.byTxId($tx)", map[string]interface{}{"tx": int64(5)}, localization.MessageCypherSpecializedCallsTxlogArgumentType},
-		{"CALL db.txlog.byTxId('tx', $limit)", map[string]interface{}{"limit": "x"}, localization.MessageCypherSpecializedCallsTxlogArgumentType},
 	} {
 		t.Run(test.query, func(t *testing.T) {
 			_, err := exec.Execute(ctx, test.query, test.params)
@@ -195,6 +191,26 @@ func TestTxlogProcedureErrors(t *testing.T) {
 			require.Equal(t, test.message, localized.Message.ID)
 		})
 	}
+
+	t.Run("bound argument types fail admission", func(t *testing.T) {
+		for _, test := range []struct {
+			query  string
+			params map[string]interface{}
+		}{
+			{"CALL db.txlog.entries($from)", map[string]interface{}{"from": "x"}},
+			{"CALL db.txlog.entries(1, $to)", map[string]interface{}{"to": "x"}},
+			{"CALL db.txlog.byTxId($tx)", map[string]interface{}{"tx": int64(5)}},
+			{"CALL db.txlog.byTxId('tx', $limit)", map[string]interface{}{"limit": "x"}},
+		} {
+			for _, prefix := range []string{"", "EXPLAIN "} {
+				query := prefix + test.query
+				_, err := exec.Execute(ctx, query, test.params)
+				var semantic *SemanticError
+				require.ErrorAs(t, err, &semantic, query)
+				require.ErrorContains(t, semantic, "Type mismatch", query)
+			}
+		}
+	})
 
 	t.Run("an unreadable WAL wraps its cause", func(t *testing.T) {
 		exec, wal := newTxlogExecutor(t)

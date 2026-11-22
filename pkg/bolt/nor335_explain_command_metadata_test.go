@@ -2,12 +2,14 @@ package bolt
 
 import (
 	"context"
+	"testing"
+	"time"
+
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 )
 
 // Assert the actual Bolt RUN fields and terminal PULL plan for the reference
@@ -30,7 +32,7 @@ func TestNOR335BoltExplainAdministrativeMetadataAndNoEffects(t *testing.T) {
 				{"schema_ddl", "CREATE INDEX nor335_bolt_i FOR (n:NOR335Bolt) ON (n.p)", nil},
 			} {
 				t.Run(test.name, func(t *testing.T) {
-					base := storage.NewMemoryEngine()
+					base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"), cypher.QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					checkAbsent := func() {
@@ -68,7 +70,7 @@ func TestNOR335BoltExplainAdministrativeMetadataAndNoEffects(t *testing.T) {
 			}
 			for _, query := range []string{"EXPLAIN SHOW PROCEDURES YIELD noSuchColumn RETURN noSuchColumn", "EXPLAIN CREATE INDEX nor335_invalid FOR (n:NOR335Bolt) ON ()"} {
 				t.Run(query, func(t *testing.T) {
-					base := storage.NewMemoryEngine()
+					base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					store := storage.NewNamespacedEngine(base, "nornic")
 					_, port := startBoltIntegrationServer(t, store, boltIntegrationAutocommit)

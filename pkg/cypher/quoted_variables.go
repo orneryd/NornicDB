@@ -259,9 +259,13 @@ func (names *quotedVariableNames) parameterName(name string) string {
 }
 
 // isPlainVariableName reports whether name can be written without quotes
-// as a variable: an identifier that isn't a Cypher keyword or a literal word
-// (NaN and Infinity read as their float), and without a '$', which only
-// Cypher 5 reads inside a name (Cypher 25 starts a parameter there).
+// as a variable: a complete unquoted identifier that isn't a Cypher keyword or
+// a literal word (NaN and Infinity read as their float), and without a '$',
+// which only Cypher 5 reads inside a name (Cypher 25 starts a parameter
+// there). A name that only scans as a backtick-quoted identifier - an alias
+// written with doubled backticks, whose identity keeps one backtick on each
+// side - is not plain: written as text it would be read back as a different
+// name.
 func isPlainVariableName(name string) bool {
 	end, ok := cyphertext.ScanIdentifier(name, 0)
 	return ok && end.End == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0

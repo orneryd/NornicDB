@@ -13,7 +13,7 @@ import (
 // expression or a parameter is read like a literal, and the call's own
 // parentheses end at its argument list, not at the statement's last ")".
 // null for an argument the procedure needs is the procedure's failure
-// (ProcedureCallFailed), and a value of another type a TypeError.
+// (ProcedureCallFailed). Incompatible scalar parameters fail during admission.
 func TestProcedureEvaluatedArguments(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "procedure_evaluated_arguments"))
 	ctx := context.Background()
@@ -60,10 +60,12 @@ func TestProcedureEvaluatedArguments(t *testing.T) {
 	result = run("SHOW INDEXES YIELD name WHERE name = 'null' RETURN count(*) AS c", nil)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 	for query, params := range map[string]map[string]interface{}{
-		"CALL db.index.fulltext.queryNodes($index, 'graph')":                 {"index": int64(1)},
-		"CALL db.index.fulltext.createNodeIndex('ft_z', $labels, ['title'])": {"labels": []interface{}{int64(1)}},
-		"CALL db.index.fulltext.queryNodes('ft_doc', 'graph', $options)":     {"options": int64(1)},
+		"CALL db.index.fulltext.queryNodes($index, 'graph')":             {"index": int64(1)},
+		"CALL db.index.fulltext.queryNodes('ft_doc', 'graph', $options)": {"options": int64(1)},
 	} {
-		requireCode(query, params, "Neo.ClientError.Statement.TypeError")
+		requireCode(query, params, "Neo.ClientError.Statement.SyntaxError")
 	}
+	// The list itself passes admission. Fulltext validates its elements.
+	requireCode("CALL db.index.fulltext.createNodeIndex('ft_z', $labels, ['title'])",
+		map[string]interface{}{"labels": []interface{}{int64(1)}}, "Neo.ClientError.Statement.TypeError")
 }

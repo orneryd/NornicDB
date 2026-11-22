@@ -150,6 +150,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/temporal_pattern.go:compileTemporalPattern":   "parses a decoded Java temporal construction pattern, not Cypher text",
 		"pkg/cypher/functions_text_locate.go:fnTextLocate":        "reads decoded function argument text, not Cypher source",
 		"pkg/cypher/functions_text_locate.go:textLocatePattern":   "builds a regex from decoded function argument text, not Cypher source",
+		"pkg/cypher/fn/sigma_context.go:sigmaContext":             "classifies decoded Unicode word and case context for Java final sigma. Quotes here are word punctuation in function argument text. TestLowerCaseSigmaFrozenOracle covers the pinned cases.",
 		"cmd/nornicdb-admin/main.go:runImportFull":                "reads a CSV quote command-line option, not Cypher text",
 		"cmd/nornicdb-admin/main.go:runExportNeo4jCSV":            "reads a CSV quote command-line option, not Cypher text",
 		"internal/jsontext/append_string.go:AppendString":         "canonical JSON string emitter, not Cypher quotation; TestJSONAppendStringExactUnits verifies exact UTF16 units and zero-allocation ASCII",

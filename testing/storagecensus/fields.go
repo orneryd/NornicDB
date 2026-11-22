@@ -233,6 +233,9 @@ var fieldClasses = map[string]fieldRow{
 	"pkg/storage.walRecordAssembler.next":    {class: "WAL spanned-record read scratch"},
 	"pkg/storage.walRecordAssembler.payload": {class: "WAL spanned-record read scratch"},
 	"pkg/storage.walRecordAssembler.dropped": {class: "WAL spanned-record read scratch"},
+	// Layout owns the serialized metadata for one WAL record. own detaches
+	// the header bytes so the encoding buffer can be reused for other entries.
+	"pkg/storage.walEntryPayload.header": {class: "WAL entry payload header bytes"},
 	// These are temporary representations: WAL inspection collects display
 	// bytes, and constraint acquisition clears and reuses its request map.
 	"pkg/storage.bufferedWALDisplayPayload.Deletes": {class: "WAL inspection serialization scratch"},

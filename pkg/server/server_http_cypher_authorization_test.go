@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -141,11 +142,12 @@ func TestHTTPReadOnlyRoleCannotMutateInExplicitTransaction(t *testing.T) {
 		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
 		requireForbidden(response)
 
-		parts := strings.Split(response.Commit, "/")
-		require.GreaterOrEqual(t, len(parts), 2)
-		txID := parts[len(parts)-2]
-		// The failed statement ended the transaction (Neo4j HTTP API).
-		rollback := makeRequest(t, server, http.MethodDelete, fmt.Sprintf("/db/nornic/tx/%s", txID), nil, authorization)
+		require.Empty(t, response.Commit)
+		require.Nil(t, response.Transaction)
+		location, err := url.Parse(recorder.Header().Get("Location"))
+		require.NoError(t, err)
+		require.Contains(t, location.Path, "/db/nornic/tx/")
+		rollback := makeRequest(t, server, http.MethodDelete, location.Path, nil, authorization)
 		require.Equal(t, http.StatusNotFound, rollback.Code, rollback.Body.String())
 	})
 

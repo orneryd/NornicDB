@@ -503,9 +503,14 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 						if (ending == "commit" && (!ok || failed)) || (ending == "rollback" && !failed) || !correct || encrypted {
 							t.Errorf("configured credential did not authenticate the full remote workflow")
 						}
-						// Remote READ participants release their session by rollback, even
-						// when the caller successfully commits its read-only statement.
-						investigationAssertHTTPWorkflow(t, target.wire, target.label, "rollback")
+						// A failed statement rolls back on the participant. Successful
+						// remote reads still release their session with an explicit rollback.
+						if target.label == "h" && ending == "rollback" {
+							investigationAssertHTTPWorkflow(t, target.wire, target.label, "statement failure")
+							investigationAssertFailedHTTPTransactionClosed(t, remote, target.wire)
+						} else {
+							investigationAssertHTTPWorkflow(t, target.wire, target.label, "rollback")
+						}
 					})
 				}
 			}
@@ -635,12 +640,49 @@ func investigationAssertHTTPWorkflow(t *testing.T, wire *investigationWire, tran
 		if ending == "rollback" && strings.HasPrefix(event, "DELETE ") {
 			ended = true
 		}
-		if ending == "rollback" && transactionCommit {
-			t.Error("rollback workflow unexpectedly sent COMMIT")
+		if ending != "commit" && transactionCommit {
+			t.Error("remote workflow unexpectedly sent COMMIT")
 		}
 	}
-	if !opened || !queried || !ended {
+	if !opened || !queried || (ending != "statement failure" && !ended) {
 		t.Error("remote workflow did not complete open, query and " + ending)
+	}
+}
+
+// Probe the remote participant directly so the check cannot mask a missing
+// coordinator request in the captured wire events.
+func investigationAssertFailedHTTPTransactionClosed(t *testing.T, remote string, wire *investigationWire) {
+	t.Helper()
+	var path string
+	for _, event := range fixtureowner.Snapshot(&wire.mu, &wire.events) {
+		if strings.HasPrefix(event, "POST /db/nornic/tx/") && !strings.Contains(event, "/commit ") {
+			path, _, _ = strings.Cut(strings.TrimPrefix(event, "POST "), " ")
+		}
+	}
+	if path == "" {
+		t.Fatal("no remote transaction statement to check")
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, remote+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth("admin", investigationPass)
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result struct {
+		Errors []struct{ Code string } `json:"errors"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotFound || len(result.Errors) != 1 ||
+		result.Errors[0].Code != "Neo.ClientError.Transaction.TransactionNotFound" {
+		t.Errorf("failed remote statement left a live transaction: HTTP %d, errors %v", response.StatusCode, result.Errors)
 	}
 }
 
