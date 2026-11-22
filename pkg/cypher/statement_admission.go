@@ -94,10 +94,35 @@ func (e *StorageExecutor) admitStatement(ctx context.Context, source string, fab
 	if !query.ChildRule(cypherantlr.CypherParserRULE_regularQuery).Valid() && !query.ChildRule(cypherantlr.CypherParserRULE_standaloneCall).Valid() {
 		return boundScopeAdmission{command: true}, nil
 	}
+	effects := syntax.Effects()
+	// Clause composition must be admitted before the binding program can
+	// report a missing variable in a later WITH or RETURN. Visit nested bodies
+	// too, using the admitted syntax and the execution owner's YIELD contract.
+	if effects.CallCount() > 0 {
+		var yieldErr error
+		syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+			if yieldErr != nil || (node.Rule() != cypherantlr.CypherParserRULE_query && node.Rule() != cypherantlr.CypherParserRULE_subqueryBody) {
+				return nil
+			}
+			body := queryBodyFromSyntax(node)
+			for _, branch := range body.branches {
+				for _, clause := range branch.clauses {
+					if clause.kind == pipelineClauseCall {
+						if yieldErr = validateProcedureYieldBindings(parseYieldClause(ctx, clause.text), len(body.branches) > 1 || len(branch.clauses) > 1); yieldErr != nil {
+							return nil
+						}
+					}
+				}
+			}
+			return nil
+		})
+		if yieldErr != nil {
+			return boundScopeAdmission{}, yieldErr
+		}
+	}
 	// Protocol statements require a valid conclusion. Embedded Execute also
 	// supports returning CALL bodies, including updates committed by that
 	// subquery. An update in the outer prefix must never run before rejection.
-	effects := syntax.Effects()
 	if strings.ContainsRune(source, '}') && (e.protocolConclusion || effects.Writes() || effects.CallCount() > 0) {
 		for _, branch := range queryBodyFromSyntax(query).branches {
 			if unconcludedClause(ctx, source, branch) != "CALL" {

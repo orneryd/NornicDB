@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve relationships and every promoted source label in the documented Neo4j migration, keep reruns idempotent, and reject incomplete target batches.
 
+- Reject composed procedure `YIELD *` during admission with the Neo4j diagnostic before downstream missing-variable errors or procedure execution.
+
 - Add optional fine-grained access control with scoped role entitlements, Cypher privilege administration, and individual actions for managed embeddings, Heimdall, and knowledge policies.
 
 - Return composite participant access failures from error-returning storage operations instead of reporting incomplete success or missing entities.
