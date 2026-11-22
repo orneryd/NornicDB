@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nor187PublicQuery is the historical reproduction shape: the exact boundary
+// n15258b3nor187PublicQuery is the historical reproduction shape: the exact boundary
 // case is passed as a parameter (repeat() is not a function on the recorded
 // commits), the complete lowercase value is returned, and the final character
 // is returned separately. The historical "FIXED" reading was wrong because the
 // observation was truncated, so every row checks both projections.
-const nor187PublicQuery = "RETURN toLower($s) AS lowered, right(toLower($s), 1) AS last"
+const n15258b3nor187PublicQuery = "RETURN toLower($s) AS lowered, right(toLower($s), 1) AS last"
 
 // TestPublicToLowerFinalSigmaBoundary reproduces NOR-187 on the public query
 // path of both parsers (default and ANTLR). Parameters carry the exact input
@@ -29,13 +29,13 @@ const nor187PublicQuery = "RETURN toLower($s) AS lowered, right(toLower($s), 1) 
 // reference comparison is opted into separately through
 // NORNICDB_NEO4J_REFERENCE_URI in TestPublicToLowerFinalSigmaNeo4jReference.
 func TestPublicToLowerFinalSigmaBoundary(t *testing.T) {
-	rows := nor187ContractRows()
+	rows := n15258b3nor187ContractRows()
 	forEachParser(t, func(t *testing.T) {
-		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor187_public"))
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "n15258b3nor187_public"))
 		for _, row := range rows {
 			t.Run(row.name, func(t *testing.T) {
 				params := map[string]interface{}{"s": row.input}
-				result, err := exec.Execute(context.Background(), nor187PublicQuery, params)
+				result, err := exec.Execute(context.Background(), n15258b3nor187PublicQuery, params)
 				require.NoError(t, err)
 				require.Len(t, result.Rows, 1)
 				require.Len(t, result.Rows[0], 2)
@@ -47,7 +47,7 @@ func TestPublicToLowerFinalSigmaBoundary(t *testing.T) {
 				assert.Equal(t, row.want, lowered,
 					"complete public toLower output: input %d bytes/%d runes, got %d bytes/%d runes",
 					len(row.input), utf8.RuneCountInString(row.input), len(lowered), utf8.RuneCountInString(lowered))
-				assert.Equal(t, nor187WantLastRune(row.want), last, "public final rune")
+				assert.Equal(t, n15258b3nor187WantLastRune(row.want), last, "public final rune")
 				assert.Equal(t, utf8.RuneCountInString(row.want), utf8.RuneCountInString(lowered),
 					"rune count: truncation is the historical misreading, not the contract")
 			})
@@ -81,30 +81,30 @@ func TestPublicToLowerFinalSigmaNeo4jReference(t *testing.T) {
 	require.NotEmpty(t, records)
 	t.Logf("Neo4j reference versions: %v", records[0].Values)
 
-	for _, row := range nor187ContractRows() {
+	for _, row := range n15258b3nor187ContractRows() {
 		t.Run(row.name, func(t *testing.T) {
-			result, err := session.Run(ctx, nor187PublicQuery, map[string]any{"s": row.input})
+			result, err := session.Run(ctx, n15258b3nor187PublicQuery, map[string]any{"s": row.input})
 			require.NoError(t, err)
 			record, err := result.Single(ctx)
 			require.NoError(t, err)
 			require.Len(t, record.Values, 2)
 			assert.Equal(t, row.want, record.Values[0], "Neo4j reference complete lowercase output")
-			assert.Equal(t, nor187WantLastRune(row.want), record.Values[1], "Neo4j reference final rune")
+			assert.Equal(t, n15258b3nor187WantLastRune(row.want), record.Values[1], "Neo4j reference final rune")
 		})
 	}
 }
 
-// nor187ContractRow is one exact input string and its exact Unicode lowercase
+// n15258b3nor187ContractRow is one exact input string and its exact Unicode lowercase
 // output.
-type nor187ContractRow struct {
+type n15258b3nor187ContractRow struct {
 	name  string
 	input string
 	want  string
 }
 
-// nor187WantLastRune is the expected right(value, 1): the final rune of the
+// n15258b3nor187WantLastRune is the expected right(value, 1): the final rune of the
 // complete expected value, or the empty string for empty input.
-func nor187WantLastRune(want string) string {
+func n15258b3nor187WantLastRune(want string) string {
 	if want == "" {
 		return ""
 	}
@@ -112,13 +112,13 @@ func nor187WantLastRune(want string) string {
 	return string(last)
 }
 
-// nor187ContractRows is the exact reproduction matrix shared by the public
+// n15258b3nor187ContractRows is the exact reproduction matrix shared by the public
 // parser tests and the opt-in Neo4j reference: the recorded boundary, adjacent
 // lengths around the 128-byte transform chunk, combining-acute runs, the
 // 30-mark forward lookahead limit, U+0345 precedence, short cased/uncased
 // context controls, and empty/non-Greek preservation. Expectations are the
 // Unicode contract; they are not a claim that Neo4j was executed.
-func nor187ContractRows() []nor187ContractRow {
+func n15258b3nor187ContractRows() []n15258b3nor187ContractRow {
 	const (
 		sigma         = "\u03A3" // GREEK CAPITAL LETTER SIGMA
 		finalSigma    = "\u03C2" // GREEK SMALL LETTER FINAL SIGMA
@@ -128,7 +128,7 @@ func nor187ContractRows() []nor187ContractRow {
 	)
 	reps := func(text string, count int) string { return strings.Repeat(text, count) }
 
-	rows := []nor187ContractRow{
+	rows := []n15258b3nor187ContractRow{
 		{name: "ascii127+Sigma_historical", input: reps("a", 127) + sigma, want: reps("a", 127) + finalSigma},
 
 		{name: "U0345+Sigma", input: ypogegrammeni + sigma, want: ypogegrammeni + finalSigma},
@@ -167,7 +167,7 @@ func nor187ContractRows() []nor187ContractRow {
 
 	for _, length := range []int{125, 126, 127, 128, 129, 130, 255, 256, 257} {
 		prefix := reps("a", length)
-		rows = append(rows, nor187ContractRow{
+		rows = append(rows, n15258b3nor187ContractRow{
 			name:  fmt.Sprintf("ascii%d+Sigma", length),
 			input: prefix + sigma,
 			want:  prefix + finalSigma,
@@ -175,7 +175,7 @@ func nor187ContractRows() []nor187ContractRow {
 	}
 
 	for _, marks := range []int{0, 1, 30, 31, 32, 63, 64, 127, 128, 257} {
-		rows = append(rows, nor187ContractRow{
+		rows = append(rows, n15258b3nor187ContractRow{
 			name:  fmt.Sprintf("A+acute%d+Sigma", marks),
 			input: "A" + reps(acute, marks) + sigma,
 			want:  "a" + reps(acute, marks) + finalSigma,
@@ -183,7 +183,7 @@ func nor187ContractRows() []nor187ContractRow {
 	}
 
 	for _, marks := range []int{30, 31, 32, 63, 255} {
-		rows = append(rows, nor187ContractRow{
+		rows = append(rows, n15258b3nor187ContractRow{
 			name:  fmt.Sprintf("A+Sigma+acute%d+B", marks),
 			input: "A" + sigma + reps(acute, marks) + "B",
 			want:  "a" + medialSigma + reps(acute, marks) + "b",
