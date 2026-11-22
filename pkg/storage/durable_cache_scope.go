@@ -11,8 +11,9 @@ import (
 // An unknown raw action revokes all representations; metadata explicitly names
 // an empty scope. Normal graph writes never require a scan of cache populations.
 type cacheWriteScope struct {
-	known bool
-	facts AffectedFacts
+	known             bool
+	facts             AffectedFacts
+	deletedEdgePrefix string
 }
 
 func (scope cacheWriteScope) complete() bool {
@@ -92,7 +93,12 @@ func (b *BadgerEngine) issueDurableCacheScope(ts uint64, scope cacheWriteScope) 
 	state.latest = max(state.latest, ts)
 	if !scope.complete() {
 		state.advanceFloorLocked()
-		b.invalidateCachesAfterRestore()
+		if scope.deletedEdgePrefix == "" {
+			b.invalidateCachesAfterRestore()
+		} else {
+			b.invalidateEntityCaches()
+			b.invalidateEdgeTypeCacheByPrefix(scope.deletedEdgePrefix)
+		}
 		return
 	}
 	if scope.facts == nil {

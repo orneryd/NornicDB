@@ -336,9 +336,10 @@ const (
 )
 
 type prefixDropOptions struct {
-	mode     prefixDropMode
-	engine   *BadgerEngine
-	metadata bool // caller proves the exact prefix cannot contain graph cache state
+	mode              prefixDropMode
+	engine            *BadgerEngine
+	metadata          bool   // caller proves the exact prefix cannot contain graph cache state
+	deletedEdgePrefix string // empty when there is no scoped relationship invalidation
 }
 
 // DropPrefix removes the ranges at one managed publication cut. Ordinary
@@ -363,7 +364,11 @@ func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOpti
 			}
 			cw.large = lc
 			cw.metadata = options.metadata
-			lc.cacheScope = cw.cacheScope
+			lc.cacheScope = func() cacheWriteScope {
+				scope := cw.cacheScope()
+				scope.deletedEdgePrefix = options.deletedEdgePrefix
+				return scope
+			}
 			lc.originalReadTs = lc.intentTs - 1
 			// The exclusive commit gate defines the cut, independent of when
 			// commitEngineWrite opened its first (blind deletion) batch.
