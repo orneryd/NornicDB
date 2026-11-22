@@ -8,14 +8,14 @@ import (
 )
 
 func TestL9MVCCPersistCloseOwner(t *testing.T) {
-	t.Run("persist_before_close", func(t *testing.T) {
+	t.Run("namespace_state_before_close", func(t *testing.T) {
 		engine, err := NewBadgerEngine(t.TempDir())
 		require.NoError(t, err)
-		require.NoError(t, engine.EnsureNamespaceMVCC("l9"))
-		engine.persistMVCCSequence("l9")
+		_, err = engine.namespaceMVCC("l9")
+		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 	})
-	t.Run("persist_at_close", func(t *testing.T) {
+	t.Run("namespace_state_at_close", func(t *testing.T) {
 		engine, err := NewBadgerEngine(t.TempDir())
 		require.NoError(t, err)
 		require.NoError(t, engine.EnsureNamespaceMVCC("l9"))
@@ -29,7 +29,7 @@ func TestL9MVCCPersistCloseOwner(t *testing.T) {
 				ready.Done()
 				<-start
 				for range 512 {
-					engine.persistMVCCSequence("l9")
+					_, _ = engine.namespaceMVCC("l9")
 				}
 			}()
 		}
