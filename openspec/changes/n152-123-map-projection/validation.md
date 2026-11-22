@@ -48,3 +48,5 @@ makes no performance-improvement or merge-ready claim.
 Original ticket source blocks are losslessly JSON-encoded in fixtures/original-source-blocks.json; the original test also remains a separate source fixture. Staged diff whitespace check passes.
 
 Parent reviewed and approved the narrow source/test correction and authorized draft publication after the above checks. Open PR worktree/head branch and shared Go cache remain preserved for active review and concurrent work. Task temporary evidence will be archived before redundant task-only temporary files are removed.
+
+Draft PR: https://github.com/orneryd/NornicDB/pull/1931, release/v1.5.2, milestone v1.5.2. Raw temporary files cited above now reside under /Users/timothysweet/.codex/task-evidence/n152-123 with a SHA-256 manifest; identical copies were verified before removing task-only temporary files. Verifier logs were also archived. Open worktree and branch retained; shared /Users/timothysweet/Library/Caches/go-build retained because other release tasks are active. No task subagent worktree exists; remote reference resources were already cleaned.

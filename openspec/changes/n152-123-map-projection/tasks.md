@@ -9,4 +9,5 @@
 - [x] Narrow correction and both-side/nested/malformed receiver regressions.
 - [x] Relevant normal/race/vet and scoped verifier; staged duplicate checker attempted (service failure recorded, indexed analysis incomplete).
 - [x] Final evidence/changelog and parent source review.
-- [ ] Parent-authorized draft publication, exact-head result comment, Plane Testing and evidence archive.
+- [x] Parent-authorized draft PR #1931 published; evidence archived.
+- Publication result comment and Plane Testing reconciliation are recorded on the PR/ticket.
