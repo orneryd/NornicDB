@@ -1,0 +1,100 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPDW161Item7NullTraversalStart(t *testing.T) {
+	ctx := context.Background()
+	for _, n := range []int{4_000, 40_000} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			exec := NewStorageExecutor(newTestMemoryEngine(t))
+			_, err := exec.Execute(ctx, "CREATE (:PDW161Collection {id:'k'})", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, `MATCH (k:PDW161Collection {id:'k'})
+				UNWIND range(0,$n-1) AS i
+				CREATE (:PDW161Document {id:'d'+toString(i)})-[:PDW161_MEMBER]->(k)`, map[string]interface{}{"n": n})
+			require.NoError(t, err)
+			cases := []struct {
+				name, query string
+				params      map[string]interface{}
+			}{
+				{"unguarded_one_hop", "OPTIONAL MATCH (a:PDW161Document {id:$id}) MATCH (a)-[:PDW161_MEMBER]->(c) RETURN c.id", map[string]interface{}{"id": "absent"}},
+				{"guarded_one_hop_control", "OPTIONAL MATCH (a:PDW161Document {id:$id}) WITH a WHERE a IS NOT NULL MATCH (a)-[:PDW161_MEMBER]->(c) RETURN c.id", map[string]interface{}{"id": "absent"}},
+			}
+			if n == 4_000 {
+				cases = append(cases,
+					struct {
+						name, query string
+						params      map[string]interface{}
+					}{"unguarded_two_hop", "OPTIONAL MATCH (a:PDW161Document {id:$id}) MATCH (a)-[:PDW161_MEMBER]->(c)<-[:PDW161_MEMBER]-(o:PDW161Document {id:'d1'}) RETURN o.id", map[string]interface{}{"id": "absent"}},
+					struct {
+						name, query string
+						params      map[string]interface{}
+					}{"guarded_two_hop_control", "OPTIONAL MATCH (a:PDW161Document {id:$id}) WITH a WHERE a IS NOT NULL MATCH (a)-[:PDW161_MEMBER]->(c)<-[:PDW161_MEMBER]-(o:PDW161Document {id:'d1'}) RETURN o.id", map[string]interface{}{"id": "absent"}},
+				)
+			}
+			for _, tc := range cases {
+				start := time.Now()
+				res, err := exec.Execute(ctx, "PROFILE "+tc.query, tc.params)
+				elapsed := time.Since(start)
+				require.NoError(t, err, tc.name)
+				require.Empty(t, res.Rows, "missing OPTIONAL MATCH input must remain null and yield no traversal rows")
+				t.Logf("PD_W161_CAUSE item=7 shape=%s size=%d rows=%d plan=%+v", tc.name, n, len(res.Rows), res.Metadata["plan"])
+				t.Logf("PD_W161_RESULT item=7 shape=%s size=%d elapsed_ms=%.3f", tc.name, n, float64(elapsed.Microseconds())/1000)
+			}
+		})
+	}
+}
+
+func TestPDW161Item9TwoLabelOrderedWindow(t *testing.T) {
+	ctx := context.Background()
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	_, err := exec.Execute(ctx, "CREATE INDEX pd_w161_node_id IF NOT EXISTS FOR (n:PDW161GraphNode) ON (n.id)", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:PDW161Collection {id:'c1'}), (:PDW161Collection {id:'c2'})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `MATCH (c1:PDW161Collection {id:'c1'}), (c2:PDW161Collection {id:'c2'})
+		UNWIND range(0,3999) AS i
+		WITH c1,c2,i,'d'+toString(100000+i) AS id
+		CREATE (d:PDW161GraphNode:PDW161Document {id:id})-[:PDW161_MEMBER]->(c1)
+		FOREACH (_ IN CASE WHEN i % 3 = 0 THEN [1] ELSE [] END | CREATE (d)-[:PDW161_MEMBER]->(c2))`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, `UNWIND range(0,47999) AS i
+		WITH i,'d'+toString(100000+i/12) AS d
+		CREATE (:PDW161GraphNode:PDW161Entity {id:'m'+toString(1000000+i),document_id:d})
+		CREATE (:PDW161GraphNode:PDW161Point {id:'p'+toString(1000000+i),document_id:d})
+		FOREACH (_ IN CASE WHEN i % 6 = 0 THEN [1] ELSE [] END |
+			CREATE (:PDW161GraphNode:PDW161Entity:PDW161Identity {id:'q'+toString(1000000+i),document_id:d}))`, nil)
+	require.NoError(t, err)
+	const page = 144
+	window := `MATCH (m:PDW161GraphNode:PDW161Entity)
+		WHERE m.id > $after AND NOT m:PDW161Identity
+		WITH m ORDER BY m.id LIMIT $limit
+		MATCH (d:PDW161Document {id:m.document_id}) RETURN m.id AS id`
+	control := `MATCH (d:PDW161GraphNode:PDW161Document)
+		WHERE d.id > $after WITH d ORDER BY d.id LIMIT 12
+		MATCH (m:PDW161GraphNode {document_id:d.id})
+		WHERE m:PDW161Entity AND NOT m:PDW161Identity RETURN m.id AS id`
+	for _, tc := range []struct{ name, query string }{{"two_label_mention_window", window}, {"document_page_then_mentions_control", control}} {
+		var elapsed time.Duration
+		var got int
+		params := map[string]interface{}{"after": "", "limit": page}
+		for rep := 0; rep < 3; rep++ {
+			start := time.Now()
+			res, err := exec.Execute(ctx, "PROFILE "+tc.query, params)
+			elapsed += time.Since(start)
+			require.NoError(t, err, tc.name)
+			got = len(res.Rows)
+			if rep == 0 {
+				t.Logf("PD_W161_CAUSE item=9 shape=%s page=%d rows=%d plan=%+v", tc.name, page, got, res.Metadata["plan"])
+			}
+		}
+		t.Logf("PD_W161_RESULT item=9 shape=%s nodes=48000 repeats=3 rows=%d elapsed_ms=%.3f", tc.name, got, float64(elapsed.Microseconds())/3000)
+	}
+}
