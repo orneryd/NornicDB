@@ -54,6 +54,9 @@ type regrEnv struct {
 
 func regrStart(b testing.TB) *regrEnv {
 	b.Helper()
+	// The HTTP server's database manager reads its default database from the
+	// process configuration (environment), as the deployment sets it.
+	b.Setenv("NORNICDB_DEFAULT_DATABASE", regrDatabase)
 	s, authenticator := setupTestServerWithDatabaseConfig(b, func(c *nornicdb.Config) {
 		// The application's deployment settings that bear on these paths.
 		c.Database.DefaultDatabase = regrDatabase
