@@ -28,9 +28,17 @@ func TestV152TipRerunHarness(t *testing.T) {
 	}
 	err := json.Unmarshal([]byte(raw), &steps)
 	if err != nil {
-		// tnrun transports --env values through Bash; accept the JSON string
-		// form with escaped quotes as well as the literal JSON form.
-		normalized := strings.ReplaceAll(raw, `\"`, `"`)
+		// tnrun transports --env values through Bash; accept JSON strings
+		// with nested escaping as well as literal JSON.
+		normalized := raw
+		for i := 0; i < 4; i++ {
+			before := normalized
+			normalized = strings.ReplaceAll(normalized, `\\`, `\`)
+			normalized = strings.ReplaceAll(normalized, `\"`, `"`)
+			if normalized == before {
+				break
+			}
+		}
 		err = json.Unmarshal([]byte(normalized), &steps)
 	}
 	if err != nil || len(steps) == 0 {
