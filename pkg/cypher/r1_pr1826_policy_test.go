@@ -29,8 +29,17 @@ func r1PolicyFixture(t testing.TB, indexed bool, predicate string, nodes []*stor
 		HalfLifeSeconds: 3600, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
 		Enabled: true, DecayEnabled: true,
 	}))
+	// The node's own score decays in hours; its properties keep their values for
+	// decades, so a visible node shows them.
+	const decades = int64(20 * 365 * 24 * 3600)
 	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
 		Name: "facts", TargetLabels: []string{"Fact"}, ProfileRef: "age",
+		PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{
+			{PropertyPath: "display", HalfLifeSeconds: decades, Order: 0},
+			{PropertyPath: "promote", HalfLifeSeconds: decades, Order: 1},
+			{PropertyPath: "body", HalfLifeSeconds: decades, Order: 2},
+			{PropertyPath: "hidden", HalfLifeSeconds: decades, Order: 3},
+		},
 	}))
 	require.NoError(t, schema.CreatePromotionProfile(knowledgepolicy.PromotionProfileDef{
 		Name: "keep", Scope: knowledgepolicy.ScopeNode, Multiplier: 10, ScoreFloor: 0.5, ScoreCap: 1, Enabled: true,
@@ -142,30 +151,63 @@ func TestR1PR1826SuppressedNodeStaysHiddenFromPropertyReads(t *testing.T) {
 // registration asks for, as the base does: "A replacement completed before
 // statement planning supplies its own demand".
 func TestR1PR1826ProofFollowsReplacedFunction(t *testing.T) {
-	const name = "r1.probe"
-	labelsOnly := func(_ context.Context, call cypherfn.Context, args []string) (interface{}, error) {
+	store := r1Fixture(t, true)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	query := "MATCH (n:Doc {key:'one'}) RETURN labels(n) AS c"
+	require.Equal(t, []string{"['Doc']"}, r1Rows(exec.Execute(t.Context(), query, nil)))
+	original := func(_ context.Context, call cypherfn.Context, args []string) (interface{}, error) {
 		value, err := call.Eval(args[0])
 		if err != nil {
 			return nil, err
 		}
-		node, _ := value.(*storage.Node)
-		return int64(len(node.Labels)), nil
+		return cypherfn.Labels(value)
 	}
-	properties := func(_ context.Context, call cypherfn.Context, args []string) (interface{}, error) {
+	t.Cleanup(func() { cypherfn.Register("labels", original, cypherfn.CanonicalReads, cypherfn.HeaderInputImage) })
+	cypherfn.Register("labels", func(_ context.Context, call cypherfn.Context, args []string) (interface{}, error) {
 		value, err := call.Eval(args[0])
 		if err != nil {
 			return nil, err
 		}
 		node, _ := value.(*storage.Node)
 		return int64(len(node.Properties)), nil
-	}
-	store := r1Fixture(t, true)
-	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
-	query := "MATCH (n:Doc {key:'one'}) RETURN r1.probe(n) AS c"
-	cypherfn.Register(name, labelsOnly, cypherfn.CanonicalReads, cypherfn.HeaderInputImage)
-	require.Equal(t, []string{"1"}, r1Rows(exec.Execute(t.Context(), query, nil)))
-	cypherfn.Register(name, properties, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
+	}, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
 	require.Equal(t, []string{"6"}, r1Rows(exec.Execute(t.Context(), query, nil)), "the replacement reads the node's six properties")
+}
+
+// The consequence a reader of an application sees: a check written in the
+// statement (the document is not restricted, the account is not blocked) is
+// answered as if the property it tests were absent.
+func TestR1PR1826ApplicationCheckInStatement(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "r1")
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	ctx := t.Context()
+	for _, statement := range []string{
+		"CREATE CONSTRAINT r1_file IF NOT EXISTS FOR (n:File) REQUIRE n.id IS UNIQUE",
+		"CREATE CONSTRAINT r1_account IF NOT EXISTS FOR (n:Account) REQUIRE n.id IS UNIQUE",
+		"CREATE (:File {id:1, restricted:true, body:'restricted text'}), (:File {id:2, restricted:false, body:'public text'})",
+		"CREATE (a:Account {id:1, blocked:true, token:'t1'})-[:MEMBER]->(:Team {name:'x'})",
+	} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err)
+	}
+	for _, test := range []struct {
+		query string
+		want  []string
+	}{
+		{"MATCH (f:File {id:1}) WHERE NOT EXISTS { (f:File {restricted:true}) } RETURN f.body", []string{}},
+		{"MATCH (f:File {id:2}) WHERE NOT EXISTS { (f:File {restricted:true}) } RETURN f.body", []string{"'public text'"}},
+		{"MATCH (f:File {id:1}) WHERE COUNT { (f:File {restricted:true}) } = 0 RETURN f.body", []string{}},
+		{"MATCH (a:Account {id:1}) WHERE NOT (a:Account {blocked:true})-[:MEMBER]->() RETURN a.token", []string{}},
+		{"MATCH (a:Account {id:1}) OPTIONAL MATCH (a:Account {blocked:true})-[:MEMBER]->(t) WITH a, t WHERE t IS NULL RETURN a.token", []string{}},
+		{"MATCH (f:File {id:2}) MATCH (f:File {restricted:false}) RETURN f.body", []string{"'public text'"}},
+	} {
+		for _, stage := range []string{"cold", "repeated"} {
+			got := r1Rows(exec.Execute(ctx, test.query, nil))
+			if !reflect.DeepEqual(test.want, got) {
+				t.Errorf("%s: %s: want %q, got %q", stage, test.query, test.want, got)
+			}
+		}
+	}
 }
 
 // n.has_embedding of an indexed read must be the value a whole-node read gives,
