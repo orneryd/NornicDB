@@ -16,7 +16,8 @@ import (
 // and every delivered container belongs to its caller. The corpus deliberately
 // crosses MessagePack scalar, collection, temporal and large-span encodings.
 func TestPR1826S1ProjectedCorpusAndOwnership(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	// On disk: an in-memory store refuses a value above 64 KiB.
+	b, _ := createTestBadgerEngineOnDisk(t)
 	when := time.Date(2026, 11, 22, 13, 14, 15, 123456789, time.FixedZone("S1", 3600))
 	properties := map[string]any{
 		"empty":       "",
@@ -147,7 +148,7 @@ func TestPR1826S1TransactionVisibilityProjectedReads(t *testing.T) {
 }
 
 func TestPR1826S1CompositeProjectedIsolation(t *testing.T) {
-	first, second := newTestMemoryEngine(t), newTestMemoryEngine(t)
+	first, second := NewNamespacedEngine(newTestMemoryEngine(t), "one"), NewNamespacedEngine(newTestMemoryEngine(t), "two")
 	_, err := first.CreateNode(t.Context(), &Node{ID: "same", Properties: map[string]any{"tenant": "one", "secret": "one-secret"}})
 	require.NoError(t, err)
 	_, err = second.CreateNode(t.Context(), &Node{ID: "same", Properties: map[string]any{"tenant": "two", "secret": "two-secret"}})
