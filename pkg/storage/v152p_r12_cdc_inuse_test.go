@@ -8,6 +8,7 @@ package storage
 // else changed. Every minute: events written, change bounds, the time of
 // one bounds read, deleted change-event versions still in the LSM, LSM shape.
 import (
+ "context"
  "fmt"
  "os"
  "strings"
@@ -31,7 +32,7 @@ func TestZZR12CDCInUse(t *testing.T){
  var written atomic.Int64;stop:=make(chan struct{});done:=make(chan struct{})
  go func(){defer close(done);tick:=time.NewTicker(time.Second/time.Duration(rate/10));defer tick.Stop();i:=0
   for{select{case <-stop:return;case <-tick.C:}
-   for k:=0;k<10;k++{n:=&Node{ID:NodeID(fmt.Sprintf("%s:n%08d",ns,i)),Labels:[]string{"Item"},Properties:map[string]any{"id":fmt.Sprint(i),"body":strings.Repeat("x",200)}};r12Call(t,b,"CreateNode",n);i++;written.Add(1)}}}()
+   for k:=0;k<10;k++{n:=&Node{ID:NodeID(fmt.Sprintf("%s:n%08d",ns,i)),Labels:[]string{"Item"},Properties:map[string]any{"id":fmt.Sprint(i),"body":strings.Repeat("x",200)}};if _,e:=b.CreateNode(context.Background(),n);e!=nil{t.Errorf("CreateNode: %v",e);return};i++;written.Add(1)}}}()
  start:=time.Now()
  sample:=func(phase string){
   at:=time.Now();first,last,e:=b.ChangeBounds(ns);if e!=nil{t.Fatal(e)};boundsSec:=time.Since(at).Seconds()
