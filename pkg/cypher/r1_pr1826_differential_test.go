@@ -152,6 +152,7 @@ func TestR1PR1826DifferentialProjectedAgainstWholeNode(t *testing.T) {
 					gotError := len(got) == 1 && strings.HasPrefix(got[0], "ERROR")
 					if wantError && gotError {
 						bothErrors++
+						fmt.Printf("R1BOTHERR indexed=%t f%d m%d r%d :: %s :: %s\n", indexed, f, m, r, query, want[0])
 						continue
 					}
 					if reflect.DeepEqual(want, got) {
