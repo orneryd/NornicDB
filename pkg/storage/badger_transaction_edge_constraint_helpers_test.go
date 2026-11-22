@@ -71,19 +71,19 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint(t *testing.T) {
 	c := Constraint{Type: ConstraintTemporal, Label: "REL", Properties: []string{"key", "from", "to"}}
 
 	// Missing key property.
-	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new1", Type: "REL", Properties: map[string]any{"from": start1, "to": end1}}, c, "tenant")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new1", Type: "REL", Properties: map[string]any{"from": start1, "to": end1}}, c, "tenant", &temporalValidationRead{})
 	require.Error(t, err)
 
 	// Invalid start type.
-	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new2", Type: "REL", Properties: map[string]any{"key": "k1", "from": "bad", "to": end1}}, c, "tenant")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new2", Type: "REL", Properties: map[string]any{"key": "k1", "from": "bad", "to": end1}}, c, "tenant", &temporalValidationRead{})
 	require.Error(t, err)
 
 	// Overlap with committed edge.
-	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new3", Type: "REL", Properties: map[string]any{"key": "k1", "from": start1.Add(10 * 24 * time.Hour), "to": end1.Add(10 * 24 * time.Hour)}}, c, "tenant")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new3", Type: "REL", Properties: map[string]any{"key": "k1", "from": start1.Add(10 * 24 * time.Hour), "to": end1.Add(10 * 24 * time.Hour)}}, c, "tenant", &temporalValidationRead{})
 	require.Error(t, err)
 
 	// Non-overlapping edge should pass.
-	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new4", Type: "REL", Properties: map[string]any{"key": "k1", "from": end1.Add(time.Second), "to": end1.Add(24 * time.Hour)}}, c, "tenant")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), &Edge{ID: "tenant:new4", Type: "REL", Properties: map[string]any{"key": "k1", "from": end1.Add(time.Second), "to": end1.Add(24 * time.Hour)}}, c, "tenant", &temporalValidationRead{})
 	require.NoError(t, err)
 }
 
@@ -112,4 +112,40 @@ func TestBadgerTransaction_CheckEdgeCardinality(t *testing.T) {
 	cIn := Constraint{Type: ConstraintCardinality, Label: "REL", Direction: "INCOMING", MaxCount: 1}
 	err = tx.checkEdgeCardinality(context.Background(), &Edge{ID: "tenant:new", StartNode: "tenant:a", EndNode: "tenant:b", Type: "REL"}, cIn, "tenant")
 	require.Error(t, err)
+}
+
+func TestTemporalValidationReadRefreshesAfterPublication(t *testing.T) {
+	engine := newTestEngine(t)
+	ctx := t.Context()
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := engine.CreateNode(ctx, &Node{ID: id})
+		require.NoError(t, err)
+	}
+
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	properties := map[string]any{"key": "k", "from": start, "to": start.Add(time.Hour)}
+	constraint := Constraint{Type: ConstraintTemporal, Label: "REL", Properties: []string{"key", "from", "to"}}
+	edge := &Edge{ID: "test:candidate", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: properties}
+
+	var read temporalValidationRead
+	require.NoError(t, tx.checkEdgeTemporalConstraint(ctx, edge, constraint, "test", &read))
+
+	peer := *edge
+	peer.ID = "test:peer"
+	require.NoError(t, engine.CreateEdge(ctx, &peer))
+	err = tx.checkEdgeTemporalConstraint(ctx, edge, constraint, "test", &read)
+	var violation *ConstraintViolationError
+	require.ErrorAs(t, err, &violation)
+	require.Equal(t, ConstraintTemporal, violation.Type)
+	require.ErrorContains(t, err, string(peer.ID))
+
+	require.NoError(t, engine.DeleteEdge(ctx, peer.ID))
+	require.NoError(t, tx.checkEdgeTemporalConstraint(ctx, edge, constraint, "test", &read))
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(t, tx.checkEdgeTemporalConstraint(cancelled, edge, constraint, "test", &read), context.Canceled)
 }
