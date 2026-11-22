@@ -39,7 +39,8 @@ func TestCloseoutL4Named64KCSVImport(t *testing.T) {
 			if err := os.WriteFile(path, []byte(strings.Join(header, ",")+"\n"+strings.Join(row, ",")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			base, openErr := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+		if openErr != nil { t.Fatal(openErr) }
 			report, err := ImportFull(context.Background(), base, Options{DatabaseName: "l4", NodeSources: []string{"Doc=" + path}, DataDir: dir, ChunkSize: 10, Now: fixedImportTime})
 			if err == nil {
 				outcomes = append(outcomes, fmt.Sprintf("k=%d ok nodes=%d", k, report.NodesImported))
@@ -98,7 +99,8 @@ func TestCloseoutL4Named64KCSVImportRowsBeforeError(t *testing.T) {
 		if err := os.WriteFile(path, []byte(strings.Join(rows, "\n")+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+		base, openErr := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+		if openErr != nil { t.Fatal(openErr) }
 		report, importErr := ImportFull(context.Background(), base, Options{DatabaseName: "l4", NodeSources: []string{"Doc=" + path}, DataDir: dir, ChunkSize: chunk, Now: fixedImportTime})
 		engine := storage.NewNamespacedEngine(base, "l4")
 		present := []string{}
