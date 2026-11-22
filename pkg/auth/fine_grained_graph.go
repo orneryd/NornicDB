@@ -237,6 +237,28 @@ func (g *fineGrainedGraph) GetEdge(ctx context.Context, id storage.EdgeID) (*sto
 	return visible, err
 }
 
+// ReadRelationshipSearchHit returns the graph-visible relationship and
+// whether its independently permissioned managed embedding may be scored.
+func ReadRelationshipSearchHit(ctx context.Context, engine storage.Engine, id storage.EdgeID) (*storage.Edge, bool, error) {
+	graph, scoped := engine.(*fineGrainedGraph)
+	if !scoped {
+		edge, err := engine.GetEdge(ctx, id)
+		return edge, err == nil, err
+	}
+	edge, err := graph.engine.GetEdge(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	projected, err := graph.projectEdge(ctx, edge)
+	if err != nil {
+		return nil, false, err
+	}
+	if projected == nil {
+		return nil, false, storage.ErrNotFound
+	}
+	return projected, graph.request.Access.Allows("graph.relationship.embedding.read", graph.edgeResource(edge)), nil
+}
+
 func (g *fineGrainedGraph) visibleNodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {
 	if err != nil {
 		return nil, err

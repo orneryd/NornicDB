@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFineGrainedSearchUsesProjectedCorpusAndInvalidatesPages(t *testing.T) {
+func TestFineGrainedSearchFiltersSharedCorpusAndInvalidatesPages(t *testing.T) {
 	ctx := t.Context()
 	service, request := newFineGrainedSearchFixture(t)
 	scoped := auth.WithFineGrainedRequest(ctx, &request)
@@ -25,7 +25,8 @@ func TestFineGrainedSearchUsesProjectedCorpusAndInvalidatesPages(t *testing.T) {
 	require.Empty(t, masked.Results)
 	visible, err := service.Search(scoped, "albatross", nil, nil)
 	require.NoError(t, err)
-	require.Len(t, visible.Results, 3)
+	require.Len(t, visible.Results, 2)
+	require.Nil(t, visible.Metrics)
 	for _, result := range visible.Results {
 		require.Equal(t, "albatross", result.Properties["content"])
 		require.NotContains(t, result.Properties, "draft")
@@ -44,10 +45,8 @@ func TestFineGrainedSearchUsesProjectedCorpusAndInvalidatesPages(t *testing.T) {
 	require.ErrorIs(t, err, resultstream.ErrInvalidated)
 }
 
-// The complete ranked-then-ID stream is built from a private projected corpus
-// too, so its cursor must take the corpus over: the first page and the next
-// page both serve the authorized article population and its visible properties,
-// and a later page stays bound to the retained policy.
+// The ranked phase queries the shared index. The catalog phase, which does
+// not rely on search scores, can still return any visible article.
 func TestFineGrainedRankedThenIDContinuationDeliversProjectedPages(t *testing.T) {
 	ctx := t.Context()
 	service, principal := newFineGrainedSearchFixture(t)
@@ -80,7 +79,7 @@ func TestFineGrainedRankedThenIDContinuationDeliversProjectedPages(t *testing.T)
 	require.Len(t, next.Results, 1)
 	require.False(t, next.HasMore)
 	remaining := next.Results[0]
-	require.NotEqual(t, storage.NodeID("hidden"), remaining.NodeID)
+	require.Equal(t, storage.NodeID("one"), remaining.NodeID)
 	_, repeated := delivered[remaining.NodeID]
 	require.False(t, repeated, "next page repeats a projected result")
 	require.Equal(t, SearchContinuationCatalogPhase, remaining.Phase)
@@ -191,11 +190,9 @@ func TestFineGrainedHNSWUsesOnlyVisibleVectors(t *testing.T) {
 		Access: policy.ForRoles([]string{"reader"}), DatabaseID: func(string) string { return "work-id" },
 	}
 	scoped := auth.WithFineGrainedRequest(ctx, request)
-	view, err := service.fineGrainedView(scoped, request)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, view.Close()) })
-	require.Equal(t, strategyModeHNSW.String(), view.CurrentStrategy())
-	require.Equal(t, 1, view.EmbeddingCount())
+	require.Equal(t, strategyModeHNSW.String(), service.CurrentStrategy())
+	population := service.EmbeddingCount()
+	require.Greater(t, population, 1)
 
 	spec := VectorQuerySpec{Limit: 1}
 	vector := []float32{1, 0}
@@ -207,5 +204,10 @@ func TestFineGrainedHNSWUsesOnlyVisibleVectors(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, hits, 1)
 		require.Equal(t, string(tc.id), hits[0].ID)
+		response, err := service.Search(tc.ctx, "", vector, &SearchOptions{Limit: 1, HNSWEf: 8})
+		require.NoError(t, err)
+		require.Len(t, response.Results, 1)
+		require.Equal(t, string(tc.id), response.Results[0].ID)
 	}
+	require.Equal(t, population, service.EmbeddingCount())
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -621,24 +622,35 @@ type relationshipCandidate struct {
 	bm25Rank   int
 }
 
+type authorizedRelationshipHit struct {
+	edge   *storage.Edge
+	vector bool
+}
+
 // SearchRelationships ranks relationships by keyword and, with an
 // embedding, vector similarity, fused by reciprocal rank as node search is.
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
-func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
-	if principal := s.requestedFineGrainedView(ctx); principal != nil {
-		view, err := s.fineGrainedView(ctx, principal)
-		if err != nil {
-			return nil, err
-		}
-		defer view.Close()
-		return view.SearchRelationships(ctx, query, embedding, opts)
+func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (response *SearchResponse, err error) {
+	ctx, scope, err := s.withIndexedSearchScope(ctx)
+	if err != nil {
+		return nil, err
 	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer finishRead()
+	if scope != nil {
+		defer func(checkCtx context.Context) {
+			if err == nil {
+				if invalid := scope.check(checkCtx); invalid != nil {
+					response, err = nil, invalid
+				}
+			}
+		}(ctx)
+	}
+	readEngine := s.searchReadEngine(ctx)
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return nil, localizedError(localization.SearchRelationshipsDisabled(), ErrRelationshipSearchDisabled)
@@ -692,7 +704,15 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 
 	rs.mu.RLock()
 	bm25 := rs.fulltext.Search(query, depth)
-	recordIndexCandidates(queryprofile.Access(ctx, profileKindRelationshipFulltextCandidates, ""), len(bm25), nil)
+	var indexedDocuments map[string]string
+	if scope != nil {
+		indexedDocuments = make(map[string]string, len(bm25))
+		for _, hit := range bm25 {
+			if document, ok := rs.fulltext.GetDocument(hit.ID); ok {
+				indexedDocuments[hit.ID] = document
+			}
+		}
+	}
 	type scored struct {
 		id    string
 		score float64
@@ -739,6 +759,48 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		terms = matchQueryTerms(analyzer, query, rs.fulltext)
 	}
 	rs.mu.RUnlock()
+
+	var scopedEdges map[string]authorizedRelationshipHit
+	if scope != nil {
+		scopedEdges = make(map[string]authorizedRelationshipHit, len(bm25))
+		readHit := func(id string) (authorizedRelationshipHit, error) {
+			if cached, ok := scopedEdges[id]; ok {
+				return cached, nil
+			}
+			edge, vector, err := auth.ReadRelationshipSearchHit(ctx, readEngine, storage.EdgeID(id))
+			queryprofile.EntityReadResult(queryprofile.Access(ctx, queryprofile.KindRelationshipByIDSeek, ""), edge, err)
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return authorizedRelationshipHit{}, err
+			}
+			hit := authorizedRelationshipHit{edge: edge, vector: vector}
+			scopedEdges[id] = hit
+			return hit, nil
+		}
+		keywords := bm25[:0]
+		for _, candidate := range bm25 {
+			hit, err := readHit(candidate.ID)
+			if err != nil {
+				return nil, err
+			}
+			if document, ok := indexedDocuments[candidate.ID]; ok && hit.edge != nil &&
+				document == s.relationshipSearchableText(hit.edge) {
+				keywords = append(keywords, candidate)
+			}
+		}
+		bm25 = keywords
+		vectors := vectorHits[:0]
+		for _, candidate := range vectorHits {
+			hit, err := readHit(candidate.id)
+			if err != nil {
+				return nil, err
+			}
+			if hit.vector {
+				vectors = append(vectors, candidate)
+			}
+		}
+		vectorHits = vectors
+	}
+	recordIndexCandidates(queryprofile.Access(ctx, profileKindRelationshipFulltextCandidates, ""), len(bm25), nil)
 
 	for rank, hit := range bm25 {
 		c := candidate(hit.ID)
@@ -811,22 +873,27 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		if len(admitted) >= limit {
 			break
 		}
-		edge, err := s.engine.GetEdge(ctx, storage.EdgeID(c.id))
-		queryprofile.EntityReadResult(edgeCounter, edge, err)
-		if err != nil {
-			continue // deleted, or hidden from reads
+		var edge *storage.Edge
+		if scope != nil {
+			edge = scopedEdges[c.id].edge
+		} else {
+			edge, err = readEngine.GetEdge(ctx, storage.EdgeID(c.id))
+			queryprofile.EntityReadResult(edgeCounter, edge, err)
+			if err != nil {
+				continue // deleted, or hidden from reads
+			}
 		}
 		if len(types) > 0 && !types[edge.Type] {
 			continue
 		}
 		if opts.RelationshipWhere != nil {
 			var start, end *storage.Node
-			node, err := s.engine.GetNode(ctx, edge.StartNode)
+			node, err := readEngine.GetNode(ctx, edge.StartNode)
 			queryprofile.EntityReadResult(endpointCounter, node, err)
 			if err == nil {
 				start = node
 			}
-			node, err = s.engine.GetNode(ctx, edge.EndNode)
+			node, err = readEngine.GetNode(ctx, edge.EndNode)
 			queryprofile.EntityReadResult(endpointCounter, node, err)
 			if err == nil {
 				end = node
@@ -841,7 +908,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		admitted = append(admitted, admittedRelationship{edge, c})
 	}
-	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, readEngine)
 	defer release()
 	results := make([]SearchResult, 0, len(admitted))
 	for _, hit := range admitted {
@@ -883,7 +950,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		if c.bm25Rank > 0 && len(terms) > 0 {
 			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.RelationshipFulltextProperties(), analyzer, terms)...)
 		}
-		if visible.Enabled() {
+		if scope != nil || visible.Enabled() {
 			result.Matches = visibleSearchMatches(result.Matches, edge.Properties)
 		}
 		results = append(results, result)

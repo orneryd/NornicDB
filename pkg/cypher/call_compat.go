@@ -411,7 +411,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsWithVector(ctx cont
 
 	svc := e.search()
 	served := false
-	if e.fineGrainedGraph == nil {
+	// A transaction-local image can contain vectors the shared index has
+	// not received yet. Ordinary fine-grained reads use the indexed filter.
+	if _, transaction := e.fineGrainedSource.(*transactionStorageWrapper); !transaction {
 		var err error
 		served, err = e.vectorIndexServiceAnswers(ctx, svc, indexName, search.VectorIndexTarget{Label: targetRelType, Property: targetProperty, Relationship: true}, len(queryVector), vectorReadWarm)
 		if err != nil {

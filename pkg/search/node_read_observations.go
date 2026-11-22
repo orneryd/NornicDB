@@ -20,10 +20,14 @@ func (s *Service) readNodeImage(ctx context.Context, id storage.NodeID, image no
 	counter := queryprofile.Access(ctx, queryprofile.KindNodeByIDSeek, "")
 	var node *storage.Node
 	var err error
-	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); image == metadataNodeImage && ok {
+	engine := s.engine
+	if image == metadataNodeImage {
+		engine = s.searchReadEngine(ctx)
+	}
+	if reader, ok := engine.(storage.NodeWithoutEmbeddingsReader); image == metadataNodeImage && ok {
 		node, err = reader.GetNodeWithoutEmbeddings(ctx, id)
 	} else {
-		node, err = s.engine.GetNode(ctx, id)
+		node, err = engine.GetNode(ctx, id)
 	}
 	queryprofile.EntityReadResult(counter, node, err)
 	return node, err
@@ -76,7 +80,7 @@ func (s *Service) batchGetNodesWithoutEmbeddings(ctx context.Context, ids []stor
 	if len(ids) == 0 {
 		return map[storage.NodeID]*storage.Node{}, nil
 	}
-	nodes, answered, err := optionalBatchNodesWithoutEmbeddings(ctx, s.engine, ids)
+	nodes, answered, err := optionalBatchNodesWithoutEmbeddings(ctx, s.searchReadEngine(ctx), ids)
 	if err != nil {
 		return nil, err
 	}

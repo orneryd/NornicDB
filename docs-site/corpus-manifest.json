@@ -1557,8 +1557,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "f39dc960567159c9f7cbdbda26ad2e42ecbccbd71d9681b9dc3ba564252ccd3a",
-      "bytes": 9805
+      "sha256": "9c85d714ec699abfefe8db13483d1e997a11a86efbaa2d2ed5add16b72e50240",
+      "bytes": 10702
     },
     {
       "path": "security/http-security.md",
@@ -1767,8 +1767,8 @@
     },
     {
       "path": "user-guides/hybrid-search.md",
-      "sha256": "c3490d311dd99ca16eb38ab1fb961dc1daa534622e424a4386cd373deb6ddc86",
-      "bytes": 17030
+      "sha256": "64bf0429648bebef9911795d820f3d0aabcff50fae41059d5291292f35a9ebf5",
+      "bytes": 17453
     },
     {
       "path": "user-guides/infinigraph-topology.md",

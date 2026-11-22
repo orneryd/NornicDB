@@ -348,6 +348,13 @@ A relationship search returns one page: continuation fields (`n`, `qid`,
 from reads (decay, `db.visibility.suppress`) isn't returned. Without an
 embedder, relationship search is keyword-only.
 
+With [fine-grained access control](../security/fine-grained-access-control.md#search-and-vectors),
+search uses the database's existing relationship index. A result requires
+visibility of the relationship and both endpoints. Keyword hits must come
+from a document built from readable fields. The
+`graph.relationship.embedding.read` entitlement allows a stored managed
+vector to contribute to vector-only or hybrid ranking.
+
 ## Related Guides
 
 - [Vector Search](vector-search.md) — dedicated vector search guide with Cypher index examples
