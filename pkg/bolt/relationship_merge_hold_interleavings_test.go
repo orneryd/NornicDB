@@ -73,7 +73,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 		tx2 = openTx(s2)
 	}
 
-	runExplicit := func(tx neo4jdriver.Transaction) error {
+	runExplicit := func(tx neo4jdriver.ExplicitTransaction) error {
 		result, runErr := tx.Run(query, params)
 		if runErr != nil {
 			return runErr
