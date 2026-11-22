@@ -35,8 +35,8 @@ const closeoutL3DecoderScript = `
 const v1 = require('neo4j-driver-bolt-connection/lib/packstream/packstream-v1');
 const ChannelBuffer = require('neo4j-driver-bolt-connection/lib/channel/channel-buf').default;
 const pkg = require('neo4j-driver-bolt-connection/package.json');
-const mode = process.argv[2];
-const bytes = Buffer.from(process.argv[3], 'hex');
+const [mode, hexArg] = process.argv.slice(-2); // node -e: arguments follow argv[0]
+const bytes = Buffer.from(hexArg, 'hex');
 const unpacker = new v1.Unpacker(false, false, false);
 if (mode === 'bypass') {
   unpacker._unpackMapWithSize = function (size, buffer, hydrateStructure) {
