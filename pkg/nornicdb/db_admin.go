@@ -1907,6 +1907,7 @@ func (db *DB) searchAfterInitialBuild(ctx context.Context, run func() (*search.S
 	response, err := run()
 	if errors.Is(err, search.ErrSearchIndexBuilding) {
 		waitErr := db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName())
+		v152Diag("DIAG-D3 searchAfterInitialBuild: run err=%v; build wait err=%v (returned to caller: %v)", err, waitErr, waitErr == nil)
 		// Both signals can be ready; the wait may report a successful build
 		// even though the caller's context has already ended.
 		switch {

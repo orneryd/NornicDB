@@ -4745,6 +4745,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 		})
 		if err != nil {
+			v152Diag("DIAG-D3 search BuildIndexes IterateNodes aborted the whole build after %d nodes: chain=%s: %v", count+len(fulltextBatch), v152Chain(err), err)
 			return err
 		}
 		if flushErr != nil {

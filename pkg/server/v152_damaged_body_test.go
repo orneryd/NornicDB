@@ -37,6 +37,7 @@ import (
 
 	badger "github.com/dgraph-io/badger/v4"
 	neo4j "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -124,6 +125,30 @@ func (h *dmgHTTP) run(statement string, params map[string]any) dmgOutcome {
 		}
 	}
 	return out
+}
+
+// post sends one JSON request to path and returns status and body.
+func (h *dmgHTTP) post(path string, body any) (int, string) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		h.t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.token)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { _ = recover() }()
+		h.router.ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(dmgDeadline):
+		return 0, "HANG"
+	}
+	return rec.Code, rec.Body.String()
 }
 
 type dmgBolt struct {
@@ -336,6 +361,48 @@ func dmgDamage(t *testing.T, dir string, damage map[string]func([]byte) []byte) 
 		t.Fatalf("damaged %d of %d requested node bodies (manifests %v)", len(originals), len(damage), manifests)
 	}
 	return originals
+}
+
+// dmgCleanShutdownMarkerKey is the storage key a clean close writes
+// (prefixMVCCMeta 0x10, prefixMVCCMetaCleanShutdown 0x08).
+var dmgCleanShutdownMarkerKey = []byte{0x10, 0x08}
+
+// dmgDropCleanShutdownMarker removes the clean-shutdown marker while the
+// database is closed, as an unclean stop leaves it.
+func dmgDropCleanShutdownMarker(t *testing.T, dir string) {
+	t.Helper()
+	var manifests []string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() && info.Name() == "MANIFEST" {
+			manifests = append(manifests, filepath.Dir(path))
+		}
+		return nil
+	})
+	dropped := 0
+	for _, candidate := range manifests {
+		raw, err := badger.OpenManaged(badger.DefaultOptions(candidate).WithLogger(nil))
+		if err != nil {
+			continue
+		}
+		readTxn := raw.NewTransactionAt(math.MaxUint64, false)
+		_, getErr := readTxn.Get(dmgCleanShutdownMarkerKey)
+		readTxn.Discard()
+		if getErr == nil {
+			writeTxn := raw.NewTransactionAt(raw.MaxVersion(), true)
+			if err := writeTxn.Delete(dmgCleanShutdownMarkerKey); err != nil {
+				t.Fatalf("drop marker: %v", err)
+			}
+			if err := writeTxn.CommitAt(raw.MaxVersion()+1, nil); err != nil {
+				t.Fatalf("drop marker commit: %v", err)
+			}
+			dropped++
+		}
+		_ = raw.Close()
+	}
+	t.Logf("D4 clean-shutdown markers dropped: %d", dropped)
+	if dropped == 0 {
+		t.Fatalf("no clean-shutdown marker found (manifests %v)", manifests)
+	}
 }
 
 type dmgEnv struct {
@@ -706,6 +773,15 @@ func TestV152DamagedBodyD2D3PointReadsAndErrors(t *testing.T) {
 			searchStatus := dmgWaitSearch(t, env)
 			searchResult, found := dmgSearch(env, "zebrafind")
 			t.Logf("D3 SEARCH %s status=%s | %s | healthy nodes found=%v", variant, searchStatus, searchResult, found)
+			httpCode, httpBody := env.http.post("/nornicdb/search", map[string]any{"query": "zebrafind", "limit": 10})
+			failedPhase := strings.Contains(httpBody, "\"phase\":\"failed\"")
+			if len(httpBody) > 700 {
+				httpBody = httpBody[:700] + "..."
+			}
+			t.Logf("D3 HTTPSEARCH %s POST /nornicdb/search: status=%d body=%s", variant, httpCode, httpBody)
+			if variant == "damaged" && httpCode == http.StatusServiceUnavailable && failedPhase {
+				t.Errorf("DEFECT3 HTTP search answers 503 'being built' (retryable) while the build has failed")
+			}
 			if variant == "control-undamaged" && len(found) != 2 {
 				t.Errorf("CONTROL search did not find both healthy nodes: %s", searchResult)
 			}
@@ -779,13 +855,19 @@ func TestV152DamagedBodyD4StartupMigrationScan(t *testing.T) {
 		"format": func(body []byte) []byte { body[0] = 0x00; return body },
 		"trunc":  func(body []byte) []byte { return body[:3] },
 	}
-	for _, variant := range []string{"control-undamaged", "empty", "format", "trunc", "empty-marker-written", "format-first-start-done"} {
+	for _, variant := range []string{"control-undamaged", "empty", "format", "trunc", "empty-marker-written", "format-first-start-done",
+		"control-undamaged-first-start-done-unclean", "format-first-start-done-unclean"} {
 		t.Run(variant, func(t *testing.T) {
-			firstStart := variant == "format-first-start-done"
+			firstStart := strings.Contains(variant, "first-start-done")
 			dir := dmgCreateStore(t, nodes, firstStart)
 			kind := strings.Split(variant, "-")[0]
 			if damage := damages[kind]; damage != nil {
 				dmgDamage(t, dir, map[string]func([]byte) []byte{"d4-bad": damage})
+			}
+			if strings.HasSuffix(variant, "-unclean") {
+				// The state an unclean stop (crash, kill) leaves: no clean-shutdown
+				// marker. Nothing else is changed.
+				dmgDropCleanShutdownMarker(t, dir)
 			}
 			if strings.HasSuffix(variant, "marker-written") {
 				// Test-side bypass: record the one-time legacy-data check as done
@@ -806,7 +888,7 @@ func TestV152DamagedBodyD4StartupMigrationScan(t *testing.T) {
 			env, err := dmgServe(t, dir)
 			t.Logf("D4 START %s: err=%v", variant, err)
 			if err != nil {
-				if variant == "control-undamaged" {
+				if strings.HasPrefix(variant, "control") {
 					t.Fatalf("CONTROL start failed: %v", err)
 				}
 				t.Errorf("DEFECT4 %s: server does not start: %v", variant, err)
@@ -818,5 +900,69 @@ func TestV152DamagedBodyD4StartupMigrationScan(t *testing.T) {
 				t.Errorf("after start %s: healthy node not readable: %s", variant, h)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Defect 1, normal use: temporal values outside years 0..9999 written by an
+// ordinary client (Bolt parameters, Cypher functions) or the library API.
+
+func TestV152DamagedBodyD1OutOfRangeTemporalWrites(t *testing.T) {
+	t.Setenv("NORNICDB_REMOTE_CREDENTIALS_KEY", "test-remote-credential-key-32b!")
+	dir := dmgCreateStore(t, nil, true)
+	env, err := dmgServe(t, dir)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	y12000 := time.Date(12000, 1, 1, 0, 0, 0, 0, time.UTC)
+	yNeg := time.Date(-50, 1, 1, 0, 0, 0, 0, time.UTC)
+	writes := []struct {
+		id        string
+		statement string
+		params    map[string]any
+		via       string
+	}{
+		{"boltdt12000", "CREATE (n:N1 {id: 'boltdt12000', d: $d}) RETURN n.id AS id", map[string]any{"d": y12000}, "bolt"},
+		{"boltldt12000", "CREATE (n:N1 {id: 'boltldt12000', d: $d}) RETURN n.id AS id", map[string]any{"d": dbtype.LocalDateTime(y12000)}, "bolt"},
+		{"boltdate12000", "CREATE (n:N1 {id: 'boltdate12000', d: $d}) RETURN n.id AS id", map[string]any{"d": dbtype.Date(y12000)}, "bolt"},
+		{"boltdtneg", "CREATE (n:N1 {id: 'boltdtneg', d: $d}) RETURN n.id AS id", map[string]any{"d": yNeg}, "bolt"},
+		{"cyldt12000", "CREATE (n:N1 {id: 'cyldt12000', d: localdatetime({year: 12000, month: 1, day: 1})}) RETURN n.id AS id", nil, "http"},
+		{"cydate12000", "CREATE (n:N1 {id: 'cydate12000', d: date({year: 12000, month: 1, day: 1})}) RETURN n.id AS id", nil, "http"},
+		{"cydtstr", "CREATE (n:N1 {id: 'cydtstr', d: datetime('+12000-01-01T00:00Z')}) RETURN n.id AS id", nil, "http"},
+		{"libdt12000", "", nil, "library"},
+		{"control", "CREATE (n:N1 {id: 'control', d: datetime('2020-01-01T00:00Z')}) RETURN n.id AS id", nil, "http"},
+	}
+	for _, w := range writes {
+		switch w.via {
+		case "bolt":
+			t.Logf("D1T CREATE %s via bolt: %s", w.id, env.bolt.run(w.statement, w.params))
+		case "http":
+			t.Logf("D1T CREATE %s via http: %s", w.id, env.http.run(w.statement, w.params))
+		case "library":
+			_, err := env.db.GetStorage().CreateNode(context.Background(), &storage.Node{ID: storage.NodeID(w.id), Labels: []string{"N1"},
+				Properties: map[string]any{"id": w.id, "d": y12000}})
+			t.Logf("D1T CREATE %s via library API: err=%v", w.id, err)
+		}
+	}
+	for _, w := range writes {
+		params := map[string]any{"id": w.id}
+		for _, statement := range []string{
+			"MATCH (n:N1 {id: $id}) RETURN n AS n",
+			"MATCH (n:N1 {id: $id}) RETURN n.d AS d",
+		} {
+			h := env.http.run(statement, params)
+			b := env.bolt.run(statement, params)
+			t.Logf("D1T READ %s | %s | http %s | bolt %s", w.id, statement, h, b)
+			if w.id == "control" {
+				if h.Status != 200 || len(h.Rows) != 1 {
+					t.Fatalf("control read failed: http %s", h)
+				}
+				continue
+			}
+			if h.Status == 200 && len(h.Body) == 0 {
+				t.Errorf("DEFECT1 out-of-range temporal %s (written via %s): HTTP 200 with empty body for %q", w.id, w.via, statement)
+			}
+		}
+		t.Logf("D1T EXEC %s: %s", w.id, dmgExecutorView(env.db, w.id))
 	}
 }
