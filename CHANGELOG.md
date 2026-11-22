@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
 
+- Give cached embedding results independent vectors so caller mutation and duplicate batch entries cannot corrupt later cache hits.
 - Apply bound parameter types through query scopes while preserving Neo4j uncertainty for floating-point parameters, so typed consumers reject invalid bindings and valid empty-input list expressions remain accepted.
 - Make catalog-publication test probes tolerate registered fixture cleanup after an explicit manager close.
 - Preserve continuation-owned rerank windows in `db.rretrieve`, returning all qualifying hits before completion while keeping caller ceilings and provider-once ordering.

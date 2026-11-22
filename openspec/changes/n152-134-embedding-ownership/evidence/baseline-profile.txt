@@ -1,0 +1,20 @@
+File: n152-134-baseline.test
+Type: cpu
+Time: 2026-11-21 20:18:46 MST
+Duration: 11.31s, Total samples = 11.23s (99.26%)
+Showing nodes accounting for 10.70s, 95.28% of 11.23s total
+Dropped 82 nodes (cum <= 0.06s)
+Showing top 12 nodes out of 82
+      flat  flat%   sum%        cum   cum%
+     8.31s 74.00% 74.00%      8.31s 74.00%  runtime.kevent
+     0.89s  7.93% 81.92%      0.89s  7.93%  runtime.pthread_kill
+     0.43s  3.83% 85.75%      0.43s  3.83%  runtime.madvise
+     0.29s  2.58% 88.33%      0.29s  2.58%  runtime.usleep
+     0.24s  2.14% 90.47%      0.24s  2.14%  runtime.asyncPreempt
+     0.17s  1.51% 91.99%      0.17s  1.51%  runtime.pthread_cond_wait
+     0.13s  1.16% 93.14%      0.17s  1.51%  runtime.tryDeferToSpanScan
+     0.07s  0.62% 93.77%      0.07s  0.62%  runtime.(*spanSet).pop
+     0.06s  0.53% 94.30%      0.06s  0.53%  runtime.procyieldAsm
+     0.05s  0.45% 94.75%      0.14s  1.25%  runtime.scanObject
+     0.03s  0.27% 95.01%      0.08s  0.71%  runtime.mallocgcTinySC2
+     0.03s  0.27% 95.28%      0.17s  1.51%  runtime.wbBufFlush1

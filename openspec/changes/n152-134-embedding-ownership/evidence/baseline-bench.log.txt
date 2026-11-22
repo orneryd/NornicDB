@@ -1,0 +1,45 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/embed
+cpu: Apple M2 Max
+BenchmarkCachedEmbeddingOwnership/dims1024/single_hit-2         	 3905205	        61.99 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/single_hit-2         	 3874352	        61.78 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/single_hit-2         	 3869935	        61.73 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/single_hit-2         	 3878708	        62.00 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/single_hit-2         	 3879946	        62.09 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_hit-2        	  202156	      1176 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_hit-2        	  201753	      1170 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_hit-2        	  200640	      1169 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_hit-2        	  201616	      1169 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_hit-2        	  201732	      1167 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_duplicate-2  	  227040	      1042 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_duplicate-2  	  227847	      1047 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_duplicate-2  	  227542	      1047 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_duplicate-2  	  227690	      1045 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_duplicate-2  	  226735	      1044 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_half_miss-2  	   24812	      9054 ns/op	   35049 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_half_miss-2  	   27006	      8830 ns/op	   35049 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_half_miss-2  	   27260	      8796 ns/op	   35049 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_half_miss-2  	   27087	      9114 ns/op	   35049 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims1024/batch16_half_miss-2  	   27008	      8761 ns/op	   35050 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/single_hit-2         	 3873812	        62.79 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/single_hit-2         	 3867052	        61.94 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/single_hit-2         	 3887004	        61.59 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/single_hit-2         	 3864936	        62.01 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/single_hit-2         	 3883413	        61.68 ns/op	      16 B/op	       1 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_hit-2        	  201100	      1202 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_hit-2        	  200860	      1190 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_hit-2        	  201342	      1192 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_hit-2        	  200446	      1187 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_hit-2        	  200630	      1196 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_duplicate-2  	  228192	      1042 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_duplicate-2  	  226933	      1043 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_duplicate-2  	  227038	      1045 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_duplicate-2  	  227536	      1042 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_duplicate-2  	  227608	      1046 ns/op	     640 B/op	      17 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_half_miss-2  	   11140	     21304 ns/op	  133344 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_half_miss-2  	   11361	     21043 ns/op	  133343 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_half_miss-2  	    9682	     20963 ns/op	  133340 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_half_miss-2  	    9642	     21045 ns/op	  133341 B/op	      70 allocs/op
+BenchmarkCachedEmbeddingOwnership/dims4096/batch16_half_miss-2  	    9866	     21103 ns/op	  133341 B/op	      70 allocs/op
+PASS
