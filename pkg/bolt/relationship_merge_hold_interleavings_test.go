@@ -74,7 +74,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 	}
 
 	runExplicit := func(tx neo4jdriver.ExplicitTransaction) error {
-		result, runErr := tx.Run(query, params)
+		result, runErr := tx.Run(ctx, query, params)
 		if runErr != nil {
 			return runErr
 		}
@@ -85,7 +85,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 		if explicit2 {
 			err := runExplicit(tx2)
 			if err == nil {
-				err = tx2.Commit()
+				err = tx2.Commit(ctx)
 			}
 			return "explicit", err
 		}
@@ -107,7 +107,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 		if err := runExplicit(tx1); err != nil {
 			t.Logf("session1 merge error after session2: %v", err)
 		}
-		if err := tx1.Commit(); err != nil {
+		if err := tx1.Commit(ctx); err != nil {
 			t.Logf("session1 commit error: %v", err)
 		}
 	} else {
@@ -115,7 +115,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 			t.Logf("session1 merge error: %v", err)
 		}
 		if commit1BeforeMerge2 {
-			if err := tx1.Commit(); err != nil {
+			if err := tx1.Commit(ctx); err != nil {
 				t.Logf("session1 commit error before session2: %v", err)
 			}
 			secondOutcome, secondErr = runSecond()
@@ -131,7 +131,7 @@ func runBoltRelationshipMergeHeldSchedule(t *testing.T, explicit2, session2First
 			case <-time.After(100 * time.Millisecond):
 				t.Log("session2 MERGE waited for session1")
 			}
-			if err := tx1.Commit(); err != nil {
+			if err := tx1.Commit(ctx); err != nil {
 				t.Logf("session1 commit error: %v", err)
 			}
 			select {
