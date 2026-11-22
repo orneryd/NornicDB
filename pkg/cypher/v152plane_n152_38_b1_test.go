@@ -39,15 +39,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// nor70PreparedFixtureCreate is the issue's prepared one-hop fixture exactly as
+// nor70PreparedFixtureCreateS3 is the issue's prepared one-hop fixture exactly as
 // written in NOR-70.
-const nor70PreparedFixtureCreate = "CREATE (q:AggOwner {g: 'g'}), (p1:AggValue {y: 1}), (p2:AggValue {y: 2}), " +
+const nor70PreparedFixtureCreateS3 = "CREATE (q:AggOwner {g: 'g'}), (p1:AggValue {y: 1}), (p2:AggValue {y: 2}), " +
 	"(q)-[:AGG {x: 1}]->(p1), (q)-[:AGG {x: 2}]->(p2)"
 
-// nor70FollowupNativeFixture returns a real BadgerEngine (in-memory) and an
+// nor70FollowupNativeFixtureS3 returns a real BadgerEngine (in-memory) and an
 // executor over a namespaced view of it. The engine is tracked and explicitly
 // closed, so the backing Badger resources are actually released.
-func nor70FollowupNativeFixture(t *testing.T) (storage.Engine, *StorageExecutor) {
+func nor70FollowupNativeFixtureS3(t *testing.T) (storage.Engine, *StorageExecutor) {
 	t.Helper()
 	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
@@ -63,14 +63,14 @@ func nor70FollowupNativeFixture(t *testing.T) (storage.Engine, *StorageExecutor)
 func nor70FollowupMemoryFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor70_followup_memory"))
-	_, err := exec.Execute(context.Background(), nor70PreparedFixtureCreate, nil)
+	_, err := exec.Execute(context.Background(), nor70PreparedFixtureCreateS3, nil)
 	require.NoError(t, err)
 	return exec
 }
 
-// nor70FollowupBegin starts an explicit transaction through the public Execute
+// nor70FollowupBeginS3 starts an explicit transaction through the public Execute
 // route and checks the documented BEGIN result.
-func nor70FollowupBegin(t *testing.T, exec *StorageExecutor) {
+func nor70FollowupBeginS3(t *testing.T, exec *StorageExecutor) {
 	t.Helper()
 	result, err := exec.Execute(context.Background(), "BEGIN", nil)
 	require.NoError(t, err)
@@ -78,26 +78,26 @@ func nor70FollowupBegin(t *testing.T, exec *StorageExecutor) {
 	require.Equal(t, [][]interface{}{{"Transaction started"}}, result.Rows)
 }
 
-// nor70FollowupCommit commits and fails the test if COMMIT reported an error.
-func nor70FollowupCommit(t *testing.T, exec *StorageExecutor) {
+// nor70FollowupCommitS3 commits and fails the test if COMMIT reported an error.
+func nor70FollowupCommitS3(t *testing.T, exec *StorageExecutor) {
 	t.Helper()
 	_, err := exec.Execute(context.Background(), "COMMIT", nil)
 	require.NoError(t, err)
 }
 
-// TestNOR70NativeExplicitTransactionAggregateContracts runs the issue's two
+// TestNOR70NativeExplicitTransactionAggregateContractsS3 runs the issue's two
 // prepared contracts inside an explicit native Badger transaction: the fixture
 // is written, read and aggregated in the transaction, isolated from a committed
 // reader, then committed and re-read from a separate executor. The reversed
 // aggregate order is checked in the same transaction so projection order is
 // proven not to share a running input.
-func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
+func TestNOR70NativeExplicitTransactionAggregateContractsS3(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
 		t.Run("prepared fixture written and aggregated in BEGIN/COMMIT", func(t *testing.T) {
-			store, exec := nor70FollowupNativeFixture(t)
+			store, exec := nor70FollowupNativeFixtureS3(t)
 			ctx := context.Background()
 
-			nor70FollowupBegin(t, exec)
+			nor70FollowupBeginS3(t, exec)
 			committed := false
 			defer func() {
 				if !committed {
@@ -105,7 +105,7 @@ func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 				}
 			}()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, nor70PreparedFixtureCreateS3, nil)
 			require.NoError(t, err)
 
 			// The transaction is a real snapshot: a committed reader cannot
@@ -126,7 +126,7 @@ func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 			require.Equal(t, [][]interface{}{{"g", float64(1.5), int64(3)}}, reversed.Rows,
 				"reversed projection order must not change either aggregate's input")
 
-			nor70FollowupCommit(t, exec)
+			nor70FollowupCommitS3(t, exec)
 			committed = true
 
 			after, err := NewStorageExecutor(store).Execute(ctx, nor70OneHopPattern+" RETURN q.g, sum(r.x), avg(p.y)", nil)
@@ -136,13 +136,13 @@ func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 		})
 
 		t.Run("null-only group after removing both p.y in BEGIN/COMMIT", func(t *testing.T) {
-			store, exec := nor70FollowupNativeFixture(t)
+			store, exec := nor70FollowupNativeFixtureS3(t)
 			ctx := context.Background()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, nor70PreparedFixtureCreateS3, nil)
 			require.NoError(t, err)
 
-			nor70FollowupBegin(t, exec)
+			nor70FollowupBeginS3(t, exec)
 			committed := false
 			defer func() {
 				if !committed {
@@ -171,7 +171,7 @@ func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 			require.Equal(t, [][]interface{}{{"g", float64(1.5), int64(3)}}, before.Rows,
 				"the transaction's REMOVE must not be visible before COMMIT")
 
-			nor70FollowupCommit(t, exec)
+			nor70FollowupCommitS3(t, exec)
 			committed = true
 
 			after, err := NewStorageExecutor(store).Execute(ctx, nor70OneHopPattern+" RETURN q.g, avg(p.y), collect(p.y)", nil)
@@ -181,10 +181,10 @@ func TestNOR70NativeExplicitTransactionAggregateContracts(t *testing.T) {
 		})
 
 		t.Run("BEGIN … COMMIT script route", func(t *testing.T) {
-			store, exec := nor70FollowupNativeFixture(t)
+			store, exec := nor70FollowupNativeFixtureS3(t)
 			ctx := context.Background()
 
-			_, err := exec.Execute(ctx, nor70PreparedFixtureCreate, nil)
+			_, err := exec.Execute(ctx, nor70PreparedFixtureCreateS3, nil)
 			require.NoError(t, err)
 
 			script := "BEGIN\n" + nor70OneHopPattern + "\nRETURN q.g, sum(r.x), avg(p.y)\nCOMMIT"
@@ -282,10 +282,10 @@ func TestNOR70DetectQueryPatternAndExecuteOptimizedOriginalQueries(t *testing.T)
 	})
 }
 
-// nor70FollowupEdgeAggFixture seeds the detector-supported edge-property
+// nor70FollowupEdgeAggFixtureS3 seeds the detector-supported edge-property
 // aggregate shape. P1 has two rated reviews, P2 has one review without a
 // rating, P3 has one rated and one unrated review.
-func nor70FollowupEdgeAggFixture(t *testing.T) *StorageExecutor {
+func nor70FollowupEdgeAggFixtureS3(t *testing.T) *StorageExecutor {
 	t.Helper()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor70_followup_edge_agg"))
 	_, err := exec.Execute(context.Background(), `CREATE
@@ -329,7 +329,7 @@ func nor70FollowupEdgeAggFixture(t *testing.T) *StorageExecutor {
 // the null-only group and omits count values; it changes no production code.
 func TestNOR70OptimizedEdgeAggNullGroupConsequence(t *testing.T) {
 	withCypherParsers(t, func(t *testing.T) {
-		exec := nor70FollowupEdgeAggFixture(t)
+		exec := nor70FollowupEdgeAggFixtureS3(t)
 		ctx := context.Background()
 		query := "MATCH (c:Customer)-[r:REVIEWED]->(p:Product) " +
 			"RETURN p.name, avg(r.rating), count(r) ORDER BY p.name"
