@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
+
 - Keep Adamic-Adar and resource-allocation scores bit-identical for equal contribution multisets by adding their common-neighbour terms in degree order, so repeated link-prediction queries keep the documented target-ID tie selection and top-K candidates.
 
 - Preserve relationships and every promoted source label in the documented Neo4j migration, keep reruns idempotent, and reject incomplete target batches.
