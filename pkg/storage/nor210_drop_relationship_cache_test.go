@@ -78,12 +78,6 @@ func cachedDropCacheRelationshipTypeIDs(t *testing.T, engine *BadgerEngine, edge
 	return ids
 }
 
-func warmDropCacheRelationshipTypeEntryCount(engine *BadgerEngine) int {
-	engine.edgeTypeCacheMu.RLock()
-	defer engine.edgeTypeCacheMu.RUnlock()
-	return len(engine.edgeTypeCache)
-}
-
 // TestNOR210UnrelatedRelationshipTypeCacheSurvivesPrefixDrop is the reported
 // defect: dropping one prefix evicted the warm relationship-type result of an
 // unrelated prefix, so the next unrelated read had to refill from storage.
@@ -100,7 +94,8 @@ func TestNOR210UnrelatedRelationshipTypeCacheSurvivesPrefixDrop(t *testing.T) {
 			require.Equal(t, []EdgeID{"victim:edge-0", "victim:edge-1"}, victimIDs)
 			peerIDs := warmDropCacheRelationshipType(t, engine, dropCachePeerType)
 			require.Equal(t, []EdgeID{"peer:edge-0", "peer:edge-1"}, peerIDs)
-			require.Equal(t, 2, warmDropCacheRelationshipTypeEntryCount(engine))
+			require.Equal(t, peerIDs, cachedDropCacheRelationshipTypeIDs(t, engine, dropCachePeerType))
+			require.NotEmpty(t, cachedDropCacheRelationshipTypeIDs(t, engine, dropCacheVictimType))
 
 			// Capture the pre-drop state a read that raced the DROP would fill.
 			victimEdges, err := engine.GetEdgesByType(context.Background(), dropCacheVictimType)
@@ -150,7 +145,7 @@ func TestNOR210SharedRelationshipTypeCacheRevokedByPrefixDrop(t *testing.T) {
 
 			require.Equal(t, []EdgeID{"peer:edge-0", "peer:edge-1", "victim:edge-0", "victim:edge-1"},
 				warmDropCacheRelationshipType(t, engine, dropCacheSharedType))
-			require.Equal(t, 1, warmDropCacheRelationshipTypeEntryCount(engine))
+			require.NotEmpty(t, cachedDropCacheRelationshipTypeIDs(t, engine, dropCacheSharedType))
 
 			_, edgesDeleted, err := engine.DeleteByPrefix(prefix)
 			require.NoError(t, err)
@@ -187,7 +182,8 @@ func TestNOR210InterruptedPrefixDropKeepsRelationshipTypeRecovery(t *testing.T) 
 			seedDropCacheRelationshipType(t, engine, "peer", dropCachePeerType, 2)
 			require.Equal(t, []EdgeID{"victim:edge-0", "victim:edge-1"}, warmDropCacheRelationshipType(t, engine, dropCacheVictimType))
 			peerIDs := warmDropCacheRelationshipType(t, engine, dropCachePeerType)
-			require.Equal(t, 2, warmDropCacheRelationshipTypeEntryCount(engine))
+			require.Equal(t, peerIDs, cachedDropCacheRelationshipTypeIDs(t, engine, dropCachePeerType))
+			require.NotEmpty(t, cachedDropCacheRelationshipTypeIDs(t, engine, dropCacheVictimType))
 
 			sentinel := errors.New("intrinsic DROP cleanup unavailable")
 			engine.dropPrefixTailHook = func(prefix string) error {
