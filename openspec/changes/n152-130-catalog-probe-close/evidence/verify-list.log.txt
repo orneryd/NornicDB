@@ -1,0 +1,43 @@
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.vNRYGn2T8C/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.vNRYGn2T8C/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.vNRYGn2T8C/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.vNRYGn2T8C/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base fb289635e58f5f5bddf0be2186b2bc1ab7be0997 (merge base with moved-base), head 440a2df8204d1eba1d9b6ce543cd07c0eee4824b
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: verify path filters (200000 paths, first/last match, no match, empty, ALL=1)
+PASS: build input gates (exact paths, every mapped step, near misses, ALL/ONLY/SKIP precedence)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.tGbOmoq8JH/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.tGbOmoq8JH/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.tGbOmoq8JH/memory/.github/workflows/ci.yml: No such file or directory
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+sed: /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp.tGbOmoq8JH/memory/.github/workflows/ci.yml: No such file or directory
+PASS: verification, coverage and shard child memory policy (CI default, explicit off, local default and override)
+PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes
+PASS: staged/committed renames to/from build inputs and near misses select exactly their checks
+base cb629c22191eb697c952d30586dc42190c9552fa (merge base with moved-base), head cb1d2657c3cb552f2b6375570b7d81f70986b8c0
+PASS: allocation base is the branch merge base when the base tip moves
+PASS: relative verifier override survives fixture directory changes
+fetching release/v1.5.2 from origin ...
+verify fix/n152-130-catalog-probe-close @ f77ec7706  against origin/release/v1.5.2 (merge base f77ec7706, 9 changed files)
+warning: uncommitted changes are included in the path filters and in every step except 'allocations', which measures commits; commit before pulling in.
+  localization  run   localization catalogs: tests, generated manifest up to date, catalog check
+  ui            run   UI assets: npm ci && npm run build
+  llama-libs    run   llama CPU libs (Linux amd64 only; needs Docker)
+  build         run   make build
+  tests         run   all test groups with coverage, as CI (scripts/ci/test-groups.sh)
+  allocations   run   allocation ratchet against the merge base (fixed-count workloads, 1% B/op tolerance)
+  conformance   run   make cypher-conformance (pinned TCK corpus + regressions)
+  differential  run   make cypher-differential (fixed corpus vs pinned Neo4j; needs Docker)
+  docs          skip  (no changes under docs paths)
