@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -122,9 +124,30 @@ func writeName(r *record, value string) { r.name = value }
 		Node:         "field",
 		Names:        []string{"name"},
 		Reachability: "all",
+	}, {
+		Kind:          "field-use",
+		Node:          "identifier",
+		Names:         []string{"name"},
+		OwnerContains: []string{".readName", ".writeName"},
+		Reachability:  "all",
 	}})
 	inventory := mustExtract(t, cfg)
-	if len(inventory.Members) != 1 || !strings.Contains(inventory.Members[0].Code, "name string") {
-		t.Fatalf("field selector must select the declared field once: %v", nor209Codes(inventory.Members))
+	var declarations []string
+	var useOwners []string
+	for _, member := range inventory.Members {
+		switch member.Kind {
+		case "field":
+			declarations = append(declarations, member.Code)
+		case "field-use":
+			useOwners = append(useOwners, member.Owner)
+		}
+	}
+	if len(declarations) != 1 || !strings.Contains(declarations[0], "name string") {
+		t.Fatalf("field selector must select the declared field once: %v", declarations)
+	}
+	wantUseOwners := []string{"nor209fixture.readName", "nor209fixture.writeName"}
+	sort.Strings(useOwners)
+	if !slices.Equal(useOwners, wantUseOwners) {
+		t.Fatalf("identifier selector did not match the two field uses: got %v want %v", useOwners, wantUseOwners)
 	}
 }
