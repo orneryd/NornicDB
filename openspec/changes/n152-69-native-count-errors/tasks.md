@@ -6,3 +6,10 @@
 - [x] Correct canonical native count error propagation.
 - [x] Verify affected public consumers, race, vet and scoped localization checks (full release and indexed analysis remain pending).
 - [ ] Publish draft release fix and scoped Plane evidence.
+
+## N152-236 composite schema admission
+
+- [x] Reproduce successful partial index metadata after participant admission fails.
+- [x] Return the admission error from the library metadata read and an unavailable schema from its errorless counterpart.
+- [x] Distinguish unavailable configured participants from an empty composite in schema and count reads.
+- [ ] Verify public read consumers, rollback and capture inventories, and release checks.

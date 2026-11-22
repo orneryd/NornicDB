@@ -144,8 +144,8 @@ func (c *CompositeEngine) SetPropertyDefault(propertyName string, constituent st
 	c.propertyDefaults[propertyName] = constituent
 }
 
-// getConstituentsForRead returns all constituents that can be read from.
-// Returns empty slice if no readable constituents are available.
+// getConstituentsForRead selects each configured readable source once.
+// A configured unavailable source remains in the result for admission.
 func (c *CompositeEngine) getConstituentsForRead() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -160,32 +160,25 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 	seen := make(map[readSource]struct{})
 	for alias, mode := range c.accessModes {
 		if mode == "read" || mode == "read_write" {
-			// Check if constituent engine exists and is accessible
-			if engine, exists := c.constituents[alias]; exists && engine != nil {
-				database := DatabaseOf(engine)
-				source := engine
-				for {
-					wrapper, ok := source.(EngineUnwrapper)
-					if !ok {
-						break
-					}
-					inner := wrapper.GetInnerEngine()
-					if inner == nil || inner == source {
-						break
-					}
-					source = inner
-				}
-				// Value engines may contain slices/maps. Their identity cannot
-				// be a map key; retain their separate views in that case.
-				if reflect.TypeOf(source).Comparable() {
-					key := readSource{source, database}
-					if _, exists := seen[key]; exists {
-						continue
-					}
-					seen[key] = struct{}{}
-				}
+			engine := c.constituents[alias]
+			// Keep unavailable configured participants so a required read can
+			// distinguish their admission failure from an empty composite.
+			if engine == nil {
 				result = append(result, alias)
+				continue
 			}
+			database := DatabaseOf(engine)
+			source := UnwrapEngine(engine)
+			// Value engines may contain slices/maps. Their identity cannot
+			// be a map key; retain their separate views in that case.
+			if reflect.TypeOf(source).Comparable() {
+				key := readSource{source, database}
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			result = append(result, alias)
 		}
 	}
 	return result
@@ -214,11 +207,18 @@ func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 	c.mu.RLock()
 	engine, exists := c.constituents[alias]
 	c.mu.RUnlock()
-	if !exists {
+	if !exists || engine == nil {
 		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
 	if c.accessConstituent != nil {
-		return c.accessConstituent(alias, engine, false)
+		resolved, err := c.accessConstituent(alias, engine, false)
+		if err != nil {
+			return nil, err
+		}
+		if resolved == nil {
+			return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
+		}
+		engine = resolved
 	}
 	return engine, nil
 }
@@ -1127,35 +1127,68 @@ func (c *CompositeEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int,
 // Schema Operations
 // ============================================================================
 
-// GetSchema returns a merged schema from all constituents.
-// Merges constraints and indexes from all constituent databases.
+// GetSchema returns a schema only if all configured readable constituents can
+// be admitted. An empty composite has a non-nil, empty schema. Call ReadSchema
+// to obtain the error when the merged schema is unavailable.
 func (c *CompositeEngine) GetSchema() *SchemaManager {
-	readConstituents := c.getConstituentsForRead()
+	schema, _ := c.readSchema(context.Background())
+	return schema
+}
 
-	if len(readConstituents) == 0 {
-		return NewSchemaManager()
+// ReadSchema reads an engine's schema with the caller's lifetime. A composite
+// returns an error and no schema when any required constituent is unavailable.
+// For example, use ReadSchema(ctx, composite) before listing merged indexes.
+func ReadSchema(ctx context.Context, engine Engine) (*SchemaManager, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	mergedSchema := NewSchemaManager()
-
-	// Merge schemas from all constituents
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	if engine == nil {
+		return nil, ErrStorageClosed
+	}
+	if reader, ok := engine.(interface {
+		readSchema(context.Context) (*SchemaManager, error)
+	}); ok {
+		return reader.readSchema(ctx)
+	}
+	if native, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
+		if err := native.ensureOpen(false); err != nil {
+			return nil, err
 		}
+		namespace := DatabaseOf(engine)
+		if namespace == "" {
+			namespace = "nornic"
+		}
+		if err := native.pendingNamespaceConflict(namespace); err != nil {
+			return nil, err
+		}
+	}
+	schema := engine.GetSchema()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return schema, nil
+}
 
-		constituentSchema := engine.GetSchema()
+func (c *CompositeEngine) readSchema(ctx context.Context) (*SchemaManager, error) {
+	mergedSchema := NewSchemaManager()
+	err := walkReadableConstituents(c, constituentAccessRequired, func(alias string, engine Engine) error {
+		constituentSchema, err := ReadSchema(ctx, engine)
+		if err != nil {
+			return err
+		}
 		if constituentSchema == nil {
-			continue
+			return localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 		}
 
 		// Merge constraints
-		constraints, _ := constituentSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
+		constraints, err := constituentSchema.GetConstraints(ctx)
+		if err != nil {
+			return err
+		}
 		for i := range constraints {
 			constraint := &constraints[i]
 			// Add constraint if not already present (by name)
-			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
+			mergedConstraints, _ := mergedSchema.GetConstraints(ctx)
 			found := false
 			for j := range mergedConstraints {
 				existing := &mergedConstraints[j]
@@ -1178,7 +1211,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 		allConstraints := constituentSchema.GetAllConstraints()
 		for i := range allConstraints {
 			constraint := &allConstraints[i]
-			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
+			mergedConstraints, _ := mergedSchema.GetConstraints(ctx)
 			found := false
 			for j := range mergedConstraints {
 				existing := &mergedConstraints[j]
@@ -1298,9 +1331,15 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return mergedSchema
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return mergedSchema, nil
 }
 
 // ============================================================================

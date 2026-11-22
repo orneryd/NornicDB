@@ -406,7 +406,6 @@ var recordedStorageAccessInventory = map[string][]constituentAccessClass{
 	"composite_engine.go#GetFirstNodeByLabel":         {accessPropagates},
 	"composite_engine.go#GetEdgeBetween":              {accessPropagates},
 	"composite_engine.go#sumConstituentDegree":        {accessPropagates},
-	"composite_engine.go#GetSchema":                   {accessSkips},
 	"composite_engine.go#BulkCreateNodes":             {accessPropagates},
 	"composite_engine.go#BulkCreateEdges":             {accessPropagates, accessPropagates, accessPropagates},
 	"composite_engine.go#BatchGetNodes":               {accessPropagates},

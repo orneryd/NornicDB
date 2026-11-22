@@ -1195,7 +1195,10 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
 		return nil, ErrClosed
 	}
 
-	schema := db.storage.GetSchema()
+	schema, err := storage.ReadSchema(ctx, db.storage)
+	if err != nil {
+		return nil, err
+	}
 	if schema == nil {
 		return []*IndexInfo{}, nil
 	}
