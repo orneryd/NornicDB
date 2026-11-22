@@ -6,7 +6,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -69,13 +68,51 @@ func TestPR1826R2NamedPathNodeKeepsItsProperties(t *testing.T) {
 				if !assert.NoError(t, err) || !assert.Len(t, result.Rows, 1) {
 					return
 				}
-				rendered := fmt.Sprintf("%v", result.Rows[0][0])
-				t.Logf("R2PATH route=%s path=%s", route, rendered)
-				assert.Contains(t, rendered, "alice", "the returned path's node must carry name")
-				assert.Contains(t, rendered, "s3cret", "the returned path's node must carry secret")
+				properties := pr1826R2PathNodeProperties(result.Rows[0][0])
+				t.Logf("R2PATH route=%s type=%T node properties=%v", route, result.Rows[0][0], properties)
+				if assert.Len(t, properties, 1, "one node in the returned path") {
+					assert.Equal(t, map[string]any{"id": int64(1), "name": "alice", "secret": "s3cret"}, properties[0])
+				}
+			})
+			t.Run("control relationship path", func(t *testing.T) {
+				_, err := exec.Execute(ctx, `MATCH (a:R2Path {id: 1}), (b:R2Path {id: 2}) CREATE (a)-[:R2REL]->(b)`, nil)
+				require.NoError(t, err)
+				result, err := exec.Execute(ctx, `MATCH p = (n:R2Path {id: 1})-[:R2REL]->(m:R2Path) RETURN nodes(p)[0].name AS first, nodes(p)[1].secret AS second`, nil)
+				if assert.NoError(t, err) {
+					t.Logf("R2ROWS route=%s case=%q rows=%v", route, "control relationship path", pr1826R2Rows(result))
+					assert.Equal(t, [][]any{{"alice", "other"}}, pr1826R2Rows(result))
+				}
 			})
 		})
 	}
+}
+
+func pr1826R2PathNodeProperties(path any) []map[string]any {
+	value, ok := path.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	var out []map[string]any
+	switch nodes := value["nodes"].(type) {
+	case []*storage.Node:
+		for _, node := range nodes {
+			out = append(out, map[string]any(node.Properties))
+		}
+	case []interface{}:
+		for _, element := range nodes {
+			switch node := element.(type) {
+			case *storage.Node:
+				out = append(out, map[string]any(node.Properties))
+			case map[string]interface{}:
+				if properties, ok := node["properties"].(map[string]interface{}); ok {
+					out = append(out, properties)
+				} else {
+					out = append(out, node)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func pr1826R2Rows(result *ExecuteResult) [][]any {
@@ -94,52 +131,57 @@ func pr1826R2Rows(result *ExecuteResult) [][]any {
 }
 
 // The registry documents that a registration can be replaced and that a
-// statement planned after the replacement uses the new declaration. The name
-// here is the test's own, so no built-in is replaced.
+// statement planned after the replacement uses the new declaration
+// (pkg/cypher/fn/registry.go, Register and InputImageOf). tail() is a registered
+// built-in with the structural declaration; the replacement declares that it
+// reads its arguments' values, and returns the property names of the first
+// element. The built-in is restored when the test ends.
 func TestPR1826R2PropertyDemandFollowsReplacedRegistration(t *testing.T) {
 	exec := pr1826R2Executor(t, "r2reg")
 	ctx := t.Context()
 	_, err := exec.Execute(ctx, `CREATE (:R2Reg {key: 'one', secret: 'value'})`, nil)
 	require.NoError(t, err)
-	argument := func(scope cypherfn.Context, args []string) (*storage.Node, error) {
+	const query = `MATCH (n:R2Reg) RETURN size(tail([n, n])) AS v`
+	first, err := exec.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{int64(1)}}, pr1826R2Rows(first), "the built-in tail of a two-element list has one element")
+
+	t.Cleanup(func() {
+		cypherfn.Register("tail", fnTail, cypherfn.CanonicalReads, cypherfn.StructuralInputImage)
+	})
+	calls := 0
+	cypherfn.Register("tail", func(_ context.Context, scope cypherfn.Context, args []string) (interface{}, error) {
+		calls++
 		value, err := scope.Eval(args[0])
 		if err != nil {
 			return nil, err
 		}
-		node, _ := value.(*storage.Node)
-		return node, nil
-	}
-	cypherfn.Register("r2probe", func(_ context.Context, scope cypherfn.Context, args []string) (interface{}, error) {
-		node, err := argument(scope, args)
-		if err != nil || node == nil {
-			return nil, err
+		list, _ := value.([]interface{})
+		if len(list) == 0 {
+			return []interface{}{}, nil
 		}
-		return int64(len(node.Labels)), nil
-	}, cypherfn.OpaqueReads, cypherfn.HeaderInputImage)
-	const query = `MATCH (n:R2Reg) RETURN r2probe(n) AS v`
-	first, err := exec.Execute(ctx, query, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]any{{int64(1)}}, pr1826R2Rows(first), "the header-only registration reads the label count")
-
-	cypherfn.Register("r2probe", func(_ context.Context, scope cypherfn.Context, args []string) (interface{}, error) {
-		node, err := argument(scope, args)
-		if err != nil || node == nil {
-			return nil, err
+		node, _ := list[0].(*storage.Node)
+		if node == nil {
+			return []interface{}{}, nil
 		}
-		return node.Properties["secret"], nil
+		names := make([]interface{}, 0, len(node.Properties))
+		for name := range node.Properties {
+			names = append(names, name)
+		}
+		return names, nil
 	}, cypherfn.OpaqueReads, cypherfn.ArgumentInputImage)
 
 	// Another variable name is analysed for the first time after the
-	// replacement: it shows the replacement is installed and reads its argument.
-	fresh, err := exec.Execute(ctx, `MATCH (m:R2Reg) RETURN r2probe(m) AS v`, nil)
+	// replacement: it shows the replacement is installed and receives the node.
+	fresh, err := exec.Execute(ctx, `MATCH (m:R2Reg) RETURN size(tail([m, m])) AS v`, nil)
 	require.NoError(t, err)
-	t.Logf("R2REG fresh=%v", pr1826R2Rows(fresh))
-	assert.Equal(t, [][]any{{"value"}}, pr1826R2Rows(fresh), "the replacement reads its node argument under a new variable name")
+	t.Logf("R2REG fresh=%v calls=%d", pr1826R2Rows(fresh), calls)
+	assert.Equal(t, [][]any{{int64(2)}}, pr1826R2Rows(fresh), "under a new variable name the replacement sees both properties of its node argument")
 
 	second, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)
-	t.Logf("R2REG repeated=%v", pr1826R2Rows(second))
-	assert.Equal(t, [][]any{{"value"}}, pr1826R2Rows(second), "the statement run before the replacement must use the replacement's declaration afterwards")
+	t.Logf("R2REG repeated=%v calls=%d", pr1826R2Rows(second), calls)
+	assert.Equal(t, [][]any{{int64(2)}}, pr1826R2Rows(second), "the statement first run before the replacement must give the replacement its whole node argument")
 }
 
 // Narrow reads, wider reads and writes of the same node through one executor:
@@ -181,4 +223,62 @@ func TestPR1826R2IndexedReadsFollowWrites(t *testing.T) {
 	read("after delete", `MATCH (n:R2W {id: 1}) RETURN n.name AS name`, [][]any{})
 	write(`CREATE (:R2W {id: 1, name: 'again'})`)
 	read("after recreate", `MATCH (n:R2W {id: 1}) RETURN n.name AS name, n.missing AS missing`, [][]any{{"again", nil}})
+}
+
+// Two executors over one store act as two sessions: one holds an explicit
+// transaction, the other reads the same node through the unique index.
+func TestPR1826R2TransactionsAndIndexedReads(t *testing.T) {
+	engine := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(engine, "r2tx")
+	writer := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	reader := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
+	ctx := t.Context()
+	run := func(exec *StorageExecutor, query string) {
+		t.Helper()
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+	}
+	see := func(step string, exec *StorageExecutor, query string, want [][]any) {
+		t.Helper()
+		for attempt := 0; attempt < 3; attempt++ {
+			result, err := exec.Execute(ctx, query, nil)
+			if !assert.NoError(t, err, step) {
+				return
+			}
+			assert.Equal(t, want, pr1826R2Rows(result), "%s (read %d)", step, attempt)
+		}
+	}
+	const name = `MATCH (n:R2T {id: 1}) RETURN n.name AS name`
+	const wide = `MATCH (n:R2T {id: 1}) RETURN n.name AS name, n.note AS note, n.extra AS extra`
+	run(writer, `CREATE CONSTRAINT r2t_id IF NOT EXISTS FOR (n:R2T) REQUIRE n.id IS UNIQUE`)
+	run(writer, `CREATE (:R2T {id: 1, name: 'v1', note: 'n1'})`)
+	see("reader warm narrow", reader, name, [][]any{{"v1"}})
+	see("reader warm wide", reader, wide, [][]any{{"v1", "n1", nil}})
+
+	run(writer, "BEGIN")
+	run(writer, `MATCH (n:R2T {id: 1}) SET n.name = 'tx', n.extra = 'e' REMOVE n.note`)
+	see("writer reads its own narrow write", writer, name, [][]any{{"tx"}})
+	see("writer reads its own wide write", writer, wide, [][]any{{"tx", nil, "e"}})
+	see("reader does not see the open transaction, narrow", reader, name, [][]any{{"v1"}})
+	see("reader does not see the open transaction, wide", reader, wide, [][]any{{"v1", "n1", nil}})
+	run(writer, "ROLLBACK")
+	see("writer after rollback", writer, wide, [][]any{{"v1", "n1", nil}})
+	see("reader after rollback", reader, wide, [][]any{{"v1", "n1", nil}})
+
+	run(writer, "BEGIN")
+	run(writer, `MATCH (n:R2T {id: 1}) SET n.name = 'c'`)
+	run(writer, `CREATE (:R2T {id: 2, name: 'new'})`)
+	see("writer sees the node it created", writer, `MATCH (n:R2T {id: 2}) RETURN n.name AS name`, [][]any{{"new"}})
+	see("reader does not see the created node", reader, `MATCH (n:R2T {id: 2}) RETURN n.name AS name`, [][]any{})
+	run(writer, "COMMIT")
+	see("reader after commit", reader, name, [][]any{{"c"}})
+	see("reader sees the committed node", reader, `MATCH (n:R2T {id: 2}) RETURN n.name AS name`, [][]any{{"new"}})
+
+	run(writer, "BEGIN")
+	run(writer, `MATCH (n:R2T {id: 1}) DETACH DELETE n`)
+	see("writer does not see the node it deleted", writer, name, [][]any{})
+	see("reader still sees the node", reader, name, [][]any{{"c"}})
+	run(writer, "ROLLBACK")
+	see("writer after rolled back delete", writer, name, [][]any{{"c"}})
+	see("reader after rolled back delete", reader, wide, [][]any{{"c", "n1", nil}})
 }
