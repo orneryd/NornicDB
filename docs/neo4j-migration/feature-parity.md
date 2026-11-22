@@ -302,12 +302,18 @@ See the [full Northwind comparison](../performance/benchmarks/database-compariso
 | Prometheus /metrics endpoint              | Full metrics export (requests, nodes, edges, embeddings, slow queries) |
 | Slow query logging                        | Configurable threshold (default 100ms), file or stderr output          |
 
+### Fine-grained access control
+
+NornicDB supports [native fine-grained access control](../security/fine-grained-access-control.md)
+for graph traversal and property reads and writes. Review the
+[property-name confidentiality rules](../security/fine-grained-access-control.md#property-writes-and-name-confidentiality)
+before migrating a Neo4j role that writes properties it cannot read.
+
 ### Not Applicable
 
 | Feature                      | Reason                 |
 | ---------------------------- | ---------------------- |
 | Cluster management (dbms.\*) | Single-node design     |
-| Enterprise security          | Use external auth      |
 | Multi-database               | Use separate instances |
 
 ---

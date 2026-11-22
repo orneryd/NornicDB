@@ -312,7 +312,8 @@ func TestQdrantGRPCFineGrainedPointOperationsAreScoped(t *testing.T) {
 		fineGrainedOnNodes("graph.node.embedding.set", collection, auth.FineGrainedScope{EntityIDs: visible[1:]}),
 		fineGrainedOnNodes("graph.node.delete", collection, auth.FineGrainedScope{EntityIDs: visible}),
 		fineGrainedOnNodes("graph.node.property.read", collection, auth.FineGrainedScope{Properties: []string{"category"}}),
-		fineGrainedOnNodes("graph.node.property.set", collection, auth.FineGrainedScope{Properties: []string{"tag"}}),
+		fineGrainedOnNodes("graph.node.property.read", collection, auth.FineGrainedScope{EntityIDs: visible[1:], Properties: []string{"tag"}}),
+		fineGrainedOnNodes("graph.node.property.set", collection, auth.FineGrainedScope{Properties: []string{"tag", "unknown"}}),
 		fineGrainedOnNodes("graph.node.create", collection, auth.FineGrainedScope{Types: []string{QdrantPointLabel, "Point"}}),
 	)
 
@@ -379,6 +380,19 @@ func TestQdrantGRPCFineGrainedPointOperationsAreScoped(t *testing.T) {
 	stored, err := engine.GetNode(ctx, storage.NodeID("qdrant:point:hidden"))
 	require.NoError(t, err, "a refused deletion leaves the point stored")
 	require.NotNil(t, stored)
+
+	// Without read access on this point, the known and unknown names receive
+	// the same write denial.
+	for _, key := range []string{"tag", "unknown"} {
+		_, err = points.SetPayload(call(), &qpb.SetPayloadPoints{
+			CollectionName: collection, Payload: map[string]*qpb.Value{key: fineGrainedString("blocked")}, PointsSelector: fineGrainedIDs("keep-a"),
+		})
+		require.Equal(t, codes.PermissionDenied, status.Code(err))
+	}
+	stored, err = engine.GetNode(ctx, storage.NodeID("qdrant:point:keep-a"))
+	require.NoError(t, err)
+	require.Equal(t, "t0", stored.Properties["tag"])
+	require.NotContains(t, stored.Properties, "unknown")
 
 	// A property the policy allows is written; one it does not is refused and the
 	// stored value survives.

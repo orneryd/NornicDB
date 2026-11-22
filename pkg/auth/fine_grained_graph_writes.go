@@ -34,7 +34,7 @@ func (g *fineGrainedGraph) allowNodeCreate(node *storage.Node) error {
 	if err := g.requireGraphTokens(node.Labels, nil); err != nil {
 		return err
 	}
-	if err := g.authorizeCreateProperties("graph.node.property.set", target, node.Properties); err != nil {
+	if err := g.authorizeCreateProperties(target, node.Properties); err != nil {
 		return err
 	}
 	if (len(node.NamedEmbeddings) != 0 || len(node.ChunkEmbeddings) != 0) &&
@@ -66,7 +66,7 @@ func (g *fineGrainedGraph) allowEdgeCreate(ctx context.Context, edge *storage.Ed
 	if err := g.requireGraphTokens(nil, []string{edge.Type}); err != nil {
 		return err
 	}
-	if err := g.authorizeCreateProperties("graph.relationship.property.set", target, edge.Properties); err != nil {
+	if err := g.authorizeCreateProperties(target, edge.Properties); err != nil {
 		return err
 	}
 	for _, id := range [...]storage.NodeID{edge.StartNode, edge.EndNode} {
@@ -105,33 +105,47 @@ func (g *fineGrainedGraph) requireGraphTokens(labels, types []string) error {
 	return nil
 }
 
-func (g *fineGrainedGraph) authorizeCreateProperties(action string, target FineGrainedResource, properties map[string]any) error {
+func (g *fineGrainedGraph) authorizeCreateProperties(target FineGrainedResource, properties map[string]any) error {
+	readAction, writeAction := propertyActions(target.Kind)
+	canCreateName := g.request.AllowsDatabaseIdentity("database.token.property.create", target.DatabaseID, "")
 	for key, value := range properties {
 		if value == nil {
 			continue
 		}
 		target.Property = key
-		if !g.request.Access.Allows(action, target) || !g.canUsePropertyName(key) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, true) {
 			return ErrFineGrainedForbidden
 		}
 	}
 	return nil
 }
 
-func (g *fineGrainedGraph) canUsePropertyName(key string) bool {
-	return g.request.AllowsDatabase("database.token.property.create", g.database, "") ||
-		storage.KnowsPropertyName(g.engine, key)
+func propertyActions(kind FineGrainedResourceKind) (read, write string) {
+	if kind == FineGrainedRelationship {
+		return "graph.relationship.property.read", "graph.relationship.property.set"
+	}
+	return "graph.node.property.read", "graph.node.property.set"
+}
+
+// Check read authorization before looking up a name so an unreadable key has
+// the same write denial whether or not the database has registered it.
+func (g *fineGrainedGraph) allowsPropertyWrite(readAction, writeAction string, target FineGrainedResource, canCreateName, setValue bool) bool {
+	return g.request.Access.Allows(writeAction, target) &&
+		(canCreateName || g.request.Access.Allows(readAction, target) &&
+			(!setValue || storage.KnowsPropertyName(g.engine, target.Property)))
 }
 
 // applyPropertyEdit checks the change against the authorized image that could
 // have produced it, then applies the change to a copy of the stored image.
 // Unobserved properties survive updates that never supplied those properties.
-func (g *fineGrainedGraph) applyPropertyEdit(action string, target FineGrainedResource, visible, after map[string]any, intent storage.PropertyWriteIntent) (map[string]any, error) {
+func (g *fineGrainedGraph) applyPropertyEdit(target FineGrainedResource, visible, after map[string]any, intent storage.PropertyWriteIntent) (map[string]any, error) {
+	readAction, writeAction := propertyActions(target.Kind)
+	canCreateName := g.request.AllowsDatabaseIdentity("database.token.property.create", target.DatabaseID, "")
 	merged := make(map[string]any, len(target.EntityProperties))
 	maps.Copy(merged, target.EntityProperties)
 	for key, set := range intent.Keys {
 		target.Property = key
-		if !g.request.Access.Allows(action, target) || set && !g.canUsePropertyName(key) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, set) {
 			return nil, ErrFineGrainedForbidden
 		}
 		if _, retained := after[key]; !retained {
@@ -144,22 +158,26 @@ func (g *fineGrainedGraph) applyPropertyEdit(action string, target FineGrainedRe
 				continue
 			}
 			target.Property = key
-			if !g.request.Access.Allows(action, target) {
+			// An omitted unreadable name must not affect the outcome of a
+			// replacement by a caller who cannot create property names.
+			if !canCreateName && !g.request.Access.Allows(readAction, target) {
+				continue
+			}
+			if !g.request.Access.Allows(writeAction, target) {
 				return nil, ErrFineGrainedForbidden
 			}
 			delete(merged, key)
 		}
 	}
-	for key, prior := range visible {
-		next, retained := after[key]
-		if retained && reflect.DeepEqual(prior, next) {
-			continue
-		}
-		target.Property = key
-		if !g.request.Access.Allows(action, target) {
-			return nil, ErrFineGrainedForbidden
-		}
-		if !retained {
+	if !intent.Replace {
+		for key := range visible {
+			if _, retained := after[key]; retained {
+				continue
+			}
+			target.Property = key
+			if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, false) {
+				return nil, ErrFineGrainedForbidden
+			}
 			delete(merged, key)
 		}
 	}
@@ -168,7 +186,7 @@ func (g *fineGrainedGraph) applyPropertyEdit(action string, target FineGrainedRe
 			continue
 		}
 		target.Property = key
-		if !g.request.Access.Allows(action, target) || (next != nil && !g.canUsePropertyName(key)) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, next != nil) {
 			return nil, ErrFineGrainedForbidden
 		}
 		merged[key] = next
@@ -219,7 +237,7 @@ func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeU
 		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
 		return storage.ErrConflict
 	}
-	properties, err := g.applyPropertyEdit("graph.node.property.set", target, visible.Properties, request.After.Properties, request.PropertyWrites)
+	properties, err := g.applyPropertyEdit(target, visible.Properties, request.After.Properties, request.PropertyWrites)
 	if err != nil {
 		return err
 	}
@@ -262,7 +280,7 @@ func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeU
 		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
 		return storage.ErrConflict
 	}
-	properties, err := g.applyPropertyEdit("graph.relationship.property.set", g.edgeResource(stored), visible.Properties, request.After.Properties, request.PropertyWrites)
+	properties, err := g.applyPropertyEdit(g.edgeResource(stored), visible.Properties, request.After.Properties, request.PropertyWrites)
 	if err != nil {
 		return err
 	}

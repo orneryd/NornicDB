@@ -145,6 +145,81 @@ func TestFineGrainedCypherExactPropertyDenial(t *testing.T) {
 	require.Equal(t, "Updated", other.Properties["title"])
 }
 
+func TestFineGrainedCypherPropertyNameConfidentiality(t *testing.T) {
+	ctx := t.Context()
+	store := newTestBadgerNamespacedStore(t)
+	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 50})
+	for _, id := range []storage.NodeID{"a", "b"} {
+		_, err := store.CreateNode(ctx, &storage.Node{ID: id, Labels: []string{"Article"},
+			Properties: map[string]any{"name": string(id), "secret": "original"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(ctx, &storage.Edge{ID: "link", Type: "CITES", StartNode: "a", EndNode: "b",
+		Properties: map[string]any{"name": "link", "secret": "original"}}))
+	policy, err := auth.CompileFineGrainedPolicy(auth.FineGrainedCoreActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "traverse-node", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "traverse-edge", Action: "graph.relationship.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+			{ID: "read-node", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Properties: []string{"name", "unregisteredReadable"}}},
+			{ID: "read-edge", Action: "graph.relationship.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship, Properties: []string{"name", "unregisteredReadable"}}},
+			{ID: "set-node", Action: "graph.node.property.set", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "set-edge", Action: "graph.relationship.property.set", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+			{ID: "create-node", Action: "graph.node.create", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "create-edge", Action: "graph.relationship.create", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+			{ID: "create-key", Action: "database.token.property.create", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+		},
+		Assignments: map[string][]string{
+			"writer":        {"access", "traverse-node", "traverse-edge", "read-node", "read-edge", "set-node", "set-edge", "create-node", "create-edge"},
+			"token-creator": {"create-key"},
+		},
+	})
+	require.NoError(t, err)
+	scope := func(roles ...string) context.Context {
+		return auth.WithFineGrainedRequest(ctx, &auth.FineGrainedRequest{
+			Access: policy.ForRoles(roles), DatabaseID: func(string) string { return "work-id" },
+		})
+	}
+	restricted := scope("writer")
+	for _, key := range []string{"secret", "unknown"} {
+		for _, query := range []string{
+			"MATCH (n:Article {name: 'a'}) SET n." + key + " = 'changed'",
+			"MATCH ()-[r:CITES]->() SET r += {" + key + ": 'changed'}",
+			"MERGE (n:Article {name: 'a'}) ON MATCH SET n." + key + " = 'changed'",
+			"MATCH (n:Article {name: 'a'}) REMOVE n." + key,
+			"MATCH ()-[r:CITES]->() SET r." + key + " = null",
+			"CREATE (:Article {" + key + ": 'changed'})",
+			"MATCH (a:Article {name: 'a'}), (b:Article {name: 'b'}) CREATE (a)-[:CITES {" + key + ": 'changed'}]->(b)",
+		} {
+			_, err := executor.Execute(restricted, query, nil)
+			require.ErrorIs(t, err, auth.ErrFineGrainedForbidden, query)
+		}
+	}
+	_, err = executor.Execute(restricted, "MATCH (n:Article {name: 'a'}) SET n.unregisteredReadable = true", nil)
+	require.ErrorIs(t, err, auth.ErrFineGrainedForbidden)
+	_, err = executor.Execute(restricted, "MATCH (n:Article {name: 'a'}) SET n = {name: 'updated'}", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(restricted, "MATCH ()-[r:CITES]->() SET r = {name: 'updated link'}", nil)
+	require.NoError(t, err)
+	node, err := store.GetNode(ctx, "a")
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"name": "updated", "secret": "original"}, node.Properties)
+	link, err := store.GetEdge(ctx, "link")
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"name": "updated link", "secret": "original"}, link.Properties)
+
+	privileged := scope("writer", "token-creator")
+	_, err = executor.Execute(privileged, "MATCH (n:Article {name: 'updated'}) SET n.secret = 'changed', n.newKey = 'created'", nil)
+	require.NoError(t, err)
+	node, err = store.GetNode(ctx, "a")
+	require.NoError(t, err)
+	require.Equal(t, "changed", node.Properties["secret"])
+	require.Equal(t, "created", node.Properties["newKey"])
+	result, err := executor.Execute(privileged, "MATCH (n:Article {name: 'updated'}) RETURN n.secret, n.newKey", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{nil, nil}}, result.Rows)
+}
+
 func TestFineGrainedRevealPreservesGraphProjection(t *testing.T) {
 	ctx := t.Context()
 	store := newTestBadgerNamespacedStore(t)

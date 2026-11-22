@@ -97,7 +97,7 @@ For operational guidance on NornicDB-specific schema features, including `REQUIR
 ### CALL Procedures
 
 -  **db.labels()** - List all labels
--  **db.propertyKeys()** - List all property keys
+-  **db.propertyKeys()** - List property keys from entities and fields visible to the caller
 -  **db.relationshipTypes()** - List all relationship types
 -  **db.indexes()** - List indexes
 -  **db.constraints()** - List constraints
@@ -105,6 +105,15 @@ For operational guidance on NornicDB-specific schema features, including `REQUIR
 -  **db.index.fulltext.queryNodes()** - Fulltext search
 -  **apoc.path.subgraphNodes()** - Graph traversal
 -  **apoc.path.expand()** - Path expansion
+
+### Fine-grained property access
+
+Like Neo4j Enterprise, NornicDB filters node and relationship properties by
+read privileges and requires `CREATE NEW PROPERTY NAME` to register a new
+name. Under NornicDB FGAC, a writer without that token privilege also needs
+read access to the property name on the target. The
+[property-write and key-listing rules](../security/fine-grained-access-control.md#property-writes-and-name-confidentiality)
+describe the difference for write-only roles and `db.propertyKeys()`.
 
 ### SHOW Commands
 
