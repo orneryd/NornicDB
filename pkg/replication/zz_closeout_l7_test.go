@@ -11,6 +11,7 @@ package replication
 
 import (
 	"context"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -141,5 +142,47 @@ func TestL7015ConcurrentDrainerDefersDelivery(t *testing.T) {
 			t.Logf("L7_015 drainer_in_progress=%v events_at_ApplyCommand_return=%d settled=%d (last change %s)", blocked, atReturn, settled, lag)
 			require.Equal(t, settled, atReturn, "every event of the command is delivered before ApplyCommand returns")
 		})
+	}
+}
+
+// L-H7-015 natural case: which goroutine delivers the command's events. Same
+// steps as the original test, no listener is held. Logs the delivering stack
+// whenever an event had not been delivered when ApplyCommand returned.
+func TestL7015NaturalDeliveryGoroutine(t *testing.T) {
+	b, a := wireFixture(t, false)
+	for _, id := range []string{"a", "b", "gone"} {
+		_, err := b.CreateNode(t.Context(), wireNode(id, "old"))
+		require.NoError(t, err)
+	}
+	require.NoError(t, b.CreateEdge(t.Context(), wireEdge("old", "a", "b", "old")))
+	var events atomic.Int64
+	stacks := make(chan string, 64)
+	record := func() {
+		buf := make([]byte, 16<<10)
+		stacks <- string(buf[:runtime.Stack(buf, false)])
+		events.Add(1)
+	}
+	b.OnNodeCreated(func(*storage.Node) { record() })
+	b.OnNodeUpdated(func(*storage.Node) { record() })
+	b.OnNodeDeleted(func(storage.NodeID) { record() })
+	b.OnEdgeCreated(func(*storage.Edge) { record() })
+	b.OnEdgeUpdated(func(*storage.Edge) { record() })
+	b.OnEdgeDeleted(func(storage.EdgeID) { record() })
+	ops := []storage.Operation{
+		{Type: storage.OpUpdateNode, Node: wireNode("a", "updated")}, {Type: storage.OpCreateNode, Node: wireNode("new", "created")},
+		{Type: storage.OpUpdateEdge, Edge: wireEdge("old", "a", "b", "updated")}, {Type: storage.OpDeleteEdge, EdgeID: storage.EdgeID("wire:old")},
+		{Type: storage.OpCreateEdge, Edge: wireEdge("new-edge", "a", "new", "created")}, {Type: storage.OpUpdateEdge, Edge: wireEdge("new-edge", "a", "new", "final")},
+		{Type: storage.OpDeleteNode, NodeID: storage.NodeID("wire:gone")}, {Type: storage.OpCreateNode, Node: wireNode("gone", "recreated")},
+	}
+	self := make([]byte, 64)
+	self = self[:runtime.Stack(self, false)]
+	require.NoError(t, applyQueued(t, a, wireCommand(t, "atomic", ops...)))
+	atReturn := events.Load()
+	settled, _ := l7015Settled(&events)
+	first := <-stacks
+	late := atReturn != settled
+	t.Logf("L7_015N late=%v at_return=%d settled=%d caller=%.20q deliverer=%.20q", late, atReturn, settled, self, first)
+	if late {
+		t.Logf("L7_015N LATE STACK\n%s", first)
 	}
 }
