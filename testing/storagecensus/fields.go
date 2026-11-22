@@ -280,6 +280,9 @@ var fieldClasses = map[string]fieldRow{
 	// refused: a source cut, compared with the label's revocation floor like
 	// the one above.
 	"pkg/storage.recentLabelScan.refused": {class: "read cache physical source cut"},
+	// A validation-pass-local copy of the published cut that guards reuse of
+	// cached relationship reads; it does not publish or advance that cut.
+	"pkg/storage.temporalValidationRead.readCut": {class: "read cache physical source cut"},
 	// Author: #1548 implementation lane (Codex). Physical source cuts and
 	// monotone revocation floors belong to cache coherence, not entity counts.
 	"pkg/storage.BadgerEngine.edgeCacheSources":                  {class: "read cache physical source cut"},
