@@ -7,14 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -39,6 +42,7 @@ const (
 type l2E17Server struct {
 	router http.Handler
 	token  string
+	db     *nornicdb.DB
 }
 
 func l2E17NewServer(t *testing.T) *l2E17Server {
@@ -84,7 +88,7 @@ func l2E17NewServer(t *testing.T) *l2E17Server {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	return &l2E17Server{router: srv.buildRouter(), token: "Bearer " + tokenResp.AccessToken}
+	return &l2E17Server{router: srv.buildRouter(), token: "Bearer " + tokenResp.AccessToken, db: db}
 }
 
 // post sends one statement to POST path and returns the status, the parsed
@@ -280,5 +284,212 @@ func TestL2_e17_Cause(t *testing.T) {
 		}
 		t.Logf("cause parser=%s route=%s refused=%d/%d (create=%d drop=%d) writer_commits=%d",
 			config.GetParserType(), route.name, r.refused(), l2E17Iterations*2, r.refusedCreate, r.refusedDrop, r.writes)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cause3: the Repro's server setup (nornicdb.Open with strict durability and
+// journal sync "immediate", server.New, HTTP autocommit in process) with
+// test-side instrumentation reachable from this package:
+//   - the store's raw Badger DB (db.GetBaseStorageForManager() unwrapped to
+//     *storage.BadgerEngine, .DB()), whose MaxVersion() is the highest
+//     committed Badger version;
+//   - storage.SetSchemaIndexFillHookForTesting, which runs inside the CREATE
+//     INDEX statement after its transaction began (so after it took the
+//     exclusive write barrier, transaction_begin.go:47) and before its
+//     commit: MaxVersion() there is an upper bound of the statement's
+//     snapshot read timestamp (the read timestamp itself is unexported).
+// For every refused schema statement it logs: the check that refused it (by
+// error text -> code path), MaxVersion before the request (v0), at the fill
+// (vfill, CREATE only) and after the answer (v1), and every Badger version in
+// (v0, v1] grouped by key class, split "pre-fill" (v0, vfill] and
+// "post-fill" (vfill, v1]. A barriered data commit cannot land post-fill:
+// the statement holds the exclusive barrier from its begin to its commit, so
+// writer keys (W node bodies, label/index keys) in "post-fill" are commits
+// that did not go through the write lock; the statement's own pre-commit
+// writes (property-key tokens, MVCC sequence, ID counters) appear in the
+// accepted baseline too. DROP INDEX has no fill, so for it only (v0, v1] is
+// shown. Diagnostic: fails only on harness errors.
+
+const (
+	l2E17C3Rounds = 10
+	l2E17C3Pairs  = 75 // 10 x 75 x 2 = 1,500 schema statements
+)
+
+func l2E17C3Badger(t *testing.T, s *l2E17Server) *badger.DB {
+	t.Helper()
+	engine := s.db.GetBaseStorageForManager()
+	for depth := 0; depth < 16 && engine != nil; depth++ {
+		switch e := engine.(type) {
+		case *storage.BadgerEngine:
+			return e.DB()
+		case *storage.MemoryEngine:
+			return e.BadgerEngine.DB()
+		}
+		unwrapper, ok := engine.(storage.EngineUnwrapper)
+		if !ok {
+			t.Fatalf("cannot reach the Badger engine: stopped at %T", engine)
+		}
+		engine = unwrapper.GetInnerEngine()
+	}
+	t.Fatalf("cannot reach the Badger engine")
+	return nil
+}
+
+func l2E17C3KeyClass(key []byte) string {
+	if len(key) == 0 {
+		return "<empty>"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "0x%02x:", key[0])
+	for i, ch := range key[1:] {
+		if i >= 6 {
+			break
+		}
+		if ch >= 0x20 && ch < 0x7f {
+			b.WriteByte(ch)
+		} else {
+			fmt.Fprintf(&b, "\\x%02x", ch)
+		}
+	}
+	return b.String()
+}
+
+// l2E17C3Versions groups the Badger versions in (from, to] by key class,
+// labelled "pre-fill" up to fill and "post-fill" after it (fill 0: "request").
+func l2E17C3Versions(raw *badger.DB, from, fill, to uint64) string {
+	groups := map[string]int{}
+	txn := raw.NewTransactionAt(math.MaxUint64, false)
+	defer txn.Discard()
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = false
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		v := item.Version()
+		if v <= from || v > to {
+			continue
+		}
+		phase := "request"
+		if fill > 0 {
+			phase = "pre-fill"
+			if v > fill {
+				phase = "post-fill"
+			}
+		}
+		groups[fmt.Sprintf("%s v%d %s", phase, v, l2E17C3KeyClass(item.Key()))]++
+	}
+	lines := make([]string, 0, len(groups))
+	for k, n := range groups {
+		lines = append(lines, fmt.Sprintf("%s x%d", k, n))
+	}
+	sort.Strings(lines)
+	if len(lines) > 60 {
+		lines = append(lines[:60], fmt.Sprintf("... %d more", len(lines)-60))
+	}
+	return strings.Join(lines, "; ")
+}
+
+func l2E17C3Check(text string) string {
+	switch {
+	case strings.Contains(text, "schema snapshot changed before commit"):
+		return "schema-snapshot check (storage badger_transaction_publication.go:109-111)"
+	case strings.Contains(text, "concurrent transaction modified data before commit"):
+		return "badger conflict at commit (publication.go:558 cw.finish -> badger_transaction_staging.go:246-247 -> badger_transaction.go:2234-2236)"
+	case text == "":
+		return "none"
+	}
+	return "other"
+}
+
+func TestL2_e17_Cause3(t *testing.T) {
+	var fillMark atomic.Uint64
+	var fillRaw atomic.Pointer[badger.DB]
+	restore := storage.SetSchemaIndexFillHookForTesting(func(indexName, label string) error {
+		if indexName == "w_v" {
+			if raw := fillRaw.Load(); raw != nil {
+				fillMark.Store(raw.MaxVersion())
+			}
+		}
+		return nil
+	})
+	t.Cleanup(restore)
+
+	refused, total, baselines, fills := 0, 0, 0, 0
+	var writerCommits int64
+	byCheck := map[string]int{}
+	for round := 0; round < l2E17C3Rounds; round++ {
+		func() {
+			s := l2E17NewServer(t)
+			raw := l2E17C3Badger(t, s)
+			fillRaw.Store(raw)
+			defer fillRaw.Store(nil)
+			stop := make(chan struct{})
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			for w := 0; w < l2E17Writers; w++ {
+				wg.Add(1)
+				go func(w int) {
+					defer wg.Done()
+					for i := 0; ; i++ {
+						select {
+						case <-stop:
+							return
+						default:
+						}
+						code, resp, ok := s.post("/db/nornic/tx/commit", "CREATE (:W {v: $v})", map[string]interface{}{"v": w*1000000 + i})
+						if code == http.StatusOK && ok && len(resp.Errors) == 0 {
+							mu.Lock()
+							writerCommits++
+							mu.Unlock()
+						}
+					}
+				}(w)
+			}
+			defer func() { close(stop); wg.Wait() }()
+			for i := 0; i < l2E17C3Pairs; i++ {
+				for _, statement := range []string{
+					"CREATE INDEX w_v IF NOT EXISTS FOR (n:W) ON (n.v)",
+					"DROP INDEX w_v IF EXISTS",
+				} {
+					total++
+					fillMark.Store(0)
+					v0 := raw.MaxVersion()
+					code, resp, ok := l2E17Autocommit(s, statement)
+					v1 := raw.MaxVersion()
+					vfill := fillMark.Load()
+					if vfill > 0 {
+						fills++
+					}
+					text := ""
+					if !ok || code != http.StatusOK || len(resp.Errors) > 0 {
+						text = fmt.Sprintf("status=%d parsed=%t", code, ok)
+						if len(resp.Errors) > 0 {
+							text = resp.Errors[len(resp.Errors)-1].Code + ": " + resp.Errors[len(resp.Errors)-1].Message
+						}
+					}
+					if text != "" {
+						refused++
+						check := l2E17C3Check(text)
+						byCheck[check]++
+						t.Logf("L2CAUSE E17 parser=%s REFUSED #%d round=%d %q check=%s err=%q v0=%d vfill=%d v1=%d versions=[%s]",
+							config.GetParserType(), refused, round, statement, check, text, v0, vfill, v1, l2E17C3Versions(raw, v0, vfill, v1))
+						continue
+					}
+					if baselines < 4 && (vfill > 0 || baselines >= 2) {
+						baselines++
+						t.Logf("L2CAUSE E17 parser=%s ACCEPTED (baseline) round=%d %q v0=%d vfill=%d v1=%d versions=[%s]",
+							config.GetParserType(), round, statement, v0, vfill, v1, l2E17C3Versions(raw, v0, vfill, v1))
+					}
+				}
+			}
+		}()
+	}
+	t.Logf("L2CAUSE E17 summary parser=%s refused=%d/%d by_check=%v create_fill_hook_calls=%d writer_commits=%d",
+		config.GetParserType(), refused, total, byCheck, fills, writerCommits)
+	if writerCommits == 0 {
+		t.Errorf("harness: the writers committed nothing")
 	}
 }
