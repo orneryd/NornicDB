@@ -44,9 +44,16 @@ type l2Neo4jResponse struct {
 
 func l2Neo4jNewClient(t *testing.T) *l2Neo4jClient {
 	t.Helper()
-	base := strings.TrimRight(os.Getenv("NEO4J_HTTP_URL"), "/")
+	// The lab's --ref neo-ref sets NORNICDB_NEO4J_REFERENCE_HTTP_URI / _URI (worker script).
+	base := strings.TrimRight(os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI"), "/")
 	if base == "" {
-		uri := os.Getenv("NEO4J_URI")
+		base = strings.TrimRight(os.Getenv("NEO4J_HTTP_URL"), "/")
+	}
+	if base == "" {
+		uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
+		if uri == "" {
+			uri = os.Getenv("NEO4J_URI")
+		}
 		if uri == "" {
 			t.Fatalf("NEO4J_URI is not set: this test needs the Neo4j reference (run with the lab's --ref neo-ref)")
 		}
