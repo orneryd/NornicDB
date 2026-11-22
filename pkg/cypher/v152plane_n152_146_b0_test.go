@@ -80,7 +80,7 @@ type portedNorStaticClaim struct {
 	reconstructed bool
 }
 
-var nor79StaticClaims = []portedNorStaticClaim{
+var portedNor79StaticClaims = []portedNorStaticClaim{
 	{
 		// The parameter's value makes "$i * 2" an Integer, so toUpper has no
 		// String argument: Neo4j rejects at compile time.
@@ -121,7 +121,7 @@ var nor80StaticClaims = []portedNorStaticClaim{
 	},
 }
 
-var nor81StaticClaims = []portedNorStaticClaim{
+var portedNor81StaticClaims = []portedNorStaticClaim{
 	{
 		name:    "any_over_timestamp",
 		query:   "UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a",
@@ -176,9 +176,9 @@ func TestNor79To82StaticClaims(t *testing.T) {
 		number string
 		claims []portedNorStaticClaim
 	}{
-		{"NOR-79", nor79StaticClaims},
+		{"NOR-79", portedNor79StaticClaims},
 		{"NOR-80", nor80StaticClaims},
-		{"NOR-81", nor81StaticClaims},
+		{"NOR-81", portedNor81StaticClaims},
 		{"NOR-82", nor82StaticClaims},
 	} {
 		t.Run(issue.number, func(t *testing.T) {
@@ -291,7 +291,7 @@ func TestPortedNor79ParameterAwareConstructorClaims(t *testing.T) {
 // message class, so this file cannot drift away from the canonical verdict data.
 func TestNor79To82NegativeControlsReuseCanonicalVerdicts(t *testing.T) {
 	controls := 0
-	for _, claim := range nor81StaticClaims {
+	for _, claim := range portedNor81StaticClaims {
 		if claim.accepts {
 			continue
 		}
