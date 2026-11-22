@@ -424,6 +424,11 @@ func TestGapS08ConflictKey(t *testing.T) {
 	root := filepath.Join("/work/tnrun/v152-upg", area)
 	_ = os.RemoveAll(root)
 	defer os.RemoveAll(root)
+	if out, err := exec.Command("sh", "-c", "cd "+gapS08Source+" && find . -type f -printf '%TY-%Tm-%TdT%TH:%TM:%TS %s %p\\n' | sort -k3 && find . -type f -exec sha256sum {} + | sort -k2 | sha256sum").CombinedOutput(); err == nil {
+		fmt.Printf("GAPS08 SOURCE listing of %s:\n%s", gapS08Source, out)
+	} else {
+		fmt.Printf("GAPS08 SOURCE listing failed: %v %s\n", err, out)
+	}
 	failed, plainFailed := 0, 0
 	ctx := context.Background()
 	for i := 0; i < n; i++ {
@@ -444,7 +449,7 @@ func TestGapS08ConflictKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pres, perr := RecoverIntoEngine(ctx, plain, filepath.Join(data, "wal"), snaps[len(snaps)-1])
+		pres, _, perr := RecoverIntoEngine(ctx, plain, filepath.Join(data, "wal"), snaps[len(snaps)-1])
 		fmt.Printf("GAPS08 iter=%d PLAIN RecoverIntoEngine applied=%d skipped=%d failed=%d err=%v\n", i, pres.Applied, pres.Skipped, pres.Failed, perr)
 		for _, e := range pres.Errors {
 			fmt.Printf("GAPS08 iter=%d PLAIN error seq=%d op=%v err=%v\n", i, e.Sequence, e.Operation, e.Error)
