@@ -1,0 +1,3 @@
+{
+  "text": "GOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB go test -p=1 -tags=noui,nolocalllm ./pkg/storage -run '^TestNOR287' -count=1 -timeout=3m -v\nGOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB go test -p=1 -tags=noui,nolocalllm ./pkg/nornicdb -run '^TestNOR287' -count=1 -timeout=3m -v\nGOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB go test -p=1 -tags=noui,nolocalllm ./pkg/cypher -run '^TestNOR287' -count=1 -timeout=3m -v\nGOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB go test -p=1 -tags=noui,nolocalllm ./pkg/server -run '^TestNOR287' -count=1 -timeout=3m -v\nGOMAXPROCS=2 GOGC=50 GOMEMLIMIT=1500MiB go test -p=1 -tags=noui,nolocalllm ./pkg/nornicdb -run '^TestStats(DoesNotReportCanceledReadsAsZeroSuccess)?$' -count=1 -v"
+}

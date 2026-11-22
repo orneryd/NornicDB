@@ -266,7 +266,8 @@ func (a *databaseManagerAdapter) DropCompositeDatabase(ctx context.Context, name
 //
 // Errors:
 //   - 404 Not Found: Database doesn't exist (Neo.ClientError.Database.DatabaseNotFound)
-//   - 500 Internal Server Error: Failed to access database (Neo.ClientError.Database.General)
+//   - 500 Internal Server Error: Failed to access database or to read its
+//     statistics (Neo.ClientError.Database.General)
 //
 // Example:
 //
@@ -415,13 +416,12 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 		return
 	}
 
-	nodeCount, err := storage.NodeCount(r.Context())
+	// A failed count read must not be published as a zero. The generic
+	// internal error keeps the storage cause out of the response.
+	nodeCount, edgeCount, err := readDatabaseCounts(r.Context(), storage)
 	if err != nil {
-		nodeCount = 0
-	}
-	edgeCount, err := storage.EdgeCount(r.Context())
-	if err != nil {
-		edgeCount = 0
+		s.writeLocalizedNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.Database.General", localization.InternalServerError())
+		return
 	}
 	_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(r.Context(), dbName)
 	_, _, managedEmbeddingBytes := s.db.GetDatabaseManagedEmbeddingStats(dbName)
