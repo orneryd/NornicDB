@@ -136,6 +136,10 @@ func (intent *namespaceDropIntent) head() []byte {
 // and bounded victim chunks become visible together, before any destructive I/O.
 func (b *BadgerEngine) writeNamespaceDropIntent(ctx context.Context, intent *namespaceDropIntent, lifecycle *lifecycleWrite) error {
 	err := b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+		// The intent record names its exact cache effects: none. Its keys are
+		// drop metadata, which installs no cached body, so committing them must
+		// not revoke every cache the engine holds.
+		cw.declaredCache = &cacheWriteScope{known: true}
 		for kind, victims := range map[byte]map[uint64]struct{}{1: intent.nodes, 2: intent.edges} {
 			if len(victims) == 0 {
 				continue
@@ -182,6 +186,9 @@ func (b *BadgerEngine) completeNamespaceDrop(ctx context.Context, intent *namesp
 		return err
 	}
 	err := b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+		// The completion removes the drop intent and the namespace schema, which
+		// install no cached body: its cache effects are known and empty.
+		cw.declaredCache = &cacheWriteScope{known: true}
 		for kind, count := range map[byte]int{1: len(intent.nodes), 2: len(intent.edges)} {
 			for chunk := 0; chunk < (count+namespaceDropChunkIDs-1)/namespaceDropChunkIDs; chunk++ {
 				key := namespaceDropKey(intent.namespace, kind, uint64(chunk))

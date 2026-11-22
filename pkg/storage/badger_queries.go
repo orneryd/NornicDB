@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -1061,6 +1062,13 @@ func (b *BadgerEngine) getEdgesByType(ctx context.Context, edgeType string, v re
 	// cache, so a cached result would miss them; bypass it.
 	useCache := b.writeBehind == nil && v == visibleRead
 	if useCache {
+		// A whole-type result spans every database, and the type cache retains
+		// unrelated prefixes' results across a DROP, so a cached body is not
+		// admission to the population a pending DROP is changing. Take the same
+		// admission the uncached scan below takes.
+		if err := b.pendingNamespaceConflict(""); err != nil {
+			return nil, err
+		}
 		// Check cache first
 		b.edgeTypeCacheMu.RLock()
 		if cached, ok := b.edgeTypeCache[edgeType]; ok {
@@ -1205,6 +1213,23 @@ func (b *BadgerEngine) InvalidateEdgeTypeCache(edgeTypes ...string) {
 		}
 	}
 	b.edgeTypeCacheMu.Unlock()
+}
+
+// invalidateEdgeTypeCacheByPrefix revokes whole-type results that include a
+// relationship removed by a prefix DROP. Only warm results need inspection.
+// The advancing cache generation prevents pre-DROP reads from refilling them.
+func (b *BadgerEngine) invalidateEdgeTypeCacheByPrefix(prefix string) {
+	b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
+	defer b.edgeTypeCacheMu.Unlock()
+
+	for edgeType, edges := range b.edgeTypeCache {
+		for _, edge := range edges {
+			if strings.HasPrefix(string(edge.ID), prefix) {
+				delete(b.edgeTypeCache, edgeType)
+				break
+			}
+		}
+	}
 }
 
 // BatchGetNodes materializes a batch through one capture, with no overlay map

@@ -197,7 +197,18 @@ func restoreEngine(engine Engine, path string) error {
 	return ErrNotImplemented
 }
 
+// invalidateCachesAfterRestore clears every cache a restore or dictionary
+// repair may have replaced, including the engine-global relationship types.
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
+	b.invalidateEntityCaches()
+	b.InvalidateEdgeTypeCache()
+}
+
+// invalidateEntityCaches clears the node, node-body, edge, adjacency and
+// label-first caches. It leaves the engine-global relationship-type cache to
+// its caller, which decides whether that cache is cleared in full or revoked
+// for the types a write actually touched.
+func (b *BadgerEngine) invalidateEntityCaches() {
 	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
 	b.resetNodeReadCachesLocked()
 	b.nodeCacheMu.Unlock()
@@ -207,10 +218,6 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeBodyCacheLRU.Init()
 	b.nodeBodyCacheBytes = 0
 	b.nodeBodyCacheMu.Unlock()
-
-	b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
-	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
-	b.edgeTypeCacheMu.Unlock()
 
 	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
@@ -391,7 +398,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 		// Its held-read capability must not open an ordinary commit read.
 		mode = purgePrefixVersions
 	}
-	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode}, dropPrefixes...); err != nil {
+	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{mode: mode, deletedEdgePrefix: prefix}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
 	// Rows are gone from here on, whichever cleanup step below may fail. A retry
@@ -566,9 +573,10 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 		delete(b.propKeyDict.nextID, namespace)
 		b.propKeyDict.mu.Unlock()
 	}
-	// Clear/adjust caches and cached counters.
+	// Clear/adjust caches and cached counters. The engine-global relationship
+	// results affected by this deletion were already revoked at publication.
 	if wholeNamespace {
-		b.invalidateCachesAfterRestore()
+		b.invalidateEntityCaches()
 	} else {
 		b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
 		for id := range b.nodeCache {
@@ -582,11 +590,6 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 			}
 		}
 		b.nodeCacheMu.Unlock()
-
-		b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
-		b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
-		b.edgeTypeCacheMu.Unlock()
-
 	}
 
 	if !recovery && nodesDeleted != 0 {
