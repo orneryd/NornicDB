@@ -639,10 +639,10 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(ctx, params, cypher25) })
+		cache.once.Do(func() { cache.rows = pdW161ParameterRowsOf(ctx, params, cypher25) })
 		return cache.rows
 	}
-	return parameterRowsOf(ctx, params, cypher25)
+	return pdW161ParameterRowsOf(ctx, params, cypher25)
 }
 
 // cypher25RowValues are the row values of a Cypher 25 statement without
@@ -659,7 +659,11 @@ type pdW161ParameterTrace struct {
 	listElementsVisited  int64
 }
 
-func parameterRowsOf(ctx context.Context, params map[string]interface{}, cypher25 bool) map[string]interface{} {
+func parameterRowsOf(params map[string]interface{}, cypher25 bool) map[string]interface{} {
+	return pdW161ParameterRowsOf(context.Background(), params, cypher25)
+}
+
+func pdW161ParameterRowsOf(ctx context.Context, params map[string]interface{}, cypher25 bool) map[string]interface{} {
 	rows := make(map[string]interface{}, len(params)+1)
 	trace, _ := ctx.Value(pdW161ParameterTraceKey{}).(*pdW161ParameterTrace)
 	for name, value := range params {
