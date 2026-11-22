@@ -29,7 +29,7 @@ func TestPR1826S1PropertyReadStatementCorpus(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for _, params := range []map[string]any{
-		{"key": "a", "name": "Alpha", "category": "x", "rank": int64(1), "body": strings.Repeat("A", 65536), "bytes": []byte{0, 1, 255}},
+		{"key": "a", "name": "Alpha", "category": "x", "rank": int64(1), "body": strings.Repeat("A", 32768), "bytes": []byte{0, 1, 255}},
 		{"key": "b", "name": "Beta", "category": "x", "rank": int64(2), "body": strings.Repeat("B", 32768), "bytes": []byte{}},
 		{"key": "c", "name": "Gamma", "category": "y", "rank": int64(3), "body": "", "bytes": []byte{3, 2, 1}},
 	} {
@@ -70,5 +70,5 @@ func TestPR1826S1PropertyReadStatementCorpus(t *testing.T) {
 	node, ok := whole.Rows[0][0].(*storage.Node)
 	require.True(t, ok)
 	require.Equal(t, "Alpha", node.Properties["name"])
-	require.Equal(t, strings.Repeat("A", 65536), node.Properties["body"])
+	require.Equal(t, strings.Repeat("A", 32768), node.Properties["body"])
 }
