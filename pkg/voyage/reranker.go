@@ -3,6 +3,7 @@ package voyage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -137,6 +138,11 @@ func rerankCapabilitiesFor(model string) rerankCapabilities {
 	return limits
 }
 
+type rerankWindowUsage struct {
+	requests    int
+	totalTokens int
+}
+
 // Rerank applies Voyage's native reranking. It preserves the provider's raw
 // indexed result set so search.Service can validate the batch before filtering.
 //
@@ -145,6 +151,12 @@ func rerankCapabilitiesFor(model string) rerankCapabilities {
 // larger than that budget is split into consecutive requests that each stay
 // inside the model's own published limits, and the answers are merged by score.
 // A single request keeps the provider's own order.
+//
+// Each request the provider completes reports its own token accounting at
+// debug level ("rerank provider usage", with provider, model, inputs and
+// total_tokens), including a completed response whose payload is later
+// rejected as unusable. The window reports the combined provider totals,
+// even if a later request fails and no ranking can be returned.
 func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candidate) ([]RankedCandidate, error) {
 	if !r.Enabled() {
 		return PassThrough(candidates), nil
@@ -176,7 +188,7 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		return size
 	}
 	var results []RankedCandidate
-	requests := 0
+	var usage rerankWindowUsage
 	err := providerbatch.ForBatches(ctx, "rerank documents", len(head), limits.documentsPerRequest, limits.requestBudget, cost, func(start, end int) error {
 		documents := make([]string, end-start)
 		for index := start; index < end; index++ {
@@ -185,13 +197,12 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		// Every document of the request is scored: the window is already
 		// bounded by TopK, and a merged answer needs each request's complete
 		// answer to rank the window as one request would.
-		resp, err := r.client.Rerank(ctx, query, documents, RerankOptions{
+		resp, err := r.client.rerank(ctx, query, documents, RerankOptions{
 			Model: r.config.Model, TopK: end - start, ReturnDocuments: false, Truncation: truncating,
-		})
+		}, &usage)
 		if err != nil {
 			return err
 		}
-		requests++
 		for rank, item := range resp.Data {
 			result := rankedCandidateForIndex(head, start, end-start, item.Index, rank+1, item.RelevanceScore)
 			result.Filtered = r.config.MinScore > 0 && item.RelevanceScore < r.config.MinScore
@@ -199,10 +210,14 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		}
 		return nil
 	})
+	if usage.requests > 0 {
+		slog.DebugContext(ctx, "rerank window usage", "provider", "voyage", "model", r.config.Model,
+			"completed_requests", usage.requests, "total_tokens", usage.totalTokens)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if requests > 1 {
+	if usage.requests > 1 {
 		// Separate requests return separate provider orders, so the merged
 		// answer is ordered by provider score. Equal scores keep the order the
 		// requests produced them in, which is the candidate window's own order.

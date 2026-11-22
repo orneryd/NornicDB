@@ -1030,6 +1030,35 @@ func (rl *IPRateLimiter) Stop() {
 	<-rl.work.BeginStop(nil)
 }
 
+func newExternalReranker(provider, model, apiURL, apiKey string, disableTruncation bool) (search.Reranker, error) {
+	const timeout = 30 * time.Second
+	if provider == "voyage" {
+		reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
+			Enabled:           true,
+			APIURL:            apiURL,
+			APIKey:            apiKey,
+			Model:             model,
+			Timeout:           timeout,
+			DisableTruncation: disableTruncation,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return reranker, nil
+	}
+	if model == "" && provider == "ollama" {
+		model = "reranker"
+	}
+	return search.NewCrossEncoder(&search.CrossEncoderConfig{
+		Enabled: true,
+		APIURL:  apiURL,
+		APIKey:  apiKey,
+		Model:   model,
+		TopK:    100,
+		Timeout: timeout,
+	}), nil
+}
+
 // New creates a new HTTP server with the given database, authenticator, and configuration.
 //
 // The server is created but not started. Call Start() to begin accepting connections.
@@ -1317,41 +1346,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		if apiURL == "" {
 			return nil
 		}
-		if provider == "voyage" {
-			reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
-				Enabled: true,
-				APIURL:  apiURL,
-				APIKey:  apiKey,
-				Model:   model,
-				Timeout: 30 * time.Second,
-				// The provider-wide setting, as for every database.
-				DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
-			})
-			if err != nil {
-				return nil
-			}
-			rerankerResolverMu.Lock()
-			perDBRerankerCache[key] = reranker
-			rerankerResolverMu.Unlock()
-			return reranker
+		reranker, err := newExternalReranker(provider, model, apiURL, apiKey, featuresConfig.SearchRerankDisableTruncation)
+		if err != nil {
+			return nil
 		}
-		ceConfig := &search.CrossEncoderConfig{
-			Enabled:  true,
-			APIURL:   apiURL,
-			APIKey:   apiKey,
-			Model:    model,
-			TopK:     100,
-			Timeout:  30 * time.Second,
-			MinScore: 0.0,
-		}
-		if ceConfig.Model == "" && provider == "ollama" {
-			ceConfig.Model = "reranker"
-		}
-		ce := search.NewCrossEncoder(ceConfig)
 		rerankerResolverMu.Lock()
-		perDBRerankerCache[key] = ce
+		perDBRerankerCache[key] = reranker
 		rerankerResolverMu.Unlock()
-		return ce
+		return reranker
 	}
 	// Install per-DB reranker resolver. It respects DB overrides and falls back to global resolver.
 	db.SetRerankerResolver(func(dbName string) search.Reranker {
@@ -1562,17 +1564,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerSearchRerankAPIURLMissingEvent(
 						"search_rerank", safeRerankProvider, "NORNICDB_SEARCH_RERANK_API_URL"))
-			} else if provider == "voyage" {
+			} else {
 				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
-				reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
-					Enabled: true,
-					APIURL:  apiURL,
-					APIKey:  apiKey,
-					Model:   model,
-					Timeout: 30 * time.Second,
-					// Voyage shortens an over-long query or pair unless this is false.
-					DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
-				})
+				reranker, err := newExternalReranker(provider, model, apiURL, apiKey, featuresConfig.SearchRerankDisableTruncation)
 				if err != nil {
 					s.logEvent(context.Background(), slog.LevelWarn,
 						localization.ServerSearchRerankerModelUnavailableEvent(
@@ -1583,25 +1577,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 					s.logEvent(context.Background(), slog.LevelInfo,
 						localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 				}
-			} else {
-				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
-				ceConfig := &search.CrossEncoderConfig{
-					Enabled:  true,
-					APIURL:   apiURL,
-					APIKey:   apiKey,
-					Model:    model,
-					TopK:     100,
-					Timeout:  30 * time.Second,
-					MinScore: 0.0,
-				}
-				if ceConfig.Model == "" && provider == "ollama" {
-					ceConfig.Model = "reranker"
-				}
-				ce := search.NewCrossEncoder(ceConfig)
-				db.SetSearchReranker(ce)
-				setGlobalRerankerResolver(func(string) search.Reranker { return ce })
-				s.logEvent(context.Background(), slog.LevelInfo,
-					localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 			}
 		}
 	} else {
