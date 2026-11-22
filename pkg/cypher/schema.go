@@ -129,7 +129,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	}
 	result, err := e.countSchemaChanges(ctx, cypher, run)
 	if err == nil {
-		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := e.executionStorage(ctx).(*transactionStorageWrapper); ok {
 			err = wrapper.tx.StageSchemaChanges()
 		}
 	}
