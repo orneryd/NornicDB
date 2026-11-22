@@ -903,8 +903,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 
 func (e *StorageExecutor) getNodeForVectorHit(ctx context.Context, id storage.NodeID, projectedProps []string) (*storage.Node, error) {
 	_, projectedReader := e.storage.(storage.ProjectedNodeReader)
-	fmt.Printf("P26DIAG R6 vector hit %s: projection %q, store %T reads projected nodes: %t
-", id, projectedProps, e.storage, projectedReader)
+	fmt.Println("P26DIAG R6 vector hit", id, "projection", projectedProps, fmt.Sprintf("store %T", e.storage), "reads projected nodes:", projectedReader)
 	if projectedProps != nil && os.Getenv("P26_BYPASS") != "R6" {
 		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
 			return reader.GetNodeProjected(ctx, id, projectedProps)
