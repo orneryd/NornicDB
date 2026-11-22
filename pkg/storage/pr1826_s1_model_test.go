@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -843,6 +844,20 @@ func s1DecoderVerdict(b *BadgerEngine, id NodeID, body []byte, names []string) (
 	return "both-err"
 }
 
+// s1ClaimsHugeSpan reports whether a 32-bit MessagePack length header anywhere in
+// body, aligned or not, claims more than 1 MiB.
+func s1ClaimsHugeSpan(body []byte) bool {
+	for i := 0; i+4 < len(body); i++ {
+		switch body[i] {
+		case 0xc6, 0xc9, 0xdb:
+			if binary.BigEndian.Uint32(body[i+1:]) > 1<<20 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // s1Ext is an opaque MessagePack extension with a variable-length payload.
 type s1Ext struct{ Data []byte }
 
@@ -886,17 +901,21 @@ func s1FuzzFixture(t testing.TB, b *BadgerEngine) ([]NodeID, [][]string) {
 	return ids, [][]string{{"keep"}, {"bytes", "nested"}, {}, {"missing", "list"}, {"skip"}, {"when", "ext"}, {"vec", "float", "strs"}}
 }
 
-// TestPR1826S1MutatedBodiesBounded mutates stored bodies systematically (every
+// TestPR1826S1MutatedBodyVerdicts mutates stored bodies systematically (every
 // truncation, every byte set to boundary values, random splices) and prints the
 // verdict counts: the counts must be the same on both revisions. 32-bit length
 // headers (bin32 c6, ext32 c9, str32 db) are left out: decoding a selected value
 // allocates the length they claim (TestPR1826S1MutatedBodyMemory).
-func TestPR1826S1MutatedBodiesBounded(t *testing.T) {
+func TestPR1826S1MutatedBodyVerdicts(t *testing.T) {
 	b, _ := createTestBadgerEngineOnDisk(t)
 	ids, sets := s1FuzzFixture(t, b)
 	counts := map[string]int{}
 	bad := 0
 	judge := func(id NodeID, body []byte, what string) {
+		if s1ClaimsHugeSpan(body) {
+			counts["skipped-32-bit-claim"]++
+			return
+		}
 		for _, names := range sets {
 			v := s1DecoderVerdict(b, id, body, names)
 			key := v
