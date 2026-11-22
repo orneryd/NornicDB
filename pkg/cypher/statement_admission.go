@@ -104,10 +104,11 @@ func (e *StorageExecutor) admitStatement(ctx context.Context, source string, fab
 			if yieldErr != nil || (node.Rule() != cypherantlr.CypherParserRULE_query && node.Rule() != cypherantlr.CypherParserRULE_subqueryBody) {
 				return nil
 			}
-			for _, branch := range queryBodyFromSyntax(node).branches {
+			body := queryBodyFromSyntax(node)
+			for _, branch := range body.branches {
 				for _, clause := range branch.clauses {
 					if clause.kind == pipelineClauseCall {
-						if yieldErr = validateProcedureYieldBindings(parseYieldClause(ctx, clause.text), len(branch.clauses) > 1); yieldErr != nil {
+						if yieldErr = validateProcedureYieldBindings(parseYieldClause(ctx, clause.text), len(body.branches) > 1 || len(branch.clauses) > 1); yieldErr != nil {
 							return nil
 						}
 					}

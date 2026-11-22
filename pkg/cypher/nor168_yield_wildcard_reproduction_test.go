@@ -250,6 +250,8 @@ func TestProcedureYieldAdmissionComposition(t *testing.T) {
 					"WITH 1 AS before CALL review.frame($n) YIELD * RETURN missing",
 					"CALL { CALL review.frame($n) YIELD * WITH missing RETURN missing } RETURN missing",
 					"RETURN 1 AS missing UNION CALL review.frame($n) YIELD * WITH missing RETURN missing",
+					"CALL review.frame($n) YIELD * UNION RETURN missing AS x",
+					"CALL review.frame($n) YIELD * UNION CALL review.frame($n) YIELD *",
 				} {
 					result, err := exec.Execute(context.Background(), prefix+query, nor168FrameParameters())
 					require.ErrorContains(t, err, nor168WildcardHeadline)
