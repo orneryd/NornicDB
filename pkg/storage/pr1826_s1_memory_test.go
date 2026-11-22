@@ -23,7 +23,13 @@ type s1Attempt struct {
 // time under a watchdog. When the process heap passes 1.5 GiB it prints the
 // input being decoded and every goroutine's stack, and ends the process: one
 // small stored body may not make a decode take gigabytes.
-func TestPR1826S1MutatedBodyMemory(t *testing.T) {
+func TestPR1826S1MutatedBodyMemory(t *testing.T) { s1MutatedBodyMemory(t, false) }
+
+// TestPR1826S1MutatedOtherMemory is the same search without the bodies whose
+// 32-bit string or byte-string header claims more than 1 MiB.
+func TestPR1826S1MutatedOtherMemory(t *testing.T) { s1MutatedBodyMemory(t, true) }
+
+func s1MutatedBodyMemory(t *testing.T, skipClaims bool) {
 	b, _ := createTestBadgerEngineOnDisk(t)
 	ids, sets := s1FuzzFixture(t, b)
 	var current atomic.Pointer[s1Attempt]
@@ -72,6 +78,9 @@ func TestPR1826S1MutatedBodyMemory(t *testing.T) {
 		},
 	}
 	judge := func(id NodeID, body []byte, what string) {
+		if skipClaims && s1ClaimsHugeSpan(body) {
+			return
+		}
 		for _, decoder := range []string{"full", "point", "scan"} {
 			for si, names := range sets {
 				if si > 0 && decoder == "full" {
@@ -107,7 +116,7 @@ func TestPR1826S1MutatedBodyMemory(t *testing.T) {
 		judge(id, body, "valid")
 		for i := 0; i < len(body); i++ {
 			judge(id, body[:i], fmt.Sprintf("%s truncate %d", id, i))
-			for _, x := range []byte{0x00, 0x7f, 0x80, 0xc0, 0xc6, 0xc9, 0xdb, 0xdd, 0xdf, 0xff} {
+			for _, x := range []byte{0x00, 0x7f, 0x80, 0xc0, 0xc6, 0xc9, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xff} {
 				m := append([]byte(nil), body...)
 				m[i] = x
 				judge(id, m, fmt.Sprintf("%s byte %d=%02x", id, i, x))
