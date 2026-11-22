@@ -154,6 +154,28 @@ write_store() {
   done
 }
 
+# write_store_server <instance-root> <build> <scenario>[,<scenario>...]
+# The same as write_store, with the old build's server writer (TestUORWrite in ./pkg/server: the embedded Cypher API,
+# Qdrant and asynchronous scenarios) in place of the Bolt writer. Both writers keep their stores under
+# <instance-root>/<build>/uor/stores/<scenario>, so the two can write into one instance. Its log is
+# <instance-root>.writer-server.log.
+write_store_server() {
+  local iroot=$1 build=$2 scenarios=$3
+  say "server writer build=$build commit=$WRITER_SHA scenarios=$scenarios root=$iroot"
+  ( cd "$WRITER_SRC" && UOR_ROOT="$iroot/$build/uor" UOR_ONLY="$scenarios" go test ./pkg/server -run '^TestUORWrite$' -count=1 -timeout=60m -v ) > "$iroot.writer-server.log" 2>&1
+  local rc=$?
+  grep -a -E '^(--- |ok |FAIL|panic)' "$iroot.writer-server.log" | sed 's/^/REPRO_WRITER /' | tail -n 20
+  [[ $rc -eq 0 ]] || { tail -n 40 "$iroot.writer-server.log"; harness_fail "server writer exited $rc"; }
+  local sc
+  for sc in ${scenarios//,/ }; do
+    local d="$iroot/$build/uor/stores/$sc"
+    [[ -s $d/expected.json && -f $d/data/MANIFEST ]] || harness_fail "server writer produced no complete store $build/$sc ($d)"
+    local fp f
+    fp=$(cd "$d/data" && find wal snapshots -type f 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do "${SHA256[@]}" "$f"; done | "${SHA256[@]}" | cut -c1-16)
+    say "store $build/$sc written: $(du -sh "$d" | cut -f1) journal+snapshot fingerprint=$fp"
+  done
+}
+
 # norm_msg: a reader message with the temporary root replaced by <root> and node IDs by <id> (stdin to stdout).
 norm_msg() {
   sed -E -e "s#${ROOT:-/nonexistent-root}#<root>#g" -e 's/nornic:[0-9a-f-]{8,}/<id>/g' -e 's/\\"/"/g'
