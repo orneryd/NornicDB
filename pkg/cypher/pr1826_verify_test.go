@@ -50,8 +50,8 @@ func TestPR1826VerifyCypherObservations(t *testing.T) {
 func TestPR1826VerifyReplacementDemandCache(t *testing.T) {
 	exec := setupTestExecutor(t)
 	if _, err := exec.Execute(t.Context(), "CREATE (:VReg {key:'one', secret:'value'})", nil); err != nil { t.Fatalf("seed: %v", err) }
-	query := "MATCH (n:VReg {key:'one'}) RETURN size(tail([n,n])) AS v"
-	first, err := exec.Execute(t.Context(), query, nil)
+	query := "MATCH (n:VReg {key:'one'}) RETURN size(tail([n,n])) AS v, $nonce AS nonce"
+	first, err := exec.Execute(t.Context(), query, map[string]any{"nonce": int64(1)})
 	if err != nil { t.Fatalf("built-in tail: %v", err) }
 	// The replacement inspects properties through the public function registry
 	// and returns the first argument node's property count. This test runs alone.
@@ -69,8 +69,8 @@ func TestPR1826VerifyReplacementDemandCache(t *testing.T) {
 		}
 		return []interface{}{}, nil
 	}, fn.OpaqueReads, fn.ArgumentInputImage)
-	stale, staleErr := exec.Execute(t.Context(), query, nil)
-	fresh, freshErr := exec.Execute(t.Context(), "MATCH (m:VReg {key:'one'}) RETURN size(tail([m,m])) AS v", nil)
+	stale, staleErr := exec.Execute(t.Context(), query, map[string]any{"nonce": int64(2)})
+	fresh, freshErr := exec.Execute(t.Context(), "MATCH (m:VReg {key:'one'}) RETURN size(tail([m,m])) AS v, $nonce AS nonce", map[string]any{"nonce": int64(2)})
 	t.Logf("OBS r2_f2 built_in=%#v repeated=%#v err=%v fresh_variable=%#v err=%v", first.Rows, stale.Rows, staleErr, fresh.Rows, freshErr)
 }
 
