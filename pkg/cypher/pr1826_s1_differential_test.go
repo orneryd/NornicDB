@@ -396,7 +396,7 @@ func TestPR1826S1ExplicitTransactionCorpus(t *testing.T) {
 		t.Run(schema, func(t *testing.T) {
 			ctx := context.Background()
 			store, _ := s1Store(t)
-			exec := s1Seed(t, store, schema)
+			s1Seed(t, store, schema)
 			twin, _ := s1Store(t)
 			twinExec := s1Seed(t, twin, schema)
 			const stride = 5
