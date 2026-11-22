@@ -40,7 +40,8 @@ related NOR-79 context, not reopened or edited. No new external item requested.
 DeepSeek read-only contract review job e82aec790818459fb4cc6ea4419fd861 completed read-only in135.859s;
 initial invalid-base submissions created no jobs. Graph retrieval incomplete.
 
-Validation pending. Full release qualification and exact Neo4j/APOC execution
+Scoped normal/race/vet and localization verification passed; see verification.md.
+Full release qualification and exact Neo4j/APOC execution
 are not claimed. Test-only correction requires no performance claim or production
 benchmark. The parent owns final publication after scoped evidence review.
 
