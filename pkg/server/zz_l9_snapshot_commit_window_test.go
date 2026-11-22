@@ -268,6 +268,10 @@ func (l *slowbLab) clientLoop(phase string, stop <-chan struct{}, dumpAfter time
 			out, code, d := l.post(path, body)
 			timer.Stop()
 			st.add(d)
+			errs, _ := out["errors"].([]any)
+			if code >= 300 || len(errs) != 0 {
+				l.t.Errorf("%s cycle %d failed: HTTP %d %v", name, i, code, errs)
+			}
 			if d > dumpAfter/2 || code >= 300 {
 				fmt.Printf("SLOWB SLOW phase=%s step=%s cycle=%d started=+%.3fs took=%v code=%d\n", phase, name, i, at.Seconds(), d.Round(time.Millisecond), code)
 			}
@@ -329,6 +333,9 @@ func TestL9SnapshotCommitWindow(t *testing.T) {
 	// SLOWB_AUTOCOMPACT=off disables it. SLOWB_PHASES selects phases (default ABC).
 	if s := slowbEnvInt("SLOWB_SNAPSHOT_SECONDS", 0); s > 0 {
 		cfg.Database.WALSnapshotInterval = time.Duration(s) * time.Second
+	}
+	if n := slowbEnvInt("SLOWB_SNAPSHOT_KEEP", 0); n > 0 {
+		cfg.Database.WALSnapshotRetentionMaxCount = n
 	}
 	if os.Getenv("SLOWB_AUTOCOMPACT") == "off" {
 		cfg.Database.WALAutoCompactionEnabled = false
