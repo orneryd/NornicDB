@@ -64,6 +64,7 @@ type gapS08ApplyLog struct {
 	replayStarted chan struct{}
 	startOnce     sync.Once
 	forcedOps     int
+	forceOps      int
 }
 
 // gapS08Versions lists the keys with a committed version in (from, to].
@@ -109,7 +110,7 @@ func (l *gapS08ApplyLog) wrap(b *BadgerEngine) {
 		// Forced overlap (GAPS08_FORCE): the first generation apply that starts
 		// after the snapshot restore waits until a buffered_commit replay has
 		// started, then 5 ms more, so it commits inside that replay.
-		if l.force && l.armed.Load() && l.held.CompareAndSwap(false, true) {
+		if l.force && l.armed.Load() && buf.ops == l.forceOps && l.held.CompareAndSwap(false, true) {
 			select {
 			case <-l.replayStarted:
 				time.Sleep(5 * time.Millisecond)
@@ -536,10 +537,11 @@ func TestGapS08ConflictKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		log := &gapS08ApplyLog{force: os.Getenv("GAPS08_FORCE") == "1", replayStarted: make(chan struct{})}
+		forceOps, _ := strconv.Atoi(os.Getenv("GAPS08_FORCE_OPS"))
+		log := &gapS08ApplyLog{force: forceOps > 0, forceOps: forceOps, replayStarted: make(chan struct{})}
 		log.wrap(fresh)
 		res, rerr := gapS08Recover(ctx, t, i, fresh, filepath.Join(data, "wal"), snaps[len(snaps)-1], log)
-		fmt.Printf("GAPS08 iter=%d applied=%d skipped=%d failed=%d err=%v applies=%d\n", i, res.Applied, res.Skipped, res.Failed, rerr, len(log.spans))
+		fmt.Printf("GAPS08 iter=%d applied=%d skipped=%d failed=%d err=%v applies=%d forced_apply_ops=%d\n", i, res.Applied, res.Skipped, res.Failed, rerr, len(log.spans), log.forcedOps)
 		if res.Failed > 0 {
 			failed++
 		}
