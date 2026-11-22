@@ -1,0 +1,554 @@
+[
+  {
+    "name": "/any/integer",
+    "query": "UNWIND [] AS empty RETURN any(x IN 1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/float",
+    "query": "UNWIND [] AS empty RETURN any(x IN 1.5 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/string",
+    "query": "UNWIND [] AS empty RETURN any(x IN 'text' WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/boolean",
+    "query": "UNWIND [] AS empty RETURN any(x IN true WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/date",
+    "query": "UNWIND [] AS empty RETURN any(x IN date('2024-01-01') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/duration",
+    "query": "UNWIND [] AS empty RETURN any(x IN duration('P1D') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/map",
+    "query": "UNWIND [] AS empty RETURN any(x IN {k:1} WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/null",
+    "query": "UNWIND [] AS empty RETURN any(x IN null WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/any/list",
+    "query": "UNWIND [] AS empty RETURN any(x IN [1,2] WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/any/timestamp",
+    "query": "UNWIND [] AS empty RETURN any(x IN timestamp() WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/any/parameter",
+    "query": "UNWIND [] AS empty RETURN any(x IN $p WHERE true) AS a",
+    "parameter": true,
+    "accepts": false
+  },
+  {
+    "name": "/any/bound_scalar",
+    "query": "UNWIND [] AS empty WITH 1 AS value RETURN any(x IN value WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/node",
+    "query": "UNWIND [] AS empty MATCH (n) RETURN any(x IN n WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/relationship",
+    "query": "UNWIND [] AS empty MATCH ()-[r]->() RETURN any(x IN r WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/any/path",
+    "query": "UNWIND [] AS empty MATCH p=()-[]->() RETURN any(x IN p WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/integer",
+    "query": "UNWIND [] AS empty RETURN all(x IN 1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/float",
+    "query": "UNWIND [] AS empty RETURN all(x IN 1.5 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/string",
+    "query": "UNWIND [] AS empty RETURN all(x IN 'text' WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/boolean",
+    "query": "UNWIND [] AS empty RETURN all(x IN true WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/date",
+    "query": "UNWIND [] AS empty RETURN all(x IN date('2024-01-01') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/duration",
+    "query": "UNWIND [] AS empty RETURN all(x IN duration('P1D') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/map",
+    "query": "UNWIND [] AS empty RETURN all(x IN {k:1} WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/null",
+    "query": "UNWIND [] AS empty RETURN all(x IN null WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/all/list",
+    "query": "UNWIND [] AS empty RETURN all(x IN [1,2] WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/all/timestamp",
+    "query": "UNWIND [] AS empty RETURN all(x IN timestamp() WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/all/parameter",
+    "query": "UNWIND [] AS empty RETURN all(x IN $p WHERE true) AS a",
+    "parameter": true,
+    "accepts": false
+  },
+  {
+    "name": "/all/bound_scalar",
+    "query": "UNWIND [] AS empty WITH 1 AS value RETURN all(x IN value WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/node",
+    "query": "UNWIND [] AS empty MATCH (n) RETURN all(x IN n WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/relationship",
+    "query": "UNWIND [] AS empty MATCH ()-[r]->() RETURN all(x IN r WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/all/path",
+    "query": "UNWIND [] AS empty MATCH p=()-[]->() RETURN all(x IN p WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/integer",
+    "query": "UNWIND [] AS empty RETURN none(x IN 1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/float",
+    "query": "UNWIND [] AS empty RETURN none(x IN 1.5 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/string",
+    "query": "UNWIND [] AS empty RETURN none(x IN 'text' WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/boolean",
+    "query": "UNWIND [] AS empty RETURN none(x IN true WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/date",
+    "query": "UNWIND [] AS empty RETURN none(x IN date('2024-01-01') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/duration",
+    "query": "UNWIND [] AS empty RETURN none(x IN duration('P1D') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/map",
+    "query": "UNWIND [] AS empty RETURN none(x IN {k:1} WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/null",
+    "query": "UNWIND [] AS empty RETURN none(x IN null WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/none/list",
+    "query": "UNWIND [] AS empty RETURN none(x IN [1,2] WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/none/timestamp",
+    "query": "UNWIND [] AS empty RETURN none(x IN timestamp() WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/none/parameter",
+    "query": "UNWIND [] AS empty RETURN none(x IN $p WHERE true) AS a",
+    "parameter": true,
+    "accepts": false
+  },
+  {
+    "name": "/none/bound_scalar",
+    "query": "UNWIND [] AS empty WITH 1 AS value RETURN none(x IN value WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/node",
+    "query": "UNWIND [] AS empty MATCH (n) RETURN none(x IN n WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/relationship",
+    "query": "UNWIND [] AS empty MATCH ()-[r]->() RETURN none(x IN r WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/none/path",
+    "query": "UNWIND [] AS empty MATCH p=()-[]->() RETURN none(x IN p WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/integer",
+    "query": "UNWIND [] AS empty RETURN single(x IN 1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/float",
+    "query": "UNWIND [] AS empty RETURN single(x IN 1.5 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/string",
+    "query": "UNWIND [] AS empty RETURN single(x IN 'text' WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/boolean",
+    "query": "UNWIND [] AS empty RETURN single(x IN true WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/date",
+    "query": "UNWIND [] AS empty RETURN single(x IN date('2024-01-01') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/duration",
+    "query": "UNWIND [] AS empty RETURN single(x IN duration('P1D') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/map",
+    "query": "UNWIND [] AS empty RETURN single(x IN {k:1} WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/null",
+    "query": "UNWIND [] AS empty RETURN single(x IN null WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/single/list",
+    "query": "UNWIND [] AS empty RETURN single(x IN [1,2] WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/single/timestamp",
+    "query": "UNWIND [] AS empty RETURN single(x IN timestamp() WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "/single/parameter",
+    "query": "UNWIND [] AS empty RETURN single(x IN $p WHERE true) AS a",
+    "parameter": true,
+    "accepts": false
+  },
+  {
+    "name": "/single/bound_scalar",
+    "query": "UNWIND [] AS empty WITH 1 AS value RETURN single(x IN value WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/node",
+    "query": "UNWIND [] AS empty MATCH (n) RETURN single(x IN n WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/relationship",
+    "query": "UNWIND [] AS empty MATCH ()-[r]->() RETURN single(x IN r WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/single/path",
+    "query": "UNWIND [] AS empty MATCH p=()-[]->() RETURN single(x IN p WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/control/comprehension_date",
+    "query": "UNWIND [] AS s RETURN [x IN date() | x] AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "/control/reduce_toInteger",
+    "query": "UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/toInteger",
+    "query": "UNWIND [] AS s RETURN any(x IN toInteger('1') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/size",
+    "query": "UNWIND [] AS s RETURN any(x IN size([]) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/length",
+    "query": "UNWIND [] AS s RETURN any(x IN length('a') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/abs",
+    "query": "UNWIND [] AS s RETURN any(x IN abs(1) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/addition",
+    "query": "UNWIND [] AS s RETURN any(x IN 1+1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/coalesce",
+    "query": "UNWIND [] AS s RETURN any(x IN coalesce(1,2) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/head",
+    "query": "UNWIND [] AS s RETURN any(x IN head([1]) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/rand",
+    "query": "UNWIND [] AS s RETURN any(x IN rand() WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/toFloat",
+    "query": "UNWIND [] AS s RETURN any(x IN toFloat('1') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/properties",
+    "query": "UNWIND [] AS s RETURN any(x IN properties({a:1}) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/any/timestamp_add",
+    "query": "UNWIND [] AS s RETURN any(x IN timestamp()+0 WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "category/any/timestamp_lowering",
+    "query": "UNWIND [] AS s RETURN any(x IN datetime().epochMillis WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "category/all/toInteger",
+    "query": "UNWIND [] AS s RETURN all(x IN toInteger('1') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/size",
+    "query": "UNWIND [] AS s RETURN all(x IN size([]) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/length",
+    "query": "UNWIND [] AS s RETURN all(x IN length('a') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/abs",
+    "query": "UNWIND [] AS s RETURN all(x IN abs(1) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/addition",
+    "query": "UNWIND [] AS s RETURN all(x IN 1+1 WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/coalesce",
+    "query": "UNWIND [] AS s RETURN all(x IN coalesce(1,2) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/head",
+    "query": "UNWIND [] AS s RETURN all(x IN head([1]) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/rand",
+    "query": "UNWIND [] AS s RETURN all(x IN rand() WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/toFloat",
+    "query": "UNWIND [] AS s RETURN all(x IN toFloat('1') WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/properties",
+    "query": "UNWIND [] AS s RETURN all(x IN properties({a:1}) WHERE true) AS a",
+    "parameter": false,
+    "accepts": false
+  },
+  {
+    "name": "category/all/timestamp_add",
+    "query": "UNWIND [] AS s RETURN all(x IN timestamp()+0 WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "category/all/timestamp_lowering",
+    "query": "UNWIND [] AS s RETURN all(x IN datetime().epochMillis WHERE true) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "category/control/reduce_timestamp",
+    "query": "UNWIND [] AS s RETURN reduce(a = 0, x IN timestamp() | a) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "category/control/comprehension_timestamp",
+    "query": "UNWIND [] AS s RETURN [x IN timestamp() | x] AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "consumer/toUpper/timestamp",
+    "query": "UNWIND [] AS s RETURN toUpper(timestamp()) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "consumer/toUpper/property",
+    "query": "UNWIND [] AS s RETURN toUpper(datetime().epochMillis) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "consumer/size/timestamp",
+    "query": "UNWIND [] AS s RETURN size(timestamp()) AS a",
+    "parameter": false,
+    "accepts": true
+  },
+  {
+    "name": "consumer/size/property",
+    "query": "UNWIND [] AS s RETURN size(datetime().epochMillis) AS a",
+    "parameter": false,
+    "accepts": true
+  }
+]

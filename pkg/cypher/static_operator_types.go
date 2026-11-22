@@ -34,11 +34,16 @@ import (
 // Null passes everywhere; STARTS WITH, ENDS WITH and CONTAINS accept any
 // types (they return null).
 
+// timestamp is deliberately absent: Neo4j 5.26.30 preparatory rewriting turns
+// it into datetime().epochMillis, a property without a concrete static proof.
+// Its runtime Integer signature is not an admission proof. See the exact-version
+// timestampRewriter.scala source linked in the NOR-81 OpenSpec reference evidence.
+//
 // staticFunctionResultTypes are the result types of functions whose result
 // type doesn't depend on their arguments.
 var staticFunctionResultTypes = map[string]string{
 	"size": "Integer", "length": "Integer", "tointeger": "Integer", "char_length": "Integer",
-	"character_length": "Integer", "timestamp": "Integer", "sign": "Integer",
+	"character_length": "Integer", "sign": "Integer",
 	"tofloat": "Float", "sqrt": "Float", "exp": "Float", "log": "Float", "log10": "Float",
 	"sin": "Float", "cos": "Float", "tan": "Float", "cot": "Float", "asin": "Float",
 	"acos": "Float", "atan": "Float", "atan2": "Float", "degrees": "Float", "radians": "Float",
