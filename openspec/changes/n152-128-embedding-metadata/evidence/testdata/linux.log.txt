@@ -1,0 +1,44 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/direct_CreateNode
+    nor330_embedding_meta_ownership_test.go:71: stored apart: chunk_count=60, hydrated chunks=60
+    nor330_embedding_meta_ownership_test.go:72: 
+        	Error Trace:	/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:61
+        	            				/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:72
+        	Error:      	map[string]interface {}{"chunk_count":60, "has_embedding":true} should not contain "chunk_count"
+        	Test:       	TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/direct_CreateNode
+        	Messages:   	storage wrote chunk_count into the caller's EmbedMeta map
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/BulkCreateNodes
+    nor330_embedding_meta_ownership_test.go:79: stored apart: chunk_count=60, hydrated chunks=60
+    nor330_embedding_meta_ownership_test.go:80: 
+        	Error Trace:	/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:61
+        	            				/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:80
+        	Error:      	map[string]interface {}{"chunk_count":60, "has_embedding":true} should not contain "chunk_count"
+        	Test:       	TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/BulkCreateNodes
+        	Messages:   	storage wrote chunk_count into the caller's EmbedMeta map
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/explicit_transaction_CreateNode
+    nor330_embedding_meta_ownership_test.go:92: stored apart: chunk_count=60, hydrated chunks=60
+    nor330_embedding_meta_ownership_test.go:93: 
+        	Error Trace:	/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:61
+        	            				/workspace/pkg/storage/nor330_embedding_meta_ownership_test.go:93
+        	Error:      	map[string]interface {}{"chunk_count":60, "has_embedding":true} should not contain "chunk_count"
+        	Test:       	TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/explicit_transaction_CreateNode
+        	Messages:   	storage wrote chunk_count into the caller's EmbedMeta map
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_CreateNode
+    nor330_embedding_meta_ownership_test.go:102: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_UpdateNode
+    nor330_embedding_meta_ownership_test.go:117: stored apart: chunk_count=60, hydrated chunks=60
+=== RUN   TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_node_inside_the_inline_limit
+    nor330_embedding_meta_ownership_test.go:138: stored inline: chunks=3, no stored chunk_count
+--- FAIL: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned (0.18s)
+    --- FAIL: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/direct_CreateNode (0.03s)
+    --- FAIL: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/BulkCreateNodes (0.03s)
+    --- FAIL: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/explicit_transaction_CreateNode (0.02s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_CreateNode (0.04s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_namespaced_UpdateNode (0.04s)
+    --- PASS: TestNOR330EmbeddingEncodeKeepsCallerEmbedMetaOwned/control:_node_inside_the_inline_limit (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.228s
+FAIL

@@ -1,0 +1,26 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar,_small_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar,_large_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar_and_named,_large_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar_metadata_without_vectors,_large_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/in_the_body,_small_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/in_the_body,_the_update_outgrows_the_body/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/apart_from_the_body,_large_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/named,_small_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/named,_large_text/plain_commit
+=== RUN   TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/no_vectors,_large_text/plain_commit
+--- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState (0.93s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar,_small_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar,_large_text/plain_commit (0.11s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar_and_named,_large_text/plain_commit (0.10s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/sidecar_metadata_without_vectors,_large_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/in_the_body,_small_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/in_the_body,_the_update_outgrows_the_body/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/apart_from_the_body,_large_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/named,_small_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/named,_large_text/plain_commit (0.09s)
+    --- PASS: TestUpdateKeepingVectorsKeepsStoredEmbeddingState/writeBuffer=false/no_vectors,_large_text/plain_commit (0.09s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	1.913s

@@ -1,0 +1,30 @@
+{
+  "ticket_sha256": "5ea0a27cac7fe75451e9b1c3d7b556a48c69437c30c731be57f2b4792572d03f",
+  "fixtures": [
+    {
+      "path": "testdata/reproduction_test.go",
+      "sha256": "b843d45c956edc54d036f11bebe9afbb9af77074c3093ff691e2f7fc45e63805",
+      "bytes": 6114
+    },
+    {
+      "path": "testdata/canonical_vector_fixture_test.go",
+      "sha256": "eeb73e0aa7196d1ae7c2c336b4ff7136eab819571c78daa64b6c00ec0debc419",
+      "bytes": 26182
+    },
+    {
+      "path": "testdata/reproduce.sh",
+      "sha256": "91516cb7c5fbed1bf49ff442ad48a20dd6e9c5c655577acc926f3107595e20e8",
+      "bytes": 202
+    },
+    {
+      "path": "testdata/macos.log.txt",
+      "sha256": "fcbff3c88144c784efc9cb04182fcd6bb683d36ebe2a55d455e73ee1b83c6ff1",
+      "bytes": 3978
+    },
+    {
+      "path": "testdata/linux.log.txt",
+      "sha256": "112653c2f3ab021fe15b8b1c23ad6c4ee343c25bd5fb805b8d2612f2d006346a",
+      "bytes": 3696
+    }
+  ]
+}

@@ -32,9 +32,10 @@ func (types typeScope) kinds() matchSemanticScope {
 }
 
 // static is the static checks' view of types: the binding kinds, the types of
-// variables that aren't entities, and the member types of maps.
-func (types typeScope) static(cypher25 bool) staticTypeScope {
-	scope := staticTypeScope{kinds: types.kinds(), complete: true, cypher25: cypher25}
+// variables that aren't entities, and the member types of maps. Request params
+// belong to this transient view; value-independent compilation passes nil.
+func (types typeScope) static(cypher25 bool, params map[string]interface{}) staticTypeScope {
+	scope := staticTypeScope{kinds: types.kinds(), complete: true, cypher25: cypher25, params: params}
 	for name, operand := range types {
 		// The views hold only what a verified rule proved.
 		operand = gateProven(operand)
@@ -184,7 +185,7 @@ func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, claus
 	if !scope.cypher25 {
 		return nil
 	}
-	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, composedPipelineClause(ctx, pipelineClauseWith, clause)).static(true).members
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, composedPipelineClause(ctx, pipelineClauseWith, clause)).static(true, scope.params).members
 }
 
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
@@ -243,7 +244,7 @@ func callSubqueryImports(ctx context.Context, clause pipelineClause, outer typeS
 // (subqueryScope). A body whose walk stops early, or that doesn't end in RETURN,
 // gives no types; a scoped body's walk error is the statement's. The branches
 // are the retained body's own: no branch text is split or re-read here.
-func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pipelineClause, body queryBody, outer typeScope, cypher25 bool) (typeScope, string, error) {
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pipelineClause, body queryBody, outer typeScope, cypher25 bool, params map[string]interface{}) (typeScope, string, error) {
 	initial, scoped, ok, err := callSubqueryImports(ctx, clause, outer)
 	if err != nil || !ok {
 		return nil, "", err
@@ -299,7 +300,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 			retained = maps.Clone(initial)
 			_, importing, _ = branchSyntaxImports(ctx, shape, func(name string) bool { _, exists := initial[name]; return exists }, false)
 			if importing {
-				for name := range projectTypeScopeIn(ctx, initial, initial.static(cypher25), clauses[0]) {
+				for name := range projectTypeScopeIn(ctx, initial, initial.static(cypher25, params), clauses[0]) {
 					delete(retained, name)
 				}
 			}
@@ -309,14 +310,14 @@ func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, clause pi
 				}
 			}
 		}
-		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(branchInitial), cypher25, subqueryScope{visible: retained})
+		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(branchInitial), cypher25, subqueryScope{visible: retained}, params)
 		if err != nil {
 			return nil, firstReturn, err
 		}
 		if !complete || last.kind != pipelineClauseReturn {
 			return nil, firstReturn, nil
 		}
-		branchTypes := projectTypeScopeIn(ctx, final, final.static(cypher25), last)
+		branchTypes := projectTypeScopeIn(ctx, final, final.static(cypher25, params), last)
 		if typedBranches == 0 {
 			returned = branchTypes
 		} else {

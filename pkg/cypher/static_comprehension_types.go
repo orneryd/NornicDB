@@ -18,11 +18,12 @@ func (checker staticOperatorChecker) checkScoped(ctx context.Context, text strin
 	if checker.checked == nil {
 		checker.checked = make(map[string]staticCheckResult)
 	}
-	// The signature check types without parameter values (operandOf).
-	typer := staticOperatorChecker{scope: checker.scope, checked: checker.checked}
-	if checker.params != nil {
-		typer.checked = make(map[string]staticCheckResult)
+	if checker.params == nil {
+		checker.params = checker.scope.params
 	}
+	// Both passes use the same request-local facts. Sharing their results
+	// prevents every enclosing scope from retyping all nested scopes.
+	typer := checker
 	if err := validateStaticFunctionVariablesTyped(ctx, text, func() staticTypeScope { return checker.scope }, func(scope staticTypeScope, ctx context.Context, expression string) string {
 		return typer.argumentType(ctx, scope, expression)
 	}); err != nil {
@@ -55,7 +56,7 @@ func (checker staticOperatorChecker) checkListComprehension(ctx context.Context,
 	}
 	types := typeScopeOf(checker.scope)
 	types[variable] = source.elementOperand()
-	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
+	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25, checker.params), params: checker.params}
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var element staticOperand
@@ -65,7 +66,7 @@ func (checker staticOperatorChecker) checkListComprehension(ctx context.Context,
 			return staticOperand{}, err
 		}
 		if index == 0 && predicate != "" {
-			if err := requireBooleanOperand(operand); err != nil {
+			if err := nested.requireBooleanOperand(operand); err != nil {
 				return staticOperand{}, err
 			}
 		}
@@ -127,7 +128,7 @@ func (checker staticOperatorChecker) checkPatternComprehension(ctx context.Conte
 		if err != nil {
 			return staticOperand{}, err
 		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := nested.requireBooleanOperand(operand); err != nil {
 			return staticOperand{}, err
 		}
 	}
@@ -158,7 +159,7 @@ func (checker staticOperatorChecker) checkReduceTypes(ctx context.Context, form 
 	types := typeScopeOf(checker.scope)
 	types[form.variable] = source.elementOperand()
 	types[form.accumulator] = reduceAccumulatorOperand(initial)
-	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
+	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25, checker.params), params: checker.params}
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var step staticOperand
@@ -174,7 +175,7 @@ func (checker staticOperatorChecker) checkReduceTypes(ctx context.Context, form 
 			step = operand
 		}
 		if index == 1 {
-			if err := requireBooleanOperand(operand); err != nil {
+			if err := nested.requireBooleanOperand(operand); err != nil {
 				return staticOperand{}, err
 			}
 		}

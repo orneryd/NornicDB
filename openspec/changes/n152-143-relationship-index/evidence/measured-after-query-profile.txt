@@ -1,0 +1,56 @@
+File: n152-143-after.test
+Type: cpu
+Time: 2026-11-21 20:03:57 MST
+Duration: 1.71s, Total samples = 1.92s (112.31%)
+Active filters:
+   tagfocus=phase=relationship-read
+Showing nodes accounting for 0.26s, 13.54% of 1.92s total
+      flat  flat%   sum%        cum   cum%
+     0.23s 11.98% 11.98%      0.23s 11.98%  runtime.madvise
+     0.02s  1.04% 13.02%      0.02s  1.04%  runtime.kevent
+     0.01s  0.52% 13.54%      0.01s  0.52%  runtime.step
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).Execute
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).execute
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeImplicitAsync
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executePipeline
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeRequiredPipeline
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeWithoutTransaction
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).parseTraversalPatternStructure (inline)
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyInitialTraversalMatch
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyMatchWithHint
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineTraversalSource
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readTraversalPattern
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).readTraversalPatternStateMachine
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1.1
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1.2
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.patternPropertyKeys
+         0     0% 13.54%      0.01s  0.52%  github.com/orneryd/nornicdb/pkg/cypher.readRelationshipPattern
+         0     0% 13.54%      0.01s  0.52%  internal/runtime/maps.(*Map).growToSmall
+         0     0% 13.54%      0.01s  0.52%  internal/runtime/maps.newGroups (inline)
+         0     0% 13.54%      0.01s  0.52%  internal/runtime/maps.newarray
+         0     0% 13.54%      0.23s 11.98%  runtime.(*mheap).alloc.func1
+         0     0% 13.54%      0.23s 11.98%  runtime.(*mheap).allocSpan
+         0     0% 13.54%      0.01s  0.52%  runtime.(*unwinder).next
+         0     0% 13.54%      0.01s  0.52%  runtime.(*unwinder).resolveInternal
+         0     0% 13.54%      0.01s  0.52%  runtime.callers
+         0     0% 13.54%      0.01s  0.52%  runtime.callers.func1
+         0     0% 13.54%      0.01s  0.52%  runtime.funcspdelta (inline)
+         0     0% 13.54%      0.01s  0.52%  runtime.mProf_Malloc
+         0     0% 13.54%      0.01s  0.52%  runtime.mallocgc
+         0     0% 13.54%      0.01s  0.52%  runtime.mallocgcSmallScanNoHeader
+         0     0% 13.54%      0.01s  0.52%  runtime.mapassign_faststr
+         0     0% 13.54%      0.02s  1.04%  runtime.netpoll
+         0     0% 13.54%      0.01s  0.52%  runtime.newarray
+         0     0% 13.54%      0.01s  0.52%  runtime.pcvalue
+         0     0% 13.54%      0.01s  0.52%  runtime.profilealloc
+         0     0% 13.54%      0.02s  1.04%  runtime.startTheWorld.func1
+         0     0% 13.54%      0.02s  1.04%  runtime.startTheWorldWithSema
+         0     0% 13.54%      0.23s 11.98%  runtime.sysUsed (inline)
+         0     0% 13.54%      0.23s 11.98%  runtime.sysUsedOS (inline)
+         0     0% 13.54%      0.26s 13.54%  runtime.systemstack
+         0     0% 13.54%      0.01s  0.52%  runtime.tracebackPCs
+         0     0% 13.54%      0.01s  0.52%  runtime/pprof.Do
+         0     0% 13.54%      0.01s  0.52%  testing.(*B).launch
+         0     0% 13.54%      0.01s  0.52%  testing.(*B).runN
