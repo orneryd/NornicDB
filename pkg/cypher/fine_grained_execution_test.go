@@ -240,3 +240,45 @@ func TestFineGrainedRevealPreservesGraphProjection(t *testing.T) {
 		require.Equal(t, tc.rows, result.Rows)
 	}
 }
+
+func TestFineGrainedVectorIndexPublishesOnCommit(t *testing.T) {
+	fixture := newDDLPublicationFixture(t, "badger")
+	executor := fixture.executor()
+	policy, err := auth.CompileFineGrainedPolicy(auth.FineGrainedCoreActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "index-create", Action: "database.index.create", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "index-show", Action: "database.index.show", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "index-drop", Action: "database.index.drop", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+		},
+		Assignments: map[string][]string{"schema-writer": {"access", "index-create", "index-show", "index-drop"}},
+	})
+	require.NoError(t, err)
+	ctx := auth.WithFineGrainedRequest(t.Context(), &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"schema-writer"}), DatabaseID: func(string) string { return "ddl-id" },
+	})
+	execute := func(query string) *ExecuteResult {
+		t.Helper()
+		result, err := executor.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		return result
+	}
+
+	execute("CREATE VECTOR INDEX fgac_nodes FOR (n:Article) ON (n.embedding)")
+	require.Equal(t, [][]any{{"fgac_nodes"}},
+		execute("SHOW VECTOR INDEXES YIELD name RETURN name ORDER BY name").Rows)
+
+	execute("BEGIN")
+	execute("CREATE VECTOR INDEX fgac_links FOR ()-[r:LINK]-() ON (r.embedding)")
+	_, published := fixture.store.GetSchema().GetVectorIndex("fgac_links")
+	require.False(t, published, "the transaction has not committed")
+	execute("COMMIT")
+	require.Equal(t, [][]any{{"fgac_links"}, {"fgac_nodes"}},
+		execute("SHOW VECTOR INDEXES YIELD name RETURN name ORDER BY name").Rows)
+
+	execute("BEGIN")
+	execute("DROP INDEX fgac_nodes")
+	execute("ROLLBACK")
+	require.Equal(t, [][]any{{"fgac_links"}, {"fgac_nodes"}},
+		execute("SHOW VECTOR INDEXES YIELD name RETURN name ORDER BY name").Rows)
+}
