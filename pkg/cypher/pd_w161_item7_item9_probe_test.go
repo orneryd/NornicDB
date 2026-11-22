@@ -14,7 +14,7 @@ func TestPDW161Item7NullTraversalStart(t *testing.T) {
 	ctx := context.Background()
 	for _, n := range []int{4_000, 40_000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pdw161"))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 			_, err := exec.Execute(ctx, "CREATE (:PDW161Collection {id:'k'})", nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, `MATCH (k:PDW161Collection {id:'k'})
@@ -55,7 +55,7 @@ func TestPDW161Item7NullTraversalStart(t *testing.T) {
 
 func TestPDW161Item9TwoLabelOrderedWindow(t *testing.T) {
 	ctx := context.Background()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pdw161"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	_, err := exec.Execute(ctx, "CREATE INDEX pd_w161_node_id IF NOT EXISTS FOR (n:PDW161GraphNode) ON (n.id)", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:PDW161Collection {id:'c1'}), (:PDW161Collection {id:'c2'})", nil)
