@@ -174,7 +174,9 @@ func TestCloseoutL3_S7_NOR119_ItemMatrix(t *testing.T) {
 				got := closeoutL3Int(res.Rows[0][0])
 				t.Logf("CLOSEOUT_L3 S7-NOR-119 matrix parser=%s case=%s edges=%d updated=%d elapsed=%v", parser, c.name, closeoutL3RetireEdges, got, elapsed)
 				require.Equal(t, c.want, got, "%s: updated relationships", c.name)
-				require.Less(t, elapsed, closeoutL3RetireBudget, "%s: unanchored retirement", c.name)
+				if elapsed >= closeoutL3RetireBudget {
+					t.Errorf("%s: unanchored retirement took %v, budget %v", c.name, elapsed, closeoutL3RetireBudget)
+				}
 			}
 			check, err := exec.Execute(ctx, "MATCH ()-[r:AUTO]->() WHERE r."+stamp+" = true RETURN count(r) AS c", nil)
 			require.NoError(t, err)
