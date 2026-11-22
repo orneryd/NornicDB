@@ -380,12 +380,12 @@ func TestCompositeEngine_ReadWriteSelectorsAndDeleteByPrefix(t *testing.T) {
 	assert.ElementsMatch(t, []string{"db2"}, writes)
 
 	ctx := t.Context()
-	_, err := engine1.CreateNode(ctx, &Node{ID: "visible"})
+	_, err := engine1.CreateNode(ctx, &Node{ID: "db1:visible"})
 	require.NoError(t, err)
 	nodes, err := composite.AllNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	require.Equal(t, NodeID("visible"), nodes[0].ID)
+	require.Equal(t, NodeID("db1:visible"), nodes[0].ID)
 
 	count, err := composite.NodeCount(ctx)
 	require.ErrorContains(t, err, "db3")
