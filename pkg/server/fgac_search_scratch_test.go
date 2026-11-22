@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -45,9 +46,15 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// fsDB is the fixture database; the embedded scenario uses the default
+// database so that GraphQL (which reads the default database) sees it.
+var fsDB = "fgs"
+
+// fsEmbedded switches the scenario to a server with a deterministic embedder.
+var fsEmbedded = false
+
 const (
 	fsMarker   = "zqx"
-	fsDB       = "fgs"
 	fsOtherDB  = "fgo"
 	fsRole     = "fs_reader"
 	fsUser     = "fsnarrow"
@@ -590,6 +597,9 @@ func fsCypherQueries() []fsQ {
 		q("vec-rel-visible", "CALL db.index.vector.queryRelationships('fs_rvec', 5, [1.0, 0.0, 0.0, 0.0]) YIELD relationship, score RETURN relationship.note AS n, score", nil),
 		q("vec-rel-hidden-property", "CALL db.index.vector.queryRelationships('fs_hrvec', 5, [0.0, 0.0, 0.0, 1.0]) YIELD relationship, score RETURN relationship.note AS n, score", nil),
 		q("vec-managed", "CALL db.index.vector.queryNodes('fs_no_such_index', 5, [1.0, 0.0, 0.0, 0.0]) YIELD node, score RETURN node.title AS t, score", nil),
+		q("vec-text-alpha", "CALL db.index.vector.queryNodes('fs_no_such_index', 10, 'alpha') YIELD node, score RETURN coalesce(node.name, node.title, node.text) AS n, score", nil),
+		q("vec-text-hidden", "CALL db.index.vector.queryNodes('fs_no_such_index', 10, 'zqxkeyword') YIELD node, score RETURN coalesce(node.name, node.title, node.text) AS n, score", nil),
+		q("vec-text-person-index", "CALL db.index.vector.queryNodes('fs_vec', 5, 'alpha') YIELD node, score RETURN node.name AS n, score", nil),
 		q("vec-cosine-fastpath", "MATCH (p:Person) RETURN p.name AS n, vector.similarity.cosine(p.vec, [1.0, 0.0, 0.0, 0.0]) AS s ORDER BY s DESC, n LIMIT 3", nil),
 		q("vec-cosine-hidden", "MATCH (p:Person) RETURN p.name AS n, vector.similarity.cosine(p.hvec, [0.0, 0.0, 0.0, 1.0]) AS s ORDER BY s DESC LIMIT 2", nil),
 		// Retrieval procedures.
@@ -691,8 +701,19 @@ func fsEndpointQueries(aliceID string) []fsEndpointQ {
 		{name: "http-search-other-db", path: "/nornicdb/search", request: map[string]any{"database": fsOtherDB, "query": "alpha", "limit": 10}},
 		{name: "http-similar-doc", path: "/nornicdb/similar", request: map[string]any{"database": fsDB, "node_id": "fs-doc-0", "limit": 5}},
 	}
+	gql := func(name, query string) fsEndpointQ {
+		return fsEndpointQ{name: name, path: "/graphql", request: map[string]any{"query": query}}
+	}
+	qs = append(qs,
+		gql("graphql-search-alpha", `{ search(query: "alpha", options: {limit: 10}) { totalCount results { score rrfScore vectorRank bm25Rank foundBy node { internalId labels properties } } } }`),
+		gql("graphql-search-hidden", `{ search(query: "zqxkeyword", options: {limit: 10}) { totalCount results { score node { internalId properties } } } }`),
+		gql("graphql-search-labels", `{ search(query: "alpha", options: {limit: 10, labels: ["Person"]}) { totalCount results { score node { internalId properties } } } }`),
+		gql("graphql-similar-doc", `{ similar(nodeId: "fs-doc-0", limit: 5) { similarity node { internalId properties } } }`),
+		s("http-search-vector-hidden-term", map[string]any{"query": "zqxkeyword delta", "limit": 10}),
+	)
 	if aliceID != "" {
 		qs = append(qs, fsEndpointQ{name: "http-similar-alice", path: "/nornicdb/similar", request: map[string]any{"database": fsDB, "node_id": aliceID, "limit": 5}})
+		qs = append(qs, gql("graphql-similar-alice", `{ similar(nodeId: "`+aliceID+`", limit: 5) { similarity node { internalId properties } } }`))
 	}
 	return qs
 }
@@ -769,7 +790,13 @@ func fsSetup(t *testing.T) *fsEnv {
 	t.Helper()
 	server, authenticator := setupTestServerWithDatabaseConfig(t, func(c *nornicdb.Config) {
 		c.Memory.SearchRelationshipsEnabled = true
+		if fsEmbedded {
+			c.Memory.EmbeddingEnabled = true
+		}
 	}, nil)
+	if fsEmbedded && !server.db.SetEmbedder(&fsHashEmbedder{dims: 1024}) {
+		t.Fatalf("embedder not accepted")
+	}
 	if _, err := authenticator.CreateUser(context.Background(), fsUser, fsPassword, []auth.Role{auth.RoleViewer}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -779,6 +806,9 @@ func fsSetup(t *testing.T) *fsEnv {
 	env.admin = getAuthToken(t, authenticator, "admin")
 	manager := server.GetDatabaseManager()
 	for _, name := range []string{fsDB, fsOtherDB} {
+		if name == manager.DefaultDatabaseName() {
+			continue
+		}
 		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatalf("create database %s: %v", name, err)
 		}
@@ -868,12 +898,13 @@ func (env *fsEnv) grantCatalog() {
 	definitions := []auth.FineGrainedEntitlement{
 		{ID: "fs_search", Action: "database.search.execute", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: identifier}},
 		{ID: "fs_embedding_read", Action: "graph.node.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, DatabaseID: identifier}},
+		{ID: "fs_graphql", Action: "dbms.api.graphql", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDBMS}},
 	}
 	document.Catalog.Definitions = append(document.Catalog.Definitions, definitions...)
 	if document.Catalog.Assignments == nil {
 		document.Catalog.Assignments = map[string][]string{}
 	}
-	document.Catalog.Assignments[fsRole] = append(document.Catalog.Assignments[fsRole], "fs_search", "fs_embedding_read")
+	document.Catalog.Assignments[fsRole] = append(document.Catalog.Assignments[fsRole], "fs_search", "fs_embedding_read", "fs_graphql")
 	code, _, body = env.http.do(http.MethodPut, "/auth/fgac/catalog", env.admin, map[string]any{"catalog": document.Catalog, "revision": document.Revision})
 	if code != http.StatusNoContent {
 		t.Fatalf("catalog put %d: %s", code, body)
@@ -1065,8 +1096,113 @@ func (env *fsEnv) toState(state string) {
 	_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
 }
 
+// settle waits for the embedding worker (embedded scenario) and logs the
+// unique-constraint lookup that decides finding 1.
+func (env *fsEnv) settle(state string) {
+	if fsEmbedded {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		err := env.server.db.WaitForEmbeddings(ctx)
+		cancel()
+		env.t.Logf("DIAG [%s] embeddings settled: err=%v pending=%d", state, err, env.server.db.PendingEmbeddingsCount())
+		_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
+	}
+	store, err := env.server.dbManager.GetStorage(fsDB)
+	if err != nil {
+		return
+	}
+	if schema := store.GetSchema(); schema != nil {
+		id, found, constrained, complete, lookupErr := schema.LookupUniqueConstraintValue(context.Background(), "Person", "ssn", "ZQX-SSN-1")
+		name := ""
+		if found {
+			if node, err := store.GetNode(context.Background(), id); err == nil {
+				name = fmt.Sprint(node.Properties["name"])
+			}
+		}
+		env.t.Logf("CAUSE1 [%s] LookupUniqueConstraintValue(Person, ssn, ZQX-SSN-1) => id=%s found=%v constrained=%v cacheComplete=%v err=%v holder=%q", state, id, found, constrained, complete, lookupErr, name)
+	}
+	if fsEmbedded {
+		if store != nil {
+			nodes, _ := store.GetNodesByLabel(context.Background(), "Person")
+			for _, node := range nodes {
+				probe := &fsHashEmbedder{dims: 1024}
+				hiddenTerm, _ := probe.Embed(context.Background(), "zqxkeyword")
+				visibleTerm, _ := probe.Embed(context.Background(), "alpha")
+				dot := func(a, b []float32) float64 {
+					var sum float64
+					for i := range a {
+						if i < len(b) {
+							sum += float64(a[i] * b[i])
+						}
+					}
+					return sum
+				}
+				var withHidden, withVisible float64
+				if len(node.ChunkEmbeddings) > 0 {
+					withHidden, withVisible = dot(node.ChunkEmbeddings[0], hiddenTerm), dot(node.ChunkEmbeddings[0], visibleTerm)
+				}
+				env.t.Logf("CAUSE-EMB [%s] embedding of %v (labels %v): chunks=%d named=%d dot(zqxkeyword)=%.4f dot(alpha)=%.4f", state, node.Properties["name"], node.Labels, len(node.ChunkEmbeddings), len(node.NamedEmbeddings), withHidden, withVisible)
+			}
+		}
+	}
+}
+
+// fsHashEmbedder embeds text deterministically: each lowercased word adds 1
+// to one dimension chosen by its FNV hash; the vector is normalized.
+type fsHashEmbedder struct{ dims int }
+
+func (e *fsHashEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
+	vector := make([]float32, e.dims)
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-')
+	}) {
+		hash := uint32(2166136261)
+		for i := 0; i < len(word); i++ {
+			hash = (hash ^ uint32(word[i])) * 16777619
+		}
+		vector[int(hash%uint32(e.dims))]++
+	}
+	var norm float64
+	for _, value := range vector {
+		norm += float64(value * value)
+	}
+	if norm == 0 {
+		vector[0] = 1
+		return vector, nil
+	}
+	scale := float32(1 / math.Sqrt(norm))
+	for i := range vector {
+		vector[i] *= scale
+	}
+	return vector, nil
+}
+
+func (e *fsHashEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, text := range texts {
+		out[i], _ = e.Embed(ctx, text)
+	}
+	return out, nil
+}
+
+func (e *fsHashEmbedder) Dimensions() int { return e.dims }
+func (e *fsHashEmbedder) Model() string   { return "fs-hash-embedder" }
+func (e *fsHashEmbedder) Backend() string { return "cpu" }
+func (e *fsHashEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	return []string{text}, nil
+}
+
+// TestFGACSearchEmbedded runs the same differential with a deterministic
+// embedder, in the default database (GraphQL reads it).
+func TestFGACSearchEmbedded(t *testing.T) {
+	fsEmbedded, fsDB = true, "nornic"
+	defer func() { fsEmbedded, fsDB = false, "fgs" }()
+	fsScenario(t)
+}
+
 // TestFGACSearchDifferential is the scenario.
-func TestFGACSearchDifferential(t *testing.T) {
+func TestFGACSearchDifferential(t *testing.T) { fsScenario(t) }
+
+func fsScenario(t *testing.T) {
 	rec := &fsRecorder{results: map[fsKey]map[string]fsOut{}}
 	leaks := 0
 	for _, variant := range []string{"restricted-first", "wide-first"} {
@@ -1074,6 +1210,7 @@ func TestFGACSearchDifferential(t *testing.T) {
 			env := fsSetup(t)
 			for _, state := range []string{"S0", "S1", "S2"} {
 				env.toState(state)
+				env.settle(state)
 				if variant == "restricted-first" {
 					env.restricted(rec, variant, "cold", state)
 					env.wide(state)
