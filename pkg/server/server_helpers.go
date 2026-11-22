@@ -336,6 +336,9 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) canReadAllDatabases(r *http.Request) bool {
+	if s.dbManager == nil {
+		return false
+	}
 	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), s.databaseReadPredicate(getClaims(r)))
 	return all
 }
