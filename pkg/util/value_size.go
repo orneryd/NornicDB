@@ -33,17 +33,17 @@ func EstimateValueBytes(value any) int64 {
 		}
 		return bytes
 	case []float64:
-		if os.Getenv("P26_BYPASS") == "R7" {
+		if (os.Getenv("P26_BYPASS") == "R7" || os.Getenv("P26_BYPASS") == "ST") {
 			return int64(24 + 8*len(typed))
 		}
 		return 16
 	case []float32:
-		if os.Getenv("P26_BYPASS") == "R7" {
+		if (os.Getenv("P26_BYPASS") == "R7" || os.Getenv("P26_BYPASS") == "ST") {
 			return int64(24 + 4*len(typed))
 		}
 		return 16
 	case []int64:
-		if os.Getenv("P26_BYPASS") == "R7" {
+		if (os.Getenv("P26_BYPASS") == "R7" || os.Getenv("P26_BYPASS") == "ST") {
 			return int64(24 + 8*len(typed))
 		}
 		return 16

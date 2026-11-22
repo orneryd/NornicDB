@@ -858,7 +858,7 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 
 	if len(node.ChunkEmbeddings) != len(projected.ChunkEmbeddings) {
 		fmt.Printf("P26DIAG R9 projected copy of %s drops %d chunk vectors, metadata %v, projection %q\n", node.ID, len(node.ChunkEmbeddings), projected.EmbedMeta, properties)
-		if os.Getenv("P26_BYPASS") == "R9" && len(projected.EmbedMeta) == 0 {
+		if (os.Getenv("P26_BYPASS") == "R9" || os.Getenv("P26_BYPASS") == "ST") && len(projected.EmbedMeta) == 0 {
 			projected.EmbedMeta = map[string]any{"chunk_count": len(node.ChunkEmbeddings)}
 		}
 	}

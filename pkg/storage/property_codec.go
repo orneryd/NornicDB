@@ -205,7 +205,7 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(txn *badger.Txn, names
 		if at := len(rest) - reader.Len(); at+5 <= len(rest) && (rest[at] == 0xc6 || rest[at] == 0xdb) {
 			claimed := uint64(rest[at+1])<<24 | uint64(rest[at+2])<<16 | uint64(rest[at+3])<<8 | uint64(rest[at+4])
 			fmt.Printf("P26DIAG F6 property %q header %02x claims %d bytes, %d bytes remain in the body\n", name, rest[at], claimed, reader.Len())
-			if os.Getenv("P26_BYPASS") == "F6" && claimed > uint64(reader.Len()) {
+			if (os.Getenv("P26_BYPASS") == "F6" || os.Getenv("P26_BYPASS") == "ST") && claimed > uint64(reader.Len()) {
 				return nil, fmt.Errorf("decoding tokenized properties: key %q value: %w", name, io.ErrUnexpectedEOF)
 			}
 		}

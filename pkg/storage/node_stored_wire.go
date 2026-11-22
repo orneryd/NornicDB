@@ -115,7 +115,7 @@ func (node *Node) DecodeMsgpack(dec *msgpack.Decoder) error {
 		case "EmbedMeta":
 			if code, peekErr := dec.PeekCode(); peekErr == nil {
 				fmt.Printf("P26DIAG F6 EmbedMeta header %02x\n", code)
-				if code == 0xdf && os.Getenv("P26_BYPASS") == "F6" {
+				if code == 0xdf && (os.Getenv("P26_BYPASS") == "F6" || os.Getenv("P26_BYPASS") == "ST") {
 					return errors.New("map length beyond the body")
 				}
 			}

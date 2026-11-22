@@ -538,7 +538,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	// caller gets a copy it may change (#965). A projected node is only
 	// read: nothing writes it back.
 	forCaller := func(node *Node) *Node {
-		if properties == nil || os.Getenv("P26_BYPASS") == "F5" {
+		if properties == nil || (os.Getenv("P26_BYPASS") == "F5" || os.Getenv("P26_BYPASS") == "ST") {
 			return copyNode(node)
 		}
 		fmt.Printf("P26DIAG F5 projected image %p of %s delivered without a copy; kept for the transaction\n", node, node.ID)
