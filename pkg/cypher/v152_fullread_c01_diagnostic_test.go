@@ -40,7 +40,7 @@ func TestC01SingleLabelBatchCandidateOwner(t *testing.T) {
 			chosen := candidates[nodeBatchMatchKey{label: "C01Batch", prop: "k"}][propEqKeyBatch("dup")]
 			chosenIDs := make([]string, 0, len(chosen))
 			for _, node := range chosen {
-				chosenIDs = append(chosenIDs, node.ID)
+				chosenIDs = append(chosenIDs, string(node.ID))
 			}
 			t.Logf("batch_consumer=buildRelationshipBatchNodeMatchIndex write=%s single_label=true index_posting_ids=%v label_scan_nodes=%d chosen_candidate_ids=%v unique=%v", write, posting, len(labelNodes), chosenIDs, unique)
 
