@@ -196,6 +196,12 @@ properties. An FGAC request against a remote composite constituent requires a
 trusted policy-aware execution path, so local FGAC refuses remote graph
 execution. Scoped policies still apply on local constituents.
 
+FGAC relationship search currently uses keyword ranking only, including for
+callers who can read every relationship property. Existing relationship vectors
+do not contribute to scoped ranking. See the [relationship search
+limitations](../user-guides/hybrid-search.md#relationship-search) for the
+HTTP and Cypher paths; this limitation does not disable node vector search.
+
 `database.cdc.read` permits access to a database's retained change feed,
 including the historical values it records. Grant it to roles intended to read
 that entire feed. History queries and REST graph snapshots instead project

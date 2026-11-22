@@ -348,6 +348,16 @@ A relationship search returns one page: continuation fields (`n`, `qid`,
 from reads (decay, `db.visibility.suppress`) isn't returned. Without an
 embedder, relationship search is keyword-only.
 
+With [fine-grained access control](../security/fine-grained-access-control.md),
+relationship search currently ranks only by keywords from the properties the
+caller may read. This applies to HTTP `relationships: true` and Cypher
+`db.retrieveRelationships`, even when the caller can read all relationship
+properties and the database has relationship embeddings. Vector similarity
+does not contribute to these scoped results; a vector-only search returns no
+relationship hits. Node vector search is separate from this limitation.
+Relationship traversal, endpoint visibility and property permissions remain
+enforced.
+
 ## Related Guides
 
 - [Vector Search](vector-search.md) — dedicated vector search guide with Cypher index examples
