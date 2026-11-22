@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
 
 - Preserve inherited columns returned unchanged by Cypher 25 conditional arms while retaining user-written nested CALL restrictions and inactive-arm guards.
+- Stop correlated EXISTS/COUNT traversal from reading suffixes rejected by an already-bound predicate, while preserving complete-path error handling and fresh row/parameter bindings.
 
 - Route native CALL bodies with importing `WITH ... USE` through the same graph-selection reader as composite queries, preserving imported variables and existing graph errors.
 
