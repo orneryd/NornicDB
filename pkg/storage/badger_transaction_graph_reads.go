@@ -291,6 +291,9 @@ func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	if edgeType == "PDW161_LINK" {
+		println("PDW161_TYPE_SCAN snapshot candidates", tx.readTS.CommitSequence, len(committed))
+	}
 	return tx.mergePendingEdgesLocked(ctx, committed, includePending)
 }
 

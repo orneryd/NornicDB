@@ -22,7 +22,11 @@ func (tx *BadgerTransaction) LookupEdgesByPropertyEquality(ctx context.Context, 
 	if err := tx.engine.pendingNamespaceConflict(""); err != nil {
 		return nil, false, err
 	}
-	if tx.engine.writeBehind != nil || !tx.namespaceSnapshotCurrentLocked() {
+	snapshotCurrent := tx.namespaceSnapshotCurrentLocked()
+	if relationshipType == "PDW161_LINK" {
+		println("PDW161_LOOKUP gate snapshot current equal write_behind", tx.readTS.CommitSequence, tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence, snapshotCurrent, tx.engine.writeBehind != nil)
+	}
+	if tx.engine.writeBehind != nil || !snapshotCurrent {
 		// Current-only postings cannot answer an older snapshot. Its existing
 		// versioned type reader remains authoritative, as does write-behind.
 		return nil, false, nil
@@ -42,6 +46,9 @@ func (tx *BadgerTransaction) LookupEdgesByPropertyEquality(ctx context.Context, 
 	})
 	if err != nil {
 		return nil, false, err
+	}
+	if relationshipType == "PDW161_LINK" {
+		println("PDW161_LOOKUP handled candidates", len(edges))
 	}
 	return edges, true, nil
 }
