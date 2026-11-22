@@ -78,6 +78,66 @@ func TestNOR66NOR167MapLiteralBoltMatrix(t *testing.T) {
 					result, err = backend.Execute(ctx, "CREATE (n:Nor66BoltHealthy) SET n = {`a\\u0062`: 1} RETURN properties(n) AS p", nil)
 					require.NoError(t, err)
 					require.Equal(t, [][]any{{map[string]any{"ab": int64(1)}}}, result.Rows)
+
+					// NOR-167: variable headers must decode identically through Bolt.
+					for _, tc := range []struct {
+						query string
+						rows  [][]any
+					}{
+						{"UNWIND ['value'] AS `ab` RETURN `ab`", [][]any{{"value"}}},
+						{"UNWIND [] AS `ab` RETURN `ab`", nil},
+						{"RETURN 1 AS `ab`", [][]any{{int64(1)}}},
+					} {
+						result, err := backend.Execute(ctx, tc.query, nil)
+						require.NoError(t, err, tc.query)
+						assert.Equal(t, []string{"ab"}, result.Columns, tc.query)
+						if tc.rows == nil {
+						assert.Empty(t, result.Rows, tc.query)
+					} else {
+						assert.Equal(t, tc.rows, result.Rows, tc.query)
+					}
+						t.Logf("statement=%q columns=%v rows=%v", tc.query, result.Columns, result.Rows)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestNOR167EscapedVariableHeadersBolt checks the exact escaped variable
+// headers from the report over Bolt, in autocommit and explicit transactions.
+func TestNOR167EscapedVariableHeadersBolt(t *testing.T) {
+	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+
+			driver, shutdown := startConformanceServer(t)
+			defer shutdown()
+			for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
+				t.Run(string(mode), func(t *testing.T) {
+					ctx := t.Context()
+					backend := newDifferentialBackend(t, driver, "nornic", mode)
+					require.NoError(t, backend.Reset(ctx))
+					for _, tc := range []struct {
+						query string
+						rows  [][]any
+					}{
+						{"UNWIND ['value'] AS `ab` RETURN `ab`", [][]any{{"value"}}},
+						{"UNWIND [] AS `ab` RETURN `ab`", nil},
+						{"RETURN 1 AS `a\\u0062`", [][]any{{int64(1)}}},
+					} {
+						result, err := backend.Execute(ctx, tc.query, nil)
+						require.NoError(t, err, tc.query)
+						t.Logf("statement=%q columns=%v rows=%v", tc.query, result.Columns, result.Rows)
+						assert.Equal(t, []string{"ab"}, result.Columns, tc.query)
+						if tc.rows == nil {
+						assert.Empty(t, result.Rows, tc.query)
+						} else {
+						assert.Equal(t, tc.rows, result.Rows, tc.query)
+						}
+					}
 				})
 			}
 		})
