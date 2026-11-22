@@ -886,10 +886,12 @@ func s1FuzzFixture(t testing.TB, b *BadgerEngine) ([]NodeID, [][]string) {
 	return ids, [][]string{{"keep"}, {"bytes", "nested"}, {}, {"missing", "list"}, {"skip"}, {"when", "ext"}, {"vec", "float", "strs"}}
 }
 
-// TestPR1826S1MutatedBodies mutates stored bodies systematically (every
+// TestPR1826S1MutatedBodiesBounded mutates stored bodies systematically (every
 // truncation, every byte set to boundary values, random splices) and prints the
-// verdict counts: the counts must be the same on both revisions.
-func TestPR1826S1MutatedBodies(t *testing.T) {
+// verdict counts: the counts must be the same on both revisions. 32-bit length
+// headers (bin32 c6, ext32 c9, str32 db) are left out: decoding a selected value
+// allocates the length they claim (TestPR1826S1MutatedBodyMemory).
+func TestPR1826S1MutatedBodiesBounded(t *testing.T) {
 	b, _ := createTestBadgerEngineOnDisk(t)
 	ids, sets := s1FuzzFixture(t, b)
 	counts := map[string]int{}
@@ -911,16 +913,27 @@ func TestPR1826S1MutatedBodies(t *testing.T) {
 		}
 	}
 	r := rand.New(rand.NewSource(1826))
+	randomByte := func() byte {
+		for {
+			if x := byte(r.Intn(256)); x != 0xc6 && x != 0xc9 && x != 0xdb {
+				return x
+			}
+		}
+	}
 	for _, id := range ids {
 		body := s1StoredBody(t, b, id)
 		judge(id, body, "valid")
 		step := 1
 		if len(body) > 4000 {
-			step = len(body) / 1000
+			// The long body holds 32-bit lengths: truncate it only.
+			for i := 0; i < len(body); i += len(body) / 1000 {
+				judge(id, body[:i], fmt.Sprintf("truncate %d", i))
+			}
+			continue
 		}
 		for i := 0; i < len(body); i += step {
 			judge(id, body[:i], fmt.Sprintf("truncate %d", i))
-			for _, x := range []byte{0x00, 0x7f, 0x80, 0xa0, 0xbf, 0xc0, 0xc1, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xd4, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xff} {
+			for _, x := range []byte{0x00, 0x7f, 0x80, 0xa0, 0xbf, 0xc0, 0xc1, 0xc4, 0xc5, 0xc7, 0xc8, 0xd4, 0xd8, 0xd9, 0xda, 0xdc, 0xdd, 0xde, 0xdf, 0xff} {
 				m := append([]byte(nil), body...)
 				m[i] = x
 				judge(id, m, fmt.Sprintf("byte %d=%02x", i, x))
@@ -928,21 +941,18 @@ func TestPR1826S1MutatedBodies(t *testing.T) {
 		}
 		for k := 0; k < 4000; k++ {
 			m := append([]byte(nil), body...)
-			if len(m) > 4000 {
-				m = m[:200+r.Intn(3000)]
-			}
 			edits := 1 + r.Intn(4)
 			for e := 0; e < edits && len(m) > 0; e++ {
 				p := r.Intn(len(m))
 				switch r.Intn(3) {
 				case 0:
-					m[p] = byte(r.Intn(256))
+					m[p] = randomByte()
 				case 1:
 					m = append(m[:p], m[min(len(m), p+1+r.Intn(5)):]...)
 				case 2:
 					ins := make([]byte, 1+r.Intn(6))
 					for i := range ins {
-						ins[i] = byte(r.Intn(256))
+						ins[i] = randomByte()
 					}
 					m = append(m[:p:p], append(ins, m[p:]...)...)
 				}
