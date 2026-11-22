@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -130,7 +132,6 @@ func TestV152P26OneByteAllocation(t *testing.T) {
 	valid, err := measure(body, nil)
 	require.NoError(t, err)
 	t.Logf("P26ROW F6S body of %d bytes, valid: %d bytes allocated", len(body), valid)
-	metaAt := bytes.Index(body, []byte("EmbedMeta")) + len("EmbedMeta")
 	places := []struct {
 		name string
 		at   int
@@ -138,7 +139,6 @@ func TestV152P26OneByteAllocation(t *testing.T) {
 	}{
 		{"property bytes header c4 to c6 (one bit)", bytes.Index(body, append([]byte{0xc4, 100}, blob[:8]...)), 0xc6},
 		{"property string header d9 to db (one bit)", bytes.Index(body, append([]byte{0xd9, 100}, text[:8]...)), 0xdb},
-		{"EmbedMeta map header to df (map32)", metaAt, 0xdf},
 	}
 	for _, p := range places {
 		if p.at < 0 || p.at >= len(body) {
@@ -266,4 +266,53 @@ func TestV152P26StorageAll(t *testing.T) {
 	t.Run("OneByteAllocation", TestV152P26OneByteAllocation)
 	t.Run("NumericListEstimate", TestV152P26NumericListEstimate)
 	t.Run("ProjectedHasEmbedding", TestV152P26ProjectedHasEmbedding)
+}
+
+// F6, second place: one changed byte in the header of the stored metadata map.
+// A watchdog ends the process when the heap passes 1.5 GiB, so the run ends
+// with exit status 3 and the stack instead of being killed for memory.
+func TestV152P26MetadataMapAllocation(t *testing.T) {
+	ctx := context.Background()
+	b, _ := createTestBadgerEngineOnDisk(t)
+	_, err := b.CreateNode(ctx, &Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"key": "k"}, EmbedMeta: map[string]any{"has_embedding": true}})
+	require.NoError(t, err)
+	body := p26StoredBody(t, b, "test:n")
+	at := bytes.Index(body, []byte("EmbedMeta")) + len("EmbedMeta")
+	mutated := append([]byte(nil), body...)
+	mutated[at] = 0xdf
+	claimed := uint32(mutated[at+1])<<24 | uint32(mutated[at+2])<<16 | uint32(mutated[at+3])<<8 | uint32(mutated[at+4])
+	t.Logf("P26ROW F6M body of %d bytes, metadata map header %02x -> df: the map now claims %d entries", len(body), body[at], claimed)
+	fmt.Printf("P26ROW F6M body of %d bytes, metadata map header %02x -> df: the map now claims %d entries
+", len(body), body[at], claimed)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc < 1536<<20 {
+				continue
+			}
+			fmt.Printf("P26ROW F6M heap %d MiB while decoding one body of %d bytes
+", m.HeapAlloc>>20, len(body))
+			var out bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&out, 2)
+			fmt.Printf("P26STACK %s
+", out.String())
+			os.Exit(3)
+		}
+	}()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = b.decodeNodeProjected(nil, namespaceForNodeID("test:n"), mutated, nil)
+	runtime.ReadMemStats(&after)
+	close(done)
+	t.Logf("P26ROW F6M decode allocated %d MiB, error: %.160v", (after.TotalAlloc-before.TotalAlloc)>>20, err)
+	if after.TotalAlloc-before.TotalAlloc > 64<<20 {
+		t.Errorf("P26 F6M decoding a body of %d bytes allocates %d MiB", len(body), (after.TotalAlloc-before.TotalAlloc)>>20)
+	}
 }
