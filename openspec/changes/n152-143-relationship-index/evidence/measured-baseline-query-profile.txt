@@ -1,0 +1,192 @@
+File: n152-143-baseline.test
+Type: cpu
+Time: 2026-11-21 19:56:22 MST
+Duration: 4.35s, Total samples = 4.40s (101.13%)
+Active filters:
+   tagfocus=phase=relationship-read
+Showing nodes accounting for 2.08s, 47.27% of 4.40s total
+Dropped 91 nodes (cum <= 0.02s)
+      flat  flat%   sum%        cum   cum%
+     0.51s 11.59% 11.59%      0.51s 11.59%  runtime.madvise
+     0.13s  2.95% 14.55%      0.13s  2.95%  runtime.memclrNoHeapPointers
+     0.07s  1.59% 16.14%      0.07s  1.59%  runtime.kevent
+     0.06s  1.36% 17.50%      0.11s  2.50%  github.com/dgraph-io/badger/v4.(*levelHandler).getTableForKey
+     0.06s  1.36% 18.86%      0.18s  4.09%  github.com/dgraph-io/badger/v4/skl.(*Skiplist).findNear
+     0.06s  1.36% 20.23%      0.07s  1.59%  runtime.mapaccess2_faststr
+     0.05s  1.14% 21.36%      0.05s  1.14%  cmpbody
+     0.05s  1.14% 22.50%      0.32s  7.27%  github.com/dgraph-io/badger/v4.(*levelsController).get
+     0.04s  0.91% 23.41%      0.06s  1.36%  runtime.(*_panic).nextDefer
+     0.04s  0.91% 24.32%      0.38s  8.64%  runtime.mallocgc
+     0.04s  0.91% 25.23%      0.04s  0.91%  runtime.mallocgcSmallScanNoHeaderSC3
+     0.04s  0.91% 26.14%      0.11s  2.50%  runtime.mapassign_faststr
+     0.04s  0.91% 27.05%      0.04s  0.91%  runtime.memmove
+     0.03s  0.68% 27.73%      0.03s  0.68%  context.(*valueCtx).Err
+     0.03s  0.68% 28.41%      0.27s  6.14%  github.com/dgraph-io/badger/v4.(*levelHandler).get
+     0.03s  0.68% 29.09%      0.03s  0.68%  github.com/dgraph-io/badger/v4/y.Hash
+     0.03s  0.68% 29.77%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/cypher.(*queryParamsContext).Err
+     0.03s  0.68% 30.45%      0.05s  1.14%  github.com/orneryd/nornicdb/pkg/cypher.(*statementContext).Err
+     0.03s  0.68% 31.14%      0.06s  1.36%  github.com/orneryd/nornicdb/pkg/storage.decodeEdgeCompactHeaderInto
+     0.03s  0.68% 31.82%      0.03s  0.68%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
+     0.03s  0.68% 32.50%      0.03s  0.68%  runtime.(*_panic).start
+     0.03s  0.68% 33.18%      0.03s  0.68%  runtime.mapaccess2_fast64
+     0.03s  0.68% 33.86%      0.03s  0.68%  runtime.memequal
+     0.03s  0.68% 34.55%      0.03s  0.68%  sync/atomic.(*Int32).Add (inline)
+     0.02s  0.45% 35.00%      0.73s 16.59%  github.com/dgraph-io/badger/v4.(*Txn).Get
+     0.02s  0.45% 35.45%      0.02s  0.45%  github.com/dgraph-io/badger/v4/skl.(*Arena).getKey (inline)
+     0.02s  0.45% 35.91%      0.07s  1.59%  github.com/dgraph-io/badger/v4/y.CompareKeys
+     0.02s  0.45% 36.36%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn.func1
+     0.02s  0.45% 36.82%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.compactEdgeTimeAt
+     0.02s  0.45% 37.27%      0.02s  0.45%  internal/runtime/maps.(*Iter).Next
+     0.02s  0.45% 37.73%      0.02s  0.45%  runtime.(*_panic).nextFrame
+     0.02s  0.45% 38.18%      0.02s  0.45%  runtime.(*fixalloc).alloc
+     0.02s  0.45% 38.64%      0.02s  0.45%  runtime.(*gcBits).bytep (inline)
+     0.02s  0.45% 39.09%      0.02s  0.45%  runtime.(*mspan).init
+     0.02s  0.45% 39.55%      0.02s  0.45%  runtime.(*mspan).writeHeapBitsSmall
+     0.02s  0.45% 40.00%      0.04s  0.91%  runtime.heapSetTypeNoHeader (inline)
+     0.02s  0.45% 40.45%      0.04s  0.91%  runtime.mallocgcSmallScanNoHeaderSC4
+     0.02s  0.45% 40.91%      0.02s  0.45%  runtime.mmap
+     0.02s  0.45% 41.36%      0.03s  0.68%  runtime.nanotime1
+     0.02s  0.45% 41.82%      0.02s  0.45%  runtime.rawstringtmp
+     0.01s  0.23% 42.05%      0.06s  1.36%  github.com/dgraph-io/badger/v4.(*DB).getMemTables
+     0.01s  0.23% 42.27%      0.33s  7.50%  github.com/dgraph-io/badger/v4.(*Item).Value
+     0.01s  0.23% 42.50%      0.06s  1.36%  github.com/dgraph-io/badger/v4.(*Iterator).Next
+     0.01s  0.23% 42.73%      0.02s  0.45%  github.com/dgraph-io/badger/v4.(*Iterator).fill
+     0.01s  0.23% 42.95%      0.03s  0.68%  github.com/dgraph-io/badger/v4/skl.(*Skiplist).getNext (inline)
+     0.01s  0.23% 43.18%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/cypher.keywordIndexFrom
+     0.01s  0.23% 43.41%      0.04s  0.91%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).collectVisibleAdjacencyEdgeIDsInTxn.func1 (inline)
+     0.01s  0.23% 43.64%      0.20s  4.55%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeBodyWithID
+     0.01s  0.23% 43.86%      0.11s  2.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeTokenizedPropertiesProjected
+     0.01s  0.23% 44.09%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).readStoredBinding
+     0.01s  0.23% 44.32%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).edgeReverseLookup
+     0.01s  0.23% 44.55%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.decodeStrictTypedValue
+     0.01s  0.23% 44.77%      0.24s  5.45%  github.com/orneryd/nornicdb/pkg/storage.embeddingRecord.value
+     0.01s  0.23% 45.00%      0.05s  1.14%  github.com/orneryd/nornicdb/pkg/storage.ownedEntries
+     0.01s  0.23% 45.23%      0.02s  0.45%  internal/runtime/maps.(*Iter).Init
+     0.01s  0.23% 45.45%      0.05s  1.14%  runtime.concatstrings
+     0.01s  0.23% 45.68%      0.10s  2.27%  runtime.growslice
+     0.01s  0.23% 45.91%      0.03s  0.68%  runtime.mallocgcSmallNoScanSC3
+     0.01s  0.23% 46.14%      0.24s  5.45%  runtime.mallocgcSmallScanNoHeader
+     0.01s  0.23% 46.36%      0.02s  0.45%  runtime.mallocgcSmallScanNoHeaderSC1
+     0.01s  0.23% 46.59%      0.02s  0.45%  runtime.mallocgcTinySC2
+     0.01s  0.23% 46.82%      0.02s  0.45%  runtime.mapdelete_faststr
+     0.01s  0.23% 47.05%      0.03s  0.68%  runtime.newArenaMayUnlock
+     0.01s  0.23% 47.27%      0.02s  0.45%  runtime.newInlineUnwinder
+         0     0% 47.27%      0.05s  1.14%  bytes.Compare (inline)
+         0     0% 47.27%      0.02s  0.45%  bytes.Equal (inline)
+         0     0% 47.27%      0.56s 12.73%  github.com/dgraph-io/badger/v4.(*DB).get
+         0     0% 47.27%      0.06s  1.36%  github.com/dgraph-io/badger/v4.(*Item).yieldItemValue
+         0     0% 47.27%      0.05s  1.14%  github.com/dgraph-io/badger/v4.(*Iterator).parseItem
+         0     0% 47.27%      0.18s  4.09%  github.com/dgraph-io/badger/v4/skl.(*Skiplist).Get
+         0     0% 47.27%      0.02s  0.45%  github.com/dgraph-io/badger/v4/skl.(*node).key (inline)
+         0     0% 47.27%      0.03s  0.68%  github.com/dgraph-io/badger/v4/y.KeyWithTs (inline)
+         0     0% 47.27%      0.02s  0.45%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+         0     0% 47.27%      0.02s  0.45%  github.com/dgraph-io/badger/v4/y.SameKey (inline)
+         0     0% 47.27%      1.76s 40.00%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).Execute
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).edgeMatchesProps
+         0     0% 47.27%      1.76s 40.00%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).execute
+         0     0% 47.27%      0.05s  1.14%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeImplicitAsync
+         0     0% 47.27%      1.69s 38.41%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeInTransaction
+         0     0% 47.27%      1.71s 38.86%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeMatchWithRelationshipsWithPathSeeded
+         0     0% 47.27%      1.73s 39.32%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executePipeline
+         0     0% 47.27%      1.69s 38.41%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeQueryAgainstStorage (inline)
+         0     0% 47.27%      1.73s 39.32%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeRequiredPipeline
+         0     0% 47.27%      1.74s 39.55%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).executeWithoutTransaction
+         0     0% 47.27%      1.07s 24.32%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).findPaths
+         0     0% 47.27%      1.72s 39.09%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyInitialTraversalMatch
+         0     0% 47.27%      1.72s 39.09%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplyMatchWithHint
+         0     0% 47.27%      1.72s 39.09%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineApplySeededTraversalMatch
+         0     0% 47.27%      0.62s 14.09%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).relationshipTypeSeedNodes
+         0     0% 47.27%      1.72s 39.09%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).runPipelineClauseRows
+         0     0% 47.27%      1.05s 23.86%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traversalEdges
+         0     0% 47.27%      1.69s 38.41%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraph
+         0     0% 47.27%      1.07s 24.32%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).traverseGraphSequential
+         0     0% 47.27%      0.59s 13.41%  github.com/orneryd/nornicdb/pkg/cypher.(*transactionStorageWrapper).GetEdgesByType
+         0     0% 47.27%      1.04s 23.64%  github.com/orneryd/nornicdb/pkg/cypher.(*transactionStorageWrapper).ReadAdjacentEdges
+         0     0% 47.27%      1.04s 23.64%  github.com/orneryd/nornicdb/pkg/cypher.(*transactionStorageWrapper).adjacentEdges
+         0     0% 47.27%      0.07s  1.59%  github.com/orneryd/nornicdb/pkg/cypher.(*transactionStorageWrapper).toUserEdge
+         0     0% 47.27%      0.04s  0.91%  github.com/orneryd/nornicdb/pkg/cypher.(*transactionStorageWrapper).unprefixNodeID (inline)
+         0     0% 47.27%      1.76s 40.00%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1
+         0     0% 47.27%      1.76s 40.00%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1.1
+         0     0% 47.27%      1.76s 40.00%  github.com/orneryd/nornicdb/pkg/cypher.benchmarkRelationshipPropertyEquality.func1.1.2
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/cypher.pipelineNodePropertyDemand
+         0     0% 47.27%      0.08s  1.82%  github.com/orneryd/nornicdb/pkg/cypher.projectTransactionRead[go.shape.*github.com/orneryd/nornicdb/pkg/storage.Edge]
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/cypher.traversalSourceProperties
+         0     0% 47.27%      0.28s  6.36%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).adjacentSnapshotHeadersInTxn
+         0     0% 47.27%      0.04s  0.91%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).adjacentSnapshotHeadersInTxn.func2
+         0     0% 47.27%      0.05s  1.14%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).collectVisibleAdjacencyEdgeIDsInTxn
+         0     0% 47.27%      0.04s  0.91%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeAdjacencyHeader
+         0     0% 47.27%      0.18s  4.09%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).decodeEdgeCompactV2
+         0     0% 47.27%      0.92s 20.91%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).getEdgeAtInTxn
+         0     0% 47.27%      0.52s 11.82%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn
+         0     0% 47.27%      0.52s 11.82%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).loadEdgeMVCCHeadByNumWithPhysicalVersionInTxn
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).loadEdgeMVCCHeadInTxn (inline)
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).loadEdgeMVCCHeadWithPhysicalVersionInTxn
+         0     0% 47.27%      0.56s 12.73%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).readEdgeBodyInTxn
+         0     0% 47.27%      0.53s 12.05%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).readStoredEdgeImage
+         0     0% 47.27%      0.20s  4.55%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).readStoredEdgeImage.func1
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).streamEdgesByTypeAtSnapshotWithView
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).streamEdgesByTypeAtSnapshotWithView.func1
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).GetEdgesByType
+         0     0% 47.27%         1s 22.73%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).ReadEdges
+         0     0% 47.27%      0.18s  4.09%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).cacheSnapshotEdgeByIDLocked
+         0     0% 47.27%         1s 22.73%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).getCommittedAdjacentEdgesLocked
+         0     0% 47.27%      0.55s 12.50%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).getCommittedEdgesByTypeLocked
+         0     0% 47.27%         1s 22.73%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).readCachedSnapshotAdjacentEdgesLocked
+         0     0% 47.27%         1s 22.73%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).readCachedSnapshotAdjacentEdgesLocked.func3
+         0     0% 47.27%      1.55s 35.23%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).withSnapshotViewLocked
+         0     0% 47.27%      1.55s 35.23%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).withSnapshotViewLocked.func1
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).GetEdgesByType
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdge
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.(*NamespacedEngine).toUserEdgesInNamespace
+         0     0% 47.27%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).edgeForwardLookup
+         0     0% 47.27%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).lookupEdgeIDByNum (inline)
+         0     0% 47.27%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).lookupEdgeNumID (inline)
+         0     0% 47.27%      0.03s  0.68%  github.com/orneryd/nornicdb/pkg/storage.DecayScoringTime
+         0     0% 47.27%      0.07s  1.59%  github.com/orneryd/nornicdb/pkg/storage.copyEdge
+         0     0% 47.27%      0.28s  6.36%  github.com/orneryd/nornicdb/pkg/storage.embeddingRecordReader.record
+         0     0% 47.27%      1.55s 35.23%  github.com/orneryd/nornicdb/pkg/storage.recoverBadgerClosedPanic
+         0     0% 47.27%      0.02s  0.45%  github.com/orneryd/nornicdb/pkg/storage.snapshotEdgeBytes
+         0     0% 47.27%      0.05s  1.14%  internal/runtime/maps.(*Map).growToSmall
+         0     0% 47.27%      0.05s  1.14%  internal/runtime/maps.newGroups (inline)
+         0     0% 47.27%      0.05s  1.14%  internal/runtime/maps.newarray
+         0     0% 47.27%      0.10s  2.27%  runtime.(*mcache).nextFree
+         0     0% 47.27%      0.09s  2.05%  runtime.(*mcache).refill
+         0     0% 47.27%      0.09s  2.05%  runtime.(*mcentral).cacheSpan
+         0     0% 47.27%      0.07s  1.59%  runtime.(*mcentral).grow
+         0     0% 47.27%      0.05s  1.14%  runtime.(*mheap).alloc
+         0     0% 47.27%      0.58s 13.18%  runtime.(*mheap).alloc.func1
+         0     0% 47.27%      0.02s  0.45%  runtime.(*mheap).allocMSpanLocked
+         0     0% 47.27%      0.58s 13.18%  runtime.(*mheap).allocSpan
+         0     0% 47.27%      0.05s  1.14%  runtime.(*mheap).initSpan
+         0     0% 47.27%      0.02s  0.45%  runtime.(*mspan).initHeapBits
+         0     0% 47.27%      0.02s  0.45%  runtime.(*mspan).refillAllocCache
+         0     0% 47.27%      0.02s  0.45%  runtime.callers
+         0     0% 47.27%      0.02s  0.45%  runtime.callers.func1
+         0     0% 47.27%      0.05s  1.14%  runtime.concatstring2
+         0     0% 47.27%      0.05s  1.14%  runtime.mProf_Malloc
+         0     0% 47.27%      0.03s  0.68%  runtime.makeslicecopy
+         0     0% 47.27%      0.04s  0.91%  runtime.mapIterStart
+         0     0% 47.27%      0.03s  0.68%  runtime.mapaccess1_faststr
+         0     0% 47.27%      0.03s  0.68%  runtime.nanotime (inline)
+         0     0% 47.27%      0.07s  1.59%  runtime.netpoll
+         0     0% 47.27%      0.02s  0.45%  runtime.newAllocBits (inline)
+         0     0% 47.27%      0.03s  0.68%  runtime.newMarkBits
+         0     0% 47.27%      0.05s  1.14%  runtime.newarray
+         0     0% 47.27%      0.22s  5.00%  runtime.newobject
+         0     0% 47.27%      0.05s  1.14%  runtime.profilealloc
+         0     0% 47.27%      0.06s  1.36%  runtime.startTheWorld.func1
+         0     0% 47.27%      0.07s  1.59%  runtime.startTheWorldWithSema
+         0     0% 47.27%      0.03s  0.68%  runtime.stkbucket
+         0     0% 47.27%      0.02s  0.45%  runtime.sysAlloc
+         0     0% 47.27%      0.02s  0.45%  runtime.sysAllocOS (inline)
+         0     0% 47.27%      0.51s 11.59%  runtime.sysUsed (inline)
+         0     0% 47.27%      0.51s 11.59%  runtime.sysUsedOS (inline)
+         0     0% 47.27%      0.67s 15.23%  runtime.systemstack
+         0     0% 47.27%      0.02s  0.45%  runtime.tracebackPCs
+         0     0% 47.27%      1.76s 40.00%  runtime/pprof.Do
+         0     0% 47.27%      0.02s  0.45%  sync.(*RWMutex).RUnlock
+         0     0% 47.27%      1.76s 40.00%  testing.(*B).launch
+         0     0% 47.27%      1.76s 40.00%  testing.(*B).runN
+         0     0% 47.27%      0.03s  0.68%  time.Now
+         0     0% 47.27%      0.03s  0.68%  time.now
+         0     0% 47.27%      0.03s  0.68%  time.runtimeNow

@@ -1,0 +1,25 @@
+# github.com/orneryd/nornicdb/pkg/cypher.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic
+    relationship_property_equality_scope_test.go:246: 
+        	Error Trace:	/Users/timothysweet/.codex/worktrees/nor42-v151-rel-equality/NornicDB/pkg/cypher/relationship_property_equality_scope_test.go:246
+        	Error:      	Not equal: 
+        	            	expected: 11
+        	            	actual  : 515
+        	Test:       	TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic
+        	Messages:   	an ONLINE equality index should answer the selected relationship instead of enumerating the type; current source has no owner for this declaration
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr
+    relationship_property_equality_scope_test.go:246: 
+        	Error Trace:	/Users/timothysweet/.codex/worktrees/nor42-v151-rel-equality/NornicDB/pkg/cypher/relationship_property_equality_scope_test.go:246
+        	Error:      	Not equal: 
+        	            	expected: 11
+        	            	actual  : 515
+        	Test:       	TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr
+        	Messages:   	an ONLINE equality index should answer the selected relationship instead of enumerating the type; current source has no owner for this declaration
+--- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup (0.09s)
+    --- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic (0.05s)
+    --- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr (0.03s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.119s
+FAIL
