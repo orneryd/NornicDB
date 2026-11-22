@@ -22,13 +22,13 @@ import (
 // observation was truncated, so every row checks both projections.
 const n15258b3nor187PublicQuery = "RETURN toLower($s) AS lowered, right(toLower($s), 1) AS last"
 
-// TestPublicToLowerFinalSigmaBoundary reproduces NOR-187 on the public query
+// TestN15258b3PortedPublicToLowerFinalSigmaBoundary reproduces NOR-187 on the public query
 // path of both parsers (default and ANTLR). Parameters carry the exact input
 // strings; expected values are the Unicode default lowercase contract
 // (SpecialCasing.txt Final_Sigma), not a recorded Neo4j run. The live Neo4j
 // reference comparison is opted into separately through
-// NORNICDB_NEO4J_REFERENCE_URI in TestPublicToLowerFinalSigmaNeo4jReference.
-func TestPublicToLowerFinalSigmaBoundary(t *testing.T) {
+// NORNICDB_NEO4J_REFERENCE_URI in TestN15258b3PortedPublicToLowerFinalSigmaNeo4jReference.
+func TestN15258b3PortedPublicToLowerFinalSigmaBoundary(t *testing.T) {
 	rows := n15258b3nor187ContractRows()
 	forEachParser(t, func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "n15258b3nor187_public"))
@@ -55,13 +55,13 @@ func TestPublicToLowerFinalSigmaBoundary(t *testing.T) {
 	})
 }
 
-// TestPublicToLowerFinalSigmaNeo4jReference compares the same exact inputs with
+// TestN15258b3PortedPublicToLowerFinalSigmaNeo4jReference compares the same exact inputs with
 // the supported Neo4j reference instance when NORNICDB_NEO4J_REFERENCE_URI is
 // set. It is skipped by default: this test never creates a network connection on
 // its own and never starts Docker or SSH. The reference version is logged, not
 // pinned here; the parent supplies and owns the reference target. A reference
 // disagreement with the Unicode contract is reported as a failure, not hidden.
-func TestPublicToLowerFinalSigmaNeo4jReference(t *testing.T) {
+func TestN15258b3PortedPublicToLowerFinalSigmaNeo4jReference(t *testing.T) {
 	uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
 	if uri == "" {
 		t.Skip("set NORNICDB_NEO4J_REFERENCE_URI to compare the NOR-187 casing contract with the live Neo4j reference")
