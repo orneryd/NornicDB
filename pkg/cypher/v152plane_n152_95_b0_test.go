@@ -132,7 +132,7 @@ func TestNOR167EscapedVariableHeadersExecute(t *testing.T) {
 		}{
 			{"UNWIND ['value'] AS `ab` RETURN `ab`", []string{"ab"}, [][]interface{}{{"value"}}},
 			{"UNWIND [] AS `ab` RETURN `ab`", []string{"ab"}, nil},
-			{"RETURN 1 AS `ab`", []string{"ab"}, [][]interface{}{{int64(1)}}},
+			{"RETURN 1 AS `a\\u0062`", []string{"ab"}, [][]interface{}{{int64(1)}}},
 		} {
 			result, err := exec.Execute(t.Context(), tc.query, nil)
 			require.NoError(t, err, tc.query)
