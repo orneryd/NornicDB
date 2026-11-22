@@ -200,13 +200,19 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	httpresponse.WritePropertyJSON(w, http.StatusOK, response)
 }
 
+func (s *Server) readEmbeddingMonitoringStats(ctx context.Context) *nornicdb.QueueStats {
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	return s.db.EmbedQueueMonitoringStats(ctx)
+}
+
 // handleEmbedStats returns embedding worker statistics.
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeFineGrainedDatabaseOperation(w, r, "", "embedding.status.read", auth.PermRead) {
 		return
 	}
 
-	stats := s.db.EmbedQueueStats()
+	stats := s.readEmbeddingMonitoringStats(r.Context())
 	// Keep contended stats reads bounded. total_embeddings uses authoritative
 	// aggregate count to avoid false zeros.
 	readIntWithTimeout := func(timeout time.Duration, fallback int, fn func() int) int {
@@ -230,11 +236,10 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 	vectorIndexDims := readIntWithTimeout(100*time.Millisecond, s.config.EmbeddingDimensions, func() int {
 		return s.db.VectorIndexDimensionsCached()
 	})
-	pendingEmbeddings := readIntWithTimeout(100*time.Millisecond, -1, func() int {
-		return s.db.PendingEmbeddingsCount()
-	})
-
 	if stats == nil {
+		pendingEmbeddings := readIntWithTimeout(100*time.Millisecond, -1, func() int {
+			return s.db.PendingEmbeddingsCount()
+		})
 		response := map[string]interface{}{
 			"enabled":                 false,
 			"message":                 "Auto-embed not enabled",
@@ -252,7 +257,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		"enabled":                 true,
 		"stats":                   stats,
 		"total_embeddings":        totalEmbeddings,
-		"pending_nodes":           pendingEmbeddings,
+		"pending_nodes":           stats.Pending,
 		"configured_model":        s.config.EmbeddingModel,
 		"configured_dimensions":   s.config.EmbeddingDimensions,
 		"configured_provider":     s.config.EmbeddingProvider,

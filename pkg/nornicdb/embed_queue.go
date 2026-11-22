@@ -437,11 +437,29 @@ type EmbeddingFailure struct {
 func (ew *EmbedWorker) QueueLen() int { return ew.PendingEmbeddingsCount() }
 
 func (ew *EmbedWorker) Stats() WorkerStats {
+	return ew.statsWithPending(ew.PendingEmbeddingsCount())
+}
+
+// monitoringStats reports an unknown pending count while the claim owner is
+// busy or the request's pending-count deadline expires.
+func (ew *EmbedWorker) monitoringStats(ctx context.Context) WorkerStats {
+	pending := -1
+	if ew.storage != nil && ctx.Err() == nil && ew.claimMu.TryLock() {
+		count := ew.pendingEmbeddingsCountLocked(ctx)
+		ew.claimMu.Unlock()
+		if ctx.Err() == nil {
+			pending = count
+		}
+	}
+	return ew.statsWithPending(pending)
+}
+
+func (ew *EmbedWorker) statsWithPending(pending int) WorkerStats {
 	inFlight := int(ew.inFlight.Load())
 	return WorkerStats{
 		Running:   inFlight > 0,
 		InFlight:  inFlight,
-		Pending:   ew.PendingEmbeddingsCount(),
+		Pending:   pending,
 		Processed: int(ew.processed.Load()),
 		Failed:    int(ew.failed.Load()),
 		Parked:    int(ew.parked.Load()),
