@@ -25,9 +25,9 @@ type s1Attempt struct {
 // small stored body may not make a decode take gigabytes.
 func TestPR1826S1MutatedBodyMemory(t *testing.T) { s1MutatedBodyMemory(t, false) }
 
-// TestPR1826S1MutatedOtherMemory is the same search without the bodies whose
+// TestPR1826S1MutatedRemainingMemory is the same search without the bodies whose
 // 32-bit string or byte-string header claims more than 1 MiB.
-func TestPR1826S1MutatedOtherMemory(t *testing.T) { s1MutatedBodyMemory(t, true) }
+func TestPR1826S1MutatedRemainingMemory(t *testing.T) { s1MutatedBodyMemory(t, true) }
 
 func s1MutatedBodyMemory(t *testing.T, skipClaims bool) {
 	b, _ := createTestBadgerEngineOnDisk(t)
