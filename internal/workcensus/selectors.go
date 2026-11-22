@@ -507,8 +507,18 @@ func matches(s Selector, site sourceSite) bool {
 		if sig == nil {
 			return false
 		}
-		if len(s.ReceiverTypes) > 0 && !site.unresolvedTargets && (sig.Recv() == nil || !contains(s.ReceiverTypes, typeString(sig.Recv().Type()))) {
-			return false
+		if len(s.ReceiverTypes) > 0 && !site.unresolvedTargets {
+			receiver := sig.Recv()
+			// A bound method or method expression has a receiver on its
+			// declaration even when the callable signature omits it.
+			if receiver == nil {
+				if method, ok := site.target.(*types.Func); ok {
+					receiver = method.Signature().Recv()
+				}
+			}
+			if receiver == nil || !contains(s.ReceiverTypes, typeString(receiver.Type())) {
+				return false
+			}
 		}
 		if len(s.ResultTypes) > 0 {
 			found := false
