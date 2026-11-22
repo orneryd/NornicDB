@@ -1257,7 +1257,11 @@ func (r *temporalValidationRead) get(ctx context.Context, tx *BadgerTransaction,
 		return nil, err
 	}
 	engine := tx.engine
-	cut := engine.db.oracle.published.Load()
+	oracle, _ := nativePublicationOracle(engine)
+	if oracle == nil || engine.work.Closing() {
+		return nil, ErrStorageClosed
+	}
+	cut := oracle.published.Load()
 	if r.edgeType == edgeType && r.namespace == namespace && r.readCut == cut {
 		if err := engine.pendingNamespaceConflict(""); err != nil {
 			return nil, err
