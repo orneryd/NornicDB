@@ -12,8 +12,7 @@ import (
 // The vector index and embedding procedures read the call's evaluated
 // arguments, so a value bound earlier in the statement is the same argument
 // as a literal or a parameter. A null argument is the procedure's failure
-// (Neo4j 5.26.30: ProcedureCallFailed for createNodeIndex(null, ...)), a
-// value of another type a TypeError (#907).
+// (ProcedureCallFailed). An incompatible bound parameter fails during admission.
 func TestVectorProceduresReadEvaluatedArguments(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
@@ -65,10 +64,10 @@ func TestVectorProceduresReadEvaluatedArguments(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", status(err), query)
 		}
 	})
-	t.Run("value of another type is a TypeError", func(t *testing.T) {
+	t.Run("incompatible parameter fails admission", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('vi_bad', 'LINKS', 'embedding', $dimension)", map[string]interface{}{"dimension": "3"})
 		require.Error(t, err)
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", status(err))
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", status(err))
 	})
 	t.Run("unsupported similarity function", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('vi_bad', 'LINKS', 'embedding', 3, 'manhattan')", nil)

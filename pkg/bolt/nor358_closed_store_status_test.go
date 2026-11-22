@@ -3,6 +3,7 @@ package bolt
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -32,7 +33,7 @@ func TestNOR358BoltClosedStoreStatusClassification(t *testing.T) {
 				{"write", "CREATE (n:Doc {id:'b'}) RETURN n.id AS id", []string{"CREATE (:Doc {id:'a'})"}},
 			} {
 				t.Run(operation.name, func(t *testing.T) {
-					base := storage.NewMemoryEngine()
+					base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "test"), cypher.QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					server := New(&Config{Port: 0, MaxConnections: 10, ReadBufferSize: 8192, WriteBufferSize: 8192}, &cypherQueryExecutor{executor: executor})

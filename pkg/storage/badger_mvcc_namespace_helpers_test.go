@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,7 +134,7 @@ func TestRecoverNamespaceMVCCFloorScopesNodeAndEdgeHeads(t *testing.T) {
 func BenchmarkRecoverNamespaceMVCCFloorWithUnrelatedKeys(b *testing.B) {
 	for _, count := range []int{0, 30000} {
 		b.Run(fmt.Sprintf("%d_nodes_and_edges", count), func(b *testing.B) {
-			engine, err := NewBadgerEngine(b.TempDir())
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, engine.Close()) })
 			for start := 0; start < count; start += 1000 {

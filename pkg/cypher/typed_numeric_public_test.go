@@ -292,9 +292,25 @@ func TestTypedNumericSubscriptBounds(t *testing.T) {
 			}
 		}
 	}
-	for _, index := range []interface{}{float64(1), float32(1), float64(0x1p63), float32(0x1p63), 1.5, math.Inf(1), math.NaN(), true} {
-		_, err := exec.Execute(context.Background(), "RETURN $xs[$index] AS v", map[string]interface{}{"xs": []int8{3, 1, 3}, "index": index})
-		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	const query = "RETURN $xs[$index] AS v"
+	for _, disabled := range []bool{false, true} {
+		rowValueProgramsDisabled.Store(disabled)
+		for _, index := range []interface{}{float64(1), float32(1), float64(0x1p63), float32(0x1p63), 1.5, math.Inf(1), math.NaN()} {
+			t.Run(fmt.Sprintf("runtime/programsDisabled=%t/%T/%v", disabled, index, index), func(t *testing.T) {
+				params := map[string]interface{}{"xs": []int8{3, 1, 3}, "index": index}
+				_, err := exec.Execute(t.Context(), "EXPLAIN "+query, params)
+				require.NoError(t, err)
+				_, err = exec.Execute(t.Context(), query, params)
+				requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
+			})
+		}
+		t.Run(fmt.Sprintf("admission/programsDisabled=%t/boolean", disabled), func(t *testing.T) {
+			params := map[string]interface{}{"xs": []int8{3, 1, 3}, "index": true}
+			for _, prefix := range []string{"EXPLAIN ", ""} {
+				_, err := exec.Execute(t.Context(), prefix+query, params)
+				requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+			}
+		})
 	}
 }
 
