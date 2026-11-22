@@ -204,13 +204,16 @@ func TestPR1826S1ModelSequences(t *testing.T) {
 					b.nodeCacheMaxEntries = bud.entries
 					b.nodeBodyCacheMaxBytes = bud.bodyBytes
 				}
-				s1RunModel(t, b, rand.New(rand.NewSource(seed)), 2500)
+				// With write-behind on, a transaction opened earlier sees later
+				// acknowledged writes (both builds: S1.md), so that budget
+				// leaves the snapshot operations out.
+				s1RunModel(t, b, rand.New(rand.NewSource(seed)), 2500, !bud.writeBehind)
 			})
 		}
 	}
 }
 
-func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int) {
+func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int, snapshots bool) {
 	ctx := t.Context()
 	model := s1Model{}
 	type snap struct {
@@ -249,6 +252,7 @@ func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int) {
 	toModel := func(l []string, p map[string]any) s1ModelNode {
 		return s1ModelNode{strings.Join(l, ","), s1NormProps(p)}
 	}
+	scribble := true
 	check := func(what string, want s1ModelNode, exists bool, names []string, node *Node, err error) {
 		if !exists {
 			if !errors.Is(err, ErrNotFound) {
@@ -270,7 +274,9 @@ func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int) {
 		if strings.Join(node.Labels, ",") != want.labels {
 			fail("%s: labels want %s got %v", what, want.labels, node.Labels)
 		}
-		s1Scribble(node.Properties)
+		if scribble {
+			s1Scribble(node.Properties)
+		}
 	}
 	for step := 0; step < steps; step++ {
 		n := id()
@@ -340,6 +346,9 @@ func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int) {
 				delete(model, n)
 			}
 		case 16:
+			if !snapshots {
+				continue
+			}
 			if len(snaps) < 3 {
 				note("%d snapshot open", step)
 				tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
@@ -372,12 +381,17 @@ func s1RunModel(t *testing.T, b *BadgerEngine, r *rand.Rand, steps int) {
 				names := s1RandomProjection(r)
 				note("%d snapshot %d labelscan %q", step, i, names)
 				seen := 0
+				// A transaction retains its completed label streams as shared
+				// immutable images (badger_transaction.go:206), so a visitor
+				// only reads them.
+				scribble = false
 				err := s.tx.StreamNodesByLabelProjected(ctx, "M", names, func(node *Node) error {
 					want, ok := s.model[node.ID]
 					seen++
 					check(fmt.Sprintf("snapshot %d labelscan %s", i, node.ID), want, ok, names, node, nil)
 					return nil
 				})
+				scribble = true
 				if err != nil || seen != len(s.model) {
 					fail("snapshot labelscan: err=%v seen=%d want %d", err, seen, len(s.model))
 				}
