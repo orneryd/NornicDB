@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.2]
 
+- Avoid rebuilding bound-type scopes when a Cypher statement only returns its parameters, while preserving type checks for expressions and composed queries.
+
 - Correct APOC text cleaning, camel-case conversion, URL/Base64 encoding and decode errors, Unicode index offsets, empty capitalize errors and null decapitalize results. Regex split/replace compatibility remains separate.
 
 - Preserve quoted Cypher in autocomplete suggestions through model-response cleanup and browser selection, and connect the endpoint to the bundled Watcher action.
