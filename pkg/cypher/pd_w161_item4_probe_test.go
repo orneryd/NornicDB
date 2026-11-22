@@ -25,8 +25,6 @@ func TestPDW161Item4KeyedRelationshipShapes(t *testing.T) {
 				CREATE (a)-[:PDW161R {id:'r1-'+toString(i)}]->(m),
 				       (m)-[:PDW161R {id:'r2-'+toString(i)}]->(z)`, map[string]interface{}{"n": n})
 			require.NoError(t, err)
-			_, err = exec.Execute(ctx, "CREATE INDEX pd_w161_unlabelled IF NOT EXISTS FOR (n:PDW161Node) ON (n.id)", nil)
-			require.NoError(t, err)
 			first, err := exec.Execute(ctx, "MATCH ()-[r:PDW161R]->() RETURN elementId(r) AS id LIMIT 1", nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, first.Rows)
