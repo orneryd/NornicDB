@@ -25,7 +25,16 @@ func parseLeadingUseClause(ctx context.Context, cypher string, stage cyphertext.
 // (fabric.ParseUseClause, Neo4j 5.26's) and reports a rejected clause as
 // Neo4j's SyntaxError. inSubquery is true for a CALL { } body.
 func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage cyphertext.SourceStage) (fabric.UseClause, string, bool, error) {
-	clause, remaining, hasUse, err := fabric.ParseUseClause(ctx, cypher, inSubquery, stage)
+	return useClauseResult(fabric.ParseUseClause(ctx, cypher, inSubquery, stage))
+}
+
+// parseAcceptedSubqueryUseClause shares Fabric's importing-WITH routing while
+// retaining the executor's USE syntax-error mapping. The body is accepted source.
+func parseAcceptedSubqueryUseClause(ctx context.Context, body string) (fabric.UseClause, string, bool, error) {
+	return useClauseResult(fabric.ParseAcceptedSubqueryUseClause(ctx, body, clauseKeywordUsedAsName))
+}
+
+func useClauseResult(clause fabric.UseClause, remaining string, hasUse bool, err error) (fabric.UseClause, string, bool, error) {
 	if err == nil {
 		return clause, remaining, hasUse, nil
 	}
