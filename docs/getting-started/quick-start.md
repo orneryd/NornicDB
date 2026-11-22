@@ -280,3 +280,5 @@ docker run -d \
 
 **Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**
 **Production ready?** → **[Docker Deployment Guide](./docker-deployment.md)**
+
+Finding NornicDB useful? A [GitHub star](https://github.com/orneryd/NornicDB) helps others discover the project.
