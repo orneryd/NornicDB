@@ -4821,6 +4821,12 @@
       "pos": "pkg/storage/badger_temporal_index.go:781"
     },
     {
+      "field": "pkg/storage.temporalValidationRead.readCut",
+      "class": "read cache physical source cut",
+      "func": "pkg/storage.temporalValidationRead.get",
+      "pos": "pkg/storage/badger_transaction_validation.go:1285"
+    },
+    {
       "field": "pkg/storage.uniqueConstraintSeenTable.keys",
       "class": "constraint lock request scratch",
       "func": "pkg/storage.SchemaManager.acquireUniqueConstraintLocks",
@@ -5033,8 +5039,6 @@
     }
   ],
   "pending": null,
-  "violations": [
-    "unclassified field: pkg/storage.temporalValidationRead.readCut is changed at pkg/storage/badger_transaction_validation.go:1285 in pkg/storage.temporalValidationRead.get"
-  ],
+  "violations": null,
   "unordered": null
 }
