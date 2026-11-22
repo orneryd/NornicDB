@@ -275,6 +275,12 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := e.validateMatchSemanticScopes(ctx, parameterQuery, cypher25); err != nil {
 		return err
 	}
+	// A whole RETURN of bare parameters consumes no runtime type. Its cached
+	// syntax proof avoids rebuilding scopes after value-independent admission;
+	// all expressions, aliases feeding consumers and composed bodies still walk.
+	if startsWithKeywordFold(parameterQuery, "RETURN") && returnProjectionPlanFor(ctx, parameterQuery).parameterPassthrough {
+		return nil
+	}
 	return checkedWithoutUnaryPlus(parameterQuery, cypher25, func(text string) error {
 		return e.validateMatchSemanticScopesUncached(ctx, text, cypher25, params)
 	})

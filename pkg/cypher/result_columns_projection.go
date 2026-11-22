@@ -55,6 +55,9 @@ type returnProjectionPlan struct {
 	projections     []returnProjection
 	columns         []string
 	hasAggregate    bool
+	// parameterPassthrough proves the entire cached source is one plain RETURN
+	// of bare parameters. Its admission cannot depend on their runtime types.
+	parameterPassthrough bool
 }
 
 // returnProjectionPlans caches parsed RETURN clauses by text. Plans are
@@ -100,6 +103,7 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	if ctx.Err() != nil {
 		return &returnProjectionPlan{}
 	}
+	plan.parameterPassthrough = plan.provesParameterPassthrough(ctx, clause)
 	returnProjectionPlans.Lock()
 	if ctx.Err() != nil {
 		returnProjectionPlans.Unlock()
@@ -111,6 +115,26 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	returnProjectionPlans.plans[clause] = plan
 	returnProjectionPlans.Unlock()
 	return plan
+}
+
+func (plan *returnProjectionPlan) provesParameterPassthrough(ctx context.Context, source string) bool {
+	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) == 0 {
+		return false
+	}
+	for _, projection := range plan.projections {
+		whole := false
+		cyphertext.ParameterReferences(projection.expr, func(_ string, start, end int) {
+			whole = start == 0 && end == len(projection.expr)
+		})
+		if !whole {
+			return false
+		}
+	}
+	// canonicalQueryClause can return the first clause of a larger statement.
+	// The shared pipeline reader proves the whole source has one branch and
+	// one RETURN; no UNION, importing clause or tail can inherit this proof.
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, source)
+	return ok && len(clauses) == 1 && clauses[0].kind == pipelineClauseReturn
 }
 
 // tryFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
