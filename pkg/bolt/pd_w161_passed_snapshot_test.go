@@ -73,24 +73,28 @@ func pdW161PassedSnapshot(t *testing.T, driver neo4j.DriverWithContext, database
 	ctx := t.Context()
 	peer := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database, AccessMode: neo4j.AccessModeWrite})
 	defer peer.Close(ctx)
+	// SessionWithContext.Run takes optional transaction configurers; adapt it to pdW161Run.
+	peerRun := func(ctx context.Context, query string, params map[string]any) (neo4j.ResultWithContext, error) {
+		return peer.Run(ctx, query, params)
+	}
 	if reference {
 		const clean = "MATCH (n:PDW161Fixture) DETACH DELETE n"
-		pdW161Collect(t, peer.Run, clean, nil)
-		defer pdW161Collect(t, peer.Run, clean, nil)
-		defer pdW161Collect(t, peer.Run, "DROP CONSTRAINT pd_w161_link IF EXISTS", nil)
+		pdW161Collect(t, peerRun, clean, nil)
+		defer pdW161Collect(t, peerRun, clean, nil)
+		defer pdW161Collect(t, peerRun, "DROP CONSTRAINT pd_w161_link IF EXISTS", nil)
 	}
-	pdW161Collect(t, peer.Run, "CREATE CONSTRAINT pd_w161_link IF NOT EXISTS FOR ()-[r:PDW161_LINK]-() REQUIRE r.id IS UNIQUE", nil)
+	pdW161Collect(t, peerRun, "CREATE CONSTRAINT pd_w161_link IF NOT EXISTS FOR ()-[r:PDW161_LINK]-() REQUIRE r.id IS UNIQUE", nil)
 	if reference {
-		_, info := pdW161Collect(t, peer.Run, "CALL db.awaitIndexes(300)", nil)
+		_, info := pdW161Collect(t, peerRun, "CALL db.awaitIndexes(300)", nil)
 		t.Logf("PDW161_REFERENCE agent=%s", info.Server().Agent())
 	}
-	pdW161Collect(t, peer.Run, "CREATE (:PDW161Fixture:PDW161Hub {id:'hub'})", nil)
+	pdW161Collect(t, peerRun, "CREATE (:PDW161Fixture:PDW161Hub {id:'hub'})", nil)
 	const seed = "MATCH (hub:PDW161Hub {id:'hub'}) " +
 		"UNWIND range($from,$to) AS i " +
 		"CREATE (hub)-[:PDW161_LINK {id:'h'+toString(i)}]->(:PDW161Fixture) " +
 		"CREATE (:PDW161Fixture)-[:PDW161_LINK {id:'n'+toString(i)}]->(:PDW161Fixture)"
 	for from := 0; from < size; from += 500 {
-		pdW161Collect(t, peer.Run, seed, map[string]any{"from": from, "to": min(from+500, size)-1})
+		pdW161Collect(t, peerRun, seed, map[string]any{"from": from, "to": min(from+500, size)-1})
 	}
 	const query = "MATCH ()-[r:PDW161_LINK {id:$x}]->() RETURN r.id AS id"
 	const markerCount = "MATCH (n:PDW161Fixture:PDW161Marker {mode:$mode}) RETURN count(n)"
@@ -141,7 +145,7 @@ func pdW161PassedSnapshot(t *testing.T, driver neo4j.DriverWithContext, database
 			defer writer.Close(ctx)
 			pdW161Collect(t, writer.Run, "CREATE (:PDW161Fixture:PDW161Marker {mode:$mode})", params)
 			require.NoError(t, writer.Commit(ctx))
-			checkMarker(peer.Run, 1)
+			checkMarker(peerRun, 1)
 			t.Logf("PDW161_PEER_COMMITTED degree=%d mode=%s marker_visible_to_peer=1", size, mode.name)
 
 			measure("passed", tx.Run)
