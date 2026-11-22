@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // These probes intentionally log actual observations instead of asserting the
@@ -65,5 +68,29 @@ func TestPR1826VerifyReplacementDemandCache(t *testing.T) {
 	stale, staleErr := exec.Execute(t.Context(), query, nil)
 	fresh, freshErr := exec.Execute(t.Context(), "MATCH (m:VReg {key:'one'}) RETURN size(tail([m,m])) AS v", nil)
 	t.Logf("OBS r2_f2 built_in=%#v repeated=%#v err=%v fresh_variable=%#v err=%v", first.Rows, stale.Rows, staleErr, fresh.Rows, freshErr)
+}
+
+func TestPR1826VerifyManagedVectorNode(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+	if err != nil { t.Fatalf("database manager: %v", err) }
+	t.Cleanup(func() { _ = manager.Close() })
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "verify_managed"}); err != nil { t.Fatalf("create database: %v", err) }
+	managed, err := manager.GetStorage("verify_managed")
+	if err != nil { t.Fatalf("managed storage: %v", err) }
+	exec := NewStorageExecutor(managed)
+	if _, err := exec.Execute(t.Context(), "CREATE VECTOR INDEX verify_vector FOR (n:VEntity) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil); err != nil { t.Fatalf("vector index: %v", err) }
+	for _, stmt := range []string{
+		"CREATE (:VEntity {uuid:'a', body:'alpha', emb:[1.0,0.0,0.0]})",
+		"CREATE (:VEntity {uuid:'b', body:'beta', emb:[0.0,1.0,0.0]})",
+	} { if _, err := exec.Execute(t.Context(), stmt, nil); err != nil { t.Fatalf("seed: %v", err) } }
+	service := search.NewService(managed, 3, nil)
+	t.Cleanup(func() { _ = service.Close() })
+	if err := service.BuildIndexes(t.Context()); err != nil { t.Fatalf("build search indexes: %v", err) }
+	exec.SetSearchService(service)
+	query := "MATCH (n:VEntity) RETURN {node:n} AS x, vector.similarity.cosine(n.emb,$q) AS score ORDER BY score DESC LIMIT 2"
+	result, err := exec.Execute(t.Context(), query, map[string]any{"q": []float64{1, 0, 0}})
+	t.Logf("OBS r1_f6 managed_vector rows=%#v err=%v fastpath=%v", result, err, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 }
 
