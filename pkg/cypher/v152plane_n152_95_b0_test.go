@@ -120,6 +120,33 @@ func TestNOR66MalformedMapClassification(t *testing.T) {
 	})
 }
 
+// TestNOR167EscapedVariableHeadersExecute checks the three exact variable
+// header statements through Execute on both parser frontends.
+func TestNOR167EscapedVariableHeadersExecute(t *testing.T) {
+	withCypherParsers(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor167_headers"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
+		for _, tc := range []struct {
+			query   string
+			columns []string
+			rows    [][]interface{}
+		}{
+			{"UNWIND ['value'] AS `ab` RETURN `ab`", []string{"ab"}, [][]interface{}{{"value"}}},
+			{"UNWIND [] AS `ab` RETURN `ab`", []string{"ab"}, nil},
+			{"RETURN 1 AS `ab`", []string{"ab"}, [][]interface{}{{int64(1)}}},
+		} {
+			result, err := exec.Execute(t.Context(), tc.query, nil)
+			require.NoError(t, err, tc.query)
+			require.Equal(t, tc.columns, result.Columns, tc.query)
+			if tc.rows == nil {
+				require.Empty(t, result.Rows, tc.query)
+			} else {
+				require.Equal(t, tc.rows, result.Rows, tc.query)
+			}
+			t.Logf("statement=%q columns=%v rows=%v", tc.query, result.Columns, result.Rows)
+		}
+	})
+}
+
 // TestNOR66MalformedMapStageWriteDoesNotPublish proves the compile-time
 // rejection runs before execution: each statement stages a write before the
 // malformed map and leaves no node or relationship behind.
