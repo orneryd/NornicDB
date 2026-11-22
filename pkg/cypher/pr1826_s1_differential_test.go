@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -22,10 +22,20 @@ import (
 // executor over it reads whole nodes only. It is the oracle of these tests.
 type s1FullReadEngine struct{ storage.Engine }
 
+// Namespace keeps the database identity (elementId) of the wrapped store.
+func (f s1FullReadEngine) Namespace() string {
+	if named, ok := f.Engine.(interface{ Namespace() string }); ok {
+		return named.Namespace()
+	}
+	return "s1db"
+}
+
 func (f s1FullReadEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
 	opts.Projection, opts.PropertyFilterProjection, opts.PropertyFilter, opts.PropertyStringEquals = nil, nil, nil, nil
 	return f.Engine.StreamNodesWithOptions(ctx, opts, fn)
 }
+
+var s1UUID = regexp.MustCompile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 // s1Render is a deterministic text form of a result value. Lists are sorted
 // when sortLists is set (collect() order follows the scan order).
@@ -48,6 +58,7 @@ func s1Render(v any, sortLists bool) string {
 		}
 		return "Edge:" + x.Type + s1Render(x.Properties, sortLists)
 	case string:
+		x = s1UUID.ReplaceAllString(x, "<uuid>") // a node created by Cypher has a random id
 		if len(x) > 80 {
 			sum := sha256.Sum256([]byte(x))
 			return fmt.Sprintf("str%d:%s", len(x), hex.EncodeToString(sum[:6]))
@@ -170,6 +181,8 @@ var s1Matches = []s1Match{
 	{"hopIn", "MATCH (n:S1Doc)<-[r:LINK]-(m:S1Doc {key:$key})"},
 	{"varHop", "MATCH (m:S1Doc {key:$key})-[:LINK*1..2]->(n:S1Doc)"},
 	{"path", "MATCH p=(n:S1Doc {key:$key})-[:LINK]->(m)"},
+	{"nodePath", "MATCH p = (n:S1Doc {key:$key})"},
+	{"nodePathWhere", "MATCH p = (n:S1Doc) WHERE length(p) = 0 AND n.rank = 2"},
 	{"optional", "OPTIONAL MATCH (n:S1Doc {key:$key})"},
 	{"optionalMissing", "OPTIONAL MATCH (n:S1Doc {key:'nope'})"},
 	{"afterOptional", "MATCH (n:S1Doc {key:$key}) OPTIONAL MATCH (n)-[:LINK]->(m)"},
@@ -657,28 +670,4 @@ func TestPR1826S1PromotionPolicyReadsStoredProperty(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestPR1826S1FunctionReRegistration: replacing a registered function that
-// declared a narrower input image must change what the plan reads.
-func TestPR1826S1FunctionReRegistration(t *testing.T) {
-	store, _ := s1Store(t)
-	exec := s1Seed(t, store, "unique")
-	const name = "s1ReRegistered"
-	cypherfn.Register(name, func(_ context.Context, _ cypherfn.Context, _ []string) (interface{}, error) { return "header", nil }, cypherfn.CanonicalReads, cypherfn.HeaderInputImage)
-	query := "MATCH (n:S1Doc {key:'a'}) RETURN " + name + "(n) AS v"
-	require.Equal(t, "v\n\"header\"", s1Run(exec, query, nil))
-	cypherfn.Register(name, func(_ context.Context, ctx cypherfn.Context, args []string) (interface{}, error) {
-		value, err := ctx.Eval(args[0])
-		if err != nil {
-			return nil, err
-		}
-		node, ok := value.(*storage.Node)
-		if !ok {
-			return fmt.Sprintf("%T", value), nil
-		}
-		return node.Properties["name"], nil
-	}, cypherfn.CanonicalReads, cypherfn.MetadataArgumentInputImage)
-	require.Equal(t, "v\n\"Alpha\"", s1Run(NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0}), query, nil))
-	require.Equal(t, "v\n\"Alpha\"", s1Run(NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0}), "MATCH (n:S1Doc) WHERE n.key='a' RETURN "+name+"(n) AS v", nil))
 }

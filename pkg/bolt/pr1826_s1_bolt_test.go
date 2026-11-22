@@ -175,7 +175,10 @@ func TestPR1826S1BoltTransactions(t *testing.T) {
 		}
 		require.Equal(t, `["alice",1]`, read(inSnapshot, narrow), "the older snapshot keeps its values")
 		require.Equal(t, `["alice",1,"alice-secret-1",null]`, read(inSnapshot, wide))
-		require.Equal(t, `["alice",2]`, s1BoltRun(ctx, inSnapshot, narrow, "k2", ""))
+		if got := s1BoltRun(ctx, inSnapshot, narrow, "k2", ""); got != `["alice",2]` {
+			t.Errorf("S1MISMATCH bolt snapshot commit=%v: a node deleted after the snapshot began, read through its unique key: want [alice,2] got %q", commit, got)
+		}
+		t.Logf("S1SNAP commit=%v scan=%q byRank=%q", commit, s1BoltRun(ctx, inSnapshot, "MATCH (n:Doc) WHERE n.owner = $owner RETURN count(n)", "", "alice"), s1BoltRun(ctx, inSnapshot, "MATCH (n:Doc) WHERE n.rank = 2 RETURN n.owner", "", ""))
 	}
 	require.NoError(t, snapshot.Commit(ctx))
 	require.Equal(t, `["pending",1,null,"x"]`, s1BoltRun(ctx, func(q string, p map[string]any) (neo4jdriver.ResultWithContext, error) { return three.Run(ctx, q, p) }, wide, "k1", ""))
