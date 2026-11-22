@@ -165,4 +165,43 @@ func TestGapS35MapOrder(t *testing.T) {
 		return replication.TranscodeV4WALPayload(0, "replication_command", payload1)
 	}))
 	gapS35Boundary(t, "named1-bypass", node1, 16)
+	gapS35HeaderFit(t, "named16", node16, 32)
+	gapS35HeaderFit(t, "named1", node1, 8)
+}
+
+// gapS35HeaderFit transcodes the at-limit record n times and, for each output,
+// computes what the frame check (checkWALEntrySize, wal_entry_codec.go:105-118)
+// measures: the JSON header of the converted entry, whose Checksum field is
+// CRC32-C of the converted data (wal_v4_file_migration.go:284) written as a
+// decimal number, plus the data length, against the 16 MiB frame.
+func gapS35HeaderFit(t *testing.T, label string, node []byte, n int) {
+	base, err := replication.TranscodeV4WALPayload(0, "replication_command", gapS35Payload(t, node, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := storage.WALEntry{Sequence: 1, Timestamp: time.Unix(1794000000, 0).UTC(), Operation: "replication_command", Checksum: 999999999}
+	header, _ := json.Marshal(probe)
+	pad := (16 << 20) - 8 - len(header) - len(base)
+	payload := gapS35Payload(t, node, pad)
+	table := crc32.MakeTable(crc32.Castagnoli)
+	hist := map[string]int{}
+	for i := 0; i < n; i++ {
+		out, err := replication.TranscodeV4WALPayload(0, "replication_command", payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := crc32.Checksum(out, table)
+		h := storage.WALEntry{Sequence: 1, Timestamp: probe.Timestamp, Operation: "replication_command", Checksum: sum}
+		hb, _ := json.Marshal(h)
+		fits := len(hb) <= (16<<20)-8-len(out)
+		hist[fmt.Sprintf("data=%dB checksum_digits=%d header=%dB fits=%t", len(out), len(fmt.Sprint(sum)), len(hb), fits)]++
+	}
+	keys := make([]string, 0, len(hist))
+	for k := range hist {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		t.Logf("GAPS35 HEADERFIT %s %s x%d of %d", label, k, hist[k], n)
+	}
 }
