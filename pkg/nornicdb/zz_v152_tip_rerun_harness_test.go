@@ -22,9 +22,18 @@ func TestV152TipRerunHarness(t *testing.T) {
 		Env    map[string]string `json:"env"`
 	}
 	var steps []step
-	if raw := os.Getenv("TNRUN_HARNESS_STEPS"); raw == "" {
+	raw := os.Getenv("TNRUN_HARNESS_STEPS")
+	if raw == "" {
 		t.Skip("TNRUN_HARNESS_STEPS is not set")
-	} else if err := json.Unmarshal([]byte(raw), &steps); err != nil || len(steps) == 0 {
+	}
+	err := json.Unmarshal([]byte(raw), &steps)
+	if err != nil {
+		// tnrun transports --env values through Bash; accept the JSON string
+		// form with escaped quotes as well as the literal JSON form.
+		normalized := strings.ReplaceAll(raw, `\"`, `"`)
+		err = json.Unmarshal([]byte(normalized), &steps)
+	}
+	if err != nil || len(steps) == 0 {
 		t.Fatalf("invalid TNRUN_HARNESS_STEPS: %v", err)
 	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
