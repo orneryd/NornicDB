@@ -31,3 +31,15 @@ Five 100 ms samples per workload on the same Apple M2 Max and Go 1.27.4. Both bi
 | Expanding dotted I and final sigma | 999 → 1706 | 656 → 800 | 3 → 4 |
 
 CPU profiles show added time in classifying Unicode characters for sigma context. These are the measured costs of the approved rule in the tested function, without an end-to-end query throughput claim. Raw samples and profiles are retained in the task archive.
+
+## Repeated code point classification
+
+The follow-up reuses the previous code point's classification when an adjacent code point is identical. The cursor and supplementary boundary logic still run for every code point. Classification depends only on the code point, and the cached value belongs to one invocation. The matched experiment used the exact follow-up source, SHA-256 `ba907eb95f9cdb423ed8defdf6169bd2c074333c2024f8902878e8d07df53ebd`.
+
+Five 100 ms samples per workload compared the initial adapter with this source on Apple M2 Max. The 31-mark workload improved from 1,972 to 824 ns, the 1,024-mark workload from 59.8 to 18.6 µs, and 1,024 capital sigmas from 57.1 to 17.8 µs. The short Greek word moved from 514.8 to 516.1 ns and the three ASCII workloads changed by +1.4%, +0.3%, and -0.1%. Allocation counts matched in all nine cells. The matched CPU profiles show the classifier and `unicode.is16` dropping out of the leading sample population. This comparison uses the initial corrected adapter as its control. The earlier table uses the original release implementation as its control.
+
+Separate allocation profiles used 200 iterations of the 1,024-mark workload with `-test.memprofilerate=1`. Both binaries measured 9,728 B/op and 8 allocations/op. Timings for these instrumented runs are excluded from the comparison above.
+
+The follow-up branched from `d85ad3f436bd9f068a4090c87789efd79346d639`, the release merge of #1935. With the cache, the casing package passed with the pinned profile in normal and race runs (0.699s and 3.467s). Both parsers and HTTP passed normal (1.073s and 1.212s) and race (2.587s and 5.323s). The casing scan had 97.6% statement coverage, and the casing package had 88.7%. An initial coverage invocation used an incorrect snapshot directory. The corrected invocation reran the full casing package and profile.
+
+`make verify-list BASE=origin/release/v1.5.2` passed. The full `make verify BASE=origin/release/v1.5.2 FAIL_FAST=1` run started with the reviewed source before commit. It passed localization, UI and native build and entered package coverage. The complete result and any coverage or allocation limitations are recorded on the PR. The staged indexed duplicate check again failed before candidate reporting.

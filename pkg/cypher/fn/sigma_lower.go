@@ -39,6 +39,7 @@ func lowerCaseSigma(text string) string {
 	}
 	var previous, beforePrevious rune
 	previousAt := -1
+	var info uint8
 	for at := 0; at < len(text); {
 		r, width := cyphertext.ReadCodepoint(text, at)
 		// Java's random-access boundary check starts on the previous low
@@ -48,8 +49,10 @@ func lowerCaseSigma(text string) string {
 		if previous > 0xffff && previousAt > 0 && beforePrevious != 0xffff {
 			finish()
 		}
+		if at == 0 || r != previous {
+			info = sigmaContext(r)
+		}
 		beforePrevious, previous, previousAt = previous, r, at
-		info := sigmaContext(r)
 		kind := info & sigmaKindMask
 		if kind == sigmaIgnore {
 			at += width
