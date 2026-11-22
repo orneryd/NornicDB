@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -256,14 +255,12 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 
 	err := b.withView(func(txn *badger.Txn) error {
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
-			opts := badgerIteratorOptions()
-			opts.Prefix = []byte{prefix}
-			it := txn.NewIterator(opts)
-			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+			// Seek to this namespace so a first write never walks other
+			// databases' primary keys while recovering its MVCC floors.
+			scanPrefix := append([]byte{prefix}, namespacePrefix...)
+			it := txn.NewIterator(badgerPrefixIteratorOptions(scanPrefix))
+			for it.Seek(scanPrefix); it.ValidForPrefix(scanPrefix); it.Next() {
 				key := it.Item().Key()
-				if len(key) <= 1 || !bytes.HasPrefix(key[1:], namespacePrefix) {
-					continue
-				}
 				if prefix == prefixNode {
 					head, err := b.loadNodeMVCCHeadInTxn(txn, NodeID(string(key[1:])))
 					if errors.Is(err, ErrNotFound) {
