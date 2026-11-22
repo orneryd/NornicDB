@@ -26,7 +26,12 @@ func TestS08FullReadScripts(t *testing.T) {
 		for _, line := range strings.Split(text, "\n") {
 			if strings.Contains(line, "RESULT=") || strings.Contains(line, "refused_starts=") { fmt.Println(line); found = true }
 		}
-		if !found { t.Fatalf("%s emitted no RESULT/refused_starts line (exit %v):\n%s", strings.Join(args, " "), runErr, text) }
+		if !found {
+			info, statErr := os.Stat(filepath.Join(repo, args[0]))
+			size := int64(-1); if info != nil { size = info.Size() }
+			fmt.Printf("S08_DEBUG cwd=%q repo=%q script=%q size=%d statErr=%v exit=%v output_bytes=%d\n", wd, repo, args[0], size, statErr, runErr, len(out))
+			t.Fatalf("%s emitted no RESULT/refused_starts line (exit %v):\n%s", strings.Join(args, " "), runErr, text)
+		}
 		if strings.Contains(text, "RESULT=HARNESS-ERROR") { t.Fatalf("%s harness error (exit %v)", strings.Join(args, " "), runErr) }
 	}
 }
