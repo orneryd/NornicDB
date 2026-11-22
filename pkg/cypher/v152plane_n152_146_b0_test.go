@@ -63,7 +63,7 @@ import (
 // compile-time verdict, so it applies to the statement before it runs and to the
 // plan of it. A rejected statement aborts an explicit transaction, so a shared
 // fixture would carry that state into the next cell.
-type norStaticClaim struct {
+type portedNorStaticClaim struct {
 	name  string
 	query string
 	// params are the parameter values supplied with the probe (nil when the
@@ -80,7 +80,7 @@ type norStaticClaim struct {
 	reconstructed bool
 }
 
-var nor79StaticClaims = []norStaticClaim{
+var nor79StaticClaims = []portedNorStaticClaim{
 	{
 		// The parameter's value makes "$i * 2" an Integer, so toUpper has no
 		// String argument: Neo4j rejects at compile time.
@@ -100,7 +100,7 @@ var nor79StaticClaims = []norStaticClaim{
 	},
 }
 
-var nor80StaticClaims = []norStaticClaim{
+var nor80StaticClaims = []portedNorStaticClaim{
 	{
 		name:    "procedure_yield_where_count_subquery",
 		query:   "UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { MATCH (m) } > 0 RETURN label",
@@ -121,7 +121,7 @@ var nor80StaticClaims = []norStaticClaim{
 	},
 }
 
-var nor81StaticClaims = []norStaticClaim{
+var nor81StaticClaims = []portedNorStaticClaim{
 	{
 		name:    "any_over_timestamp",
 		query:   "UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a",
@@ -141,7 +141,7 @@ var nor81StaticClaims = []norStaticClaim{
 	},
 }
 
-var nor82StaticClaims = []norStaticClaim{
+var nor82StaticClaims = []portedNorStaticClaim{
 	{
 		name:         "toUpper_head_dotk_plus_date",
 		query:        "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a",
@@ -174,7 +174,7 @@ var nor82StaticClaims = []norStaticClaim{
 func TestNor79To82StaticClaims(t *testing.T) {
 	for _, issue := range []struct {
 		number string
-		claims []norStaticClaim
+		claims []portedNorStaticClaim
 	}{
 		{"NOR-79", nor79StaticClaims},
 		{"NOR-80", nor80StaticClaims},
@@ -183,28 +183,28 @@ func TestNor79To82StaticClaims(t *testing.T) {
 	} {
 		t.Run(issue.number, func(t *testing.T) {
 			forEachParser(t, func(t *testing.T) {
-				for _, execution := range norStaticExecutions() {
-					for _, mode := range norStaticTransactionModes() {
+				for _, execution := range portedNorStaticExecutions() {
+					for _, mode := range portedNorStaticTransactionModes() {
 						for _, claim := range issue.claims {
 							t.Run(execution.kind+"/"+mode+"/"+claim.name, func(t *testing.T) {
 								if claim.reconstructed {
 									t.Logf("composed from supplied parts, not supplied inline: %s", claim.query)
 								}
 								ctx := context.Background()
-								exec := norStaticFreshExecutor(t)
+								exec := portedNorStaticFreshExecutor(t)
 								if mode == "tx" {
 									_, err := exec.Execute(ctx, "BEGIN", nil)
 									require.NoError(t, err, "BEGIN for the explicit-transaction cell")
 								}
 								result, err := exec.Execute(ctx, execution.prefix+claim.query, claim.params)
-								norStaticRollback(t, ctx, exec, mode)
+								portedNorStaticRollback(t, ctx, exec, mode)
 								if err != nil {
 									code, message := nornicerrors.Neo4jStatus(err)
 									t.Logf("%s: rejected %s: %s", execution.kind, code, message)
 								} else {
 									t.Logf("%s: accepted", execution.kind)
 								}
-								if mismatch, detail := norClassifyVerdict(execution.kind, result, err, claim.accepts, claim.messageClass); mismatch != norVerdictMatches {
+								if mismatch, detail := portedNorClassifyVerdict(execution.kind, result, err, claim.accepts, claim.messageClass); mismatch != norVerdictMatches {
 									t.Errorf("%s: %s: %s", execution.kind, claim.query, detail)
 								}
 							})
@@ -249,8 +249,8 @@ func TestPortedNor79ParameterAwareConstructorClaims(t *testing.T) {
 	params := staticConstructorTypesParams()
 
 	forEachParser(t, func(t *testing.T) {
-		for _, execution := range norStaticExecutions() {
-			for _, mode := range norStaticTransactionModes() {
+		for _, execution := range portedNorStaticExecutions() {
+			for _, mode := range portedNorStaticTransactionModes() {
 				t.Run(execution.kind+"/"+mode, func(t *testing.T) {
 					ctx := context.Background()
 					// counts[0] under-rejections, [1] false rejections, [2] status
@@ -259,14 +259,14 @@ func TestPortedNor79ParameterAwareConstructorClaims(t *testing.T) {
 					var samples []string
 					for _, index := range oracle.Inherited {
 						query := population[index]
-						exec := norStaticFreshExecutor(t)
+						exec := portedNorStaticFreshExecutor(t)
 						if mode == "tx" {
 							_, err := exec.Execute(ctx, "BEGIN", nil)
 							require.NoError(t, err, "BEGIN for the explicit-transaction cell")
 						}
 						result, err := exec.Execute(ctx, execution.prefix+query, params)
-						norStaticRollback(t, ctx, exec, mode)
-						mismatch, detail := norClassifyVerdict(execution.kind, result, err, !rejected[index], "Type mismatch")
+						portedNorStaticRollback(t, ctx, exec, mode)
+						mismatch, detail := portedNorClassifyVerdict(execution.kind, result, err, !rejected[index], "Type mismatch")
 						if mismatch == norVerdictMatches {
 							continue
 						}
@@ -311,9 +311,9 @@ func TestNor79To82NegativeControlsReuseCanonicalVerdicts(t *testing.T) {
 	require.Equal(t, 2, controls, "the supplied reference has two NOR-81 negative controls")
 }
 
-// norStaticExecutions are the statement kinds each cell runs: the statement
+// portedNorStaticExecutions are the statement kinds each cell runs: the statement
 // itself, its plan, and its profiled execution.
-func norStaticExecutions() []struct{ kind, prefix string } {
+func portedNorStaticExecutions() []struct{ kind, prefix string } {
 	return []struct{ kind, prefix string }{
 		{"RUN", ""},
 		{"EXPLAIN", "EXPLAIN "},
@@ -321,20 +321,20 @@ func norStaticExecutions() []struct{ kind, prefix string } {
 	}
 }
 
-// norStaticTransactionModes are the transaction contexts each cell runs in.
-func norStaticTransactionModes() []string { return []string{"auto", "tx"} }
+// portedNorStaticTransactionModes are the transaction contexts each cell runs in.
+func portedNorStaticTransactionModes() []string { return []string{"auto", "tx"} }
 
-// norStaticFreshExecutor builds the cell's fixture: its own storage engine and
+// portedNorStaticFreshExecutor builds the cell's fixture: its own storage engine and
 // executor, so no cell inherits another's transaction state or data.
-func norStaticFreshExecutor(t *testing.T) *StorageExecutor {
+func portedNorStaticFreshExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor79_to_82_static_claims"))
 }
 
-// norStaticRollback closes an explicit transaction cell. The fixture is
+// portedNorStaticRollback closes an explicit transaction cell. The fixture is
 // discarded either way, but a ROLLBACK that fails would mean the cell was not
 // what its own executor saw.
-func norStaticRollback(t *testing.T, ctx context.Context, exec *StorageExecutor, mode string) {
+func portedNorStaticRollback(t *testing.T, ctx context.Context, exec *StorageExecutor, mode string) {
 	t.Helper()
 	if mode != "tx" {
 		return
@@ -344,13 +344,13 @@ func norStaticRollback(t *testing.T, ctx context.Context, exec *StorageExecutor,
 	}
 }
 
-// norVerdictMismatch classifies how a cell departs from its reference verdict.
-type norVerdictMismatch int
+// portedNorVerdictMismatch classifies how a cell departs from its reference verdict.
+type portedNorVerdictMismatch int
 
 const (
 	// norVerdictMatches is the reference verdict: a supported acceptance, or
 	// Neo4j's SyntaxError in the expected message class.
-	norVerdictMatches norVerdictMismatch = iota
+	norVerdictMatches portedNorVerdictMismatch = iota
 	// norVerdictUnderRejection is an acceptance where Neo4j rejects.
 	norVerdictUnderRejection
 	// norVerdictFalseRejection is a rejection where Neo4j accepts.
@@ -360,10 +360,10 @@ const (
 	norVerdictStatusMismatch
 )
 
-// norClassifyVerdict reads a cell's verdict from the returned error and result -
+// portedNorClassifyVerdict reads a cell's verdict from the returned error and result -
 // the supported acceptance or Neo4j's status, never from logs - and returns how
 // it departs from the reference verdict, with a description of the departure.
-func norClassifyVerdict(kind string, result *ExecuteResult, err error, accepts bool, messageClass string) (norVerdictMismatch, string) {
+func portedNorClassifyVerdict(kind string, result *ExecuteResult, err error, accepts bool, messageClass string) (portedNorVerdictMismatch, string) {
 	if accepts {
 		switch {
 		case err != nil:
