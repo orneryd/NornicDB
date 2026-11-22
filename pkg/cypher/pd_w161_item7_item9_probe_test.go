@@ -15,11 +15,15 @@ func TestPDW161Item7NullTraversalStart(t *testing.T) {
 	for _, n := range []int{4_000, 40_000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-			_, err := exec.Execute(ctx, "CREATE (:PDW161Collection {id:'k'})", nil)
+			_, err := exec.Execute(ctx, "CREATE INDEX pd_w161_doc_id IF NOT EXISTS FOR (n:PDW161Document) ON (n.id)", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CREATE (:PDW161Collection {id:'k'})", nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, `MATCH (k:PDW161Collection {id:'k'})
 				UNWIND range(0,$n-1) AS i
 				CREATE (:PDW161Document {id:'d'+toString(i)})-[:PDW161_MEMBER]->(k)`, map[string]interface{}{"n": n})
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CALL db.awaitIndexes()", nil)
 			require.NoError(t, err)
 			cases := []struct {
 				name, query string
