@@ -14,7 +14,7 @@ func TestPDW161Item4KeyedRelationshipShapes(t *testing.T) {
 	ctx := context.Background()
 	for _, n := range []int{1_000, 8_000} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pdw161"))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 			_, err := exec.Execute(ctx, "CREATE INDEX pd_w161_nid IF NOT EXISTS FOR (n:PDW161Node) ON (n.id)", nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "CREATE INDEX pd_w161_rid IF NOT EXISTS FOR ()-[r:PDW161R]-() ON (r.id)", nil)
