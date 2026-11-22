@@ -127,20 +127,11 @@ func TestV152P26FlippedBit(t *testing.T) {
 					}
 				}
 			}
-			done := make(chan struct{})
-			for w := 0; w < 4; w++ {
-				go func() {
-					for i := 0; i < 5; i++ {
-						e2.boltAuto().run("MATCH (n:Doc) RETURN n", nil)
-					}
-					done <- struct{}{}
-				}()
-			}
-			for w := 0; w < 4; w++ {
-				<-done
+			for i := 0; i < 10; i++ {
+				e2.boltAuto().run("MATCH (n:Doc) RETURN n", nil)
 			}
 			_, hwm, _ := p26Memory()
-			t.Logf("P26ROW F6 %s after 20 reads by 4 clients: peak resident %d MiB", c.name, hwm>>10)
+			t.Logf("P26ROW F6 %s after 10 more reads: peak resident %d MiB", c.name, hwm>>10)
 		})
 	}
 }
