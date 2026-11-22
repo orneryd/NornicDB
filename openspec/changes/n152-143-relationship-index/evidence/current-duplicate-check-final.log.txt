@@ -1,0 +1,3 @@
+Mandatory duplicate check: repository=orneryd/NornicDB, database=nornicdbcode, endpoint=http://localhost:7474
+code-intelligence: AnalysisError: analysis/ingestion failed. Verify NORNICDB_URI, credentials and service readiness; see the local Graphify guide.
+MANDATORY COMMIT CHECK: Do not override, bypass or disable this hook. Fix the reported database, ingestion, search-readiness or duplicate-code problem before proceeding. This prevents duplicate, divergent code from being checked in.

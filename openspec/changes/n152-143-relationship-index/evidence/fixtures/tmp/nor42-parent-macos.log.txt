@@ -1,0 +1,158 @@
+# github.com/orneryd/nornicdb/pkg/cypher.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestProfileRelationshipPropertyLookupObservesAllOperators
+=== RUN   TestProfileRelationshipPropertyLookupObservesAllOperators/nornic
+=== RUN   TestProfileRelationshipPropertyLookupObservesAllOperators/antlr
+--- PASS: TestProfileRelationshipPropertyLookupObservesAllOperators (0.04s)
+    --- PASS: TestProfileRelationshipPropertyLookupObservesAllOperators/nornic (0.03s)
+    --- PASS: TestProfileRelationshipPropertyLookupObservesAllOperators/antlr (0.01s)
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic/auto-commit
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic/explicit_transaction
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr/auto-commit
+=== RUN   TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr/explicit_transaction
+--- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint (0.04s)
+    --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic (0.02s)
+        --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic/auto-commit (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/nornic/explicit_transaction (0.01s)
+    --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr (0.02s)
+        --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr/auto-commit (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityReadsTheIndexOfItsConstraint/antlr/explicit_transaction (0.01s)
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic/auto-commit
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic/explicit_transaction
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr/auto-commit
+=== RUN   TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr/explicit_transaction
+--- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack (0.09s)
+    --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic (0.05s)
+        --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic/auto-commit (0.04s)
+        --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/nornic/explicit_transaction (0.02s)
+    --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr (0.03s)
+        --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr/auto-commit (0.02s)
+        --- PASS: TestRelationshipPropertyEqualityThroughTheDurabilityStack/antlr/explicit_transaction (0.02s)
+=== RUN   TestRelationshipPropertyEqualityTracksChangedAndDeletedValues
+=== RUN   TestRelationshipPropertyEqualityTracksChangedAndDeletedValues/nornic
+=== RUN   TestRelationshipPropertyEqualityTracksChangedAndDeletedValues/antlr
+--- PASS: TestRelationshipPropertyEqualityTracksChangedAndDeletedValues (0.02s)
+    --- PASS: TestRelationshipPropertyEqualityTracksChangedAndDeletedValues/nornic (0.01s)
+    --- PASS: TestRelationshipPropertyEqualityTracksChangedAndDeletedValues/antlr (0.01s)
+=== RUN   TestRelationshipPropertyEqualitySeesTransactionPendingWrites
+=== RUN   TestRelationshipPropertyEqualitySeesTransactionPendingWrites/nornic
+=== RUN   TestRelationshipPropertyEqualitySeesTransactionPendingWrites/antlr
+--- PASS: TestRelationshipPropertyEqualitySeesTransactionPendingWrites (0.02s)
+    --- PASS: TestRelationshipPropertyEqualitySeesTransactionPendingWrites/nornic (0.01s)
+    --- PASS: TestRelationshipPropertyEqualitySeesTransactionPendingWrites/antlr (0.01s)
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unconstrained_type
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unindexed_value
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/null_value
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unindexed_inline_property
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unconstrained_type
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unindexed_value
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/null_value
+=== RUN   TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unindexed_inline_property
+--- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks (0.09s)
+    --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic (0.04s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unconstrained_type (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unindexed_value (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/null_value (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/nornic/unindexed_inline_property (0.01s)
+    --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr (0.04s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unconstrained_type (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unindexed_value (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/null_value (0.01s)
+        --- PASS: TestRelationshipPropertyEqualityKeepsCompleteScanFallbacks/antlr/unindexed_inline_property (0.01s)
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate/nornic
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate/antlr
+--- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate (0.03s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate/nornic (0.01s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerUpdate/antlr (0.01s)
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete/nornic
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete/antlr
+--- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete (0.03s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete/nornic (0.01s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDelete/antlr (0.01s)
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate/nornic
+=== RUN   TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate/antlr
+--- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate (0.03s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate/nornic (0.01s)
+    --- PASS: TestRelationshipEqualityLookupPreservesPinnedReadAfterPeerDeleteAndRecreate/antlr (0.01s)
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic/auto-commit
+    relationship_property_equality_allocation_test.go:49: 8 unrelated relationships: 292.0 allocations per statement; 512: 292.0
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic/explicit_transaction
+    relationship_property_equality_allocation_test.go:49: 8 unrelated relationships: 293.0 allocations per statement; 512: 293.0
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr/auto-commit
+    relationship_property_equality_allocation_test.go:49: 8 unrelated relationships: 293.0 allocations per statement; 512: 293.0
+=== RUN   TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr/explicit_transaction
+    relationship_property_equality_allocation_test.go:49: 8 unrelated relationships: 294.0 allocations per statement; 512: 294.0
+--- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType (0.14s)
+    --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic (0.07s)
+        --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic/auto-commit (0.04s)
+        --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/nornic/explicit_transaction (0.03s)
+    --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr (0.07s)
+        --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr/auto-commit (0.04s)
+        --- PASS: TestRelationshipPropertyEqualityAllocationsStayFlatAcrossTheType/antlr/explicit_transaction (0.03s)
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/auto-commit
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/explicit_transaction
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/auto-commit
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/explicit_transaction
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+--- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship (0.26s)
+    --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic (0.13s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/auto-commit (0.06s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/explicit_transaction (0.07s)
+    --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr (0.13s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/auto-commit (0.06s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/explicit_transaction (0.07s)
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/nornic
+    relationship_property_equality_scope_test.go:218: ordinary index reads: 11 at 8 unrelated relationships, 515 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/antlr
+    relationship_property_equality_scope_test.go:218: ordinary index reads: 11 at 8 unrelated relationships, 515 at 512; complete scan: 11 and 515
+--- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned (0.15s)
+    --- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/nornic (0.08s)
+    --- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/antlr (0.07s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	1.908s
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestRelationshipPropertyEqualityIndexIsBuiltByItsConstraint
+--- PASS: TestRelationshipPropertyEqualityIndexIsBuiltByItsConstraint (0.03s)
+=== RUN   TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests
+=== RUN   TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/no_relationship_type
+=== RUN   TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/no_properties
+=== RUN   TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/unkeyable_value
+--- PASS: TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests (0.01s)
+    --- PASS: TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/no_relationship_type (0.00s)
+    --- PASS: TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/no_properties (0.00s)
+    --- PASS: TestRelationshipPropertyEqualityLookupDeclinesUnsupportedRequests/unkeyable_value (0.00s)
+=== RUN   TestRelationshipPropertyEqualityQualificationIsolatesNamespaceAndType
+--- PASS: TestRelationshipPropertyEqualityQualificationIsolatesNamespaceAndType (0.43s)
+=== RUN   TestRelationshipPropertyEqualityLookupSeparatesSurrogatePropertyNames
+--- PASS: TestRelationshipPropertyEqualityLookupSeparatesSurrogatePropertyNames (0.01s)
+=== RUN   TestRelationshipUniqueCommitUsesValueIndex
+--- PASS: TestRelationshipUniqueCommitUsesValueIndex (0.08s)
+=== RUN   TestRelationshipUniqueIndexSeparatesSurrogatePropertyNames
+--- PASS: TestRelationshipUniqueIndexSeparatesSurrogatePropertyNames (0.05s)
+=== RUN   TestRelationshipPropertyKeyPreservesExactIdentity
+--- PASS: TestRelationshipPropertyKeyPreservesExactIdentity (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	1.644s

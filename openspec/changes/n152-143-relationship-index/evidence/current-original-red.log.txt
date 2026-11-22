@@ -1,0 +1,51 @@
+# github.com/orneryd/nornicdb/pkg/cypher.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/auto-commit
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/explicit_transaction
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/auto-commit
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/explicit_transaction
+    relationship_property_equality_scope_test.go:150: constrained reads: 2 at 8 unrelated relationships, 2 at 512; complete scan: 11 and 515
+--- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship (0.30s)
+    --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic (0.17s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/auto-commit (0.09s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/nornic/explicit_transaction (0.08s)
+    --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr (0.13s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/auto-commit (0.07s)
+        --- PASS: TestRelationshipPropertyEqualityCountedReadsStayAtTheSelectedRelationship/antlr/explicit_transaction (0.06s)
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/nornic
+    relationship_property_equality_scope_test.go:218: ordinary index reads: 11 at 8 unrelated relationships, 515 at 512; complete scan: 11 and 515
+=== RUN   TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/antlr
+    relationship_property_equality_scope_test.go:218: ordinary index reads: 11 at 8 unrelated relationships, 515 at 512; complete scan: 11 and 515
+--- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned (0.14s)
+    --- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/nornic (0.07s)
+    --- PASS: TestRelationshipPropertyEqualityOrdinaryRelationshipIndexIsDeclaredNotOwned/antlr (0.06s)
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic
+    relationship_property_equality_scope_test.go:246: 
+        	Error Trace:	/private/tmp/n152-143-relationship-index/pkg/cypher/relationship_property_equality_scope_test.go:246
+        	Error:      	Not equal: 
+        	            	expected: 11
+        	            	actual  : 515
+        	Test:       	TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic
+        	Messages:   	an ONLINE equality index should answer the selected relationship instead of enumerating the type; current source has no owner for this declaration
+=== RUN   TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr
+    relationship_property_equality_scope_test.go:246: 
+        	Error Trace:	/private/tmp/n152-143-relationship-index/pkg/cypher/relationship_property_equality_scope_test.go:246
+        	Error:      	Not equal: 
+        	            	expected: 11
+        	            	actual  : 515
+        	Test:       	TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr
+        	Messages:   	an ONLINE equality index should answer the selected relationship instead of enumerating the type; current source has no owner for this declaration
+--- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup (0.06s)
+    --- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/nornic (0.03s)
+    --- FAIL: TestNOR42OnlineOrdinaryRelationshipIndexSuppliesEqualityLookup/antlr (0.03s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.673s
+FAIL
