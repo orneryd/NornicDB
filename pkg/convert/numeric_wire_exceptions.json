@@ -313,7 +313,7 @@
   },
   "pkg/mcp/tools.go:getDiscoverTool": {
     "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
-    "sha256": "bfa185cc066314cd30e8d278a662aa4471b9b14bbcb2bce6789566ed8513d9de"
+    "sha256": "c84dbd3d1409f8e999aa9647bae046213e0eaa0770e29070869eb32b07f5aed8"
   },
   "pkg/mcp/tools.go:getLinkTool": {
     "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
@@ -682,5 +682,9 @@
   "pkg/observability/credential_text.go:ownedCredentialForms": {
     "reason": "Standard-JSON string escaping is one representation oracle used to recognize caller-owned credentials inside already-encoded text. This is representation enumeration, not a graph-value encoder/decoder; exhaustive overlap/escaping and split-stream controls compare against the standard oracle.",
     "sha256": "3ee3aa65ae23d0bb57bfb66af738638e73924976a8f5582fc95d896101b384ed"
+  },
+  "scripts/migration/neo4j/migrate.go:loadMigrationQueries": {
+    "reason": "Decodes embedded, repository-owned migration statement strings into map[string]string; it does not decode graph properties or numeric values. The standalone go run entry point must retain its embedded query definitions.",
+    "sha256": "4bfd399a16b5a41e7f172fa4a84e6ddd11998d281a0cb2bb5431fa2a90d756b3"
   }
 }
