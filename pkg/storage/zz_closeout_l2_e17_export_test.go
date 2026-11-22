@@ -6,11 +6,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/ristretto/v2/z"
 )
 
 // Test-side seam for E17 Cause2 (pkg/storage/zz_closeout_l2_e17_test.go,
@@ -153,4 +155,163 @@ func (c *L2E17CaptureEngine) L2E17Describe(begin *L2E17SchemaBegin, namespace st
 	}
 	return fmt.Sprintf("badgerReadTs=%d published_at_begin=%d last_assigned_at_begin=%d lag_at_begin=%d inflight_at_begin=%d last_assigned_at_end=%d tx.readTS.CommitSequence=%d namespace_current_sequence=%d scan_err=%v versions_above_snapshot=[%s]",
 		begin.BadgerReadTs, begin.Published, begin.LastAssigned, begin.LastAssigned-begin.Published, begin.Inflight, endAssigned, txSeq, currentSeq, scanErr, strings.Join(lines, "; "))
+}
+
+// ---------------------------------------------------------------------------
+// E17 Cause4 seam: wraps the base engine nornicdb.Open builds (the WAL engine
+// over the Badger engine) as the database manager's inner engine. It is a
+// transparent EngineUnwrapper, so capability discovery still reaches the WAL
+// and Badger engines, and it is the first TransactionCapableEngine the Cypher
+// executor finds (cypher resolveImplicitTxEngines), so every schema
+// statement's begin passes here and is recorded with its Badger transaction.
+
+// L2E17C4Begin is one captured AutocommitSchemaBegin.
+type L2E17C4Begin struct {
+	Tx           *BadgerTransaction
+	Txn          *badger.Txn
+	ReadTs       uint64 // Txn.ReadTs()
+	Published    uint64 // oracle.published right after the begin
+	LastAssigned uint64 // oracle.nextTs-1 right after the begin
+	Inflight     int
+	MaxVersion   uint64 // badger.DB.MaxVersion() right after the begin
+}
+
+// L2E17Cause4Engine is the recording wrapper.
+type L2E17Cause4Engine struct {
+	Engine
+	native *BadgerEngine
+	l2mu   sync.Mutex
+	l2last *L2E17C4Begin
+}
+
+// NewL2E17Cause4Engine wraps base and finds its Badger engine.
+func NewL2E17Cause4Engine(base Engine) (*L2E17Cause4Engine, error) {
+	engine := base
+	for depth := 0; depth < 16 && engine != nil; depth++ {
+		switch e := engine.(type) {
+		case *BadgerEngine:
+			return &L2E17Cause4Engine{Engine: base, native: e}, nil
+		case *MemoryEngine:
+			return &L2E17Cause4Engine{Engine: base, native: e.BadgerEngine}, nil
+		}
+		unwrapper, ok := engine.(EngineUnwrapper)
+		if !ok {
+			return nil, fmt.Errorf("no Badger engine under %T (stopped at %T)", base, engine)
+		}
+		engine = unwrapper.GetInnerEngine()
+	}
+	return nil, fmt.Errorf("no Badger engine under %T", base)
+}
+
+// GetInnerEngine keeps capability discovery transparent.
+func (c *L2E17Cause4Engine) GetInnerEngine() Engine { return c.Engine }
+
+// BeginTransaction is the native begin, recording schema begins.
+func (c *L2E17Cause4Engine) BeginTransaction(ctx context.Context, request BeginRequest) (*BadgerTransaction, error) {
+	tx, err := c.native.BeginTransaction(ctx, request)
+	if err != nil || request != AutocommitSchemaBegin {
+		return tx, err
+	}
+	o := c.native.db.oracle
+	o.mu.Lock()
+	published, lastAssigned, inflight := o.published.Load(), o.nextTs-1, len(o.inflight)
+	o.mu.Unlock()
+	begin := &L2E17C4Begin{Tx: tx, Txn: tx.badgerTx, Published: published, LastAssigned: lastAssigned, Inflight: inflight, MaxVersion: c.native.db.DB.MaxVersion()}
+	if tx.badgerTx != nil {
+		begin.ReadTs = tx.badgerTx.ReadTs()
+	}
+	c.l2mu.Lock()
+	c.l2last = begin
+	c.l2mu.Unlock()
+	return tx, nil
+}
+
+// L2E17TakeBegin returns and clears the last captured schema begin.
+func (c *L2E17Cause4Engine) L2E17TakeBegin() *L2E17C4Begin {
+	c.l2mu.Lock()
+	defer c.l2mu.Unlock()
+	begin := c.l2last
+	c.l2last = nil
+	return begin
+}
+
+// l2E17TxnReads reads the Badger transaction's read-key fingerprints
+// (badger.Txn.reads, unexported; z.MemHash of each key read, the set Badger's
+// conflict check compares with later commits' written keys).
+func l2E17TxnReads(txn *badger.Txn) (map[uint64]struct{}, bool) {
+	if txn == nil {
+		return nil, false
+	}
+	field := reflect.ValueOf(txn).Elem().FieldByName("reads")
+	if !field.IsValid() || field.Kind() != reflect.Slice {
+		return nil, false
+	}
+	reads := make(map[uint64]struct{}, field.Len())
+	for i := 0; i < field.Len(); i++ {
+		element := field.Index(i)
+		if element.Kind() != reflect.Uint64 {
+			return nil, false
+		}
+		reads[element.Uint()] = struct{}{}
+	}
+	return reads, true
+}
+
+// L2E17Cause4Describe reports a refused schema statement's decisive values:
+// its Badger read timestamp and the oracle / Badger state right after its
+// begin, and every key with a committed version above its read timestamp,
+// marked when the statement read that key (fingerprint in its read set: the
+// key Badger's conflict check fired on) and split by whether the version was
+// already committed when the begin returned (<= MaxVersion at begin) or
+// committed later.
+func (c *L2E17Cause4Engine) L2E17Cause4Describe(begin *L2E17C4Begin) string {
+	if begin == nil {
+		return "no schema begin captured"
+	}
+	o := c.native.db.oracle
+	o.mu.Lock()
+	publishedNow, lastAssignedNow := o.published.Load(), o.nextTs-1
+	o.mu.Unlock()
+	raw := c.native.db.DB
+	maxNow := raw.MaxVersion()
+	reads, readsOK := l2E17TxnReads(begin.Txn)
+	var conflicted, other []string
+	txn := raw.NewTransactionAt(math.MaxUint64, false)
+	opts := badger.DefaultIteratorOptions
+	opts.AllVersions = true
+	opts.PrefetchValues = false
+	it := txn.NewIterator(opts)
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		v := item.Version()
+		if v <= begin.ReadTs {
+			continue
+		}
+		when := "after-begin"
+		if v <= begin.MaxVersion {
+			when = "before-begin"
+		}
+		line := fmt.Sprintf("v%d %s %s", v, when, l2E17KeyClass(item.Key()))
+		if _, read := reads[z.MemHash(item.Key())]; read {
+			conflicted = append(conflicted, line)
+		} else if len(other) < 30 {
+			other = append(other, line)
+		}
+	}
+	it.Close()
+	txn.Discard()
+	sort.Strings(conflicted)
+	// The begin takes the exclusive barrier, then its snapshot (readTs =
+	// oracle.published), then returns; the values above are read on return.
+	verdict := "readTs equals the newest committed version at begin"
+	switch {
+	case begin.Published < begin.LastAssigned:
+		verdict = "published-vs-assigned lag at begin: an assigned commit was still unfinished, so the snapshot stopped below it"
+	case begin.ReadTs < begin.Published:
+		verdict = "oracle.published advanced between the snapshot and the begin's return: a commit finished inside the exclusive barrier"
+	case begin.ReadTs < begin.MaxVersion:
+		verdict = "Badger holds versions above oracle.published with nothing in flight: written outside the oracle's assign/finish"
+	}
+	return fmt.Sprintf("readTs=%d published_at_begin=%d last_assigned_at_begin=%d inflight_at_begin=%d maxVersion_at_begin=%d published_now=%d last_assigned_now=%d maxVersion_now=%d read_set_size=%d read_set_ok=%t begin_reading=%q conflicted_keys(read by the DDL, newer than its readTs)=[%s] other_newer_versions(first 30)=[%s]",
+		begin.ReadTs, begin.Published, begin.LastAssigned, begin.Inflight, begin.MaxVersion, publishedNow, lastAssignedNow, maxNow, len(reads), readsOK, verdict, strings.Join(conflicted, "; "), strings.Join(other, "; "))
 }
