@@ -1,0 +1,48 @@
+# github.com/orneryd/nornicdb/pkg/multidb.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup/without_observer
+=== RUN   TestNOR360CatalogProbeCloseAndRegisteredCleanup/with_close_observer
+    catalog_probe_close_regression_test.go:33: 
+        	Error Trace:	/private/tmp/n152-130-catalog-probe-close/pkg/multidb/catalog_probe_close_regression_test.go:33
+        	Error:      	func (assert.PanicTestFunc)(0x103216b00) should not panic
+        	            		Panic value:	close of closed channel
+        	            		Panic stack:	goroutine 111 [running]:
+        	            	runtime/debug.Stack()
+        	            		/Users/timothysweet/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.4.darwin-arm64/src/runtime/debug/stack.go:26 +0x64
+        	            	github.com/stretchr/testify/assert.didPanic.func1()
+        	            		/Users/timothysweet/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1287 +0x64
+        	            	panic({0x1055affa0?, 0x1051e80a0?})
+        	            		/Users/timothysweet/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.4.darwin-arm64/src/runtime/panic.go:859 +0x120
+        	            	github.com/orneryd/nornicdb/pkg/multidb.(*f25CatalogReceiptProbe).Close(0x20a56c64d980)
+        	            		/private/tmp/n152-130-catalog-probe-close/pkg/multidb/catalog_publication_test.go:38 +0x2c
+        	            	github.com/orneryd/nornicdb/pkg/multidb.(*DatabaseManager).Close(0x20a56c66c380)
+        	            		/private/tmp/n152-130-catalog-probe-close/pkg/multidb/manager.go:910 +0xc8
+        	            	github.com/orneryd/nornicdb/internal/testfixture.own[...].func1.1()
+        	            		/private/tmp/n152-130-catalog-probe-close/internal/testfixture/fixture.go:48 +0x40
+        	            	github.com/orneryd/nornicdb/internal/testfixture.own[...].func1()
+        	            		/private/tmp/n152-130-catalog-probe-close/internal/testfixture/fixture.go:59 +0x90
+        	            	github.com/orneryd/nornicdb/internal/testfixture.(*Boundary).Close(0x20a56c9b2240)
+        	            		/private/tmp/n152-130-catalog-probe-close/internal/testfixture/fixture.go:90 +0x38
+        	            	github.com/orneryd/nornicdb/pkg/multidb.TestNOR360CatalogProbeCloseAndRegisteredCleanup.func1.1()
+        	            		/private/tmp/n152-130-catalog-probe-close/pkg/multidb/catalog_probe_close_regression_test.go:33 +0x24
+        	            	github.com/stretchr/testify/assert.didPanic(0x1058d1310?)
+        	            		/Users/timothysweet/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1292 +0x68
+        	            	github.com/stretchr/testify/assert.NotPanics({0x1057b0bd8, 0x20a56c76bb08}, 0x20a56c5a40f0, {0x20a56cb9df40, 0x1, 0x1})
+        	            		/Users/timothysweet/go/pkg/mod/github.com/stretchr/testify@v1.12.1/assert/assertions.go:1369 +0x70
+        	            	github.com/orneryd/nornicdb/pkg/multidb.TestNOR360CatalogProbeCloseAndRegisteredCleanup.func1(0x20a56c76bb08)
+        	            		/private/tmp/n152-130-catalog-probe-close/pkg/multidb/catalog_probe_close_regression_test.go:33 +0x1a8
+        	            	testing.tRunner(0x20a56c76bb08, 0x20a5709cc320)
+        	            		/Users/timothysweet/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.4.darwin-arm64/src/testing/testing.go:2195 +0xc4
+        	            	created by testing.(*T).Run in goroutine 7
+        	            		/Users/timothysweet/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.4.darwin-arm64/src/testing/testing.go:2260 +0x3b8
+        	Test:       	TestNOR360CatalogProbeCloseAndRegisteredCleanup/with_close_observer
+        	Messages:   	registered cleanup after explicit close must not double-close the observation channel
+--- FAIL: TestNOR360CatalogProbeCloseAndRegisteredCleanup (0.02s)
+    --- PASS: TestNOR360CatalogProbeCloseAndRegisteredCleanup/without_observer (0.01s)
+    --- FAIL: TestNOR360CatalogProbeCloseAndRegisteredCleanup/with_close_observer (0.01s)
+=== RUN   TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache
+--- PASS: TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/multidb	0.768s
+FAIL
