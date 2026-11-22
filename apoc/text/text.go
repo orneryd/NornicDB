@@ -232,14 +232,26 @@ var cleanReplacements = strings.NewReplacer("Ä", "Ae", "Ü", "Ue", "Ö", "Oe", 
 // and canonical decomposition, then lowercases the remaining text.
 // For example, Clean("É a λ-42!") returns "eaλ42".
 func Clean(text string) string {
-	decomposed := norm.NFD.String(cleanReplacements.Replace(text))
-	var out strings.Builder
-	for _, r := range decomposed {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			out.WriteRune(r)
-		}
+	if cyphertext.PlainASCII(text) {
+		return strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsNumber(r) {
+				return unicode.ToLower(r)
+			}
+			return -1
+		}, text)
 	}
-	return cypherfn.LowerCaseText(out.String())
+
+	decomposed := norm.NFD.String(cleanReplacements.Replace(text))
+	filtered := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return r
+		}
+		return -1
+	}, decomposed)
+	if cyphertext.PlainASCII(filtered) {
+		return strings.ToLower(filtered)
+	}
+	return cypherfn.LowerCaseText(filtered)
 }
 
 // Comparecleanstrings compares two strings after cleaning.
