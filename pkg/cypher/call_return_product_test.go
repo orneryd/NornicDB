@@ -37,7 +37,7 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(newTestMemoryEngine(t))
 			call, body := testRetainedCall(t, tc.call)
-			types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false)
+			types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, clause)
 			if tc.unknown {
@@ -66,7 +66,7 @@ func TestCallReturnClauseRetainsUndefinedVariableError(t *testing.T) {
 			t.Run(tc.query, func(t *testing.T) {
 				e := NewStorageExecutor(newTestMemoryEngine(t))
 				call, body := testRetainedCall(t, tc.query)
-				types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false)
+				types, clause, err := e.callSubqueryReturnTypes(t.Context(), call, body, typeScope{}, false, nil)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), "missing")
 				require.Equal(t, tc.firstReturn, clause)
