@@ -11,19 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNOR120UnchangedGraphTieSelection uses a fixed twelve-node graph and 64
+// TestPortedNOR120UnchangedGraphTieSelection uses a fixed twelve-node graph and 64
 // real uncached executions per parser. x and y share three neighbours with s,
 // of degrees 4, 5 and 6. Their mathematical Adamic-Adar scores are identical.
 // This bounded reproduction records actual selection/score variants before
 // asserting the shipped stable-top-k contract. Production map iteration is
 // nondeterministic; not every possible iteration schedule must expose the bug.
-func TestNOR120UnchangedGraphTieSelection(t *testing.T) {
+func TestPortedNOR120UnchangedGraphTieSelection(t *testing.T) {
 	const repeats = 64
 	for _, lane := range linkPredictionLanes() {
 		t.Run(lane.name, func(t *testing.T) {
 			restore := lane.apply()
 			defer restore()
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nor120_noise_"+lane.name)
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "portedNor120_noise_"+lane.name)
 			for _, id := range []string{"s", "x", "y"} {
 				linkPredictionNode(t, engine, id)
 			}
