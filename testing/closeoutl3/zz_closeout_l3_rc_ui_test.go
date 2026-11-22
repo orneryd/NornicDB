@@ -182,6 +182,10 @@ var (
 // extracted walkers. Object-literal values (`key: value`) are untouched
 // because their values are never one of the type atoms.
 func closeoutL3RCStripTypes(code string) string {
+	// The tip's copyConvertedEntries helper adds a function-valued parameter
+	// and a tuple return annotation that the older stripper did not encounter.
+	code = strings.ReplaceAll(code, "convert: (value: unknown) => unknown", "convert")
+	code = strings.ReplaceAll(code, "([key, value]): [string, unknown] =>", "([key, value]) =>")
 	code = closeoutL3RCAsLiteral.ReplaceAllString(code, "")
 	code = closeoutL3RCAsCast.ReplaceAllStringFunc(code, func(m string) string {
 		last := m[len(m)-1:]
@@ -212,6 +216,8 @@ func TestCloseoutL3_RC_N152_8_StripperControl(t *testing.T) {
 		"return { identity: m.id, type: rel?.type ?? \"\" };": "return { identity: m.id, type: rel?.type ?? \"\" };",
 		"const node = v as {\n  identity: unknown;\n  labels?: string[];\n};": "const node = v;",
 		"const isInt = (_v: unknown): boolean => false;":      "const isInt = (_v) => false;",
+		"function f(obj: Record<string, unknown>, convert: (value: unknown) => unknown): Record<string, unknown> {": "function f(obj, convert) {",
+		"Object.entries(obj).map(([key, value]): [string, unknown] => [key, convert(value)])": "Object.entries(obj).map(([key, value]) => [key, convert(value)])",
 	}
 	for in, want := range cases {
 		if got := closeoutL3RCStripTypes(in); got != want {
