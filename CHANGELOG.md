@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
 - Detach caller-owned nested evidence and configuration in the in-memory inference stores: `EdgeMetaStore` append/import/read/export and `NodeConfigStore` set/import/get/export no longer share mutable maps or slices with callers or retained state.
 - Reject Neo4j CSV labels that would split, disappear, or be trimmed on import before writing package files; report localized delimiter guidance.
+- Return the union of all requested node types from MCP recall instead of filtering on the first type, and document discover's depth hop semantics.
 
 - Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
 - Allow remote database factories to reenter the catalog without deadlocking storage selection.
