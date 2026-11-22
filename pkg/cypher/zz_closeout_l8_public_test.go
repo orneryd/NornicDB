@@ -261,7 +261,7 @@ func TestL8_H4_017_Control(t *testing.T) {
 // ---------------------------------------------------------------- L-H4-018
 // Error class of the 22 members (Neo4j codes recorded in the lead's log).
 var l8H4018 = []struct{ id, setup, query, neo string }{
-	{"01075.1-3", "UNWIND range(1, 10) AS i CREATE ({nr: i})", "MATCH (n) WITH n SKIP -2 WITH count(*) AS count RETURN count > 0 AS nonEmpty", "Neo.ClientError.Statement.ArgumentError"},
+	{"01075.1-3", "UNWIND range(1, 10) AS i CREATE ({nr: i})", "MATCH (n) WITH n SKIP -2 WITH count(*) AS count RETURN count > 0 AS nonEmpty", "Neo.ClientError.Statement.SyntaxError"},
 	{"01079.1-2", "CREATE (s:Person {name: 'Steven'}), (c:Person {name: 'Craig'})", "MATCH (p:Person) RETURN p.name AS name SKIP -null", "Neo.ClientError.Statement.TypeError"},
 	{"01083.1-2", "", "MATCH (n) RETURN n   SKIP -null", "Neo.ClientError.Statement.TypeError"},
 	{"01089.1-1", "UNWIND range(1, 3) AS i CREATE ({nr: i})", "MATCH (n) WITH n LIMIT toInteger(ceil(null)) RETURN count(*) AS count", "Neo.ClientError.Statement.TypeError"},
