@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
 
+- Preserve continuation-owned rerank windows in `db.rretrieve`, returning all qualifying hits before completion while keeping caller ceilings and provider-once ordering.
+
 - Match Neo4j admission of `timestamp()` in quantifiers and other typed expressions by preserving its pre-semantic property type uncertainty, while keeping ordinary scalar list-source errors.
 - Admit CASE expressions containing COUNT subqueries as DELETE targets while preserving undefined-variable checks and null-target behavior.
 
