@@ -452,12 +452,6 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	if expression == "" {
 		return staticOperand{}, nil
 	}
-	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
-		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, nil); !projection {
-			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-				localization.CypherCoreMapProjectionReceiver(receiver))
-		}
-	}
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		return checker.checkAtom(ctx, expression)
 	}
@@ -470,6 +464,11 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
 	if !expressionTextAccepted(ctx, checker.maskMapProjections(expression), expressionTextOperator) {
+		// Malformed projection receivers still belong to the operand checker,
+		// even when the expression gate declines operator decomposition.
+		if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
+			return checker.checkAtom(ctx, expression)
+		}
 		// A function call or subquery expression over a pattern still has
 		// its result type (size([(n)-->() | 1]) is an Integer).
 		return staticPatternExpressionType(expression), nil
@@ -1218,6 +1217,14 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
 func (checker staticOperatorChecker) checkAtom(ctx context.Context, expression string) (staticOperand, error) {
+	// Validate the receiver after operators have separated their operands.
+	// Correlated pattern values first arrive at derive as b.k = a{.k}.
+	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
+		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); !projection {
+			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+				localization.CypherCoreMapProjectionReceiver(receiver))
+		}
+	}
 	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
