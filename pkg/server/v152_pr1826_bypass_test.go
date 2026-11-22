@@ -13,6 +13,7 @@ func TestV152P26Bypass(t *testing.T) {
 		{"F2", "TrimmedNodes", TestV152P26TrimmedNodes},
 		{"R11", "TrimmedNodes", TestV152P26TrimmedNodes},
 		{"R11", "NamedNodePaths", TestV152P26NamedNodePaths},
+		{"R11", "TrimmedWrites", TestV152P26TrimmedWrites},
 		{"F3", "OlderTransaction", TestV152P26OlderTransaction},
 		{"R6", "VectorInTransaction", TestV152P26VectorInTransaction},
 	} {
