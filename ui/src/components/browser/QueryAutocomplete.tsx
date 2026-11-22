@@ -79,11 +79,8 @@ export function QueryAutocomplete({
           return;
         }
 
-        // Clean up the suggestion (remove markdown code blocks if present)
-        const cleanSuggestion = suggestionText
-          .replace(/^```(?:cypher|sql)?\n?/i, "")
-          .replace(/\n?```$/i, "")
-          .trim();
+        // The API owns model framing; its suggestion is executable Cypher.
+        const cleanSuggestion = suggestionText;
 
         // If the suggestion is significantly different or longer, offer it
         if (cleanSuggestion && cleanSuggestion !== currentQuery.trim() && cleanSuggestion.length > currentQuery.trim().length) {

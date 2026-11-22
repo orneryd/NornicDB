@@ -917,7 +917,7 @@ func TestHeimdallCoverage_HandlerAutocompleteAndHelpers(t *testing.T) {
 	assert.Nil(t, handler.inMemoryRunner)
 
 	RegisterBuiltinAction(ActionFunc{
-		Name:        "heimdall_autocomplete_suggest",
+		Name:        autocompleteActionName,
 		Description: "Autocomplete coverage action",
 		Category:    "testing",
 		Handler: func(ctx ActionContext) (*ActionResult, error) {
