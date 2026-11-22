@@ -1,0 +1,147 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+79-reject RUN
+Type mismatch: expected String but was Float, Integer or Duration (line 1, column 61 (offset: 60))
+"UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a"
+                                                             ^
+exit=1
+79-reject EXPLAIN 
+Type mismatch: expected String but was Float, Integer or Duration (line 1, column 69 (offset: 68))
+"EXPLAIN UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a"
+                                                                     ^
+exit=1
+79-reject PROFILE 
+Type mismatch: expected String but was Float, Integer or Duration (line 1, column 69 (offset: 68))
+"PROFILE UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a"
+                                                                     ^
+exit=1
+79-accept RUN
+exit=0
+79-accept EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 71
+exit=0
+79-accept PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 28
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+81-accept RUN
+exit=0
+81-accept EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+exit=0
+81-accept PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 13
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+81-list-reject RUN
+Type mismatch: expected List<T> but was Date (line 1, column 29 (offset: 28))
+"UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                             ^
+exit=1
+81-list-reject EXPLAIN 
+Type mismatch: expected List<T> but was Date (line 1, column 37 (offset: 36))
+"EXPLAIN UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                                     ^
+exit=1
+81-list-reject PROFILE 
+Type mismatch: expected List<T> but was Date (line 1, column 37 (offset: 36))
+"PROFILE UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                                     ^
+exit=1
+82-date() RUN
+Type mismatch: expected String but was Any or Date (line 1, column 41 (offset: 40))
+"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a"
+                                         ^
+exit=1
+82-date() EXPLAIN 
+Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))
+"EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a"
+                                                 ^
+exit=1
+82-date() PROFILE 
+Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))
+"PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a"
+                                                 ^
+exit=1
+82-duration("P1D") RUN
+Type mismatch: expected String but was Any or Duration (line 1, column 41 (offset: 40))
+"UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a"
+                                         ^
+exit=1
+82-duration("P1D") EXPLAIN 
+Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))
+"EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a"
+                                                 ^
+exit=1
+82-duration("P1D") PROFILE 
+Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))
+"PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a"
+                                                 ^
+exit=1
+82-[] RUN
+exit=0
+82-[] EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 13
+exit=0
+82-[] PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 28
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+82-n.j RUN
+exit=0
+82-n.j EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 16
+exit=0
+82-n.j PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0

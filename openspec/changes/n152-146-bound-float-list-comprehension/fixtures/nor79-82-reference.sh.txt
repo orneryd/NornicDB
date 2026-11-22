@@ -1,0 +1,122 @@
+#!/bin/bash
+set -u
+printf "%s\n" '79-reject RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '79-reject EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '79-reject PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '79-accept RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '79-accept EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '79-accept PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-accept RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-accept EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-accept PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-date() RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-date() EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-date() PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-duration("P1D") RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-duration("P1D") EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-duration("P1D") PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration("P1D"))) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-[] RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-[] EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-[] PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-n.j RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-n.j EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '82-n.j PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a;
+CYPHER
+printf "exit=%s\n" "$?"

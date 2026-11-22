@@ -219,10 +219,6 @@ func parameterPropertyAccessType(value interface{}) string {
 	if _, isMap := toStringAnyMap(value); isMap {
 		return "Map"
 	}
-	switch value.(type) {
-	case float32, float64:
-		return ""
-	}
 	return staticParameterOperand(value).display
 }
 

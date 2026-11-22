@@ -1,0 +1,730 @@
+[
+  {
+    "id": "population/8935",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $i AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 49 (offset: 48))\n\"UNWIND [] AS r MATCH (n) WITH n, $i AS v MATCH (v) RETURN 1 AS a\"\n                                                 ^\n"
+  },
+  {
+    "id": "population/9159",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE $i END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE $i END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/9167",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE 1 END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 80 (offset: 79))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE 1 END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                ^\n"
+  },
+  {
+    "id": "population/9175",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE 'a' END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer or String (expected Node) (line 1, column 82 (offset: 81))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i ELSE 'a' END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                  ^\n"
+  },
+  {
+    "id": "population/9191",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 73 (offset: 72))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $i END AS v MATCH (v) RETURN 1 AS a\"\n                                                                         ^\n"
+  },
+  {
+    "id": "population/9199",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $i ELSE [1] END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer or List<T> (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $i ELSE [1] END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/9207",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$i]) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 57 (offset: 56))\n\"UNWIND [] AS r MATCH (n) WITH n, head([$i]) AS v MATCH (v) RETURN 1 AS a\"\n                                                         ^\n"
+  },
+  {
+    "id": "population/9215",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($i, $i) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 63 (offset: 62))\n\"UNWIND [] AS r MATCH (n) WITH n, coalesce($i, $i) AS v MATCH (v) RETURN 1 AS a\"\n                                                               ^\n"
+  },
+  {
+    "id": "population/9511",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $s AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 49 (offset: 48))\n\"UNWIND [] AS r MATCH (n) WITH n, $s AS v MATCH (v) RETURN 1 AS a\"\n                                                 ^\n"
+  },
+  {
+    "id": "population/9735",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE $s END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE $s END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/9743",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE 1 END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer or String (expected Node) (line 1, column 80 (offset: 79))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE 1 END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                ^\n"
+  },
+  {
+    "id": "population/9751",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE 'a' END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 82 (offset: 81))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s ELSE 'a' END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                  ^\n"
+  },
+  {
+    "id": "population/9767",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 73 (offset: 72))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $s END AS v MATCH (v) RETURN 1 AS a\"\n                                                                         ^\n"
+  },
+  {
+    "id": "population/9775",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $s ELSE [1] END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String or List<T> (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $s ELSE [1] END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/9783",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$s]) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 57 (offset: 56))\n\"UNWIND [] AS r MATCH (n) WITH n, head([$s]) AS v MATCH (v) RETURN 1 AS a\"\n                                                         ^\n"
+  },
+  {
+    "id": "population/9791",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($s, $s) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 63 (offset: 62))\n\"UNWIND [] AS r MATCH (n) WITH n, coalesce($s, $s) AS v MATCH (v) RETURN 1 AS a\"\n                                                               ^\n"
+  },
+  {
+    "id": "population/9799",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $l AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 49 (offset: 48))\n\"UNWIND [] AS r MATCH (n) WITH n, $l AS v MATCH (v) RETURN 1 AS a\"\n                                                 ^\n"
+  },
+  {
+    "id": "population/10023",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE $l END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE $l END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/10031",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 1 END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer or List<T> (expected Node) (line 1, column 80 (offset: 79))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 1 END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                ^\n"
+  },
+  {
+    "id": "population/10039",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 'a' END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String or List<T> (expected Node) (line 1, column 82 (offset: 81))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 'a' END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                  ^\n"
+  },
+  {
+    "id": "population/10055",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 73 (offset: 72))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l END AS v MATCH (v) RETURN 1 AS a\"\n                                                                         ^\n"
+  },
+  {
+    "id": "population/10063",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $l ELSE [1] END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $l ELSE [1] END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/10071",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$l]) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 57 (offset: 56))\n\"UNWIND [] AS r MATCH (n) WITH n, head([$l]) AS v MATCH (v) RETURN 1 AS a\"\n                                                         ^\n"
+  },
+  {
+    "id": "population/10079",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($l, $l) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type List<T> (expected Node) (line 1, column 63 (offset: 62))\n\"UNWIND [] AS r MATCH (n) WITH n, coalesce($l, $l) AS v MATCH (v) RETURN 1 AS a\"\n                                                               ^\n"
+  },
+  {
+    "id": "population/10087",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $m AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10311",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $m ELSE $m END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10319",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $m ELSE 1 END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10327",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $m ELSE 'a' END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10335",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $m ELSE null END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10343",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $m END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10351",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $m ELSE [1] END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10359",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$m]) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10367",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($m, $m) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10663",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $b AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean (expected Node) (line 1, column 49 (offset: 48))\n\"UNWIND [] AS r MATCH (n) WITH n, $b AS v MATCH (v) RETURN 1 AS a\"\n                                                 ^\n"
+  },
+  {
+    "id": "population/10887",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE $b END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE $b END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/10895",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE 1 END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean or Integer (expected Node) (line 1, column 80 (offset: 79))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE 1 END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                ^\n"
+  },
+  {
+    "id": "population/10903",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE 'a' END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean or String (expected Node) (line 1, column 82 (offset: 81))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b ELSE 'a' END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                  ^\n"
+  },
+  {
+    "id": "population/10919",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean (expected Node) (line 1, column 73 (offset: 72))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $b END AS v MATCH (v) RETURN 1 AS a\"\n                                                                         ^\n"
+  },
+  {
+    "id": "population/10927",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $b ELSE [1] END AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean or List<T> (expected Node) (line 1, column 81 (offset: 80))\n\"UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $b ELSE [1] END AS v MATCH (v) RETURN 1 AS a\"\n                                                                                 ^\n"
+  },
+  {
+    "id": "population/10935",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$b]) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean (expected Node) (line 1, column 57 (offset: 56))\n\"UNWIND [] AS r MATCH (n) WITH n, head([$b]) AS v MATCH (v) RETURN 1 AS a\"\n                                                         ^\n"
+  },
+  {
+    "id": "population/10943",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($b, $b) AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": false,
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Boolean (expected Node) (line 1, column 63 (offset: 62))\n\"UNWIND [] AS r MATCH (n) WITH n, coalesce($b, $b) AS v MATCH (v) RETURN 1 AS a\"\n                                                               ^\n"
+  },
+  {
+    "id": "control/literal_map",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, {a:1} AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Map (expected Node) (line 1, column 52 (offset: 51))\n\"UNWIND [] AS r MATCH (n) WITH n, {a:1} AS v MATCH (v) RETURN 1 AS a\"\n                                                    ^\n"
+  },
+  {
+    "id": "control/literal_int",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, 5 AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Integer (expected Node) (line 1, column 48 (offset: 47))\n\"UNWIND [] AS r MATCH (n) WITH n, 5 AS v MATCH (v) RETURN 1 AS a\"\n                                                ^\n"
+  },
+  {
+    "id": "control/literal_string",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, 'a' AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Node) (line 1, column 50 (offset: 49))\n\"UNWIND [] AS r MATCH (n) WITH n, 'a' AS v MATCH (v) RETURN 1 AS a\"\n                                                  ^\n"
+  },
+  {
+    "id": "control/node",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, n AS v MATCH (v) RETURN 1 AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "control/node_as_rel",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, n AS v MATCH ()-[v]->() RETURN 1 AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Node (expected Relationship) (line 1, column 51 (offset: 50))\n\"UNWIND [] AS r MATCH (n) WITH n, n AS v MATCH ()-[v]->() RETURN 1 AS a\"\n                                                   ^\n"
+  },
+  {
+    "id": "control/literal_subquery",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, 'a' AS v RETURN EXISTS { MATCH ()-[v]->() } AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type String (expected Relationship) (line 1, column 69 (offset: 68))\n\"UNWIND [] AS r MATCH (n) WITH n, 'a' AS v RETURN EXISTS { MATCH ()-[v]->() } AS a\"\n                                                                     ^\n"
+  },
+  {
+    "id": "control/parameter_map_subquery",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $m AS v RETURN EXISTS { MATCH (v) } AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "control/literal_map_subquery",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, {a:1} AS v RETURN EXISTS { MATCH (v) } AS a",
+    "parameters": {
+      "m": "{a:1}"
+    },
+    "exit_code": 1,
+    "output": "Type mismatch: v defined with conflicting type Map (expected Node) (line 1, column 68 (offset: 67))\n\"UNWIND [] AS r MATCH (n) WITH n, {a:1} AS v RETURN EXISTS { MATCH (v) } AS a\"\n                                                                    ^\n"
+  }
+]
