@@ -129,12 +129,24 @@ func closeoutL3RunDecoder(t *testing.T, mode string, record []byte) closeoutL3De
 	lockedVersion := lock.Packages["node_modules/neo4j-driver-bolt-connection"].Version
 	require.Equal(t, "6.3.2", lockedVersion, "the release tip UI lock is the test source of truth")
 	modules := filepath.Join(repoRoot, "ui", "node_modules")
-	if _, err := os.Stat(filepath.Join(modules, "neo4j-driver-bolt-connection", "lib", "packstream", "packstream-v1.js")); err != nil {
+	driverPackage := filepath.Join(modules, "neo4j-driver-bolt-connection", "package.json")
+	var installed struct {
+		Version string `json:"version"`
+	}
+	installedBytes, installedErr := os.ReadFile(driverPackage)
+	if installedErr == nil {
+		installedErr = json.Unmarshal(installedBytes, &installed)
+	}
+	if installedErr != nil || installed.Version != lockedVersion {
 		install := exec.Command("npm", "ci", "--ignore-scripts", "--prefix", filepath.Join(repoRoot, "ui"))
 		if out, installErr := install.CombinedOutput(); installErr != nil {
 			t.Fatalf("install the release-tip UI lock for the decoder test: %v\n%s", installErr, out)
 		}
 	}
+	installedBytes, err = os.ReadFile(driverPackage)
+	require.NoError(t, err, "PRECONDITION: release-tip locked driver present")
+	require.NoError(t, json.Unmarshal(installedBytes, &installed))
+	require.Equal(t, lockedVersion, installed.Version, "installed driver package must match the release-tip lock")
 	_, err = os.Stat(filepath.Join(modules, "neo4j-driver-bolt-connection", "lib", "packstream", "packstream-v1.js"))
 	require.NoError(t, err, "PRECONDITION: release-tip locked driver present")
 	cmd := exec.Command(node, "-e", closeoutL3DecoderScript, mode, hex.EncodeToString(record))
