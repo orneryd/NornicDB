@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -249,7 +250,11 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 				if err := preparationContext.Err(); err != nil {
 					return err
 				}
-				operations[i].OldNode = copyNode(operations[i].OldNode)
+				// DIAGNOSTIC (S28 cause run, not for merge): with S28_BYPASS_OLDNODE_COPY=1
+				// the before-image is retained instead of copied with its vectors.
+				if !s28BypassOldNodeCopy {
+					operations[i].OldNode = copyNode(operations[i].OldNode)
+				}
 				operations[i].OldEdge = copyEdge(operations[i].OldEdge)
 			}
 			nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(preparationContext)
@@ -403,3 +408,6 @@ func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu s
 }
 
 func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
+
+// s28BypassOldNodeCopy is the S28 diagnostic switch (not for merge).
+var s28BypassOldNodeCopy = os.Getenv("S28_BYPASS_OLDNODE_COPY") == "1"
