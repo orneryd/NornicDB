@@ -121,24 +121,23 @@ func TestN15290RetrievalFilterCostProbe(t *testing.T) {
 						}
 
 						// One un-warmed search start and pull, explicitly reported
-						// apart from the 30 warm samples.
+						// apart from the 30 warm samples. Discard the remaining cursor
+						// after the measured continuation page.
 						coldPage, coldFirst := call(request(""))
-						for coldPage.more {
-							coldPage, _ = call(request(coldPage.qid))
+						if coldPage.more {
+							_, _ = call(map[string]any{"qid": coldPage.qid, "n": pageSize, "discard": true})
 						}
 						firstSamples := make([]time.Duration, 0, 30)
-						continuationSamples := make(map[int][]time.Duration)
+						continuationSamples := make(map[int][]time.Duration, 1)
 						for i := 0; i < 30; i++ {
 							first, firstElapsed := call(request(""))
 							firstSamples = append(firstSamples, firstElapsed)
 							require.True(t, first.more, "warm start must have a continuation page")
-							pageNumber := 2
-							for first.more {
-								continuation, continuationElapsed := call(request(first.qid))
-								continuationSamples[pageNumber] = append(continuationSamples[pageNumber], continuationElapsed)
-								require.NotEmpty(t, continuation.ids)
-								first = continuation
-								pageNumber++
+							continuation, continuationElapsed := call(request(first.qid))
+							continuationSamples[2] = append(continuationSamples[2], continuationElapsed)
+							require.NotEmpty(t, continuation.ids)
+							if continuation.more {
+								_, _ = call(map[string]any{"qid": continuation.qid, "n": pageSize, "discard": true})
 							}
 						}
 						// Drain one independent stream and fingerprint all returned IDs.
