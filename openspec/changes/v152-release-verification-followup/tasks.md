@@ -10,3 +10,7 @@
 - [x] Refresh the reports and use the request-scoped native Bolt adapter in production. Verify the stored-entity and nil-context censuses and focused Bolt behavior.
 - [x] Set the release build metadata and move the changelog entries under 1.5.2.
 - [ ] Verify all release shards after reconciling the final release head with main.
+- [x] Reproduce both failures from release CI run 45079590652 on 98c70efcf.
+- [x] Review the discovered lexical inventory differences and register the composite schema test engines with the shared fixture owner.
+- [x] Verify both failing checks and the composite schema admission test locally.
+- [ ] Verify the fixes on the integrated release head in CI.
