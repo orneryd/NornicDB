@@ -2,9 +2,8 @@
 
 **Historical compatibility audit**
 
-Last Updated: December 2025 (historical snapshot)
 
-This audit is a December 2025 snapshot of the v0.1.x surface. The current function, procedure, and plugin capability boundaries are maintained in [APOC Functions](../features/apoc-functions.md), the [APOC procedure capability audit](../features/apoc-procedure-capabilities.md), and `SHOW FUNCTIONS` / `SHOW PROCEDURES`; remaining gaps are tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+This audit, dated December 1, 2025, is a snapshot of the v0.1.x surface. The current function, procedure, and plugin capability boundaries are maintained in [APOC Functions](../features/apoc-functions.md), the [APOC procedure capability audit](../features/apoc-procedure-capabilities.md), and `SHOW FUNCTIONS` / `SHOW PROCEDURES`; remaining gaps are tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318).
 
 Scope: Production workloads excluding plugins and multi-database orchestration.
 
@@ -377,5 +376,4 @@ NornicDB v0.1.4 provides production-grade Neo4j replacement capability:
 
 ---
 
-_Last Updated: December 1, 2025_
 _Previous Audit: November 27, 2025_

@@ -1,7 +1,5 @@
 # ARM64 NEON SIMD Acceleration
 
-Last Updated: January 2026
-
 ## Summary
 
 Replaced vek library dependency with native ARM64 NEON SIMD implementation in C++ for Apple Silicon and ARM64 servers.
@@ -102,4 +100,3 @@ $ go test ./pkg/simd -v
 ## Conclusion
 
 The ARM64 NEON SIMD implementation is complete, tested, and provides **1.4x performance improvement** for typical embedding operations. This eliminates the vek dependency for ARM64 platforms while maintaining compatibility with x86 builds.
-

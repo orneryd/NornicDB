@@ -2,8 +2,6 @@
 
 **How NornicDB's security features satisfy HIPAA requirements.**
 
-Last Updated: April 2026
-
 ---
 
 ## Overview

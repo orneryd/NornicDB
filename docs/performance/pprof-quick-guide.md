@@ -36,7 +36,7 @@ When pprof is enabled, NornicDB also turns on mutex and block profiling so `/deb
 
 ### Step 1: Find Top CPU Consumers
 
-```pprof
+```text
 (pprof) top10
 ```
 
@@ -49,7 +49,7 @@ This shows the top CPU consumers. Look for:
 
 ### Step 2: Check the Full Call Chain
 
-```pprof
+```text
 (pprof) top20 -cum
 ```
 
@@ -57,7 +57,7 @@ Use cumulative time to find the higher-level path that leads into the hotspot.
 
 ### Step 3: Check for GC Overhead
 
-```pprof
+```text
 (pprof) top20 | grep -E "(gc|runtime)"
 ```
 
@@ -77,7 +77,7 @@ go tool pprof http://127.0.0.1:9091/debug/pprof/goroutine
 
 Inside pprof:
 
-```pprof
+```text
 (pprof) top20 -cum
 (pprof) traces
 ```
@@ -96,7 +96,7 @@ curl http://127.0.0.1:9091/debug/pprof/goroutine?debug=2
 
 ### Step 5: Focus on a Specific Function
 
-```pprof
+```text
 (pprof) list searchWithEf
 ```
 
@@ -110,7 +110,7 @@ go tool pprof http://127.0.0.1:9091/debug/pprof/mutex
 
 Useful commands:
 
-```pprof
+```text
 (pprof) top20
 (pprof) top20 -cum
 (pprof) list <function>
@@ -133,19 +133,19 @@ Use the block profile when the process is not CPU-hot but requests or background
 
 ### Step 8: Generate Visual Reports
 
-```pprof
+```text
 (pprof) web
 ```
 
 Or generate SVG:
 
-```pprof
+```text
 (pprof) svg > /tmp/profile.svg
 ```
 
 ### Step 9: Exit and Use the HTML UI
 
-```pprof
+```text
 (pprof) exit
 ```
 

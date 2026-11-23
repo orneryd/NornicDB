@@ -1011,7 +1011,7 @@ Heimdall is the cognitive guardian and AI chat assistant. It supports **local** 
 | `NORNICDB_HEIMDALL_API_KEY`  | (empty)     | Required for OpenAI and Orca; optional LiteLLM master/virtual key or vLLM key                                                                                |
 | `NORNICDB_HEIMDALL_MODEL`    | (varies)    | Local GGUF name, Ollama/OpenAI/vLLM model name, or required LiteLLM `model_name` alias                                                                       |
 
-**Advanced llama.cpp context features** (local provider only, most models work with defaults):
+The following settings apply to Heimdall with the local llama.cpp provider.
 
 | Variable                           | Default | Description                                     |
 | ---------------------------------- | ------- | ----------------------------------------------- |
@@ -1038,7 +1038,7 @@ Stage-2 reranking improves vector/hybrid search by re-scoring top candidates wit
 | `NORNICDB_SEARCH_RERANK_API_KEY`  | (empty)     | API key for Cohere, OpenAI, etc.                                                                                           |
 | `NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS` | `2048` | Maximum characters sent per candidate (identifying properties + matched chunk with its neighbours); `…_BYTES` is deprecated and read as characters |
 
-**Advanced llama.cpp context features** (local provider only, most models work with defaults):
+The following settings apply to the local llama.cpp reranker.
 
 | Variable                         | Default | Description                                     |
 | -------------------------------- | ------- | ----------------------------------------------- |

@@ -1,7 +1,5 @@
 # Single Request Performance Benchmark
 
-Last Updated: February 2026
-
 HTTP write performance with a single sequential request (best case). Configuration: HTTP/2, no auth, Go 1.26.0.
 
 ## Test Configuration

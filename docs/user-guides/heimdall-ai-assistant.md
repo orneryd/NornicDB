@@ -525,12 +525,12 @@ GGUF models come in different quantizations (compression levels):
 
 | Quantization | Quality | Size | Speed |
 |--------------|---------|------|-------|
-| `q4_k_m` | Good | ~40% | Fast | **Recommended** |
+| `q4_k_m` | Good | ~40% | Fast |
 | `q5_k_m` | Better | ~50% | Medium |
 | `q8_0` | Best | ~80% | Slower |
 | `f16` | Original | 100% | Slowest |
 
-For Heimdall, `q4_k_m` provides the best balance of quality and performance.
+Start with `q4_k_m` for Heimdall. Choose a higher-precision variant if you have available memory and want to prioritize model quality.
 
 #### GPU vs CPU
 

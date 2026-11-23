@@ -355,5 +355,4 @@ tasks(status=["pending"], unblocked_only=true)
 
 ---
 
-**Last Updated:** 2025-11-28
 **Version:** 0.1.3

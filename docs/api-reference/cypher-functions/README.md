@@ -2,8 +2,6 @@
 
 **documentation with real-world examples**
 
-Last Updated: November 25, 2025
-
 ---
 
 ## Quick Navigation
@@ -721,5 +719,3 @@ These sources describe general concepts and Neo4j. NornicDB behavior can differ;
 **Functions Documented:** 62/62 (100%)
 
 **Examples Provided:** 160+
-
-**Last Updated:** November 29, 2025

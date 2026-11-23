@@ -2,8 +2,6 @@
 
 **NornicDB HTTP/2 configuration and performance guide**
 
-Last Updated: January 27, 2026
-
 ---
 
 ## Overview

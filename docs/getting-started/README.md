@@ -1,42 +1,20 @@
 # Getting Started
 
-Use this section to install NornicDB quickly and run your first successful query.
-
 ## Fast Path
 
-1. [installation.md](installation.md)
-2. [quick-start.md](quick-start.md)
-3. [first-queries.md](first-queries.md)
+- [Quick start](quick-start.md) to run NornicDB locally.
+- [Installation](installation.md) for platform-specific setup.
+- [Docker deployment](docker-deployment.md) and [image selection](image-quick-reference.md) for container deployments.
+- [First queries](first-queries.md) to create nodes, connect them, and read them back.
 
 ## Choose Your Path
 
-### I want to try NornicDB locally
-
-- [quick-start.md](quick-start.md)
-- [image-quick-reference.md](image-quick-reference.md)
-
-### I need Docker deployment details
-
-- [docker-deployment.md](docker-deployment.md)
-- [image-quick-reference.md](image-quick-reference.md)
-
-### I am migrating from Neo4j
-
-- [../neo4j-migration/README.md](../neo4j-migration/README.md)
-- [../neo4j-migration/feature-parity.md](../neo4j-migration/feature-parity.md)
-
-### I need API details after setup
-
-- [../api-reference/README.md](../api-reference/README.md)
-- [../user-guides/README.md](../user-guides/README.md)
-
-## After Setup
-
-- Query patterns and workflows: [../user-guides/README.md](../user-guides/README.md)
-- Endpoint and protocol references: [../api-reference/README.md](../api-reference/README.md)
-- Production operations: [../operations/README.md](../operations/README.md)
+- [Neo4j migration](../neo4j-migration/README.md) for driver and compatibility guidance.
+- [User guides](../user-guides/README.md) for query patterns and workflows.
+- [API reference](../api-reference/README.md) for endpoints and protocols.
+- [Operations](../operations/README.md) for production deployments.
 
 ## If Something Fails During Setup
 
-- Symptom-based index: [../issues-index.md](../issues-index.md)
-- Ops troubleshooting: [../operations/troubleshooting.md](../operations/troubleshooting.md)
+- [Find an issue by symptom](../issues-index.md)
+- [Troubleshoot a deployment](../operations/troubleshooting.md)

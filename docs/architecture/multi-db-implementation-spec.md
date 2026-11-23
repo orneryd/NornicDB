@@ -2,7 +2,6 @@
 
 **Status:** Complete
 **Version:** 1.2
-**Last Updated:** 2024-12-04
 
 NornicDB supports multiple isolated databases (multi-tenancy) within a single storage backend, providing Neo4j 4.x-compatible multi-database functionality.
 

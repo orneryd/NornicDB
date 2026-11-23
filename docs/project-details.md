@@ -1,6 +1,6 @@
 # Project details
 
-This reference retains the project, configuration, benchmark, migration, and build details previously included in the repository README. Consult the linked guides for current operating instructions and benchmark context.
+Find supported interfaces, deployment options, migration resources, and benchmark results.
 
 ## Quick Start
 
@@ -23,22 +23,19 @@ Open [http://localhost:7474](http://localhost:7474) for the admin UI. For NVIDIA
 
 ---
 
-> **Writing queries?** Start with the [Hot-Path Cypher Cookbook](performance/hot-path-query-cookbook.md) — proven query shapes that route through the executor's specialized fast paths.
->
-> 🤖 **Building with Claude / agents?** The [`docs/skills/`](skills/) directory contains agent-ready skill files for every Cypher surface: query shapes, decay/promotion policies, managed embeddings, vector & hybrid search, and RAG procedures. Drop them into `.claude/skills/` to make agents fluent in NornicDB.
+- Use the [Hot-Path Cypher Cookbook](performance/hot-path-query-cookbook.md) to find query patterns with specialized executors.
+- Copy the relevant [NornicDB skills](skills/) into `.claude/skills/` for Claude Code.
 
 ## What NornicDB Is
 
-NornicDB is a graph database for workloads that need graph traversal, vector retrieval, and historical truth in the same system. It speaks Neo4j's language through Bolt and Cypher, exposes REST, GraphQL, and gRPC interfaces, and can preserve Qdrant-style client workflows where that helps migration.
+NornicDB combines graph traversal, vector retrieval, and historical reads. It supports Neo4j clients through Bolt and Cypher, Qdrant clients through gRPC, and applications through REST and GraphQL.
 
 The architecture draws from [research](https://github.com/orneryd/NornicDB/blob/main/docs/research/papers/persistence-semantics-nornicdb/references.bib) in Temporal GraphRAG, agent memory systems, event-sourced decision memory, and persistence semantics for AI agents. These ideas appear in NornicDB as graph-native support for temporal facts, canonical knowledge versioning, replayable history, policy-driven memory retention, and audit-friendly retrieval.
-
-It is built for knowledge systems, agent memory, Graph-RAG, and canonical truth stores where semantic search is only part of the query. The design goal is not to bolt a vector store onto a graph database. The design goal is one execution path for graph, vector, temporal, and audit-oriented workloads.
 
 ## Why NornicDB Is Different
 
 - **Neo4j-compatible by default**: Bolt + Cypher support for existing drivers and applications.
-- **Built for AI-native workloads**: vector search, memory decay, and auto-relationships are first-class features.
+- **Knowledge-layer policies** control score decay and promotion. Auto-TLP can infer relationships.
 - **Graph, vector, and ledger semantics in one engine**: hybrid retrieval, graph traversal, canonical graph ledger modeling, tritemporal facts, as-of reads, txlog queries, and receipts do not require a second database.
 - **Protocol flexibility without splitting the system**: REST, GraphQL, Bolt/Cypher, Qdrant-compatible gRPC, and additive Nornic gRPC live on the same platform.
 - **Hardware-accelerated execution**: Metal/CUDA/Vulkan pathways for high-throughput graph + semantic workloads.
@@ -64,19 +61,7 @@ See [transaction implementation details](user-guides/transactions.md), [historic
 
 ## Performance Snapshot
 
-**Northwind benchmark** (48,000 products and 48,000 orders; 30 measured iterations per query after 5 warmups):
-
-| Metric                                  |       NornicDB |        Neo4j |                 Difference |
-| --------------------------------------- | -------------: | -----------: | -------------------------: |
-| Overall mean query latency              |        0.13 ms |      54.69 ms | **-99.8% (413.40x ratio)** |
-| Query-latency-only aggregate throughput | 7,559.12 ops/s |   18.29 ops/s |   **+41240.3% (413.40x)** |
-| End-to-end query-loop throughput        |    16.58 ops/s |   15.14 ops/s |        **+9.6% (1.10x)** |
-| Query-loop duration                     |       25.327 s |     27.746 s |         **-8.7% (1.10x)** |
-| Benchmark wall-clock                    |        35.12 s |      55.06 s |   **-36.2% (1.57x ratio)** |
-| Energy during benchmark                 |       325.30 J |     383.86 J |   **-15.3% (1.18x ratio)** |
-| Peak memory used                        |       17.4 GiB |     17.7 GiB |    **-1.6% (1.02x ratio)** |
-
-All seed counts and per-query result fingerprints matched between NornicDB and Neo4j. See the [full Northwind benchmark report](performance/1.1.0-northwind-results/comparison.md) for per-query latency, correctness, power, memory, and storage results.
+The [Northwind comparison](performance/benchmarks/database-comparison/comparison.md) reports 14 query workloads against the same 48,000 products and 48,000 orders. It includes query latency, end-to-end throughput, result verification, energy, memory, and storage measurements.
 
 ### BEIR Retrieval Quality
 
@@ -91,7 +76,7 @@ The BGE-M3 row runs fully locally. The Titan V2 row uses Amazon Titan Text Embed
 
 ### Hybrid Retrieval Benchmarks
 
-Hybrid retrieval is where NornicDB is materially different from vector-only stacks: the query shape is vector search followed by graph expansion in the same engine.
+This benchmark compares vector search alone with vector search followed by one hop of graph traversal.
 
 **Local benchmark** (67,280 nodes, 40,921 edges, 67,298 embeddings, HNSW CPU-only index):
 
@@ -108,25 +93,18 @@ Hybrid retrieval is where NornicDB is materially different from vector-only stac
 - Vector + 1 hop: ~112.9 ms P50
 - The delta between local and remote matched network RTT closely enough that end-to-end latency was network-bound rather than compute-bound.
 
-This point is: once vector search plus one-hop traversal stays in low single-digit milliseconds locally, the bottleneck shifts from retrieval logic to deployment topology.
-
 See the [hybrid retrieval benchmark write-up](performance/hybrid-query-benchmarks.md) for methodology, caveats, and reproduction queries, and see [Graph-RAG: NornicDB vs Typical](architecture/graph-rag-nornicdb-comparison.md) for the architectural implications.
 
-### 🔬 Academic Validation: UCLouvain Case Study
+### UCLouvain automata-learning benchmark
 
-NornicDB is currently being utilized by researchers at **UCLouvain** to map large-scale **Cyber-Physical Systems** (CPS).
-
-In benchmarks performing **Automata Learning (L\*)**—a high-iteration logic process where an LLM acts as a "Deterministic Teacher" or Oracle—NornicDB outperformed industry-standard graph databases by a significant margin:
-
-- **Efficiency:** **2.2x Faster** than Neo4j in total execution time for formal logic mapping.
-- **Throughput:** Successfully handled **1,443 state-transition queries** in ~32 seconds (Avg 22.69ms per full reasoning loop).
+UCLouvain researchers used NornicDB to map cyber-physical systems with the L* automata-learning algorithm. The benchmark ran 1,443 state-transition queries per database. NornicDB completed the run in 32.74 seconds, compared with 72.43 seconds for Neo4j.
 
 | DATABASE     | CALLS    | AVG TIME (ms) | TOTAL (s) |
 | ------------ | -------- | ------------- | --------- |
 | **NornicDB** | **1443** | **22.69**     | **32.74** |
 | Neo4j        | 1443     | 50.20         | 72.43     |
 
-### What Recent Deep-Dives Show
+### Query execution and index construction
 
 - **Hybrid execution model (streaming fast paths + general engine)**: NornicDB uses shape-specialized streaming executors for common traversal/aggregation patterns while retaining a general Cypher path for coverage and correctness.
 - **Scannerless recursive-descent (SRD) parser by default**: the `nornic` parser scans the raw query text with no lexer and no parse tree — clause boundaries and precedence are found by scanning for top-level keywords and operators — so hot-path routing is allocation-free. The `antlr` parser remains for strict parsing and diagnostics.
@@ -190,7 +168,7 @@ with driver.session() as session:
 - **Drop-in compatibility** via Bolt + Cypher for existing applications.
 - **Canonical graph ledger model** for temporal validity, tritemporal fact modeling, as-of reads, and audit-oriented mutation tracking.
 
-> 🚚 **Migrating?** [Neo4j → NornicDB skill](skills/neo4j-migration.skill.md) · runnable Python/Go/Node scripts in [`scripts/migration/neo4j/`](../scripts/migration/neo4j/).
+> [Neo4j → NornicDB skill](skills/neo4j-migration.skill.md) · runnable Python/Go/Node scripts in [`scripts/migration/neo4j/`](../scripts/migration/neo4j/).
 
 ## Why Switch from Qdrant?
 
@@ -200,7 +178,7 @@ with driver.session() as session:
 - **Canonical truth modeling**: versioned facts, temporal validity windows, tritemporal facts, and as-of reads for governance-heavy use cases.
 - **Protocol flexibility**: use REST, GraphQL, Bolt/Cypher, Qdrant-compatible gRPC, and additive Nornic gRPC on one platform.
 
-> 🚚 **Migrating?** [Qdrant → NornicDB skill](skills/qdrant-migration.skill.md) · [gRPC surface skill](skills/grpc.skill.md) · runnable Python/Go/Node scripts in [`scripts/migration/qdrant/`](../scripts/migration/qdrant/).
+> [Qdrant → NornicDB skill](skills/qdrant-migration.skill.md) · [gRPC surface skill](skills/grpc.skill.md) · runnable Python/Go/Node scripts in [`scripts/migration/qdrant/`](../scripts/migration/qdrant/).
 
 ## Features
 
@@ -210,7 +188,7 @@ Retention policy enforcement is available, but it is disabled by default and mus
 
 See [Retention Policies](user-guides/retention-policies.md) and [Configuration](operations/configuration.md#retention-policies-opt-in).
 
-### 🔌 Neo4j Compatible
+### Neo4j Compatible
 
 Designed to work with existing Neo4j drivers and Bolt/Cypher workflows, with minimal or no application changes for supported query shapes.
 
@@ -220,9 +198,9 @@ Designed to work with existing Neo4j drivers and Bolt/Cypher workflows, with min
 - **Schema Management** — Constraints, indexes (single- and multi-property), vector indexes
 - **Qdrant gRPC API Compatible** — Works with Qdrant-style gRPC vector workflows
 
-> 🤖 **Agent skill:** [Bolt Client](skills/bolt-client.skill.md) — connection defaults, retry classification, MERGE under concurrent writers, batch sizing.
+> **Agent skill:** [Bolt Client](skills/bolt-client.skill.md) — connection defaults, retry classification, MERGE under concurrent writers, batch sizing.
 
-### 🧠 Knowledge-Layer Scoring
+### Knowledge-Layer Scoring
 
 Profile-driven decay and promotion scoring with the [Ebbinghaus-Roynard four-layer decomposition](https://arxiv.org/pdf/2604.11364). The engine does not hardcode cognitive tiers. Operators model their own labels and lifecycle rules using Cypher DDL.
 
@@ -259,26 +237,26 @@ MATCH (n:SessionRecord) WHERE decayScore(n) > 0.5
 RETURN n ORDER BY decayScore(n) DESC
 ```
 
-> 📖 Deep dive: [Knowledge-Layer Policies](user-guides/knowledge-layer-policies.md), [Decay Profiles](user-guides/decay-profiles.md), [Promotion Policies](user-guides/promotion-policies.md), and [Ebbinghaus-Roynard Bootstrap](user-guides/ebbinghaus-roynard-bootstrap.md).
+> See [Knowledge-Layer Policies](user-guides/knowledge-layer-policies.md), [Decay Profiles](user-guides/decay-profiles.md), [Promotion Policies](user-guides/promotion-policies.md), and [Ebbinghaus-Roynard Bootstrap](user-guides/ebbinghaus-roynard-bootstrap.md).
 >
-> 🤖 **Agent skills:** [Knowledge Policies](skills/knowledge-policies.skill.md) · [Decay Tuning](skills/decay-tuning.skill.md) · [Promotion Policies](skills/promotion-policies.skill.md)
+> **Agent skills:** [Knowledge Policies](skills/knowledge-policies.skill.md) · [Decay Tuning](skills/decay-tuning.skill.md) · [Promotion Policies](skills/promotion-policies.skill.md)
 
-### 🔗 Auto-Relationships
+### Auto-Relationships
 
-NornicDB weaves connections automatically:
+When automatic relationship inference is enabled, it uses these signals:
 
 - **Embedding Similarity** — Related concepts link together
 - **Co-access Patterns** — Frequently queried pairs connect
 - **Temporal Proximity** — Same-session nodes associate
 - **Transitive Inference** — A→B + B→C suggests A→C
 
-### 🎯 Vector Search
+### Vector Search
 
 Native semantic search with GPU acceleration and hybrid retrieval support.
 
-> 📖 Deep dive: [Vector Search Guide](user-guides/vector-search.md) and [Qdrant gRPC Endpoint](user-guides/qdrant-grpc.md).
+> See [Vector Search Guide](user-guides/vector-search.md) and [Qdrant gRPC Endpoint](user-guides/qdrant-grpc.md).
 >
-> 🤖 **Agent skills:** [Vector & Full-Text Search](skills/vector-search.skill.md) · [Managed Embeddings](skills/managed-embeddings.skill.md) · [RAG Procedures](skills/rag-procedures.skill.md)
+> **Agent skills:** [Vector & Full-Text Search](skills/vector-search.skill.md) · [Managed Embeddings](skills/managed-embeddings.skill.md) · [RAG Procedures](skills/rag-procedures.skill.md)
 
 **Cypher (Neo4j-compatible):**
 
@@ -303,9 +281,9 @@ More API entry points:
 - **Nornic native gRPC**: `NornicSearch/SearchText` (additive client)
 - See `docs/user-guides/nornic-search-grpc.md` for additive proto setup without forking Qdrant drivers.
 
-### 🤖 Heimdall AI Assistant
+### Heimdall AI Assistant
 
-Built-in AI that understands your database.
+Heimdall responds to natural-language requests for database status, metrics, and health checks.
 
 ```bash
 # Enable Heimdall
@@ -327,7 +305,7 @@ NORNICDB_HEIMDALL_ENABLED=true ./nornicdb serve
 
 See [Heimdall AI Assistant Guide](user-guides/heimdall-ai-assistant.md) and [Plugin Development](user-guides/heimdall-plugins.md).
 
-### 🧩 APOC Functions
+### APOC Functions
 
 950+ built-in functions for text, math, collections, and more. Plus a plugin system for custom extensions.
 

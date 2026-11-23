@@ -193,4 +193,4 @@ nornicdb-admin database check-ids --repair --data-dir=./data
 
 - [CLI Commands](cli-commands.md)
 - [Data Import/Export Guide](../user-guides/data-import-export.md)
-- [Search related documentation](/search?q=Open%20Knowledge%20Format%20Admin%20Import/Export)
+- [Open Knowledge Format import and export](../user-guides/open-knowledge-format-interchange.md)

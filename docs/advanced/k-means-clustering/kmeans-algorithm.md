@@ -113,7 +113,7 @@ cluster_ids, cluster_centers = kmeans(
 
 For maximum control and performance:
 
-```cuda
+```cpp
 // k-means distance kernel (simplified)
 __global__ void compute_distances(
     float* embeddings,        // [N, D] embeddings
@@ -181,7 +181,7 @@ __global__ void update_centroids(
 
 ### Option 3: Metal Shaders (Apple Silicon)
 
-```metal
+```cpp
 kernel void compute_distances(
     device const float* embeddings [[buffer(0)]],
     device const float* centroids [[buffer(1)]],

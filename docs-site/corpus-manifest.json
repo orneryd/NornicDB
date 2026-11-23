@@ -2,8 +2,8 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "c57f1ac5abf87aa5fd5573861bb784da53ecf21277e59758201f3c611fa25cf7",
-      "bytes": 4148
+      "sha256": "4ed2f5f60c4f5e16afe23e8fcf13aa3391aa53347e8a4da47cbbc4da8e23c8e7",
+      "bytes": 2690
     },
     {
       "path": "advanced/README.md",
@@ -32,13 +32,13 @@
     },
     {
       "path": "advanced/k-means-clustering/kmeans-algorithm.md",
-      "sha256": "82569b45353a60eed24f7fb66c9156d1d4790c2b86c6f3691c1344facb87639c",
-      "bytes": 21586
+      "sha256": "f8f25412f9335af71e6761162a100f5c8fe08aeb83b638f036056aa2fe3d02da",
+      "bytes": 21583
     },
     {
       "path": "advanced/k-means-clustering/metal-optimizations.md",
-      "sha256": "f2e55f444b812b9ceede8784942288f3c8cc9d8d7c9d7099f8f4545bc7fa70a6",
-      "bytes": 4696
+      "sha256": "0a0a49c17fac234732845c247887e54e5d5c8bab68f3161bc79fcd48d659a794",
+      "bytes": 4694
     },
     {
       "path": "advanced/search-evaluation.md",
@@ -57,13 +57,13 @@
     },
     {
       "path": "ai-agents/chat-modes.md",
-      "sha256": "8c229324f29476f4e70e80e711f1d9091ddfe985a9ca23b99b818d52e748be00",
-      "bytes": 9536
+      "sha256": "c5584b4a1349f152dbf2dc4f2ea63c8ec6791bf2d76c89b29ec5aa55f805376e",
+      "bytes": 9507
     },
     {
       "path": "api-reference/README.md",
-      "sha256": "7b28a73eb228a117c79bbdc0b012914146aac0da4dc431d585c11725aa4b4959",
-      "bytes": 9412
+      "sha256": "45b86071284543e01f09575bd36ffc54c671ebd05e7a24988b0316f2e6bcdf9b",
+      "bytes": 9414
     },
     {
       "path": "api-reference/apoc-integer-values.md",
@@ -77,8 +77,8 @@
     },
     {
       "path": "api-reference/cypher-functions/README.md",
-      "sha256": "a9b5cd7d53cf0469198b5090e36ed439dc3702e833a3aff2224b50005b3a3941",
-      "bytes": 33845
+      "sha256": "df41995734a4ad543be74de5ba1317bab0f411d5553f5451d68d65592dc5415a",
+      "bytes": 33775
     },
     {
       "path": "api-reference/openapi.md",
@@ -97,8 +97,8 @@
     },
     {
       "path": "architecture/README.md",
-      "sha256": "7b2885fe2fed560ca31d84f87c5a15688308fb39675f3f10b6973ec99382c80c",
-      "bytes": 2899
+      "sha256": "7cb93830de03ca1bb8c385d5760cefbcba6dcb9fd956c203f188427df344f324",
+      "bytes": 2838
     },
     {
       "path": "architecture/clustering-roadmap.md",
@@ -157,8 +157,8 @@
     },
     {
       "path": "architecture/knowledge-policy-scoring-pipeline.md",
-      "sha256": "57a00e22e5aaef039efe82cabbe76e30a151907b1261e92cb4705460fd0bb333",
-      "bytes": 12101
+      "sha256": "749b90debfdef968aa1a09e939f711c68f1c1f42c794e349d10d547d6afc9656",
+      "bytes": 12111
     },
     {
       "path": "architecture/knowledge-policy-visibility-layer.md",
@@ -172,8 +172,8 @@
     },
     {
       "path": "architecture/multi-db-implementation-spec.md",
-      "sha256": "70f2ae7960cd0b06b128c7ce682b41cd25e479c7089fe862a67541bede083cf6",
-      "bytes": 17817
+      "sha256": "9be3632408c4ca1030c03775d4de6f071397f75524b2810fedf82041e1a3c1d3",
+      "bytes": 17788
     },
     {
       "path": "architecture/mvcc-lifecycle-background-work.md",
@@ -182,8 +182,8 @@
     },
     {
       "path": "architecture/neon-simd-implementation.md",
-      "sha256": "3a9283c7426827d694d31e7c171d9bb0b6cdcb3970adcc3020821703c17c0b9f",
-      "bytes": 3492
+      "sha256": "e03850f275640481fc6df784c88159291a786f154fc02225dfbd584126c61f52",
+      "bytes": 3463
     },
     {
       "path": "architecture/norns-mythology.md",
@@ -232,8 +232,8 @@
     },
     {
       "path": "architecture/system-design.md",
-      "sha256": "f2ca846a77b1bbe6654101c9b9499db5465e806d54993d6d35c931bc0480b75f",
-      "bytes": 15428
+      "sha256": "7dbd2706abf16b9bce0490e8b37be565a289d6eacf80576abd7f89a5c31fe3cd",
+      "bytes": 15393
     },
     {
       "path": "architecture/vector-checkpoints.md",
@@ -357,13 +357,13 @@
     },
     {
       "path": "compliance/hipaa-compliance.md",
-      "sha256": "17aafaea7951be30573859dda47e85b3daeca606b40eb3ab4f8b9d46c756c099",
-      "bytes": 10218
+      "sha256": "2a406af4290c50bbfa8cd28215ad88cf7fe4b0f2a0769a5df5c6cd49ceca7560",
+      "bytes": 10192
     },
     {
       "path": "compliance/rbac.md",
-      "sha256": "d8199794f712ffe0e557da80e4e1c7701855f5debb4929caad38261806e91de7",
-      "bytes": 22085
+      "sha256": "a2ec4e7762bc8a196cb12e562916c7503413fd96ca98509f99431d31e0b4a649",
+      "bytes": 22059
     },
     {
       "path": "compliance/soc2-compliance.md",
@@ -377,8 +377,8 @@
     },
     {
       "path": "development/README.md",
-      "sha256": "7fc8e4fb49f71663e3d90b4f94dd555ea0fd1d07dd8c81e034495db67dcf6c00",
-      "bytes": 2537
+      "sha256": "b021ecf4928aa2b2fbb88403e831088a4edd99f1ef249f7ab696d5d6caab148f",
+      "bytes": 2539
     },
     {
       "path": "development/access-metadata-write-ownership.md",
@@ -672,8 +672,8 @@
     },
     {
       "path": "features/auto-tlp.md",
-      "sha256": "59237b6fa2453d1c537d4ca1b22826155316a5ccce26d3388a41ba73a358e894",
-      "bytes": 10129
+      "sha256": "783efe0e27cb378b30f396d501a43f470a3f83510c8e6902f5e8b45a91ac284c",
+      "bytes": 10064
     },
     {
       "path": "features/autocomplete-plugin.md",
@@ -687,8 +687,8 @@
     },
     {
       "path": "features/feature-flags.md",
-      "sha256": "0443bc1540b4083ae33282c6166088a9dddde66b0d0418dba553ec6e291a5ae6",
-      "bytes": 26838
+      "sha256": "22132a7e674fdacd069dbe26a89c7d52b62cc580bfa19af7e87eccc3b0f39b4a",
+      "bytes": 26797
     },
     {
       "path": "features/gpu-acceleration.md",
@@ -707,8 +707,8 @@
     },
     {
       "path": "features/memory-decay.md",
-      "sha256": "97d40c847bf347caa1ccb8293be29b700eb82aa011f5b15b4f8df5c8a601b9af",
-      "bytes": 7987
+      "sha256": "f223b21e1dd5c269d40526e0543df8ab3210fdebd5b494920f364a8e7857577d",
+      "bytes": 7997
     },
     {
       "path": "features/plugin-system.md",
@@ -737,8 +737,8 @@
     },
     {
       "path": "getting-started/README.md",
-      "sha256": "7c442ef0948bda9a3dabc24183bdf2ebb6153c5ec57e893c1fbd34046eaf2670",
-      "bytes": 1308
+      "sha256": "796459b46196ee9ee9ce6c5c6a457aabf008648c46e470afeea54f658c1411b5",
+      "bytes": 839
     },
     {
       "path": "getting-started/docker-deployment.md",
@@ -752,18 +752,18 @@
     },
     {
       "path": "getting-started/image-quick-reference.md",
-      "sha256": "7267781b3212e3f62b429d36a4c9e87bd4fb8df17a7a857203aa11ac3096ec02",
-      "bytes": 5413
+      "sha256": "7fb7f54e6a9f6a7f8a14328065534607d6de5e134dbb6dfc4ea81d2bcab4a53d",
+      "bytes": 5329
     },
     {
       "path": "getting-started/installation.md",
-      "sha256": "ceb2a86197bb3e9a9f600597048fd1f004720003da2908a892323fa658792c1c",
-      "bytes": 12148
+      "sha256": "5b0e01b08f33e80d34c5b521df82f205004a8c73c91e02019f3fef61ffb4a653",
+      "bytes": 11928
     },
     {
       "path": "getting-started/quick-start.md",
-      "sha256": "29e4a96501a39bf12714b74ed5046cfdeeaa7dc9e519fecdbfe96b92507568c0",
-      "bytes": 7770
+      "sha256": "dac6549439966eea1075fee9aa1b5a5f2f0bbcd856de75e35130ab744620232e",
+      "bytes": 7656
     },
     {
       "path": "getting-started/windows-cuda.md",
@@ -772,8 +772,8 @@
     },
     {
       "path": "issues-index.md",
-      "sha256": "e8914e60da9c307dcdd5776647d97e9fa986b57dcb5f4b4fc6f8f603bb8cedf0",
-      "bytes": 4002
+      "sha256": "4b1973eeaa0586cc36e8eb7b64da02c7a713b8bb913823070c2befebf9f195aa",
+      "bytes": 4004
     },
     {
       "path": "latest-untagged.md",
@@ -797,13 +797,13 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "fd76ed21717112527627260968a95745bb485f43ee1e985addea2b98d13e8b2c",
-      "bytes": 36087
+      "sha256": "3cac25587c0720d30c7a9f0d07ff870b6fa7a73780c8c5e44d7fab2c4519a381",
+      "bytes": 36076
     },
     {
       "path": "neo4j-migration/feature-parity.md",
-      "sha256": "c525961bf1ca33e43e6c12a15c73ba942943b4f75b06a2dfc769c1c856439ec0",
-      "bytes": 23428
+      "sha256": "f400fd97dcf406d93a24a4d1b90e7ceb0d853d3ff04afb4dc69eb1bff88b24db",
+      "bytes": 23356
     },
     {
       "path": "nornicdb-vs-neo4j-tradeoffs.md",
@@ -822,8 +822,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "131a8a1c7c63c57b2ddcdc7ea03cdcad516c2b2becb7bff07089949dc01cefc4",
-      "bytes": 7959
+      "sha256": "46bf016a026825323a5ed4aa7eb0270de14078da782cbb42fc9a6b243d951191",
+      "bytes": 7962
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -847,8 +847,8 @@
     },
     {
       "path": "operations/configuration.md",
-      "sha256": "1cf606ccaa76c9170e60e48e276f24f4f3ae37aa78fada803b41cba69890dc75",
-      "bytes": 79938
+      "sha256": "4b9b34877e525ef1d117d611d5a029c75a2da0aff495b365372872c77cd4f930",
+      "bytes": 79886
     },
     {
       "path": "operations/dashboards/nornicdb-overview.json",
@@ -862,8 +862,8 @@
     },
     {
       "path": "operations/docker.md",
-      "sha256": "7c3c2bbe6a33d658887e23395d3addaeab26ed6ba51b802b10c794b4ee0c15a5",
-      "bytes": 11680
+      "sha256": "8792c1e7619b3222550e87571ea4b83e9350b9bc7d49058971496382244d991f",
+      "bytes": 11590
     },
     {
       "path": "operations/durability.md",
@@ -872,8 +872,8 @@
     },
     {
       "path": "operations/environment-variables.md",
-      "sha256": "105a1e5671f345ae224a3534931d8d3ada5e9e15420f8e7fbab5e44e6d9afe8d",
-      "bytes": 266953
+      "sha256": "e79d87e48ea3beda1ffe9099101997ed16581a9eebf13b4aac569344f283fe69",
+      "bytes": 266996
     },
     {
       "path": "operations/low-memory-mode.md",
@@ -892,8 +892,8 @@
     },
     {
       "path": "operations/monitoring.md",
-      "sha256": "397f0ceb9cc19d4a5224794dc73b80031d8083c6831915835138e1499cffe5ce",
-      "bytes": 16244
+      "sha256": "980f25525a556848cbbc144390b944908b5ce01a3526f011186fe5ce680278b0",
+      "bytes": 16238
     },
     {
       "path": "operations/mvcc-lifecycle-compaction.md",
@@ -947,7 +947,7 @@
     },
     {
       "path": "packaging/linux.md",
-      "sha256": "f09898eb18fe6a28219df5c4d5bedda513b5225aeb3fab933a6aebe6214ab5ed",
+      "sha256": "0b7328e0a166d86f856c283665e1186276899a047712aa572a3a72d12d2c0d3a",
       "bytes": 11364
     },
     {
@@ -962,8 +962,8 @@
     },
     {
       "path": "packaging/windows.md",
-      "sha256": "470bcafcde75a5b0f2f978131dc8fc0445f78babae524d0de1452b808738ff23",
-      "bytes": 16765
+      "sha256": "b24fbb54409138e2faba5d5707b7fbfdd9702f8cc52f4cb91a503d41d2417cf1",
+      "bytes": 16752
     },
     {
       "path": "performance/README.md",
@@ -1292,8 +1292,8 @@
     },
     {
       "path": "performance/benchmarks/database-comparison/sweep.md",
-      "sha256": "0bdd5bdb1becafb66756dd0d0029ab6c66036c20fcdb651993359294f58e6edb",
-      "bytes": 4555
+      "sha256": "8a3cf47b34b7a1c35fafde28c100bf5ef2123d48b0cd2c0fd59ba9d3bcc7b9f0",
+      "bytes": 4570
     },
     {
       "path": "performance/benchmarks/parser-scaling/go_test.log",
@@ -1352,8 +1352,8 @@
     },
     {
       "path": "performance/benchmarks-vs-neo4j.md",
-      "sha256": "5bf206dd2608b9ba781de63f2f0e5617b1e6d89f3fe6ce2c9548562aafc9ecf0",
-      "bytes": 54082
+      "sha256": "e518996268f40abf0ce422a6bdc3ae48470309dc7d136269c559438a7c892de2",
+      "bytes": 43410
     },
     {
       "path": "performance/concurrent-entity-writes.md",
@@ -1377,33 +1377,33 @@
     },
     {
       "path": "performance/http-api-vs-neo4j.md",
-      "sha256": "a8b66f27124a39f3f5a7ddeeb280846798075d3a549f8a42deceec261947e486",
-      "bytes": 7547
+      "sha256": "9ea7a94d2c55f0fcad65f40c7febdca256109e1969ec1dd74c73a400e4270544",
+      "bytes": 7519
     },
     {
       "path": "performance/http-optimization-options.md",
-      "sha256": "0dca75492581ce4a4d38e270508cd0bf2ea088f60ef234cd186bba5284ee359b",
-      "bytes": 11084
+      "sha256": "9809cd74bb9f11da9b6e3d315200726f1963945830849a61dc96e0d9b6f0a3f8",
+      "bytes": 11055
     },
     {
       "path": "performance/http2-implementation.md",
-      "sha256": "e6179476b740c726670ae333c3207a018d0ba65a7f130dba2204deb1a89ee5e2",
-      "bytes": 5642
+      "sha256": "e4bb60a26c56150311be60a3a051588fb5224a0236eb3da901b5a6d7a9494c17",
+      "bytes": 5610
     },
     {
       "path": "performance/hybrid-query-benchmarks.md",
-      "sha256": "1eeb5f2b64b51f395b46b40d79aedf767fb510232f06a1ca1658a949454aa41c",
-      "bytes": 10898
+      "sha256": "e246d722b564f8f97795c53649bf50af53f5148fd48ea9041493ae1e5ad3a5e9",
+      "bytes": 10619
     },
     {
       "path": "performance/maxconcurrentstreams-comparison.md",
-      "sha256": "86465f6313ae7beada517985fdb0e1274dbc7b80b492aac5326c98f290fc73f0",
-      "bytes": 5148
+      "sha256": "359c86cd5f6d9d558ba7994e55fd0e38fc31cd34874d5f85ba4ef5d66468b2e3",
+      "bytes": 5119
     },
     {
       "path": "performance/pprof-quick-guide.md",
-      "sha256": "040e4bcace1ca662832124cf2da463bd97ac021c306cfa93435d6055a55bc05b",
-      "bytes": 5596
+      "sha256": "56d3e467c8e56a5a99caed7501044d32369e7ed4755ab247db4e2c111a92ee8e",
+      "bytes": 5587
     },
     {
       "path": "performance/replication-projection-identity.md",
@@ -1427,13 +1427,13 @@
     },
     {
       "path": "performance/searching.md",
-      "sha256": "43cf2ca312b134503396ad6f10bdbeb9cf9512e1a9007ad53b803f468dc860f7",
-      "bytes": 49709
+      "sha256": "a6eb4d8b13c5821e2ee6816ded26977af537e84a293e07d6a3112b8c59d89184",
+      "bytes": 49693
     },
     {
       "path": "performance/single-request-benchmark.md",
-      "sha256": "3561221328485a4eecb1e42a38d770afe0867216a9d6e8575a4312cac2bcd69b",
-      "bytes": 4868
+      "sha256": "3fa75c48043b673153c48f665be7aad218b050232b4832c95dd329d055f0d0cc",
+      "bytes": 4839
     },
     {
       "path": "performance/temporal-read-and-constraint-costs.md",
@@ -1497,13 +1497,13 @@
     },
     {
       "path": "privacy.md",
-      "sha256": "2a571958f5723d3143b996257561f7aab01f6a7caa63f958984ab30fea8711f0",
-      "bytes": 2335
+      "sha256": "bf82742dafc70f45df658b961438b3cbb5dcc48108e08c2a01e05cca85bed264",
+      "bytes": 2332
     },
     {
       "path": "project-details.md",
-      "sha256": "7ab3c400bd1805e69915e9a14b338f828aa27857d559cd2e286876357da3763e",
-      "bytes": 34113
+      "sha256": "5c3ae1b14a0f0db627dbf1221c17beb24074de998888fa4df3e2a612da252cc3",
+      "bytes": 31666
     },
     {
       "path": "property-key-dictionary.md",
@@ -1642,8 +1642,8 @@
     },
     {
       "path": "start.md",
-      "sha256": "636a0da092b8de6dd92338c216c9bcc88a9f2c07a6967489a690d8e30ebd705a",
-      "bytes": 2338
+      "sha256": "d509b97091acb702ea2aeaa622bec705d34d35e47bed62534fe7ca766a609380",
+      "bytes": 2434
     },
     {
       "path": "support/reply-user-config-gpu-embeddings-ui.md",
@@ -1677,13 +1677,13 @@
     },
     {
       "path": "user-guides/clustering.md",
-      "sha256": "1eb5c70224692eeb8c32569c63b219ecc970515bd3e494a87d76da4cf25c33ab",
-      "bytes": 36754
+      "sha256": "1aae1f4963c9468c024ef936c0ec41a9894a452e07cb093b2bc22d3cac723a75",
+      "bytes": 36702
     },
     {
       "path": "user-guides/complete-examples.md",
-      "sha256": "df7798751c7a751ff5c0ba2ca15d85f32ed6cff7c71e8f1366bafaca06e7671b",
-      "bytes": 14562
+      "sha256": "338225d60d2bcb7dd323211808d5e6fdd0d1a4ea1a358591da01961a56c5a574",
+      "bytes": 14520
     },
     {
       "path": "user-guides/connecting-bolt.md",
@@ -1692,8 +1692,8 @@
     },
     {
       "path": "user-guides/cypher-queries.md",
-      "sha256": "456fde10f0fbd1c9900f048be29402974781693bf3dc32db2528e4c20aa6b9cc",
-      "bytes": 15527
+      "sha256": "4c47a312783af5a2b2ee0ad82572d6d31e931b787ee72fb414a4dae2aa3ee274",
+      "bytes": 15516
     },
     {
       "path": "user-guides/cypher-rag-procedures.md",
@@ -1702,8 +1702,8 @@
     },
     {
       "path": "user-guides/data-import-export.md",
-      "sha256": "7bad61c10ce3d4a0d68dd7c63a0ca244cf53a5e36cb4d5d4eb34b7f53a54dc5c",
-      "bytes": 5266
+      "sha256": "16f30864580ccadd3c17350c89654dc1d461c3609a81d9f8150ce8106d8fcaea",
+      "bytes": 5230
     },
     {
       "path": "user-guides/decay-profiles.md",
@@ -1717,8 +1717,8 @@
     },
     {
       "path": "user-guides/graph-traversal.md",
-      "sha256": "e36d5dd4f089316b8541f3587ceaa0558394d84e7ba88e9cbfb766c188c4f64e",
-      "bytes": 20521
+      "sha256": "58b1e74c4cb2ccea12cbb0db5531d6a8e2edd090bdd908810d22216a74f5f380",
+      "bytes": 20443
     },
     {
       "path": "user-guides/graphify-local.md",
@@ -1737,13 +1737,13 @@
     },
     {
       "path": "user-guides/heimdall-ai-assistant.md",
-      "sha256": "e1f3eface0c9aea83a2c0cf2e7f757ba37d4d96884b54350fe3e00ee378d0eb8",
-      "bytes": 31284
+      "sha256": "696f77d1a33c48d00d813b78c68b8d0ca7096eb68dc413e7c02d75bcae981f38",
+      "bytes": 31324
     },
     {
       "path": "user-guides/heimdall-context.md",
-      "sha256": "4bfb3314826585559bbb1cd3d5cd084d71c635c2b18b87a6af7f373643fc2d1e",
-      "bytes": 12918
+      "sha256": "ede224a1d916802f02c8a113aeb809f4da0fdb819da347c86b85c6a48090392f",
+      "bytes": 12929
     },
     {
       "path": "user-guides/heimdall-event-triggers-remediation.md",
@@ -1757,8 +1757,8 @@
     },
     {
       "path": "user-guides/heimdall-plugins.md",
-      "sha256": "886e20d243fb990953740d3835a6d1e0e685e2f9baa411bec5903279bdb88fb5",
-      "bytes": 43986
+      "sha256": "e062d6c7f9ca6a4945f5b6b23ff5e0c802122d02e9cc7282f3d3edf749e126ce",
+      "bytes": 43957
     },
     {
       "path": "user-guides/historical-reads-mvcc-retention.md",
@@ -1767,8 +1767,8 @@
     },
     {
       "path": "user-guides/hybrid-search.md",
-      "sha256": "64bf0429648bebef9911795d820f3d0aabcff50fae41059d5291292f35a9ebf5",
-      "bytes": 17453
+      "sha256": "74b16bcf750be04284516792d209a33da3dcd7707ae033a2d45b47fda06939a5",
+      "bytes": 17421
     },
     {
       "path": "user-guides/infinigraph-topology.md",
@@ -1777,8 +1777,8 @@
     },
     {
       "path": "user-guides/knowledge-layer-policies.md",
-      "sha256": "6f026c74457a23676e10d184fe6fe2f70e6bd1aebe086066686c2835075da78f",
-      "bytes": 14797
+      "sha256": "d228ff025e530a6ef886119288fdbd0a75293c4a49ddf065fa0220c5f3861c33",
+      "bytes": 14684
     },
     {
       "path": "user-guides/knowledge-policy-tuning-testing.md",
@@ -1857,13 +1857,13 @@
     },
     {
       "path": "user-guides/vector-search.md",
-      "sha256": "610b793a997f0b74cc0ae39d03f4e15802c4a943427b7a105a885d9de6c83d11",
-      "bytes": 26565
+      "sha256": "f03d1b5e1f0645d663ff3c4ef204a5cad0b83133b9e02def9299d148c59900a0",
+      "bytes": 26505
     },
     {
       "path": "user-guides/visibility-suppression-deindex.md",
-      "sha256": "4fbfb48a9558012245a1696ce8670c67739532653e081c1935674df5994f535f",
-      "bytes": 5200
+      "sha256": "f5e3138d0488ec20616dc8c89e637e55dedd47bdd714a467941e299c87d4d70e",
+      "bytes": 5138
     }
   ],
   "exactDuplicates": []

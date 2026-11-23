@@ -1,6 +1,6 @@
 # Cypher Query Language Guide
 
-**Complete guide to querying NornicDB with Cypher - the graph query language.**
+Use Cypher to match graph patterns, update data, and return results.
 
 ## Table of Contents
 

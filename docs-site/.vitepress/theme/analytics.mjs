@@ -14,14 +14,24 @@ export function sanitize(event) {
   return event;
 }
 let client, pending;
-export function optedOut() {
-  try { return localStorage.getItem('nornic-docs-analytics-disabled') === 'true'; } catch { return true; }
+export const consentKey = 'nornic-docs-analytics-consent';
+export function analyticsAvailable() {
+  return typeof location !== 'undefined' && location.hostname === 'orneryd.github.io' && navigator.doNotTrack !== '1' && !navigator.globalPrivacyControl;
 }
-export function allowed() {
-  return typeof location !== 'undefined' && location.hostname === 'orneryd.github.io' && !optedOut() && navigator.doNotTrack !== '1' && !navigator.globalPrivacyControl;
+export function readConsent() {
+  try {
+    const choice = localStorage.getItem(consentKey);
+    if (choice === 'accepted' || choice === 'declined') return choice;
+    return localStorage.getItem('nornic-docs-analytics-disabled') === 'true' ? 'declined' : null;
+  } catch {
+    return 'declined';
+  }
 }
-export async function initialize() {
-  if (!allowed()) return;
+function allowed() {
+  return analyticsAvailable() && readConsent() === 'accepted';
+}
+async function initialize() {
+  if (client || !allowed()) return;
   if (!pending) pending = import('posthog-js').then(({default: posthog}) => {
     if (!allowed()) return;
     posthog.init(projectToken, {
@@ -32,10 +42,12 @@ export async function initialize() {
       advanced_disable_feature_flags: true, advanced_disable_decide: true,
       disable_external_dependency_loading: true, disable_compression: true,
       person_profiles: 'never', persistence: 'memory', ip: false,
+      opt_out_capturing_by_default: true,
       before_send: sanitize,
     });
     client = posthog;
-  }).catch(() => {});
+    syncConsent();
+  }).catch(() => {}).finally(() => { pending = undefined; });
   return pending;
 }
 export async function track(event, properties = {}) {
@@ -43,8 +55,16 @@ export async function track(event, properties = {}) {
   await initialize();
   if (allowed()) client?.capture(event, {version: import.meta.env?.VITE_DOCS_VERSION || 'current', ...properties});
 }
-export function setDisabled(disabled) {
-  localStorage.setItem('nornic-docs-analytics-disabled', String(disabled));
-  if (disabled) client?.opt_out_capturing();
-  else if (client) client.opt_in_capturing({captureEventName: false});
+export function writeConsent(choice) {
+  try {
+    localStorage.setItem(consentKey, choice);
+    return true;
+  } catch {
+    return false;
+  }
+}
+export function syncConsent() {
+  if (!client) return;
+  if (allowed()) client.opt_in_capturing({captureEventName: false});
+  else client.opt_out_capturing();
 }

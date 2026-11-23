@@ -527,5 +527,4 @@ curl -f http://localhost:7474/health || echo "Health check failed"
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](./troubleshooting.md)**
-**Production deployment?** → **[Docker Deployment Guide](../getting-started/docker-deployment.md)**
+See [Troubleshooting](./troubleshooting.md) for startup and connectivity issues.

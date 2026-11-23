@@ -154,6 +154,8 @@ Performance improvements implemented (no functionality changes):
 
 ## Raw Benchmark Output
 
+Source locations recorded during the follow-up review are [`create.go:855`](https://github.com/orneryd/NornicDB/blob/f1cd7e93a03ff209d4d0fff554b99c2478f6b94c/pkg/cypher/create.go#L855), [`create.go:1000`](https://github.com/orneryd/NornicDB/blob/f1cd7e93a03ff209d4d0fff554b99c2478f6b94c/pkg/cypher/create.go#L1000), [`create.go:1100`](https://github.com/orneryd/NornicDB/blob/f1cd7e93a03ff209d4d0fff554b99c2478f6b94c/pkg/cypher/create.go#L1100), and [`executor.go:2360`](https://github.com/orneryd/NornicDB/blob/f1cd7e93a03ff209d4d0fff554b99c2478f6b94c/pkg/cypher/executor.go#L2360).
+
 <details>
 <summary>Click to expand full benchmark logs</summary>
 
@@ -241,7 +243,11 @@ _Benchmark conducted: January 2025_
 _NornicDB Version: 0.1.0_
 _Test Framework: Vitest 3.2.4_
 
-Timothy-Sweet_cvsh: stdout | testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts:407:11
+<details>
+<summary>Northwind output excerpt</summary>
+
+```text
+stdout | testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts:407:11
 
 ────────────────────────────────────────────────────────────────────────
 
@@ -268,7 +274,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 1,033.00 0.6214 3.7122 0.9680 0.9873 2.8371 3.5454 3.7122 ±3.13% 517
 · Orders per customer 1,627.83 0.4206 3.6855 0.6143 0.6347 1.3991 2.2749 3.6855 ±2.58% 814
 · Products per supplier 1,613.60 0.4138 3.5487 0.6197 0.6356 1.8656 2.9555 3.5487 ±2.98% 807
-· Top products by revenue (price \* quantity) 3,450.50 0.1953 2.6303 0.2898 0.2951 0.8229 0.9549 2.4498 ±1.96% 1726
+· Top products by revenue (price * quantity) 3,450.50 0.1953 2.6303 0.2898 0.2951 0.8229 0.9549 2.4498 ±1.96% 1726
 · Products out of stock 2,800.22 0.2523 3.2860 0.3571 0.3672 0.7813 0.8722 2.9119 ±2.30% 1401
 · Expensive products (price > 30) 2,228.94 0.2878 3.3469 0.4486 0.4563 1.7403 2.1875 3.3431 ±3.08% 1115
 · Categories with product lists 1,956.37 0.3248 3.5289 0.5112 0.5451 1.0788 2.3450 3.5289 ±2.69% 979
@@ -309,7 +315,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 1,909.74 0.2668 4.2707 0.5236 0.5034 2.7104 3.0886 4.2707 ±5.30% 955
 · Orders per customer 1,801.21 0.2675 4.8566 0.5552 0.5158 3.2261 3.3939 4.8566 ±5.74% 901
 · Products per supplier 1,944.69 0.2719 3.5189 0.5142 0.4800 2.5626 3.2084 3.5189 ±5.22% 973
-· Top products by revenue (price \* quantity) 1,602.35 0.2789 27.8556 0.6241 0.5143 3.3537 4.0900 27.8556 ±15.06% 802
+· Top products by revenue (price * quantity) 1,602.35 0.2789 27.8556 0.6241 0.5143 3.3537 4.0900 27.8556 ±15.06% 802
 · Products out of stock 2,021.71 0.2747 3.8188 0.4946 0.4656 2.8578 3.1791 3.6422 ±4.97% 1011
 · Expensive products (price > 30) 2,009.25 0.2727 3.6688 0.4977 0.4706 2.5540 3.1060 3.4627 ±4.74% 1005
 · Categories with product lists 1,869.98 0.2723 6.3576 0.5348 0.4813 3.0154 3.5286 6.3576 ±6.35% 936
@@ -320,7 +326,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 
 BENCH Summary
 
-Top products by revenue (price \* quantity) - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
+Top products by revenue (price * quantity) - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
 1.03x faster than Create and delete relationship
 1.12x faster than Products with or without orders
 1.14x faster than Find product by name
@@ -360,7 +366,7 @@ Customers with order lists - testing/benchmarks/nornicdb-vs-neo4j-northwind.benc
 1.13x faster than Orders per customer
 1.21x faster than Customer orders to products
 1.27x faster than Products with or without orders
-1.28x faster than Top products by revenue (price \* quantity)
+1.28x faster than Top products by revenue (price * quantity)
 1.29x faster than Find category by name
 1.30x faster than Average price per category
 1.41x faster than Find customer by ID
@@ -379,78 +385,15 @@ Customers with order lists - testing/benchmarks/nornicdb-vs-neo4j-northwind.benc
 3.07x faster than Get all products
 3.11x faster than Count all relationships
 4.01x faster than Count all nodes
+```
 
-user@laptop NornicDB %
+</details>
 
-what does this data mean?
+<details>
+<summary>Northwind run with Metal enabled</summary>
 
-GitHub Copilot: Looking at these benchmark results comparing **NornicDB** (your custom graph database) vs **Neo4j** on the Northwind dataset, here's what the data tells us:
-
-## Summary: NornicDB is Faster Overall
-
-### Key Metrics Explained
-
-| Column         | Meaning                                            |
-| -------------- | -------------------------------------------------- |
-| `hz`           | Operations per second (higher = faster)            |
-| `min/max/mean` | Execution time in milliseconds                     |
-| `p75/p99`      | 75th/99th percentile latency                       |
-| `rme`          | Relative margin of error (lower = more consistent) |
-
----
-
-## NornicDB vs Neo4j Comparison
-
-### Where NornicDB Dominates (2x+ faster):
-
-| Query                          | NornicDB    | Neo4j     | Speedup         |
-| ------------------------------ | ----------- | --------- | --------------- |
-| **Count all nodes**            | 2,309 ops/s | 510 ops/s | **4.5x faster** |
-| **Get all products**           | 1,012 ops/s | 665 ops/s | **1.5x faster** |
-| **Count relationships**        | 2,764 ops/s | 658 ops/s | **4.2x faster** |
-| **Create/delete node**         | 1,050 ops/s | 858 ops/s | **1.2x faster** |
-| **Create/delete relationship** | 3,361 ops/s | 961 ops/s | **3.5x faster** |
-
-### Where They're Comparable:
-
-| Query                | NornicDB     | Neo4j        |
-| -------------------- | ------------ | ------------ |
-| Find by name/ID      | ~3,000 ops/s | ~1,400 ops/s |
-| Multi-hop traversals | ~2,000 ops/s | ~1,400 ops/s |
-| Aggregations         | ~1,600 ops/s | ~1,800 ops/s |
-
-### Where Neo4j Wins Slightly:
-
-- **Aggregations with grouping** (Products per category, Orders per customer) - Neo4j's mature query planner optimizes these better
-- **OPTIONAL MATCH** patterns - Neo4j handles outer joins more efficiently
-
----
-
-## What This Means
-
-1. **Read operations in this v0.1.0 fixture** measured 1.5-4x faster than Neo4j
-
-2. **Write operations are MUCH faster** - 3.5x faster create/delete (important for agent memory workloads)
-
-3. **Simple queries shine** - Count, lookup by ID/name are fast
-
-4. **Complex aggregations need work** - Some GROUP BY queries are slower (this is where Neo4j's mature optimizer helps)
-
-5. **Consistency is good** - Low `rme` values (2-4%) mean predictable performance
-
----
-
-## Recommendations
-
-Your parallel execution work should help with the aggregation queries (Products per category, Orders per customer) where NornicDB is currently slower. Those involve scanning + grouping large result sets - perfect for parallel execution!
-
-Want me to profile any specific slow queries to identify optimization opportunities?
-
-APPLE METAL ENABLED::
-
-Timothy-Sweet_cvsh: these are with metal enabled for northwind. give me a breakdown of the performance difference
-
-user@laptop NornicDB % npm run bench:northwind
+```text
+npm run bench:northwind
 
 > nornicdb@1.0.0 bench:northwind
 > npx vitest bench testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts --run
@@ -552,7 +495,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 1,169.00 0.6635 1.8253 0.8554 0.9187 1.0756 1.1500 1.8253 ±0.96% 585
 · Orders per customer 1,906.57 0.4125 1.1563 0.5245 0.5595 0.7740 0.8276 1.1563 ±0.84% 954
 · Products per supplier 1,898.07 0.4113 1.3674 0.5269 0.5610 0.9188 1.0235 1.3674 ±0.99% 950
-· Top products by revenue (price \* quantity) 4,959.36 0.1486 0.9269 0.2016 0.2091 0.6685 0.7988 0.8841 ±1.30% 2480
+· Top products by revenue (price * quantity) 4,959.36 0.1486 0.9269 0.2016 0.2091 0.6685 0.7988 0.8841 ±1.30% 2480
 · Products out of stock 3,562.49 0.2143 1.0617 0.2807 0.2927 0.7385 0.9013 1.0349 ±1.19% 1782
 · Expensive products (price > 30) 3,077.89 0.2470 1.2440 0.3249 0.3423 0.7940 0.9409 1.0685 ±1.13% 1539
 · Categories with product lists 1,983.83 0.3817 1.4889 0.5041 0.5371 0.9780 1.0357 1.4889 ±1.10% 992
@@ -593,7 +536,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 1,842.66 0.3236 1.5331 0.5427 0.5922 1.3262 1.3884 1.5331 ±1.64% 922
 · Orders per customer 1,863.44 0.3132 1.4901 0.5366 0.6037 1.2297 1.3475 1.4901 ±1.73% 932
 · Products per supplier 1,931.43 0.3083 1.8870 0.5177 0.5750 1.2539 1.3555 1.8870 ±1.70% 966
-· Top products by revenue (price \* quantity) 1,849.10 0.3182 1.6995 0.5408 0.5893 1.2203 1.4133 1.6995 ±1.61% 925
+· Top products by revenue (price * quantity) 1,849.10 0.3182 1.6995 0.5408 0.5893 1.2203 1.4133 1.6995 ±1.61% 925
 · Products out of stock 2,046.96 0.2817 1.5414 0.4885 0.5375 1.1872 1.3849 1.4868 ±1.66% 1024
 · Expensive products (price > 30) 2,030.10 0.2740 1.4711 0.4926 0.5508 1.2891 1.3432 1.4117 ±1.70% 1016
 · Categories with product lists 1,930.37 0.3028 7.9957 0.5180 0.5658 1.3052 1.4605 7.9957 ±3.39% 966
@@ -604,7 +547,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 
 BENCH Summary
 
-Top products by revenue (price \* quantity) - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
+Top products by revenue (price * quantity) - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
 1.00x faster than Create and delete relationship
 1.20x faster than Orders by customer ALFKI
 1.20x faster than Customer orders to products
@@ -655,7 +598,7 @@ Find category by name - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts 
 1.13x faster than Products with or without orders
 1.13x faster than Orders per customer
 1.13x faster than Customer to supplier through orders and products
-1.14x faster than Top products by revenue (price \* quantity)
+1.14x faster than Top products by revenue (price * quantity)
 1.14x faster than Total quantity ordered per product
 1.17x faster than Get all products
 1.20x faster than Customer to category through orders and products
@@ -663,153 +606,14 @@ Find category by name - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts 
 1.22x faster than Supplier to category through products
 1.29x faster than Create and delete product node
 1.60x faster than Create and delete relationship
+```
 
-user@laptop NornicDB %
+</details>
 
-GitHub Copilot: ##  NornicDB vs Neo4j Performance Breakdown (Metal GPU Enabled)
+<details>
+<summary>Additional Northwind output excerpt</summary>
 
-### Overall: NornicDB is **1.5x - 4.3x faster** across the board
-
----
-
-## Performance Comparison Table
-
-| Query Type                        | NornicDB (ops/s) | Neo4j (ops/s) | **Speedup** | Notes                     |
-| --------------------------------- | ---------------- | ------------- | ----------- | ------------------------- |
-| **Top products by revenue**       | 4,959            | 1,849         | **2.68x**   |  Fastest NornicDB query |
-| **Create/delete relationship**    | 4,938            | 1,308         | **3.78x**   | Massive write advantage   |
-| **Orders by customer ALFKI**      | 4,145            | 2,094         | **1.98x**   | Simple traversal          |
-| **Customer orders to products**   | 4,130            | 1,725         | **2.39x**   | Multi-hop traversal       |
-| **Find category by name**         | 4,125            | 2,099         | **1.97x**   | Index lookup              |
-| **Products with/without orders**  | 4,103            | 1,865         | **2.20x**   | OPTIONAL MATCH            |
-| **Find customer by ID**           | 4,077            | 1,990         | **2.05x**   | Index lookup              |
-| **Find product by name**          | 4,051            | 2,034         | **1.99x**   | Index lookup              |
-| **Count relationships**           | 3,963            | 2,008         | **1.97x**   | Simple aggregation        |
-| **Products in order 10643**       | 3,575            | 2,098         | **1.70x**   | Pattern match             |
-| **Products out of stock**         | 3,562            | 2,047         | **1.74x**   | WHERE filter              |
-| **Products supplied by Exotic**   | 3,549            | 2,030         | **1.75x**   | Pattern match             |
-| **Count all nodes**               | 3,304            | 1,920         | **1.72x**   | Simple count              |
-| **Products in Beverages**         | 3,273            | 2,035         | **1.61x**   | Category filter           |
-| **Expensive products (>30)**      | 3,078            | 2,030         | **1.52x**   | WHERE filter              |
-| **Create/delete node**            | 2,464            | 1,626         | **1.52x**   | Write operation           |
-| **Products per category**         | 2,056            | 1,977         | **1.04x**   | GROUP BY                  |
-| **Average price per category**    | 2,054            | 1,951         | **1.05x**   | AVG aggregation           |
-| **Categories with product lists** | 1,984            | 1,930         | **1.03x**   | COLLECT                   |
-| **Customer→category→orders**      | 1,910            | 1,750         | **1.09x**   | 3-hop traversal           |
-| **Customer→supplier→orders**      | 1,908            | 1,851         | **1.03x**   | 3-hop traversal           |
-| **Supplier→category→products**    | 1,907            | 1,714         | **1.11x**   | 3-hop traversal           |
-| **Orders per customer**           | 1,907            | 1,863         | **1.02x**   | GROUP BY                  |
-| **Get all customers**             | 1,897            | 1,934         | **0.98x**   |  Neo4j wins slightly    |
-| **Products per supplier**         | 1,898            | 1,931         | **0.98x**   |  Neo4j wins slightly    |
-| **Get all categories**            | 1,884            | 1,949         | **0.97x**   |  Neo4j wins slightly    |
-| **Customers with order lists**    | 1,865            | 1,948         | **0.96x**   |  Neo4j wins slightly    |
-| **Total qty ordered per product** | 1,169            | 1,843         | **0.63x**   |  Neo4j wins             |
-| **Get all products**              | 1,141            | 1,801         | **0.63x**   |  Neo4j wins             |
-
----
-
-## Key Insights
-
-### Where NornicDB Dominates (2x+ faster):
-
-| Category                       | Speedup | Why                           |
-| ------------------------------ | ------- | ----------------------------- |
-| **Write operations**           | 3.78x   | Optimized WAL + BadgerDB MVCC |
-| **Index lookups**              | ~2x     | Simpler index structure       |
-| **Simple traversals**          | 2-2.4x  | Less query planning overhead  |
-| **Aggregations (no GROUP BY)** | 2.7x    | Parallel execution shines     |
-
-### Where They're Equal (~1x):
-
-| Category             | Reason                               |
-| -------------------- | ------------------------------------ |
-| GROUP BY queries     | Neo4j's mature aggregation optimizer |
-| COLLECT operations   | Similar implementation               |
-| Multi-hop traversals | Both handle graph patterns well      |
-
-### Where Neo4j Wins (0.6-0.98x):
-
-| Query                 | Neo4j Advantage | Possible Fix              |
-| --------------------- | --------------- | ------------------------- |
-| **Get all products**  | 1.58x faster    | Batch return optimization |
-| **Total qty ordered** | 1.58x faster    | SUM aggregation tuning    |
-| **Get all customers** | 1.02x faster    | Minor - acceptable        |
-
----
-
-## Metal GPU Impact
-
-Comparing to your **previous run without Metal**:
-
-| Query                      | Without Metal | With Metal  | **Metal Boost** |
-| -------------------------- | ------------- | ----------- | --------------- |
-| Count all nodes            | 2,309 ops/s   | 3,304 ops/s | **+43%**        |
-| Count relationships        | 2,764 ops/s   | 3,963 ops/s | **+43%**        |
-| Find product by name       | 3,028 ops/s   | 4,051 ops/s | **+34%**        |
-| Top products by revenue    | 3,451 ops/s   | 4,959 ops/s | **+44%**        |
-| Create/delete relationship | 3,361 ops/s   | 4,938 ops/s | **+47%**        |
-
-**Metal provides ~35-47% performance boost** on most queries!
-
----
-
-## Optimization Opportunities
-
-The two queries where Neo4j wins significantly:
-
-1. **Get all products** (0.63x) - Returning all 16 products with all properties
-2. **Total quantity ordered per product** (0.63x) - SUM aggregation with GROUP BY
-
-These would benefit from:
-
-- **Parallel property serialization** when returning many nodes
-- **Parallel SUM with partitioned aggregation** for large groupings
-
-Want me to optimize these specific queries?
-
-Timothy-Sweet_cvsh: Get all customers 1,897 1,934 0.98x  Neo4j wins slightly
-Products per supplier 1,898 1,931 0.98x  Neo4j wins slightly
-Get all categories 1,884 1,949 0.97x  Neo4j wins slightly
-Customers with order lists 1,865 1,948 0.96x  Neo4j wins slightly
-Total qty ordered per product 1,169 1,843 0.63x  Neo4j wins
-Get all products 1,141 1,801 0.63x  Neo4j wins
-
-check if they are easy performance gains such as regex not compiled up front if we can, better cleanup and management of things, etc.. CHANGE NO FUNCTIONALITY
-
-GitHub Copilot: Let me investigate these slower queries to find easy performance wins without changing functionality.
-
-Searched for regex `regexp\.Compile|regexp\.MustCompile` (`**/nornicdb/**/*.go`), 20 results
-
-Good - the regex patterns are pre-compiled at package level. Let me check if there are any regex being compiled inside functions (hot paths):
-
-Searched for regex `regexp\.Compile\(|regexp\.MustCompile\(` (`**/nornicdb/**/*.go`), 50 results
-
-Found several regex patterns being compiled inside functions in create.go! Let me check those:
-
-Read [](file://~/src/NornicDB/pkg/cypher/create.go#855-855), lines 855 to 915
-
-Read [](file://~/src/NornicDB/pkg/cypher/create.go#1000-1000), lines 1000 to 1100
-
-Read [](file://~/src/NornicDB/pkg/cypher/create.go#1100-1100), lines 1100 to 1200
-
-I found several regex patterns being compiled inside functions in hot paths. Let me also check if there are any in the executor or match files:
-
-Searched for regex `func.*\{[^}]*regexp\.(Must)?Compile` (`**/nornicdb/pkg/cypher/*.go`), no results
-
-Searched for regex `regexp\.` (`**/nornicdb/pkg/cypher/executor.go`), 1 result
-
-Read [](file://~/src/NornicDB/pkg/cypher/executor.go#2360-2360), lines 2360 to 2380
-
-Found one! `regexp.MatchString` compiles the regex every call. Let me also look for other common inefficiencies - strings.Split in loops, unnecessary allocations, etc:
-
-Searched for regex `regexp\.|strings\.Split|strings\.ToLower|strings\.ToUpper` (`**/nornicdb/pkg/cypher/match.go`), 18 results
-
-Let me also check how nodes are returned/serialized - this could be a bottleneck for "Get all products":
-
-Searched for regex `make\(map\[string\]|make\(\[\]` (`**/nornicdb/pkg/cypher/*.go`), 20 results
-
-Let me check the regex_patterns.go to see the structure and look for the regex cache opportunity:
-
+```text
 ────────────────────────────────────────────────────────────────────────
 
 ✓ testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind) 41568ms
@@ -821,7 +625,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 1,017.37 0.7366 2.1327 0.9829 1.0323 1.2541 1.3257 2.1327 ±0.86% 509
 · Orders per customer 1,117.22 0.6544 3.9100 0.8951 0.9415 1.1478 2.1856 3.9100 ±1.59% 559
 · Products per supplier 1,140.24 0.6239 2.6550 0.8770 0.9274 1.1900 1.3216 2.6550 ±1.20% 571
-· Top products by revenue (price \* quantity) 1,271.93 0.6412 2.3894 0.7862 0.8129 1.0327 1.1199 2.3894 ±1.08% 637
+· Top products by revenue (price * quantity) 1,271.93 0.6412 2.3894 0.7862 0.8129 1.0327 1.1199 2.3894 ±1.08% 637
 · Products out of stock 1,285.50 0.6430 2.2735 0.7779 0.8005 0.9989 1.0871 2.2735 ±0.97% 643
 · Expensive products (price > 30) 1,209.61 0.6636 1.9992 0.8267 0.8798 1.0449 1.0792 1.9992 ±1.04% 605
 · Categories with product lists 1,141.45 0.7414 2.2706 0.8761 0.9122 1.1751 1.2315 2.2706 ±0.95% 571
@@ -859,7 +663,7 @@ name hz min max mean p75 p99 p995 p999 rme samples
 · Total quantity ordered per product 622.58 1.2270 2.6862 1.6062 1.7455 2.2409 2.6389 2.6862 ±1.62% 312
 · Orders per customer 663.20 1.1364 2.2180 1.5078 1.5984 1.9929 2.0883 2.2180 ±1.16% 333
 · Products per supplier 582.89 1.1452 5.0242 1.7156 1.9287 3.1040 3.1280 5.0242 ±3.00% 292
-· Top products by revenue (price \* quantity) 548.85 1.1585 3.4319 1.8220 2.0011 3.0117 3.0762 3.4319 ±2.28% 275
+· Top products by revenue (price * quantity) 548.85 1.1585 3.4319 1.8220 2.0011 3.0117 3.0762 3.4319 ±2.28% 275
 · Products out of stock 757.79 0.9920 3.2709 1.3196 1.4263 1.9332 2.1028 3.2709 ±1.61% 379
 · Expensive products (price > 30) 627.58 1.1188 5.1640 1.5934 1.7012 2.4953 2.5551 5.1640 ±2.35% 315
 · Categories with product lists 634.17 1.0582 3.0414 1.5769 1.7907 2.8042 2.9368 3.0414 ±2.87% 318
@@ -873,7 +677,7 @@ stdout | testing\benchmarks\nornicdb-vs-neo4j-northwind.bench.ts:426:11
 BENCH Summary
 
 Products out of stock - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts > NornicDB Benchmarks (Northwind)
-1.01x faster than Top products by revenue (price \* quantity)
+1.01x faster than Top products by revenue (price * quantity)
 1.04x faster than Find customer by ID
 1.06x faster than Expensive products (price > 30)
 1.07x faster than Products with or without orders
@@ -914,7 +718,7 @@ Products out of stock - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts 
 1.28x faster than Orders by customer ALFKI
 1.30x faster than Products per supplier
 1.38x faster than Products per category
-1.38x faster than Top products by revenue (price \* quantity)
+1.38x faster than Top products by revenue (price * quantity)
 1.42x faster than Supplier to category through products
 1.43x faster than Customer to category through orders and products
 1.45x faster than Customer to supplier through orders and products
@@ -931,5 +735,6 @@ Products out of stock - testing/benchmarks/nornicdb-vs-neo4j-northwind.bench.ts 
 1.71x faster than Find product by name
 1.71x faster than Get all products
 1.80x faster than Get all customers
+```
 
-PS C:\Users\timot\Documents\GitHub\NornicDB>
+</details>

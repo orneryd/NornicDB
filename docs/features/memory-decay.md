@@ -75,7 +75,7 @@ finalScore  = max(scoreFloor, capped_promoted_curve(t))
 suppressed  = finalScore < visibilityThreshold      // strict less-than
 ```
 
-`scoreFloor` is a **score clamp** — it pins the value the entity reports. `visibilityThreshold` is a **suppression cutoff** — it gates whether the entity is hidden from queries. They are independent levers; setting `scoreFloor` alone does **not** keep an entity visible unless the floor itself clears `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](../user-guides/decay-profiles.md#scorefloor-vs-visibilitythreshold-they-are-independent) for the full disambiguation table and lifecycle examples.
+`scoreFloor` is a **score clamp** — it pins the value the entity reports. `visibilityThreshold` is a **suppression cutoff** — it gates whether the entity is hidden from queries. They are independent levers; setting `scoreFloor` alone does **not** keep an entity visible unless the floor itself clears `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](../user-guides/decay-profiles.md#scorefloor-vs-visibilitythreshold-%E2%80%94-they-are-independent) for the full disambiguation table and lifecycle examples.
 
 #### Inverted Curves
 

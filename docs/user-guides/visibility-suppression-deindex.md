@@ -1,6 +1,6 @@
 # Visibility Suppression and Deindex
 
-When a node or edge's decay score drops below the visibility threshold, NornicDB suppresses it — hiding it from normal queries while preserving its data. This guide covers suppression behavior, deindex cleanup, and the `reveal()` bypass.
+When a node or edge scores below its visibility threshold, NornicDB hides it from ordinary queries and retains its data. Use `reveal()` to inspect suppressed entities.
 
 ## Visibility Threshold
 
@@ -10,7 +10,7 @@ When a node or edge's decay score drops below the visibility threshold, NornicDB
 suppressed = finalScore < visibilityThreshold       // strict less-than
 ```
 
-It is independent from `scoreFloor`, which is a *score-value clamp* (the score never drops below it). A non-zero floor does not, on its own, keep an entity visible — it only does so if the floor itself is at or above `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](decay-profiles.md#scorefloor-vs-visibilitythreshold-they-are-independent) for lifecycle examples.
+It is independent from `scoreFloor`, which is a *score-value clamp* (the score never drops below it). A non-zero floor does not, on its own, keep an entity visible — it only does so if the floor itself is at or above `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](decay-profiles.md#scorefloor-vs-visibilitythreshold-%E2%80%94-they-are-independent) for lifecycle examples.
 
 Each decay profile specifies a `DECAY VISIBILITY THRESHOLD` (default: `0.05`). When an entity's score falls below this value:
 

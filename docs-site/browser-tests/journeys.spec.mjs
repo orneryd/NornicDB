@@ -11,6 +11,49 @@ test("quick start is reachable and query examples are readable", async ({
     page.getByRole("heading", { name: /^Quick start/, level: 1 }),
   ).toBeVisible();
   await expect(page.getByText("Expected names:")).toBeVisible();
+  const inlineStar = page
+    .getByRole("main")
+    .getByRole("link", { name: /star nornicdb on github/i });
+  await expect(inlineStar).toHaveAttribute(
+    "href",
+    "https://github.com/orneryd/NornicDB",
+  );
+  expect(
+    await inlineStar.evaluate((link) =>
+      link.closest("p")?.previousElementSibling?.textContent.startsWith(
+        "Expected names:",
+      ),
+    ),
+  ).toBe(true);
+});
+test("the footer offers the GitHub star link without adding it to page content", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  const footer = page.getByRole("contentinfo", { name: "Project and privacy" });
+  for (const route of [
+    "",
+    "api-reference/",
+    "getting-started/quick-start",
+    "versions/v1.4.3/getting-started/quick-start",
+  ]) {
+    await page.goto(route);
+    const star = footer.getByRole("link", { name: "Star NornicDB on GitHub" });
+    await expect(star).toHaveAttribute(
+      "href",
+      "https://github.com/orneryd/NornicDB",
+    );
+    await expect(
+      footer.getByRole("link", { name: "Analytics privacy" }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("main")
+        .getByRole("link", { name: /github star|star nornicdb on github/i }),
+    ).toHaveCount(0);
+    await star.scrollIntoViewIfNeeded();
+    await expect(star).toBeInViewport();
+  }
 });
 test("search remains usable while semantic service is unavailable", async ({
   page,

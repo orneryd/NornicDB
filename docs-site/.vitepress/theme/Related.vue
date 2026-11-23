@@ -1,13 +1,17 @@
 <script setup>
 import Analytics from "./Analytics.vue";
-import DefaultTheme from "vitepress/theme";
+import DefaultTheme, { useLayout, VPIcon } from "vitepress/theme";
 import SearchPage from "./SearchPage.vue";
 import VersionPicker from "./VersionPicker.vue";
 import Explorer from "./Explorer.vue";
 import SearchDialog from "./SearchDialog.vue";
 import { useData, withBase } from "vitepress";
 import { computed, ref, onMounted, nextTick } from "vue";
-const { page } = useData();
+const { page, theme } = useData();
+const { hasSidebar } = useLayout();
+const githubRepo = computed(
+  () => theme.value.socialLinks?.find(({ icon }) => icon === "github")?.link,
+);
 const nodes = ref({});
 const dialog = ref(null),
   active = ref(null);
@@ -25,7 +29,15 @@ const related = computed(
 </script>
 <template>
   <DefaultTheme.Layout
-    ><template #layout-bottom><Analytics /></template><template #nav-bar-content-before><SearchDialog /></template
+    ><template #layout-bottom>
+      <footer class="docs-footer" :class="{ 'with-sidebar': hasSidebar }" aria-label="Project and privacy">
+        <a v-if="githubRepo" class="star-repo" :href="githubRepo" target="_blank" rel="noopener">
+          <VPIcon icon="simple-icons:github" aria-hidden="true" />
+          Star NornicDB on GitHub
+        </a>
+        <Analytics />
+      </footer>
+    </template><template #nav-bar-content-before><SearchDialog /></template
     ><template #nav-bar-content-after><VersionPicker /></template
     ><template #doc-after
       ><aside v-if="related.length" class="related">
@@ -67,3 +79,25 @@ const related = computed(
     ><template #not-found><SearchPage /></template
   ></DefaultTheme.Layout>
 </template>
+<style scoped>
+.docs-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 20px;
+  padding: 8px 24px;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+}
+.star-repo {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  text-decoration: underline;
+}
+.star-repo:hover { color: var(--vp-c-brand-1); }
+@media (min-width: 960px) {
+  .docs-footer.with-sidebar { margin-left: var(--vp-sidebar-width); }
+}
+</style>

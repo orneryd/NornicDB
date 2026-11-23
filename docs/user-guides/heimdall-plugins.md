@@ -1168,7 +1168,6 @@ If you see ordering issues:
 ---
 
 **Version:** 1.1.0
-**Last Updated:** 2024-12-03
 **Maintainer:** NornicDB Team
 
 ### Changelog

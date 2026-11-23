@@ -53,7 +53,7 @@ Same seed data, verified by each engine's own `count(...)` queries.
 Row counts must agree across engines (same deterministic dataset). Hashes may legitimately differ when engines order results differently; disagreements in row count or intra-run stability are flagged.
 
 | Query | NornicDB rows | NornicDB (ANTLR parser) rows | Neo4j rows | FalkorDB rows | Memgraph rows | LadybugDB rows | Agreement |
-|---|---:|---:|---:|---:|---:|---:||:---:|
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
 | `products_per_category` | 96 | 96 | 96 | 96 | 96 | 96 | Yes |
 | `customer_category_distinct_orders` | 10 | 10 | 10 | 10 | 10 | 10 | Yes |
 | `optional_match_orders_count` | 100 | 100 | 100 | 100 | 100 | 100 | Yes |

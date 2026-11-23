@@ -1,8 +1,6 @@
 # Vector Search Guide
 
-**Complete guide to semantic search in NornicDB**
-
-Last Updated: December 11, 2025
+Use vector search to find nodes with similar embeddings.
 
 For durable pagination of canonical text/hybrid search results, see
 [Search Continuation](search-continuation.md). The continuation API extends
@@ -692,8 +690,6 @@ Health checks must NOT target `/nornicdb/search` for `lazy` databases — see [L
 - [Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control) — control BM25 and vector indexes per database
 
 ---
-
-_Last updated: December 1, 2025_
 
 ## External reference
 

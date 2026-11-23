@@ -2,8 +2,6 @@
 
 **Define roles, assign entitlements, and control per-database access.**
 
-Last Updated: April 2026
-
 ---
 
 ## Overview
