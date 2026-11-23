@@ -138,9 +138,37 @@ func (e *StorageExecutor) compileRetainedWhere(ctx context.Context, where string
 		}
 	}
 	predicate := e.compileNodeWherePredicate(nodeCompiling, "node", where)
+	// DIAGNOSTIC (scratch branch only, never for merge): an observer of every
+	// real evaluation and an optional per-retrieval memo of verdicts by
+	// candidate id, scoped to this compiled predicate.
+	var memoMu sync.Mutex
+	memo := map[storage.NodeID]bool{}
 	node = func(asking context.Context, candidate *storage.Node) (bool, error) {
+		if retainedWhereDiagnosticMemo {
+			memoMu.Lock()
+			verdict, found := memo[candidate.ID]
+			memoMu.Unlock()
+			if found {
+				return verdict, nil
+			}
+		}
+		if observe := retainedWhereDiagnosticObserver; observe != nil {
+			observe(candidate)
+		}
 		evaluation := newRetainedPredicateContext(asking, nodeCompiling)
-		return evaluation.outcome(predicate.holds(retainedEvaluator(asking, committed), evaluation, candidate))
+		admitted, err := evaluation.outcome(predicate.holds(retainedEvaluator(asking, committed), evaluation, candidate))
+		if retainedWhereDiagnosticMemo && err == nil {
+			memoMu.Lock()
+			memo[candidate.ID] = admitted
+			memoMu.Unlock()
+		}
+		return admitted, err
 	}
 	return node, relationship
 }
+
+// DIAGNOSTIC (scratch branch only): set by PD W161 item 8 cause test.
+var (
+	retainedWhereDiagnosticObserver func(candidate *storage.Node)
+	retainedWhereDiagnosticMemo     bool
+)

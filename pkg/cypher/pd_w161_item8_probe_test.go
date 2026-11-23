@@ -55,7 +55,11 @@ func pdW161OpsString(ops map[string]int64) string {
 	return strings.Join(parts, ",")
 }
 
-func runPDW161Item8(t *testing.T, schemaLabel string, schema []string) {
+// pdW161Item8PageHook, when set, is called before each page with the form and
+// the page number (0-based).
+var pdW161Item8PageHook func(form string, page int)
+
+func runPDW161Item8(t *testing.T, schemaLabel string, schema []string) (storedIDs, directIDs []string, storedTotal, directTotal time.Duration) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
@@ -128,6 +132,9 @@ func runPDW161Item8(t *testing.T, schemaLabel string, schema []string) {
 		request := "CALL db.rretrieve({query:'quokka',types:['PDW161SearchSource'],n:20,limit:100,where:$where,minRRFScore:0}) YIELD page RETURN page"
 		params := map[string]interface{}{"where": where}
 		for {
+			if pdW161Item8PageHook != nil {
+				pdW161Item8PageHook(label, out.pages)
+			}
 			start := time.Now()
 			result, err := exec.Execute(ctx, "PROFILE "+request, params)
 			elapsed := time.Since(start)
@@ -178,4 +185,5 @@ func runPDW161Item8(t *testing.T, schemaLabel string, schema []string) {
 	require.Equal(t, stored.ids, direct.ids, "stored and direct rules must return the same source IDs")
 	t.Logf("PD_W161_RATIO item=8 schema=%s total_direct_over_stored=%.1f first_page_direct_over_stored=%.1f",
 		schemaLabel, float64(direct.total)/float64(stored.total), float64(direct.first)/float64(stored.first))
+	return stored.ids, direct.ids, stored.total, direct.total
 }
