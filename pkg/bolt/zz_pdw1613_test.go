@@ -351,3 +351,44 @@ func TestPDW1613AutoCommitSetRacesMergeWriter(t *testing.T) {
 	t.Logf("PDW1613 obs2-race rounds=%d failures=%v final=%v", rounds, failures, final)
 	require.Empty(t, failures, "no deadlock between a key-less SET and a MERGE writer (Neo4j: none)")
 }
+
+// ---- Side finding: link first, then the exclusion fails with Outdated ----
+
+const pdw1613NodeDump = "MATCH (n) RETURN elementId(n), labels(n), properties(n) ORDER BY elementId(n)"
+
+// pdw1613LinkFirstOutdated runs the exact link statement in tx1 and the exact
+// exclusion in tx2 (both began and read d first), commits tx1 while tx2
+// waits, and logs tx2's outcome with the graph before and after tx1.
+func pdw1613LinkFirstOutdated(t *testing.T, tag string) error {
+	t.Helper()
+	link, correction := pdw1613Statement(t, "WRITE_LINK"), pdw1613Statement(t, "RECORD_CORRECTION")
+	port, waits := pdw1613Server(t)
+	setup := openBoltTestConn(t, port)
+	pdw1613ApplicationSchema(t, setup)
+	runBoltQueryWithParams(t, setup, pdw1613ApplicationSeed, nil)
+	t.Logf("PDW1613 side %s nodes-before=%v", tag, runBoltQueryWithParams(t, setup, pdw1613NodeDump, nil))
+	linker, excluder := openBoltTestConn(t, port), openBoltTestConn(t, port)
+	for _, c := range []net.Conn{linker, excluder} {
+		nor213BoltBegin(t, c)
+		require.Len(t, runBoltQueryWithParams(t, c, "MATCH (d:PDDocument {id:'d'}) RETURN d.id AS id", nil), 1)
+	}
+	require.Len(t, runBoltQueryWithParams(t, linker, link, pdw1613LinkParams()), 1)
+	got, linkCommit, waited := pdw1613WaitThenCommit(t, waits, linker, excluder, correction, pdw1613ExclusionParams())
+	t.Logf("PDW1613 side %s nodes-after-link-commit=%v", tag, runBoltQueryWithParams(t, setup, pdw1613NodeDump, nil))
+	commit := error(nil)
+	if got.err == nil {
+		commit = nor213BoltCommitResult(t, excluder)
+	}
+	t.Logf("PDW1613 side %s linkCommit=%v exclusion-waited=%v exclusion-err=%v exclusion-commit=%v stored=%v",
+		tag, linkCommit, waited, got.err, commit, runBoltQueryWithParams(t, setup, pdw1613Effective, nil))
+	require.NoError(t, linkCommit)
+	if got.err != nil {
+		return got.err
+	}
+	return commit
+}
+
+func TestPDW1613LinkFirstExclusionOutdated(t *testing.T) {
+	err := pdw1613LinkFirstOutdated(t, "plain")
+	require.NoError(t, err, "the exclusion, begun before the link committed, waits for it and commits (Neo4j)")
+}
