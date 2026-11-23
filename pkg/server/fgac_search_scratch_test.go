@@ -762,7 +762,7 @@ func fsEndpointQueries(aliceID string) []fsEndpointQ {
 		fsEndpointQ{name: "mcp-other-db", path: "/mcp/" + fsOtherDB + "/tools/call", request: map[string]any{"name": "discover", "arguments": map[string]any{"query": "alpha"}}},
 	)
 	if aliceID != "" {
-		qs = append(qs, mcpq("mcp-recall-alice", "recall", map[string]any{"id": aliceID}))
+		qs = append(qs, mcpq("mcp-recall-alice", "recall", map[string]any{"id": "4:" + fsDB + ":" + aliceID}))
 		qs = append(qs, fsEndpointQ{name: "http-similar-alice", path: "/nornicdb/similar", request: map[string]any{"database": fsDB, "node_id": aliceID, "limit": 5}})
 		qs = append(qs, gql("graphql-similar-alice", `{ similar(nodeId: "`+aliceID+`", limit: 5) { similarity node { internalId properties } } }`))
 	}
@@ -1089,6 +1089,12 @@ func (env *fsEnv) restricted(rec *fsRecorder, variant, position, state string) {
 		out, object := env.http.endpoint(q.path, env.narrow, q.request)
 		env.leakCheck(where+"/endpoint", q.name, "", q.request, out)
 		rec.put(fsKey{variant, position, "endpoint", q.name}, state, out)
+		if strings.HasPrefix(q.path, "/mcp") {
+			env.t.Logf("MCPFULL [%s] %s: %s", where, q.name, out.Canon)
+			if q.name == "mcp-discover-depth2" && position != "after-wide-repeat" {
+				env.followRelated(where, out)
+			}
+		}
 		if qid, ok := object["qid"].(string); ok && qid != "" {
 			next, _ := env.http.endpoint(q.path, env.narrow, map[string]any{"database": fsDB, "qid": qid, "n": 2})
 			env.leakCheck(where+"/endpoint", q.name+"-page2", "", q.request, next)
@@ -1106,6 +1112,33 @@ func (env *fsEnv) restricted(rec *fsRecorder, variant, position, state string) {
 		for transport, out := range map[string]fsOut{"http": httpOut, "bolt": boltOut} {
 			env.leakCheck(variant+"/"+position+"/"+state+"/other-db/"+transport, statement, statement, nil, out)
 			rec.put(fsKey{variant, position, "other-db-" + transport, statement}, state, out)
+		}
+	}
+}
+
+// followRelated takes every related ID MCP discover returned to the
+// restricted user and asks for it again as that user: MCP recall by ID and a
+// Cypher elementId lookup over HTTP. Logged as MCPCHAIN lines.
+func (env *fsEnv) followRelated(where string, out fsOut) {
+	var decoded map[string]any
+	if json.Unmarshal([]byte(out.Canon), &decoded) != nil {
+		return
+	}
+	rows, _ := decoded["rows"].([]any)
+	seen := map[string]bool{}
+	for _, row := range rows {
+		item, _ := row.(map[string]any)
+		related, _ := item["related"].([]any)
+		for _, entry := range related {
+			rel, _ := entry.(map[string]any)
+			id, _ := rel["id"].(string)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			recall, _ := env.http.endpoint("/mcp/"+fsDB+"/tools/call", env.narrow, map[string]any{"name": "recall", "arguments": map[string]any{"id": id}})
+			lookup := env.http.cypher(fsDB, env.narrow, "MATCH (n) WHERE elementId(n) = $id RETURN labels(n) AS l, n.name AS name", map[string]any{"id": id})
+			env.t.Logf("MCPCHAIN [%s] related id=%s title=%v type=%v rel=%v from=%v: recall=%s cypher=%s", where, id, rel["title"], rel["type"], rel["relationship"], item["title"], recall.Canon, lookup.Canon)
 		}
 	}
 }
