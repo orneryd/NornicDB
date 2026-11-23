@@ -165,7 +165,7 @@ Environment overrides commonly used in operations:
 
 ### Example Metrics
 
-```prometheus
+```text
 # HTTP edge
 nornicdb_http_requests_total{method="GET",path_template="/health",status_class="2xx"} 1234
 nornicdb_http_request_duration_seconds_bucket{method="POST",path_template="/db/{database}/tx/commit",le="0.05"} 42

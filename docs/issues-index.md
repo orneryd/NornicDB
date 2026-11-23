@@ -14,7 +14,7 @@ Use this page when you know a symptom, but not the right document yet.
 ### Startup & Connectivity
 
 - Server won't start / exits immediately
-    - [Troubleshooting → Server won't start (corruption after crash)](operations/troubleshooting.md#server-wont-start-until-data-is-deleted-corruption-after-crash)
+    - [Troubleshooting → Server won't start (corruption after crash)](operations/troubleshooting.md#server-won-t-start-until-data-is-deleted-corruption-after-crash)
     - [Deployment](operations/deployment.md)
 - Cannot connect to HTTP/Bolt
     - [Troubleshooting → Cannot connect to server](operations/troubleshooting.md#cannot-connect-to-server)
@@ -60,7 +60,7 @@ Use this page when you know a symptom, but not the right document yet.
     - [Troubleshooting → Data not persisting](operations/troubleshooting.md#data-not-persisting)
     - [Backup & Restore](operations/backup-restore.md)
 - Corruption / recovery after crash
-    - [Troubleshooting → Server won't start (corruption after crash)](operations/troubleshooting.md#server-wont-start-until-data-is-deleted-corruption-after-crash)
+    - [Troubleshooting → Server won't start (corruption after crash)](operations/troubleshooting.md#server-won-t-start-until-data-is-deleted-corruption-after-crash)
     - [WAL Compaction](operations/wal-compaction.md)
 
 ### Search, Embeddings, and AI

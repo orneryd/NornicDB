@@ -1,6 +1,6 @@
 # Knowledge-Layer Policies
 
-NornicDB's knowledge-layer scoring system manages the lifecycle and visibility of graph entities through declarative parameter packages and targeted bindings. This guide covers the system architecture and how the pieces fit together.
+Use knowledge-layer policies and bindings to control how graph entities decay, become hidden, or are promoted.
 
 ## Architecture
 
@@ -112,7 +112,7 @@ finalScore   = max(decayBindingFloor, clampedPromo)         // decay binding's f
 suppressed   = finalScore < visibilityThreshold             // strict less-than
 ```
 
-`scoreFloor` (on the decay binding) clamps the score value upward; `visibilityThreshold` is the boolean cutoff for suppression. They are independent — setting `scoreFloor` alone does not keep an entity visible unless the floor itself is at or above `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](decay-profiles.md#scorefloor-vs-visibilitythreshold-they-are-independent) for lifecycle examples.
+`scoreFloor` (on the decay binding) clamps the score value upward; `visibilityThreshold` is the boolean cutoff for suppression. They are independent — setting `scoreFloor` alone does not keep an entity visible unless the floor itself is at or above `visibilityThreshold`. See [`scoreFloor` vs `visibilityThreshold`](decay-profiles.md#scorefloor-vs-visibilitythreshold-%E2%80%94-they-are-independent) for lifecycle examples.
 
 `baseDecay(t)`:
 - **Exponential:** `e^(-ln(2)/halfLife * t)` where halfLife is in seconds

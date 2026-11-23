@@ -1,8 +1,6 @@
 # Hybrid Search
 
-**Complete guide to combined vector + keyword search in NornicDB**
-
-Last Updated: December 2025
+Hybrid search combines keyword matching with vector similarity.
 
 For durable START/PULL/DISCARD pagination, complete `id` and
 `ranked_then_id` populations, and grouped child passages, see

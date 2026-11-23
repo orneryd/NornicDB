@@ -6,7 +6,7 @@
 
 ## Overview
 
-NornicDB supports graph traversal capabilities through Cypher queries. This guide covers path finding, pattern matching, and relationship navigation.
+Use Cypher to match relationship patterns and find paths between nodes.
 
 ---
 

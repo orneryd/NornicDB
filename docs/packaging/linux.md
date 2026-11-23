@@ -292,7 +292,7 @@ sudo systemctl status nornicdb
 ### Implementation
 
 #### 1. RPM Spec File (`nornicdb.spec`)
-```spec
+```text
 Name:           nornicdb
 Version:        1.0.0
 Release:        1%{?dist}

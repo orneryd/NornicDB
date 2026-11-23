@@ -536,7 +536,3 @@ ORDER BY conf DESC
 RETURN m.content AS source,
        collect({content: related.content, confidence: conf})[0..5] AS relatedMemories
 ```
-
----
-
-**Last Updated:** November 25, 2025

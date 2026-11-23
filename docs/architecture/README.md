@@ -5,7 +5,7 @@
 ## Documentation
 
 - **[System Design](system-design.md)** - High-level architecture overview
-- **[Search related documentation](/search?q=Projected%20Entity%20Reads%20and%20Per-Entity%20Byte%20Maps)** - Proposed opaque node/relationship property access, projection contracts, and async snapshot layering
+- **[Storage Read Delivery](../development/storage-read-delivery.md)** - Transaction snapshots, partial projections, and ownership of returned values
 - **[MVCC Lifecycle and Background Work](mvcc-lifecycle-background-work.md)** - Debounced mutation work, lifecycle scheduling, and query-protection behavior
 - **[Embedding Search](embedding-search.md)** - Embedding storage model and search paths
 - **[Secure Search Continuation](secure-search-continuation.md)** - Cross-protocol qids, ranked continuation, and caching/performance tradeoffs

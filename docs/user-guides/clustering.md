@@ -1,6 +1,6 @@
 # NornicDB Clustering Guide
 
-This guide covers how to set up, configure, and operate NornicDB in clustered configurations for high availability.
+Configure and operate a NornicDB cluster for high availability.
 
 ## Table of Contents
 

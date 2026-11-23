@@ -1,6 +1,6 @@
 # Heimdall Context & Token Budget Guide
 
-This guide covers private conversation context and stateless command budgets. The packaged local model is Qwen3.5-0.8B.
+Heimdall uses separate context budgets for private conversations and stateless commands. The packaged local model is Qwen3.5-0.8B.
 
 ## Overview
 

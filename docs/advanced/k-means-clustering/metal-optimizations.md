@@ -8,7 +8,7 @@ Original plan used `atomic_float` which doesn't exist in Metal 2.x (macOS < 13).
 ### Solution
 Emulate atomic float via compare-exchange on `atomic_uint`:
 
-```metal
+```cpp
 inline void atomicAddFloat(device atomic_uint* addr, float val) {
     uint expected = atomic_load_explicit(addr, memory_order_relaxed);
     uint desired;

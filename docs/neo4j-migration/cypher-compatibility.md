@@ -1,6 +1,6 @@
 # NornicDB Cypher Compatibility
 
-**Date**: November 26, 2025
+**Compatibility snapshot:** November 26, 2025, after EXPLAIN and PROFILE support was added
 **Status**: Historical feature inventory; not a complete language conformance claim
 
 **Purpose**: Inventory of implemented Cypher features and native extensions
@@ -754,7 +754,6 @@ native extensions. Empty query collection returns no fabricated counter row.
 
 ---
 
-**Last Updated**: November 26, 2025 (Post EXPLAIN/PROFILE implementation)
 **Status**: Production ready
 **Test Results**: 1,171 tests passing
 

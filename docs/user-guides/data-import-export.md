@@ -6,7 +6,7 @@
 
 ## Overview
 
-This guide covers importing Neo4j data through supported drivers and exporting NornicDB data. Neo4j store files are not interchangeable with NornicDB storage; use the transfer methods below and validate property types and queries against the selected release.
+Neo4j and NornicDB use different store formats. Transfer Neo4j data through a supported driver, then validate property types and queries against the target release. Use the export methods below to move data out of NornicDB.
 
 ---
 

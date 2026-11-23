@@ -928,9 +928,5 @@ func TestResetAll(t *testing.T) {
 |-----------------|---------|---------|-----------------|
 | **Tier 1** | Production safety | Enabled | Only if causing specific issues |
 | **Performance** | Speed optimization | Enabled | Memory-constrained environments |
-| **Auto-Integration** | Seamless inference integration | Enabled | For manual control of features |
+| **Auto-Integration** | Automatic inference setup | Enabled | For manual control of features |
 | **Experimental** | Advanced capabilities | Disabled | Enable to experiment |
-
----
-
-_Last updated: November 2025_

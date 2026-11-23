@@ -1,7 +1,6 @@
 # NornicDB Architecture
 
 **Version:** 0.1.4
-**Last Updated:** December 1, 2025
 
 ## Overview
 

@@ -1,7 +1,5 @@
 # NornicDB HTTP API vs Neo4j Performance Comparison
 
-Last Updated: January 2026
-
 HTTP write performance comparison via REST API. Configuration: HTTP/2, JWT auth, 50,000 requests.
 
 > **Scope:** This protocol-specific report compares NornicDB measurements with separately published or estimated Neo4j HTTP figures. For the current same-hardware, same-workload comparison, use the [48k-product / 48k-order Northwind report](benchmarks/database-comparison/comparison.md).

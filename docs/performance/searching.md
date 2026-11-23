@@ -340,7 +340,7 @@ Document D:
 
                         ↓ Final Ranking ↓
 
-Rank 1: Document A (RRF 0.0323) ← Best of both worlds
+Rank 1: Document A (RRF 0.0323) ← Highest combined rank
 Rank 2: Document C (RRF 0.0316)
 Rank 3: Document B (RRF 0.0311)
 Rank 4: Document D (RRF 0.0157)
@@ -1190,15 +1190,15 @@ Q: Need EXACT keyword match?
 ├─ YES → Use BM25 Full-Text
 └─ NO → Continue
 
-Q: Need SEMANTIC understanding?
+Q: Need matches by meaning?
 ├─ YES → Use Vector Search (HNSW)
 └─ NO → Consider metadata filters
 
-Q: Want BEST of both worlds?
+Q: Need keyword matching and vector similarity?
 ├─ YES → Use RRF (Vector + BM25)
 └─ NO → Pick one method
 
-Q: Critical relevance required?
+Q: Need to rerank the top results?
 ├─ YES → Add Cross-Encoder reranking
 └─ NO → RRF alone is sufficient
 ```
@@ -1460,5 +1460,4 @@ results, _ := svc.Search(ctx, query, embedding, opts)
 
 ---
 
-**Last Updated**: February 17, 2026
 **Package**: `pkg/search` + `pkg/simd` + `pkg/math/vector`

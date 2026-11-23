@@ -61,13 +61,15 @@ build.bat all
 
 ## Prerequisites by Variant
 
-| Variant | Go | llama.cpp libs | CUDA Toolkit | BGE Model |
-|---------|-----|----------------|--------------|-----------|
-| `cpu` | Yes | No | No | No |
-| `cpu-localllm` | Yes | Yes | No | No |
-| `cpu-bge` | Yes | Yes | No | Yes |
-| `cuda` | Yes | ✅ (CUDA) | Yes | No |
-| `cuda-bge` | Yes | ✅ (CUDA) | Yes | Yes |
+Go is required for every variant.
+
+| Variant | llama.cpp libraries | CUDA Toolkit required | BGE model required for build |
+| --- | --- | --- | --- |
+| `cpu` | None | No | No |
+| `cpu-localllm` | CPU | No | No |
+| `cpu-bge` | CPU | No | Yes |
+| `cuda` | CUDA | Yes | No |
+| `cuda-bge` | CUDA | Yes | Yes |
 
 ## Pre-Built llama.cpp Libraries
 

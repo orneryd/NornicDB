@@ -137,14 +137,7 @@ local-embedding binary, and manage the server itself.
 
 ## Why This Matters
 
-Most systems make this query shape a composition problem:
-
-1. embed the query
-2. call a vector store
-3. move the results into a graph store or application layer
-4. expand neighbors and shape the result there
-
-NornicDB keeps that inside one execution engine. The benchmark does not prove every workload is constant-time, but it does show that shallow hybrid retrieval can stay tight enough locally that deployment topology matters more than extra database-side micro-optimizations.
+NornicDB embeds the query, retrieves candidates, and expands their neighbors in one query. For the shallow traversal measured here, network round-trip time was the main constraint on remote throughput.
 
 ## Caveats
 

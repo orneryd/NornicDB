@@ -1,7 +1,5 @@
 # MaxConcurrentStreams Comparison: 100 vs 250
 
-Last Updated: February 2026
-
 HTTP Write Performance with Different MaxConcurrentStreams Settings.
 Configuration: HTTP/2, no auth, 100 concurrent connections, 50,000 requests (Go 1.26.0) with executor caching and search service reuse enabled.
 

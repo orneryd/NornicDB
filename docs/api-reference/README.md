@@ -97,7 +97,7 @@ must add `ctx` to `cypher.QueryPermissionRequirements(ctx, query)`,
 `cypher.TransactionDatabaseError(ctx, databases, txDB, target, query)` and
 `analyzer.Analyze(ctx, query)`. This preserves request cancellation through the
 same owners used during execution; HTTP, Bolt and CLI protocol behavior is unchanged.
-See [Embedded Go statement effects](#embedded-go-statement-effects-v144-migration)
+See [Embedded Go statement effects](#embedded-go-statement-effects-v1-4-4-migration)
 for the analysis result and effect-method migration.
 Permission requirements are an intermediate result: use `AuthorizeQuery` for an
 actual authorization decision rather than treating canceled classification as a grant.

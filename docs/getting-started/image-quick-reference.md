@@ -196,5 +196,4 @@ Use the canonical [Environment Variables Reference](../operations/environment-va
 
 ---
 
-**Need help?** → **[Troubleshooting Guide](../operations/troubleshooting.md)**
-**Production deployment?** → **[Docker Deployment Guide](./docker-deployment.md)**
+For deployment settings, see the [Docker deployment guide](docker-deployment.md).
