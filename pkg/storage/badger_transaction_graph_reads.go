@@ -55,7 +55,7 @@ func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
 func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, projection projectedNodeRead) (*Node, error) {
-	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsNodeLastCommittedLocked(nodeID)) {
+	if tx.engine != nil && ((tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4") || tx.readsNodeLastCommittedLocked(nodeID)) {
 		return tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
@@ -530,7 +530,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	// Write-behind reads are read-committed: the flusher may land a
 	// buffered commit after the pinned snapshot, so the engine's latest
 	// (overlaid) stream is used and no extra overlay merge runs here.
-	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
+	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4")
 	fmt.Printf("P26DIAG F4 label stream of %s: readTS=%v snapshot pinned=%t writeBehind=%t -> reads the engine's latest state: %t\n", label, tx.readTS, tx.snapshotTx != nil, tx.engine != nil && tx.engine.writeBehind != nil, engineOverlaid)
 
 	// A whole node the stream hands out is also the one a later write of
@@ -641,7 +641,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		completed = append(completed, node)
 		return emitCommitted(node)
 	}
-	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
+	if tx.snapshotTx != nil && (tx.engine.writeBehind == nil || os.Getenv("P26_BYPASS") == "F4") {
 		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, storedRead, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, storedRead, streamVisit, StreamNodesOptions{QueryNodes: queryNodes})
@@ -1171,7 +1171,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 	// whose write lock the transaction took after a later commit is read as
 	// last committed too, and so is the other end of a relationship a locked
 	// node's last committed read returned (readsNodeLastCommittedLocked).
-	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsNodeLastCommittedLocked(nodeID)) {
+	if tx.engine != nil && ((tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4") || tx.readsNodeLastCommittedLocked(nodeID)) {
 		if vectors {
 			return tx.engine.getNode(ctx, nodeID, v)
 		}

@@ -407,3 +407,10 @@ func computeFinalScore(baseDecayScore, multiplier, promoFloor, promoCap, decayFl
 	capped := math.Min(floored, promoCap)
 	return math.Max(capped, decayFloor)
 }
+
+// P26ValidatePredicate parses a WHEN predicate as scoring does, with no entity
+// (diagnostic branch only).
+func P26ValidatePredicate(predicate string) error {
+	_, err := evalOnAccessExpression(predicate, onAccessEvalContext{params: map[string]interface{}{}})
+	return err
+}

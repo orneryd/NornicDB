@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"context"
 	"fmt"
 	"maps"
@@ -290,6 +291,13 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 	}
 
 	for _, wc := range policy.WhenClauses {
+		if os.Getenv("P26_BYPASS") == "F1B" {
+			if err := knowledgepolicy.P26ValidatePredicate(wc.Predicate); err != nil {
+				lease.release()
+				fmt.Println("P26DIAG F1B CREATE refuses WHEN", wc.Predicate, ":", err)
+				return fmt.Errorf("invalid WHEN predicate %q: %w", wc.Predicate, err)
+			}
+		}
 		if wc.ProfileRef != "" {
 			if _, ok := sm.promotionProfiles[wc.ProfileRef]; !ok {
 				lease.release()
