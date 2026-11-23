@@ -807,6 +807,15 @@ func fsSetup(t *testing.T) *fsEnv {
 	if fsEmbedded && !server.db.SetEmbedder(&fsHashEmbedder{dims: 1024}) {
 		t.Fatalf("embedder not accepted")
 	}
+	if fsEmbedded {
+		// The server applies db.nornic.embedding.enabled from its own global
+		// config to the databases that exist at start (pkg/server/server.go:1780);
+		// the test helper's server config leaves it off, so the default
+		// database's nodes are never admitted to the embed queue. Enable it
+		// for the fixture database, as an operator enabling embeddings would.
+		server.db.SetDatabaseEmbeddingsEnabled(fsDB, true)
+		t.Logf("EMB setup: database embeddings enabled for %s", fsDB)
+	}
 	if _, err := authenticator.CreateUser(context.Background(), fsUser, fsPassword, []auth.Role{auth.RoleViewer}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
