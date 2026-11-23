@@ -92,3 +92,52 @@ func TestV152P26ManyChunkSnapshot(t *testing.T) {
 		})
 	}
 }
+
+// TestV152P26SnapshotWhileWriting reads a compaction snapshot's .tmp file the
+// moment it appears, which the any-file selection did by chance.
+func TestV152P26SnapshotWhileWriting(t *testing.T) {
+	const chunks = 6600
+	config := journalConfig()
+	config.Database.WALAutoCompactionEnabled = true
+	config.Database.WALSnapshotInterval = 2 * time.Second
+	lab := journalOpen(t, t.TempDir(), config)
+	lab.mustRun("CREATE (:Many {id: 'many', text: 'alpha', flag: false})", nil)
+	lab.embed("Many", chunks)
+	lab.requireVectors("Many", 1, chunks)
+	_, err := lab.run("MATCH (n:Many {id: 'many'}) SET n.flag = true", nil, true)
+	require.NoError(t, err)
+	want := journalVectors(chunks, 0)
+	reads, failed := 0, 0
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline) && reads < 6; time.Sleep(time.Millisecond) {
+		unfinished := p26NewestSnapshot(t, lab.root, "snapshot-*.json.tmp")
+		if unfinished == "" {
+			continue
+		}
+		found, size, head, readErr := p26ReadSnapshot(t, unfinished, want)
+		if readErr != nil && os.IsNotExist(readErr) {
+			continue
+		}
+		reads++
+		if readErr != nil {
+			failed++
+		}
+		t.Logf("P26ROW SNAPW read %s while it is written: size at open %d, first bytes %s, node found %d, error: %v", filepath.Base(unfinished), size, head, found, readErr)
+		time.Sleep(300 * time.Millisecond)
+	}
+	require.Positive(t, reads, "an unfinished snapshot was seen")
+	if failed == 0 {
+		t.Errorf("P26 SNAPW no read of an unfinished snapshot failed in %d reads", reads)
+	}
+	require.Eventually(t, func() bool { return p26NewestSnapshot(t, lab.root, "snapshot-*.json") != "" }, 30*time.Second, 50*time.Millisecond)
+	published := p26NewestSnapshot(t, lab.root, "snapshot-*.json")
+	found, size, _, readErr := p26ReadSnapshot(t, published, want)
+	t.Logf("P26ROW SNAPW published %s: size %d, node with all %d vectors found %d, error: %v", filepath.Base(published), size, chunks, found, readErr)
+	if readErr != nil || found != 1 {
+		t.Errorf("P26 SNAPLOSS published snapshot: found %d, %v", found, readErr)
+	}
+	lab = lab.reopen(config)
+	require.Equal(t, [][]any{{true}}, lab.mustRun("MATCH (n:Many {id: 'many'}) RETURN n.flag", nil))
+	lab.requireVectors("Many", 1, chunks)
+	lab.requireNodeMeta("Many", chunks)
+	t.Logf("P26ROW SNAPW after %d reads of unfinished files (%d failed): node, flag and all %d vectors read after the restart", reads, failed, chunks)
+}
