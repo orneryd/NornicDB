@@ -147,3 +147,49 @@ func TestPDW1614BoltSummaryTimingAndStreaming(t *testing.T) {
 		}
 	}
 }
+
+// pdw1614BoltBatched sends RUN and PULL {n: fetch} together, as a driver
+// with that fetch size does, then PULL {n: fetch} after each batch, and logs
+// when each batch's first record and summary arrive, measured from the RUN.
+func pdw1614BoltBatched(t *testing.T, conn net.Conn, query string, params map[string]any, fetch int64) string {
+	t.Helper()
+	start := time.Now()
+	requireNoError(t, SendRun(t, conn, query, params, nil))
+	requireNoError(t, SendPull(t, conn, map[string]any{"n": fetch}))
+	msgType, _, err := ReadMessage(conn)
+	requireNoError(t, err)
+	if msgType != MsgSuccess {
+		return "RUN failed"
+	}
+	out := fmt.Sprintf("RUN-SUCCESS@%v", time.Since(start).Round(time.Microsecond))
+	for batch := 0; ; batch++ {
+		var timing pdw1614BoltTiming
+		pdw1614BoltRead(t, conn, start, &timing)
+		out += fmt.Sprintf(" batch%d{records=%d first@%v summary@%v has_more=%v}", batch, timing.records,
+			timing.firstRecord.Round(time.Microsecond), timing.pullTotal.Round(time.Microsecond), timing.pullSuccess["has_more"])
+		if timing.failure != "" || timing.pullSuccess["has_more"] != true {
+			return out
+		}
+		requireNoError(t, SendPull(t, conn, map[string]any{"n": fetch}))
+	}
+}
+
+func TestPDW1614BoltBatchedPull(t *testing.T) {
+	store := nor213BoltStore(t, false)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
+	setup := openBoltTestConn(t, port)
+	runBoltQueryWithParams(t, setup, "UNWIND range(0, 4999) AS i CREATE (:Item {k: i})", nil)
+	for _, statement := range []struct{ name, text string }{{"match", pdw1614BoltMatch}, {"unwind", pdw1614BoltUnwind}} {
+		for _, n := range []int64{1000, 1001, 5000} {
+			for _, fetch := range []int64{200, 1000} {
+				conn := openBoltTestConn(t, port)
+				params := map[string]any{"n": n, "w": int64(400)}
+				pdw1614BoltRunPull(t, conn, statement.text, params)
+				for round := 0; round < 2; round++ {
+					t.Logf("PDW1614BOLT batched %s n=%d fetch=%d round=%d auto-commit %s", statement.name, n, fetch, round,
+						pdw1614BoltBatched(t, conn, statement.text, params, fetch))
+				}
+			}
+		}
+	}
+}
