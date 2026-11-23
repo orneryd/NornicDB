@@ -119,3 +119,69 @@ func TestV152P26ReferenceOlderTransaction(t *testing.T) {
 	must("DROP CONSTRAINT p26_key")
 	must("DROP INDEX p26_rank")
 }
+
+// F3 and F4 on the reference: the server test's exact two-session sequence
+// (range, composite and key indexes; delete, update of an indexed value,
+// label removal), the same nine statements before and after, then a create
+// and the async test's read of the created node. It asserts nothing.
+func TestV152P26ReferenceSequence(t *testing.T) {
+	uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
+	if uri == "" {
+		t.Skip("set NORNICDB_NEO4J_REFERENCE_URI")
+	}
+	ctx := context.Background()
+	driver, err := neo4jdriver.NewDriverWithContext(uri, neo4jdriver.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(ctx) })
+	other, older := driver.NewSession(ctx, neo4jdriver.SessionConfig{}), driver.NewSession(ctx, neo4jdriver.SessionConfig{})
+	defer other.Close(ctx)
+	defer older.Close(ctx)
+	must := func(q string) {
+		result, err := other.Run(ctx, q, nil)
+		require.NoError(t, err, q)
+		_, err = result.Consume(ctx)
+		require.NoError(t, err, q)
+	}
+	result, err := other.Run(ctx, "CALL dbms.components() YIELD versions RETURN versions", nil)
+	require.NoError(t, err)
+	record, err := result.Single(ctx)
+	require.NoError(t, err)
+	t.Logf("P26ROW REFSEQ version %v", record.Values)
+	for _, q := range []string{"MATCH (n:Doc) DETACH DELETE n", "MATCH (n:Gone) DETACH DELETE n", "DROP INDEX d_key IF EXISTS", "DROP INDEX d_rank IF EXISTS", "DROP INDEX d_cr IF EXISTS",
+		"CREATE INDEX d_key FOR (n:Doc) ON (n.key)", "CREATE INDEX d_rank FOR (n:Doc) ON (n.rank)", "CREATE INDEX d_cr FOR (n:Doc) ON (n.category, n.rank)", "CALL db.awaitIndexes(60)",
+		"UNWIND range(0,9) AS i CREATE (:Doc {key:'k'+toString(i), rank:i, category:'x', body:'b'+toString(i)})"} {
+		must(q)
+	}
+	statements := []string{
+		"MATCH (n:Doc {key:'k1'}) RETURN n.body", "MATCH (n:Doc) WHERE n.key IN ['k1'] RETURN n.body", "MATCH (n:Doc {rank:2}) RETURN n.body",
+		"MATCH (n:Doc {category:'x', rank:2}) RETURN n.body", "MATCH (n:Doc) WHERE n.rank >= 2 AND n.rank < 3 RETURN n.body", "MATCH (n:Doc {key:'k3'}) RETURN n.body",
+		"MATCH (n:Doc) WHERE toString(n.key) = 'k1' RETURN n.body", "MATCH (n:Doc) WHERE n.rank + 0 = 2 RETURN n.body", "MATCH (n:Doc) RETURN count(n)",
+		"MATCH (n:Doc) WHERE n.key = 'new' RETURN n.rank", "MATCH (n:Doc) WHERE n.key STARTS WITH 'k' RETURN count(n.rank)",
+	}
+	tx, err := older.BeginTransaction(ctx)
+	require.NoError(t, err)
+	read := func(stage string) {
+		for _, q := range statements {
+			result, err := tx.Run(ctx, q, nil)
+			require.NoError(t, err, q)
+			records, err := result.Collect(ctx)
+			require.NoError(t, err, q)
+			var rows []any
+			for _, r := range records {
+				rows = append(rows, r.Values...)
+			}
+			t.Logf("P26ROW REFSEQ %s %q -> %v", stage, q, rows)
+		}
+	}
+	read("before")
+	must("MATCH (n:Doc {key:'k1'}) DETACH DELETE n")
+	must("MATCH (n:Doc {key:'k2'}) SET n.rank = 77")
+	must("MATCH (n:Doc {key:'k3'}) REMOVE n:Doc SET n:Gone")
+	read("after delete, update, label removal")
+	must("CREATE (:Doc {key:'new', rank:100})")
+	read("after create")
+	require.NoError(t, tx.Rollback(ctx))
+	for _, q := range []string{"MATCH (n:Doc) DETACH DELETE n", "MATCH (n:Gone) DETACH DELETE n", "DROP INDEX d_key", "DROP INDEX d_rank", "DROP INDEX d_cr"} {
+		must(q)
+	}
+}
