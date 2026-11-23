@@ -107,9 +107,9 @@
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
     "sha256": "cce7f07abda19e0f356f34ac95802d73e0e2a861065416ef2a5e17b555cf2d99"
   },
-  "pkg/auth/oauth.go:OAuthManager.GetUserInfo": {
+  "pkg/auth/oauth.go:OAuthManager.getOAuthUserInfo": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
-    "sha256": "42e2dd59438c58d52f4b795094fb685de99a87c234097dadd66d19aea94123dd"
+    "sha256": "9942e043a0dff80cca4d2413b27caedeb7392a6faac9419224d16f534c5a2fb6"
   },
   "pkg/auth/oauth.go:OAuthManager.RefreshOAuthToken": {
     "reason": "Authentication/token protocol or typed account mapping/metadata; not graph property JSON transport.",
@@ -268,8 +268,8 @@
     "sha256": "5f387abbb012e3b281a53bffda6ddcaeb817410753d6e6d734d911d51886834a"
   },
   "pkg/heimdall/handler.go:Handler.handleAutocomplete": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "2b95a1376c320fc8e99371062dd014fe4a8baba0b446450f64ef5a35f62e2a7e"
+    "reason": "Typed autocomplete request with a query string and integer cursor position. The JSON calls and DTO are unchanged by #1933, which changes the action name and model response framing.",
+    "sha256": "585a6df2c2b6f3c6d06de6c8c73902c00a32cf7955b094fe78c45b9ee77438da"
   },
   "pkg/heimdall/plugin.go:FormatInMemoryToolResult": {
     "reason": "Author: #1665 implementation lane (Claude Opus 5.5). In-process (MCP-style) tool path; release behaviour kept: routed to the 1.5.0 MCP process (Nornic2 decision after audit #30, 30 Oct 2026). Shared dependency: this site would use the external-number policy (convert.CypherInputJSON / PropertyJSON) once the 1.5.0 MCP process adopts it.",
@@ -313,7 +313,7 @@
   },
   "pkg/mcp/tools.go:getDiscoverTool": {
     "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
-    "sha256": "bfa185cc066314cd30e8d278a662aa4471b9b14bbcb2bce6789566ed8513d9de"
+    "sha256": "c84dbd3d1409f8e999aa9647bae046213e0eaa0770e29070869eb32b07f5aed8"
   },
   "pkg/mcp/tools.go:getLinkTool": {
     "reason": "Static tool input-schema definition; argument values are decoded separately through convert.",
@@ -402,10 +402,6 @@
   "pkg/search/stemmer/stemmer.go:ReadManifest": {
     "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
     "sha256": "785a9ce4603567cd9a92ff8cd21f0aa5d1ec2006b60085a0d754feed097bfdca"
-  },
-  "pkg/server/server_dbconfig.go:Server.handleDbLifecyclePrefix": {
-    "reason": "Author: #1665 implementation lane (Codex). Typed lifecycle scheduler/debt control input retains its integer/time fields. The delta only binds property output before the existing HTTP response owner.",
-    "sha256": "86875cd9ab36a104021bdfc67394af70c39e046fe89f341ce2384c590d27fffc"
   },
   "pkg/storage/receipt.go:computeReceiptHash": {
     "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",
@@ -600,8 +596,8 @@
     "sha256": "c73a8cbaaa112250ddd2951a044de2d6d575a506872e7d72b6fc67a5e01967ee"
   },
   "internal/jsontext/codec.go:unmarshal": {
-    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds. Re-reviewed after release df07c94fb: only error metadata now delegates to jsonRootName and JSON Pointer field projection to match Go 1.27; syntax validation, exact string projection and number binding/normalization are unchanged.",
-    "sha256": "c157704408ea7a3138f12ba6de8a4de124db22fbb4a1e89c4ec915af5ac64ff4"
+    "reason": "Author: #1665 implementation lane (Codex). Retained typed/string binder: standard JSON validates syntax and locates type errors; the fork preserves projected strings. The added immutable numbers mode selects UseNumber before binding, then the numeric domain normalizes kinds. Re-reviewed after release df07c94fb: only error metadata now delegates to jsonRootName and JSON Pointer field projection to match Go 1.27; syntax validation, exact string projection and number binding/normalization are unchanged. The typed binder also supports optional unknown-field rejection for policy documents.",
+    "sha256": "1fb16b78597fbbfa7c6887de2b4694b71c75528d898bfa06c3e94a0b04161fdf"
   },
   "internal/testutil/remotegraph/remote_graph.go:New": {
     "reason": "Author: #1665 implementation lane (Codex). Internal remote-graph fixture server reads typed control requests and writes fixed test graph envelopes, not a production property admission path; unchanged TJ body.",
@@ -618,10 +614,6 @@
   "pkg/replication/wal_v4_payload.go:decodeV4ReplicationValue": {
     "reason": "Author: #1665 implementation lane (Codex). Historical version-4 compatibility fallback after strict Gob framing. Its old JSON meaning is retained, rather than changing a historical format to the new property policy.",
     "sha256": "e0adf009a9250d8f048ce546e7944fe5e5929bec17d01ab7c09ad47bc85b90fc"
-  },
-  "pkg/server/server_nornicdb.go:Server.handleEmbeddingFailures": {
-    "reason": "Author: #1665 implementation lane (Codex). Typed retry/control input is administrative metadata. The delta changes only the shared response adapter; retry authorization and request parsing are unchanged.",
-    "sha256": "37d7e0cd69fa01fdfda682f394ea463a6efe253ba350710f7ea59f73491717f3"
   },
   "pkg/storage/wal_v4_file_migration.go:scanV4MigrationWAL": {
     "reason": "Historical WAL framing reads typed WALEntry wrappers (uint64 sequence, uint32 checksum, opaque Data bytes); semantic property decoding remains with the WAL migration owner. Oversized embedding audit frames use the existing bounded streaming reader and do not add a JSON property decoder. NOR-412: frames of the spanned version (7) are accepted as a known version; the JSON read is the same typed WALEntry wrapper. NOR-412 upgrade (#1796): a store journal carries a complete old record over one frame whole through the same bounded reader (readOversizedFrame); the JSON read is still the typed WALEntry header and no property decoder is added. Re-reviewed 2026-11-13 after merged torn-tail recovery: scanV4MigrationWAL recognizes physically incomplete final active frames using walFrameCutShort; both JSON calls still decode the typed WALEntry wrapper. Complete, interior and sealed corruption remain errors. No raw property decoder is admitted.",
@@ -659,17 +651,9 @@
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "b472c049f0c4bab151c313894b4c7c2715ec59af78ec4330ec249eecdb584ccf"
   },
-  "pkg/heimdall/handler.go:Handler.handleStreamingResponse": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "ddbc37cba475b2f75eb563abead80c0896a33b197c84119f5be713ff1a3b2102"
-  },
   "pkg/heimdall/handler.go:Handler.sendCancellationResponse": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
     "sha256": "fa9efb931fa5d55249a5bd0a7c65290fa657997bb1249dc0f3837167c20d330e"
-  },
-  "pkg/heimdall/handler.go:Handler.sendStreamNotifications": {
-    "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
-    "sha256": "164d38d1c6d7ebed47ce6968ed82c84ee74d4a571cef58a3f8c70c3dfab57a90"
   },
   "pkg/heimdall/plugin.go:FormatActionResultForModel": {
     "reason": "Author: L6 / #1665 lane (Codex). Restored release Heimdall/agent protocol under the standing 1.5.0 MCP exclusion; no targeted MCP correction or correctness claim belongs to this bounded numeric PR.",
@@ -698,5 +682,9 @@
   "pkg/observability/credential_text.go:ownedCredentialForms": {
     "reason": "Standard-JSON string escaping is one representation oracle used to recognize caller-owned credentials inside already-encoded text. This is representation enumeration, not a graph-value encoder/decoder; exhaustive overlap/escaping and split-stream controls compare against the standard oracle.",
     "sha256": "3ee3aa65ae23d0bb57bfb66af738638e73924976a8f5582fc95d896101b384ed"
+  },
+  "scripts/migration/neo4j/migrate.go:loadMigrationQueries": {
+    "reason": "Decodes embedded, repository-owned migration statement strings into map[string]string; it does not decode graph properties or numeric values. The standalone go run entry point must retain its embedded query definitions.",
+    "sha256": "4bfd399a16b5a41e7f172fa4a84e6ddd11998d281a0cb2bb5431fa2a90d756b3"
   }
 }

@@ -2152,6 +2152,16 @@ func (db *DB) EmbedQueueStats() *QueueStats {
 	return &stats
 }
 
+// EmbedQueueMonitoringStats reports worker counters with Pending set to -1
+// when the monitoring request cannot obtain the count within its budget.
+func (db *DB) EmbedQueueMonitoringStats(ctx context.Context) *QueueStats {
+	if db.embedQueue == nil {
+		return nil
+	}
+	stats := db.embedQueue.monitoringStats(ctx)
+	return &stats
+}
+
 // EmbeddingFailures lists nodes parked after terminal embedding errors.
 func (db *DB) EmbeddingFailures(ctx context.Context, limit int) ([]EmbeddingFailure, error) {
 	if db.embedQueue == nil {
@@ -2400,6 +2410,22 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 // database namespace. The vector index follows through the same per-node
 // storage commits (clearEmbeddings). It does not reset the shared worker.
 func (db *DB) ClearDatabaseEmbeddings(database string, engine storage.Engine) (int, error) {
+	// DatabaseManager wraps its namespaced view for size tracking. Follow only
+	// transparent engine wrappers, then validate the namespace before clearing.
+	for depth := 0; depth < 16; depth++ {
+		if _, ok := engine.(*storage.NamespacedEngine); ok {
+			break
+		}
+		wrapper, ok := engine.(storage.EngineUnwrapper)
+		if !ok {
+			return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")
+		}
+		next := wrapper.GetInnerEngine()
+		if next == nil || next == engine {
+			return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")
+		}
+		engine = next
+	}
 	namespace, ok := engine.(*storage.NamespacedEngine)
 	if !ok || database == "" || namespace.Namespace() != database {
 		return 0, fmt.Errorf("embedding regeneration requires matching database-scoped storage")

@@ -72,6 +72,7 @@ export function decodeViewState<T>(raw: string | null, fallback: T): T {
 export function useViewState<T>(
   key: string,
   fallback: T,
+  replace = false,
 ): [T, Dispatch<SetStateAction<T>>] {
   const { params, patch } = useUrlState();
   const defaultJson = JSON.stringify(fallback);
@@ -92,8 +93,8 @@ export function useViewState<T>(
                 ? String(resolved)
                 : JSON.stringify(resolved),
         };
-      }),
-    [patch, key, defaultJson],
+      }, replace),
+    [patch, key, defaultJson, replace],
   );
   return [decodeViewState(params.get(key), fallback), setValue];
 }

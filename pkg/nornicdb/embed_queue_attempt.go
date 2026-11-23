@@ -89,6 +89,7 @@ func (ew *EmbedWorker) bindNodeAttemptLocked(node *storage.Node, selection embed
 		ew.processed.Add(1)
 		ew.markRecentlyProcessed(authoritative)
 	})
+	attempt.token.RequireExactBody = interruptedCallerAttempt(node) || ew.callerJobs[string(node.ID)] != nil
 	ew.claimedNodes[string(node.ID)] = attempt
 	node.SetEmbeddingAttempt(attempt.token)
 }
@@ -123,6 +124,11 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 	}
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
+	return ew.pendingEmbeddingsCountLocked(ew.ctx)
+}
+
+// pendingEmbeddingsCountLocked requires claimMu.
+func (ew *EmbedWorker) pendingEmbeddingsCountLocked(ctx context.Context) int {
 	ew.applyNodeUpdatesLocked()
 	count := len(ew.claimedNodes)
 	for id := range ew.nodeRetries {
@@ -138,11 +144,11 @@ func (ew *EmbedWorker) PendingEmbeddingsCount() int {
 			return !claimed && !queued && ew.admitsEmbedding(storage.NodeID(id))
 		}
 	}
-	count += storage.CountPendingEmbeddingIDs(ew.ctx, ew.storage, accept) // the worker's own lifetime
+	count += storage.CountPendingEmbeddingIDs(ctx, ew.storage, accept)
 	return count
 }
 
-func (ew *EmbedWorker) commitNodeReset(node *storage.Node) error {
+func (ew *EmbedWorker) commitNodeReset(node *storage.Node, job *callerEmbeddingJob) error {
 	selection := ew.selectEmbeddingProvider()
 	ew.claimMu.Lock()
 	if _, claimed := ew.claimedNodes[string(node.ID)]; claimed {
@@ -151,8 +157,12 @@ func (ew *EmbedWorker) commitNodeReset(node *storage.Node) error {
 	}
 	ew.bindNodeAttemptLocked(node, selection)
 	ew.claimMu.Unlock()
-	defer ew.releaseNodeClaim(node.ID)
-	return ew.commitNodeOutcome(node)
+	err := ew.commitNodeOutcome(node)
+	if err != nil {
+		job = nil
+	}
+	ew.releaseNodeClaim(node.ID, job)
+	return err
 }
 func (selection embeddingSelection) resolve(id storage.NodeID) (embed.Embedder, error) {
 	if selection.resolver != nil {

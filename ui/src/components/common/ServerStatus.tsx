@@ -12,8 +12,9 @@ export function ServerStatus() {
  useEffect(()=>acquireMonitoring(details),[details]);
  const stats=ready?reported:null;
  const fresh=ready&&connected&&updatedAt!==null&&Date.now()-updatedAt<15000;
+ const warming=fresh&&stats?.startup?.phase==='search_warming';
  return <div className="header-server-status">
-  <span className={`header-server-connection ${fresh?'text-nornic-primary':'text-red-400'}`}><Activity className="w-4 h-4" aria-hidden="true"/>{!ready?'Checking':hidden?'Paused':fresh?'Connected':'Disconnected'}</span>
+  <span className={`header-server-connection ${warming?'text-valhalla-gold':fresh?'text-nornic-primary':'text-red-400'}`}><Activity className="w-4 h-4" aria-hidden="true"/>{!ready?'Checking':hidden?'Paused':warming?'Connected · Search warming':fresh?(stats?'Connected':'Connected · Status unavailable'):'Disconnected'}</span>
   <details className="server-status-popover" open={open} onToggle={event=>{if(event.currentTarget.open!==open)setOpen(event.currentTarget.open)}}>
    <summary>Server status</summary>
    <dl aria-label="Server status details">

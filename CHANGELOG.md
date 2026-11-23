@@ -8,6 +8,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2]
+
+- Reuse database search indexes under fine-grained access control and filter node and relationship hits by traversal, property and managed-vector permissions.
+
+- Avoid rebuilding bound-type scopes when a Cypher statement only returns its parameters, while preserving type checks for expressions and composed queries.
+
+- Correct APOC text cleaning, camel-case conversion, URL/Base64 encoding and decode errors, Unicode index offsets, empty capitalize errors and null decapitalize results. Regex split/replace compatibility remains separate.
+
+- Preserve quoted Cypher in autocomplete suggestions through model-response cleanup and browser selection, and connect the endpoint to the bundled Watcher action.
+- Match Neo4j final-sigma casing in `lower()` and `toLower()`, including long strings and supplementary Unicode characters.
+- Return EXPLAIN headers for SHOW PROCEDURES and SHOW FUNCTIONS, and reject malformed index targets without executing schema changes or binding OPTIONS values.
+
+- Report failed native node or relationship count reads through statistics endpoints and Heimdall instead of returning successful zero counts.
+
+- Accept map projections in correlated pattern-property comparisons while preserving scalar correlation and invalid projection receiver errors.
+
+- Reject unknown declared procedure YIELD outputs before RUN, PROFILE, or EXPLAIN invokes a handler, while preserving dynamic procedure result headers.
+- Preserve the original composite HTTP statement failure when its remote transaction already aborted, while retaining real cleanup failures and accurate transaction metadata.
+
+- Preserve caller-owned embedding metadata when oversized node writes add the stored chunk count.
+- Give cached embedding results independent vectors so caller mutation and duplicate batch entries cannot corrupt later cache hits.
+- Apply bound parameter types through query scopes while preserving Neo4j uncertainty for floating-point parameters, so typed consumers reject invalid bindings and valid empty-input list expressions remain accepted.
+- Make catalog-publication test probes tolerate registered fixture cleanup after an explicit manager close.
+- Preserve continuation-owned rerank windows in `db.rretrieve`, returning all qualifying hits before completion while keeping caller ceilings and provider-once ordering.
+- Use declared relationship RANGE indexes for single-match inline equality reads through the existing derived index owner; preserve complete results for duplicate values and unsupported read views.
+
+- Match Neo4j admission of `timestamp()` in quantifiers and other typed expressions by preserving its pre-semantic property type uncertainty, while keeping ordinary scalar list-source errors.
+- Admit CASE expressions containing COUNT subqueries as DELETE targets while preserving undefined-variable checks and null-target behavior.
+
+- Preserve forwarded write cancellation and the original deadline during leader preparation, while accepted writes retain their durable completion owner.
+
+- Preserve inherited columns returned unchanged by Cypher 25 conditional arms while retaining user-written nested CALL restrictions and inactive-arm guards.
+- Stop correlated EXISTS/COUNT traversal from reading suffixes rejected by an already-bound predicate, while preserving complete-path error handling and fresh row/parameter bindings.
+
+- Route native CALL bodies with importing `WITH ... USE` through the same graph-selection reader as composite queries, preserving imported variables and existing graph errors.
+
+- Preserve possible list element types when adding an unknown property to temporal values, so incompatible string consumers reject before execution while valid list consumers remain accepted.
+
+- Keep Adamic-Adar and resource-allocation scores bit-identical for equal contribution multisets by adding their common-neighbour terms in degree order, so repeated link-prediction queries keep the documented target-ID tie selection and top-K candidates.
+
+- Preserve relationships and every promoted source label in the documented Neo4j migration, keep reruns idempotent, and reject incomplete target batches.
+
+- Reject composed procedure `YIELD *` during admission with the Neo4j diagnostic before downstream missing-variable errors or procedure execution.
+
+- Add optional fine-grained access control with scoped role entitlements, Cypher privilege administration, and individual actions for managed embeddings, Heimdall, and knowledge policies.
+
+- Return composite participant access failures from error-returning storage operations instead of reporting incomplete success or missing entities.
+- Remove the standalone Cypher detector and optimizer APIs. Go callers should use StorageExecutor.Execute.
+- Detach caller-owned nested evidence and configuration in the in-memory inference stores: `EdgeMetaStore` append/import/read/export and `NodeConfigStore` set/import/get/export no longer share mutable maps or slices with callers or retained state.
+- Reject Neo4j CSV labels that would split, disappear, or be trimmed on import before writing package files; report localized delimiter guidance.
+- Return the union of all requested node types from MCP recall instead of filtering on the first type, and document discover's depth hop semantics.
+
+- Stop cancelled graph neighborhood and path requests from waiting behind unrelated reveal work.
+- Allow remote database factories to reenter the catalog without deadlocking storage selection.
+- Allow accepted-write settlement callbacks to close the WAL engine without waiting on their own completing join.
+- Report a definite Raft log discard to its settlement observer outside the accepted work and shutdown drain that observer may re-enter, and bound Raft's accepted commit waiter by the recorded decision instead of the delivered settlement.
+
+- Preserve transaction cleanup failures alongside BEGIN setup errors.
+- Preserve all result-map keys in the browser's Bolt and HTTP responses, including nested maps, and update the JavaScript driver to 6.3.2.
+- Keep admitted namespace discovery complete while storage closes.
+
+- Allow exported Go `apoc.Call` to invoke the registered import-result and multi-statement-result signatures, preserving handler results and errors.
+
 ## [1.5.1]
 
 ### Security

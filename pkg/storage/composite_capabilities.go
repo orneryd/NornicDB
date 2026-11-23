@@ -10,7 +10,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -26,7 +25,7 @@ func (c *CompositeEngine) StreamNodesWithOptions(ctx context.Context, opts Strea
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		if err := engine.StreamNodesWithOptions(ctx, opts, func(node *Node) error {
 			if stopped {
@@ -52,227 +51,153 @@ func (c *CompositeEngine) StreamNodesWithOptions(ctx context.Context, opts Strea
 
 // --- MVCC visibility: ID-scoped reads route to the first constituent that
 // resolves the ID, mirroring GetNode's search-all semantics.
+//
+// The provider branch and its ordinary fallback stay in each typed adapter's
+// read closure: a provider that reports not-found moves to the next source, it
+// never retries the same source through the plain read.
 
 // GetNodeLatestEffective routes latest-effective node reads to the first
 // constituent that resolves the ID.
 func (c *CompositeEngine) GetNodeLatestEffective(ctx context.Context, id NodeID) (*Node, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
-			node, err := provider.GetNodeLatestEffective(ctx, id)
-			if err == nil {
-				return c.sourceNode(alias, engine, node), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		node, err := engine.GetNode(ctx, id)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Node, error) {
+			if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
+				return provider.GetNodeLatestEffective(ctx, localID)
+			}
+			return engine.GetNode(ctx, localID)
+		},
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 // GetEdgeLatestEffective routes latest-effective edge reads to the first
 // constituent that resolves the ID.
 func (c *CompositeEngine) GetEdgeLatestEffective(ctx context.Context, id EdgeID) (*Edge, error) {
-	aliases, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
-			edge, err := provider.GetEdgeLatestEffective(ctx, id)
-			if err == nil {
-				return c.sourceEdge(alias, engine, edge), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		edge, err := engine.GetEdge(ctx, id)
-		if err == nil {
-			return c.sourceEdge(alias, engine, edge), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Edge, error) {
+			if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
+				return provider.GetEdgeLatestEffective(ctx, localID)
+			}
+			return engine.GetEdge(ctx, localID)
+		},
+		func(edge *Edge, alias string, engine Engine) *Edge { return c.sourceEdge(alias, engine, edge) },
+	)
 }
 
 func (c *CompositeEngine) GetNodeLatestVisible(ctx context.Context, id NodeID) (*Node, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			node, err := provider.GetNodeLatestVisible(ctx, id)
-			if err == nil {
-				return c.sourceNode(alias, engine, node), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		node, err := engine.GetNode(ctx, id)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Node, error) {
+			if provider, ok := engine.(MVCCVisibilityEngine); ok {
+				return provider.GetNodeLatestVisible(ctx, localID)
+			}
+			return engine.GetNode(ctx, localID)
+		},
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 func (c *CompositeEngine) GetNodeVisibleAt(ctx context.Context, id NodeID, version MVCCVersion) (*Node, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			node, err := provider.GetNodeVisibleAt(ctx, id, version)
-			if err == nil {
-				return c.sourceNode(alias, engine, node), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		node, err := engine.GetNode(ctx, id)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Node, error) {
+			if provider, ok := engine.(MVCCVisibilityEngine); ok {
+				return provider.GetNodeVisibleAt(ctx, localID, version)
+			}
+			return engine.GetNode(ctx, localID)
+		},
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 func (c *CompositeEngine) GetEdgeLatestVisible(ctx context.Context, id EdgeID) (*Edge, error) {
-	aliases, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			edge, err := provider.GetEdgeLatestVisible(ctx, id)
-			if err == nil {
-				return c.sourceEdge(alias, engine, edge), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		edge, err := engine.GetEdge(ctx, id)
-		if err == nil {
-			return c.sourceEdge(alias, engine, edge), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Edge, error) {
+			if provider, ok := engine.(MVCCVisibilityEngine); ok {
+				return provider.GetEdgeLatestVisible(ctx, localID)
+			}
+			return engine.GetEdge(ctx, localID)
+		},
+		func(edge *Edge, alias string, engine Engine) *Edge { return c.sourceEdge(alias, engine, edge) },
+	)
 }
 
 func (c *CompositeEngine) GetEdgeVisibleAt(ctx context.Context, id EdgeID, version MVCCVersion) (*Edge, error) {
-	aliases, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
-			edge, err := provider.GetEdgeVisibleAt(ctx, id, version)
-			if err == nil {
-				return c.sourceEdge(alias, engine, edge), nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return nil, err
-			}
-			continue
-		}
-		edge, err := engine.GetEdge(ctx, id)
-		if err == nil {
-			return c.sourceEdge(alias, engine, edge), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Edge, error) {
+			if provider, ok := engine.(MVCCVisibilityEngine); ok {
+				return provider.GetEdgeVisibleAt(ctx, localID, version)
+			}
+			return engine.GetEdge(ctx, localID)
+		},
+		func(edge *Edge, alias string, engine Engine) *Edge { return c.sourceEdge(alias, engine, edge) },
+	)
 }
 
-// --- MVCC heads: route by ID to the owning constituent.
+// --- MVCC heads: route by ID to the owning constituent. The head API publishes
+// the failing source's head beside a non-not-found error, so the lookup keeps
+// that value.
 
 func (c *CompositeEngine) GetNodeCurrentHead(ctx context.Context, id NodeID) (MVCCHead, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCHeadEngine); ok {
-			head, err := provider.GetNodeCurrentHead(ctx, id)
-			if err == nil {
-				return head, nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return head, err
-			}
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return MVCCHead{}, err
 	}
-	return MVCCHead{}, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, true,
+		func(engine Engine) (MVCCHead, error) {
+			if provider, ok := engine.(MVCCHeadEngine); ok {
+				return provider.GetNodeCurrentHead(ctx, localID)
+			}
+			return MVCCHead{}, ErrNotFound
+		},
+		nil,
+	)
 }
 
 func (c *CompositeEngine) GetEdgeCurrentHead(ctx context.Context, id EdgeID) (MVCCHead, error) {
-	aliases, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if provider, ok := engine.(MVCCHeadEngine); ok {
-			head, err := provider.GetEdgeCurrentHead(ctx, id)
-			if err == nil {
-				return head, nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return head, err
-			}
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return MVCCHead{}, err
 	}
-	return MVCCHead{}, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, true,
+		func(engine Engine) (MVCCHead, error) {
+			if provider, ok := engine.(MVCCHeadEngine); ok {
+				return provider.GetEdgeCurrentHead(ctx, localID)
+			}
+			return MVCCHead{}, ErrNotFound
+		},
+		nil,
+	)
 }
 
 // --- MVCC indexed visibility: merge across all readable constituents.
@@ -308,7 +233,10 @@ func (c *CompositeEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, reques
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if engine, start, end, qualified := c.constituentForNodePair(request.Node, request.Other); qualified {
+		if engine, start, end, qualified, err := c.constituentForNodePair(request.Node, request.Other); qualified {
+			if err != nil {
+				return nil, err
+			}
 			if engine == nil {
 				return nil, nil
 			}
@@ -327,7 +255,10 @@ func (c *CompositeEngine) ReadAdjacentEdgesVisibleAt(ctx context.Context, reques
 			compositeFanOutPublishesRaw,
 		)
 	}
-	aliases, local, _ := c.constituentsForEntity("4", string(request.Node))
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(request.Node))
+	if err != nil {
+		return nil, err
+	}
 	request.Node = NodeID(local)
 
 	return materializeConstituents(c, ctx, aliases,
@@ -359,7 +290,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(ctx context.Context, label string
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		stop := false
 		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
@@ -399,29 +330,24 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(ctx context.Context, label string
 // constituents like their non-projected counterparts.
 
 func (c *CompositeEngine) GetNodeProjected(ctx context.Context, id NodeID, properties []string) (*Node, error) {
-	aliases, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		node, err := getNodeProjectedThrough(ctx, engine, id, properties)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return nil, err
-		}
+	aliases, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, aliases, constituentNotFoundWrapped, false,
+		func(engine Engine) (*Node, error) {
+			return getNodeProjectedThrough(ctx, engine, localID, properties)
+		},
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		if iterator, ok := engine.(NodeIterator); ok {
 			stop := false
@@ -456,87 +382,113 @@ func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 }
 
 // UpdateNodeEmbeddingSidecar routes the embedding-only sidecar write to the
-// constituent holding the node, without touching any node record.
+// constituent holding the node, without touching any node record. It belongs to
+// this file's maintenance class: the derived embedding state is written through
+// the readable participant that holds the node, not through the constituent's
+// writer admission, because the node record itself is never mutated.
 func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(ctx context.Context, node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	for _, alias := range c.getConstituentsForRead() {
+	return writeFirstConstituent(c, c.getConstituentsForRead(), constituentNotFoundWrapped, constituentWriteMaintenance,
+		func(engine Engine) error {
+			_, err := engine.GetNode(ctx, node.ID)
+			return err
+		},
+		func(engine Engine) error {
+			sidecar, ok := engine.(EmbeddingSidecarUpdater)
+			if !ok {
+				return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
+			}
+			return sidecar.UpdateNodeEmbeddingSidecar(ctx, node)
+		},
+		ErrNotFound,
+	)
+}
+
+// --- Capability broadcast and sum walks.
+
+// constituentAccess selects what a broadcast or sum walk does with a source it
+// cannot open.
+type constituentAccess int
+
+const (
+	// constituentAccessRequired fails the whole operation on an access error.
+	constituentAccessRequired constituentAccess = iota
+	// constituentAccessOptional skips an unreadable source.
+	constituentAccessOptional
+)
+
+// walkReadableConstituents is the single owner of the composite's capability
+// broadcast and sum walks: it selects each readable source in the composite's
+// order and opens it once. The visitor owns the per-source contribution, and a
+// visitor error stops the walk with the accumulated state intact.
+func walkReadableConstituents(c *CompositeEngine, access constituentAccess, visit func(alias string, engine Engine) error) error {
+	for _, alias := range c.readConstituentAliases(access) {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
+			// Access failure is fatal unless this walk is explicitly partial.
+			if access == constituentAccessRequired {
+				return err
+			}
 			continue
 		}
-		if _, err := engine.GetNode(ctx, node.ID); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
+		if err := visit(alias, engine); err != nil {
 			return err
 		}
-		sidecar, ok := engine.(EmbeddingSidecarUpdater)
-		if !ok {
-			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
-		}
-		return sidecar.UpdateNodeEmbeddingSidecar(ctx, node)
 	}
-	return ErrNotFound
+	return nil
 }
 
 // StreamParkedEmbeddingFailures aggregates sidecar failure scans across
 // constituents.
 func (c *CompositeEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
 	total := 0
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	err := walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
 		streamer, ok := engine.(EmbeddingFailureStreamer)
 		if !ok {
-			continue
+			return nil
 		}
 		count, err := streamer.StreamParkedEmbeddingFailures(ctx, visit)
 		if err != nil {
-			return total, err
+			return err
 		}
 		total += count
-	}
-	return total, nil
+		return nil
+	})
+	return total, err
 }
 
 // --- Aggregate reads and broadcasts.
 
 func (c *CompositeEngine) PendingEmbeddingsCount() int {
 	total := 0
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
 		if provider, ok := engine.(EmbeddingCountProvider); ok {
 			total += provider.PendingEmbeddingsCount()
 		}
-	}
+		return nil
+	})
 	return total
 }
 
 func (c *CompositeEngine) ListNamespaces() []string {
 	seen := make(map[string]struct{})
 	var namespaces []string
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
+		lister, ok := engine.(NamespaceLister)
+		if !ok {
+			return nil
 		}
-		if lister, ok := engine.(NamespaceLister); ok {
-			for _, namespace := range lister.ListNamespaces() {
-				if _, exists := seen[namespace]; exists {
-					continue
-				}
-				seen[namespace] = struct{}{}
-				namespaces = append(namespaces, namespace)
+		for _, namespace := range lister.ListNamespaces() {
+			if _, exists := seen[namespace]; exists {
+				continue
 			}
+			seen[namespace] = struct{}{}
+			namespaces = append(namespaces, namespace)
 		}
-	}
+		return nil
+	})
 	return namespaces
 }
 
@@ -561,134 +513,115 @@ func (c *CompositeEngine) GetSchemaForNamespace(namespace string) *SchemaManager
 func (c *CompositeEngine) GraphMutationVersion() (uint64, bool) {
 	var total uint64
 	supported := false
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
+		provider, ok := engine.(GraphMutationVersionProvider)
+		if !ok {
+			return nil
 		}
-		if provider, ok := engine.(GraphMutationVersionProvider); ok {
-			version, ok := provider.GraphMutationVersion()
-			if ok {
-				supported = true
-				total += version
-			}
+		version, ok := provider.GraphMutationVersion()
+		if ok {
+			supported = true
+			total += version
 		}
-	}
+		return nil
+	})
 	return total, supported
 }
 
 func (c *CompositeEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
 	consumed := false
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
+	err := walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		provider, ok := engine.(StartupMaintenanceStateEngine)
+		if !ok {
+			return nil
+		}
+		got, err := provider.ConsumeCleanShutdownMarker(ctx)
 		if err != nil {
-			continue
+			return err
 		}
-		if provider, ok := engine.(StartupMaintenanceStateEngine); ok {
-			got, err := provider.ConsumeCleanShutdownMarker(ctx)
-			if err != nil {
-				return false, err
-			}
-			consumed = consumed || got
-		}
+		consumed = consumed || got
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
 	return consumed, nil
 }
 
 func (c *CompositeEngine) MarkCleanShutdown(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		provider, ok := engine.(StartupMaintenanceStateEngine)
+		if !ok {
+			return nil
 		}
-		if provider, ok := engine.(StartupMaintenanceStateEngine); ok {
-			if err := provider.MarkCleanShutdown(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return provider.MarkCleanShutdown(ctx)
+	})
 }
 
 func (c *CompositeEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
 	var total int64
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
+	err := walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		maint, ok := engine.(MVCCMaintenanceEngine)
+		if !ok {
+			return nil
+		}
+		pruned, err := maint.PruneMVCCVersions(ctx, opts)
 		if err != nil {
-			continue
+			return err
 		}
-		if maint, ok := engine.(MVCCMaintenanceEngine); ok {
-			pruned, err := maint.PruneMVCCVersions(ctx, opts)
-			if err != nil {
-				return total, err
-			}
-			total += pruned
-		}
-	}
-	return total, nil
+		total += pruned
+		return nil
+	})
+	return total, err
 }
 
 func (c *CompositeEngine) RebuildMVCCHeads(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		maint, ok := engine.(MVCCMaintenanceEngine)
+		if !ok {
+			return nil
 		}
-		if maint, ok := engine.(MVCCMaintenanceEngine); ok {
-			if err := maint.RebuildMVCCHeads(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return maint.RebuildMVCCHeads(ctx)
+	})
 }
 
 func (c *CompositeEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
 	var total int64
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
+	err := walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		maint, ok := engine.(TemporalMaintenanceEngine)
+		if !ok {
+			return nil
+		}
+		pruned, err := maint.PruneTemporalHistory(ctx, opts)
 		if err != nil {
-			continue
+			return err
 		}
-		if maint, ok := engine.(TemporalMaintenanceEngine); ok {
-			pruned, err := maint.PruneTemporalHistory(ctx, opts)
-			if err != nil {
-				return total, err
-			}
-			total += pruned
-		}
-	}
-	return total, nil
+		total += pruned
+		return nil
+	})
+	return total, err
 }
 
 func (c *CompositeEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		maint, ok := engine.(TemporalMaintenanceEngine)
+		if !ok {
+			return nil
 		}
-		if maint, ok := engine.(TemporalMaintenanceEngine); ok {
-			if err := maint.RebuildTemporalIndexes(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return maint.RebuildTemporalIndexes(ctx)
+	})
 }
 
 // --- MVCC lifecycle broadcasts.
 
 func (c *CompositeEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
 	releases := make([]func(), 0, len(c.getConstituentsForRead()))
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
 		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
 			releases = append(releases, lifecycle.RegisterSnapshotReader(info))
 		}
-	}
+		return nil
+	})
 	return func() {
 		for _, release := range releases {
 			if release != nil {
@@ -700,72 +633,55 @@ func (c *CompositeEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func()
 
 func (c *CompositeEngine) LifecycleStatus() map[string]interface{} {
 	status := make(map[string]interface{})
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
+		lifecycle, ok := engine.(MVCCLifecycleEngine)
+		if !ok {
+			return nil
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
-			for key, value := range lifecycle.LifecycleStatus() {
-				status[key] = value
-			}
+		for key, value := range lifecycle.LifecycleStatus() {
+			status[key] = value
 		}
-	}
+		return nil
+	})
 	return status
 }
 
 func (c *CompositeEngine) TriggerPruneNow(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		lifecycle, ok := engine.(MVCCLifecycleEngine)
+		if !ok {
+			return nil
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
-			if err := lifecycle.TriggerPruneNow(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return lifecycle.TriggerPruneNow(ctx)
+	})
 }
 
 func (c *CompositeEngine) PauseLifecycle() {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
 		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
 			lifecycle.PauseLifecycle()
 		}
-	}
+		return nil
+	})
 }
 
 func (c *CompositeEngine) ResumeLifecycle() {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
 		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
 			lifecycle.ResumeLifecycle()
 		}
-	}
+		return nil
+	})
 }
 
 func (c *CompositeEngine) SetLifecycleSchedule(interval time.Duration) error {
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		schedule, ok := engine.(MVCCLifecycleScheduleEngine)
+		if !ok {
+			return nil
 		}
-		if schedule, ok := engine.(MVCCLifecycleScheduleEngine); ok {
-			if err := schedule.SetLifecycleSchedule(interval); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+		return schedule.SetLifecycleSchedule(interval)
+	})
 }
 
 // --- Event registration broadcasts to every readable constituent.
@@ -785,11 +701,7 @@ type storageEventTarget struct {
 func (c *CompositeEngine) eventTargets() []storageEventTarget {
 	targets := make([]storageEventTarget, 0, len(c.getConstituentsForRead()))
 	seen := make(map[Engine]int)
-	for _, alias := range c.getConstituentsForRead() {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
+	_ = walkReadableConstituents(c, constituentAccessOptional, func(_ string, engine Engine) error {
 		var view *NamespacedEngine
 		if ns, ok := engine.(*NamespacedEngine); ok {
 			view = ns
@@ -799,7 +711,7 @@ func (c *CompositeEngine) eventTargets() []storageEventTarget {
 			if view != nil {
 				targets[idx].views = append(targets[idx].views, view)
 			}
-			continue
+			return nil
 		}
 		target := storageEventTarget{engine: engine}
 		if view != nil {
@@ -807,7 +719,8 @@ func (c *CompositeEngine) eventTargets() []storageEventTarget {
 		}
 		seen[engine] = len(targets)
 		targets = append(targets, target)
-	}
+		return nil
+	})
 	return targets
 }
 

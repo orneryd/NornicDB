@@ -183,7 +183,7 @@ func BenchmarkSharedCypherGrammar(b *testing.B) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "benchmark"))
 	for _, query := range []string{
 		"UNWIND [1,2,3] AS x WITH x, x * 10 AS scaled WHERE scaled > 10 RETURN x, scaled",
-		"FOR x IN [1,2,3] LET scaled = x * 10 FILTER scaled > 10 RETURN x, scaled",
+		"CYPHER 25 FOR x IN [1,2,3] LET scaled = x * 10 FILTER scaled > 10 RETURN x, scaled",
 	} {
 		b.Run(query, func(b *testing.B) {
 			b.ReportAllocs()

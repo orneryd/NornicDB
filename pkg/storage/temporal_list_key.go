@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -73,11 +72,6 @@ func writeTemporalListToken(out *strings.Builder, value reflect.Value, path map[
 		}
 		out.WriteByte(']')
 		return true
-	}
-	// NaN is not equal even to itself, so its history needs the same explicit
-	// equality filtering as other values without an exact canonical token.
-	if constraintFloat(value.Kind()) && math.IsNaN(value.Float()) {
-		return false
 	}
 	if writeConstraintListNumericKey(out, value.Interface()) {
 		return true

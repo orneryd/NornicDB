@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/collection"
 	"github.com/orneryd/nornicdb/internal/labelrouting"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -51,29 +52,6 @@ type CompositeEngine struct {
 	transactionTimeout time.Duration
 
 	mu sync.RWMutex
-}
-
-func anyToStringSlice(raw interface{}) []string {
-	switch v := raw.(type) {
-	case []string:
-		out := make([]string, 0, len(v))
-		for _, s := range v {
-			if strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []interface{}:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }
 
 // NewCompositeEngine creates a new composite engine that spans multiple constituent databases.
@@ -144,9 +122,15 @@ func (c *CompositeEngine) SetPropertyDefault(propertyName string, constituent st
 	c.propertyDefaults[propertyName] = constituent
 }
 
-// getConstituentsForRead returns all constituents that can be read from.
-// Returns empty slice if no readable constituents are available.
+// getConstituentsForRead selects each configured readable source once.
+// A configured unavailable source remains in the result for admission.
 func (c *CompositeEngine) getConstituentsForRead() []string {
+	return c.readConstituentAliases(constituentAccessOptional)
+}
+
+// readConstituentAliases preserves source deduplication for both available
+// reads and operations whose result requires every configured participant.
+func (c *CompositeEngine) readConstituentAliases(access constituentAccess) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -160,32 +144,27 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 	seen := make(map[readSource]struct{})
 	for alias, mode := range c.accessModes {
 		if mode == "read" || mode == "read_write" {
-			// Check if constituent engine exists and is accessible
-			if engine, exists := c.constituents[alias]; exists && engine != nil {
-				database := DatabaseOf(engine)
-				source := engine
-				for {
-					wrapper, ok := source.(EngineUnwrapper)
-					if !ok {
-						break
-					}
-					inner := wrapper.GetInnerEngine()
-					if inner == nil || inner == source {
-						break
-					}
-					source = inner
+			engine := c.constituents[alias]
+			// Keep unavailable configured participants so a required read can
+			// distinguish their admission failure from an empty composite.
+			if engine == nil {
+				if access == constituentAccessRequired {
+					result = append(result, alias)
 				}
-				// Value engines may contain slices/maps. Their identity cannot
-				// be a map key; retain their separate views in that case.
-				if reflect.TypeOf(source).Comparable() {
-					key := readSource{source, database}
-					if _, exists := seen[key]; exists {
-						continue
-					}
-					seen[key] = struct{}{}
-				}
-				result = append(result, alias)
+				continue
 			}
+			database := DatabaseOf(engine)
+			source := UnwrapEngine(engine)
+			// Value engines may contain slices/maps. Their identity cannot
+			// be a map key; retain their separate views in that case.
+			if reflect.TypeOf(source).Comparable() {
+				key := readSource{source, database}
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			result = append(result, alias)
 		}
 	}
 	return result
@@ -214,11 +193,18 @@ func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 	c.mu.RLock()
 	engine, exists := c.constituents[alias]
 	c.mu.RUnlock()
-	if !exists {
+	if !exists || engine == nil {
 		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
 	if c.accessConstituent != nil {
-		return c.accessConstituent(alias, engine, false)
+		resolved, err := c.accessConstituent(alias, engine, false)
+		if err != nil {
+			return nil, err
+		}
+		if resolved == nil {
+			return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
+		}
+		engine = resolved
 	}
 	return engine, nil
 }
@@ -410,25 +396,15 @@ func (c *CompositeEngine) ConstituentDatabaseForEdge(ctx context.Context, id Edg
 
 // GetNode retrieves a node. Searches all readable constituents.
 func (c *CompositeEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(id))
-	id = NodeID(local)
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		node, err := engine.GetNode(ctx, id)
-		if err == nil {
-			return c.sourceNode(alias, engine, node), nil
-		}
-		if err != ErrNotFound {
-			return nil, err
-		}
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, ErrNotFound
+	localID := NodeID(local)
+	return readFirstConstituent(c, readConstituents, constituentNotFoundDirect, false,
+		func(engine Engine) (*Node, error) { return engine.GetNode(ctx, localID) },
+		func(node *Node, alias string, engine Engine) *Node { return c.sourceNode(alias, engine, node) },
+	)
 }
 
 // UpdateNode updates a node. Routes to the constituent that contains it.
@@ -444,7 +420,10 @@ func (c *CompositeEngine) UpdateNode(ctx context.Context, updateRequest NodeUpda
 	if before := updateRequest.Before; before != nil && before.RuntimeMetadata().Database != "" {
 		identity = SourceNodeElementID(before.RuntimeMetadata().Database, node.ID)
 	}
-	readConstituents, local, qualified := c.constituentsForEntity("4", identity)
+	readConstituents, _, local, qualified, err := c.constituentsForEntity("4", identity)
+	if err != nil {
+		return err
+	}
 	copy := *node
 	copy.ID = NodeID(local)
 	node = &copy
@@ -459,58 +438,36 @@ func (c *CompositeEngine) UpdateNode(ctx context.Context, updateRequest NodeUpda
 		}
 		return writer.UpdateNode(ctx, updateRequest)
 	}
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetNode(ctx, node.ID)
-		if err == nil {
-			// Found it, update in this constituent
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.UpdateNode(ctx, updateRequest)
-		}
-		if err != ErrNotFound {
-			return err
-		}
-	}
-
+	missing := ErrNotFound
 	if updateRequest.Before != nil {
-		return ErrConflict
+		missing = ErrConflict
 	}
-	return ErrNotFound
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetNode(ctx, node.ID)
+			return err
+		},
+		func(engine Engine) error { return engine.UpdateNode(ctx, updateRequest) },
+		missing,
+	)
 }
 
 // DeleteNode deletes a node from the constituent that contains it.
 func (c *CompositeEngine) DeleteNode(ctx context.Context, id NodeID) error {
-	readConstituents, local, _ := c.constituentsForEntity("4", string(id))
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(id))
+	if err != nil {
+		return err
+	}
 	id = NodeID(local)
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetNode(ctx, id)
-		if err == nil {
-			// Found it, delete from this constituent
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.DeleteNode(ctx, id)
-		}
-		if err != ErrNotFound {
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetNode(ctx, id)
 			return err
-		}
-	}
-
-	return ErrNotFound
+		},
+		func(engine Engine) error { return engine.DeleteNode(ctx, id) },
+		ErrNotFound,
+	)
 }
 
 // ============================================================================
@@ -620,7 +577,10 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 		}
 
 		engine, err := c.getConstituent(alias)
-		if err != nil || engine == nil {
+		if err != nil {
+			return err
+		}
+		if engine == nil {
 			continue
 		}
 
@@ -668,7 +628,7 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 
 		_, err = engine.GetNode(ctx, edge.StartNode)
@@ -687,25 +647,15 @@ func (c *CompositeEngine) CreateEdge(ctx context.Context, edge *Edge) error {
 
 // GetEdge retrieves an edge. Searches all constituents.
 func (c *CompositeEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
-	readConstituents, local, _ := c.constituentsForEntity("5", string(id))
-	id = EdgeID(local)
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		edge, err := engine.GetEdge(ctx, id)
-		if err == nil {
-			return c.sourceEdge(alias, engine, edge), nil
-		}
-		if err != ErrNotFound {
-			return nil, err
-		}
+	readConstituents, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return nil, err
 	}
-
-	return nil, ErrNotFound
+	localID := EdgeID(local)
+	return readFirstConstituent(c, readConstituents, constituentNotFoundDirect, false,
+		func(engine Engine) (*Edge, error) { return engine.GetEdge(ctx, localID) },
+		func(edge *Edge, alias string, engine Engine) *Edge { return c.sourceEdge(alias, engine, edge) },
+	)
 }
 
 // UpdateEdge updates an edge. Routes to the constituent containing it.
@@ -721,7 +671,10 @@ func (c *CompositeEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpda
 	if before := updateRequest.Before; before != nil && before.Database != "" {
 		identity = SourceRelationshipElementID(before.Database, edge.ID)
 	}
-	readConstituents, local, qualified := c.constituentsForEntity("5", identity)
+	readConstituents, _, local, qualified, err := c.constituentsForEntity("5", identity)
+	if err != nil {
+		return err
+	}
 	copy := *edge
 	copy.ID = EdgeID(local)
 	edge = &copy
@@ -734,56 +687,36 @@ func (c *CompositeEngine) UpdateEdge(ctx context.Context, updateRequest EdgeUpda
 		}
 		return writer.UpdateEdge(ctx, updateRequest)
 	}
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetEdge(ctx, edge.ID)
-		if err == nil {
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.UpdateEdge(ctx, updateRequest)
-		}
-		if err != ErrNotFound {
-			return err
-		}
-	}
-
+	missing := ErrNotFound
 	if updateRequest.Before != nil {
-		return ErrConflict
+		missing = ErrConflict
 	}
-	return ErrNotFound
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetEdge(ctx, edge.ID)
+			return err
+		},
+		func(engine Engine) error { return engine.UpdateEdge(ctx, updateRequest) },
+		missing,
+	)
 }
 
 // DeleteEdge deletes an edge from the constituent containing it.
 func (c *CompositeEngine) DeleteEdge(ctx context.Context, id EdgeID) error {
-	readConstituents, local, _ := c.constituentsForEntity("5", string(id))
+	readConstituents, _, local, _, err := c.constituentsForEntity("5", string(id))
+	if err != nil {
+		return err
+	}
 	id = EdgeID(local)
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		_, err = engine.GetEdge(ctx, id)
-		if err == nil {
-			writer, err := c.getConstituentForWrite(alias)
-			if err != nil {
-				return err
-			}
-			return writer.DeleteEdge(ctx, id)
-		}
-		if err != ErrNotFound {
+	return writeFirstConstituent(c, readConstituents, constituentNotFoundDirect, constituentWriteEntityMutation,
+		func(engine Engine) error {
+			_, err := engine.GetEdge(ctx, id)
 			return err
-		}
-	}
-
-	return ErrNotFound
+		},
+		func(engine Engine) error { return engine.DeleteEdge(ctx, id) },
+		ErrNotFound,
+	)
 }
 
 // ============================================================================
@@ -840,8 +773,7 @@ func materializeConstituents[T any](
 		}
 		engine, err := composite.getConstituent(alias)
 		if err != nil {
-			// Constituent not found or offline - skip it.
-			continue
+			return nil, err
 		}
 		values, err := read(engine)
 		if err != nil {
@@ -901,7 +833,7 @@ func streamConstituents[T any](
 		}
 		engine, err := composite.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		database := composite.constituentDatabase(alias, engine)
 		if streamer, ok := ResolveStreamingEngine(engine); ok {
@@ -998,7 +930,7 @@ func (c *CompositeEngine) GetFirstNodeByLabel(ctx context.Context, label string)
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		node, err := engine.GetFirstNodeByLabel(ctx, label)
@@ -1028,7 +960,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if engine, start, end, qualified := c.constituentForNodePair(request.Node, request.Other); qualified {
+		if engine, start, end, qualified, err := c.constituentForNodePair(request.Node, request.Other); qualified {
+			if err != nil {
+				return nil, err
+			}
 			if engine == nil {
 				return nil, nil
 			}
@@ -1047,7 +982,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 			compositeFanOutPublishesLocalizedQuery,
 		)
 	}
-	readConstituents, local, _ := c.constituentsForEntity("4", string(request.Node))
+	readConstituents, _, local, _, err := c.constituentsForEntity("4", string(request.Node))
+	if err != nil {
+		return nil, err
+	}
 	request.Node = NodeID(local)
 
 	return materializeConstituents(c, ctx, readConstituents,
@@ -1059,7 +997,10 @@ func (c *CompositeEngine) ReadAdjacentEdges(ctx context.Context, request Adjacen
 
 // GetEdgeBetween returns an edge between two nodes from any constituent.
 func (c *CompositeEngine) GetEdgeBetween(ctx context.Context, startID, endID NodeID, edgeType string) (*Edge, error) {
-	if engine, start, end, qualified := c.constituentForNodePair(startID, endID); qualified {
+	if engine, start, end, qualified, err := c.constituentForNodePair(startID, endID); qualified {
+		if err != nil {
+			return nil, err
+		}
 		if engine == nil {
 			return nil, nil
 		}
@@ -1074,7 +1015,7 @@ func (c *CompositeEngine) GetEdgeBetween(ctx context.Context, startID, endID Nod
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		edge, err := engine.GetEdgeBetween(ctx, startID, endID, edgeType)
@@ -1126,238 +1067,162 @@ func (c *CompositeEngine) AllEdges(ctx context.Context) ([]*Edge, error) {
 // Degree Operations
 // ============================================================================
 
-// GetInDegree returns the in-degree of a node across all constituents.
-func (c *CompositeEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
-	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
-		if engine == nil {
+// sumConstituentDegree is the canonical degree router. A qualified node routes
+// to its one source; an unqualified node sums every readable source and keeps
+// the partial total when a source fails.
+func (c *CompositeEngine) sumConstituentDegree(nodeID NodeID, degree func(Engine, NodeID) (int, error)) (int, error) {
+	if _, source, local, qualified, err := c.constituentsForEntity("4", string(nodeID)); qualified {
+		if err != nil {
+			return 0, err
+		}
+		if source == nil {
 			return 0, nil
 		}
-		return engine.GetInDegree(ctx, NodeID(local))
+		return degree(source, NodeID(local))
 	}
-	readConstituents := c.getConstituentsForRead()
 	total := 0
-
-	for _, alias := range readConstituents {
+	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		degree, err := engine.GetInDegree(ctx, nodeID)
 		if err != nil {
 			return total, err
 		}
-		total += degree
+		value, err := degree(engine, nodeID)
+		if err != nil {
+			return total, err
+		}
+		total += value
 	}
-
 	return total, nil
+}
+
+// GetInDegree returns the in-degree of a node across all constituents.
+func (c *CompositeEngine) GetInDegree(ctx context.Context, nodeID NodeID) (int, error) {
+	return c.sumConstituentDegree(nodeID, func(engine Engine, id NodeID) (int, error) {
+		return engine.GetInDegree(ctx, id)
+	})
 }
 
 // GetOutDegree returns the out-degree of a node across all constituents.
 func (c *CompositeEngine) GetOutDegree(ctx context.Context, nodeID NodeID) (int, error) {
-	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
-		if engine == nil {
-			return 0, nil
-		}
-		return engine.GetOutDegree(ctx, NodeID(local))
-	}
-	readConstituents := c.getConstituentsForRead()
-	total := 0
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		degree, err := engine.GetOutDegree(ctx, nodeID)
-		if err != nil {
-			return total, err
-		}
-		total += degree
-	}
-
-	return total, nil
+	return c.sumConstituentDegree(nodeID, func(engine Engine, id NodeID) (int, error) {
+		return engine.GetOutDegree(ctx, id)
+	})
 }
 
 // ============================================================================
 // Schema Operations
 // ============================================================================
 
-// GetSchema returns a merged schema from all constituents.
-// Merges constraints and indexes from all constituent databases.
+// GetSchema returns a schema only if all configured readable constituents can
+// be admitted. An empty composite has a non-nil, empty schema. Call ReadSchema
+// to obtain the error when the merged schema is unavailable.
 func (c *CompositeEngine) GetSchema() *SchemaManager {
-	readConstituents := c.getConstituentsForRead()
+	schema, _ := c.readSchema(context.Background())
+	return schema
+}
 
-	if len(readConstituents) == 0 {
-		return NewSchemaManager()
+// ReadSchema reads an engine's schema with the caller's lifetime. A composite
+// returns an error and no schema when any required constituent is unavailable.
+// For example, use ReadSchema(ctx, composite) before listing merged indexes.
+func ReadSchema(ctx context.Context, engine Engine) (*SchemaManager, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	if engine == nil {
+		return nil, ErrStorageClosed
+	}
+	if reader, ok := engine.(interface {
+		readSchema(context.Context) (*SchemaManager, error)
+	}); ok {
+		return reader.readSchema(ctx)
+	}
+	if native, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
+		if err := native.ensureOpen(false); err != nil {
+			return nil, err
+		}
+		namespace := DatabaseOf(engine)
+		if namespace == "" {
+			namespace = "nornic"
+		}
+		if err := native.pendingNamespaceConflict(namespace); err != nil {
+			return nil, err
+		}
+	}
+	schema := engine.GetSchema()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return schema, nil
+}
 
-	mergedSchema := NewSchemaManager()
-
-	// Merge schemas from all constituents
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
+func (c *CompositeEngine) readSchema(ctx context.Context) (*SchemaManager, error) {
+	definitions := make(map[string]*SchemaDefinition)
+	err := walkReadableConstituents(c, constituentAccessRequired, func(alias string, engine Engine) error {
+		schema, err := ReadSchema(ctx, engine)
 		if err != nil {
-			continue
+			return err
 		}
-
-		constituentSchema := engine.GetSchema()
-		if constituentSchema == nil {
-			continue
+		if schema == nil {
+			return localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 		}
-
-		// Merge constraints
-		constraints, _ := constituentSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
-		for i := range constraints {
-			constraint := &constraints[i]
-			// Add constraint if not already present (by name)
-			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
-			found := false
-			for j := range mergedConstraints {
-				existing := &mergedConstraints[j]
-				if existing.Name == constraint.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				_ = mergedSchema.AddConstraint(Constraint{
-					Name:       constraint.Name,
-					Type:       ConstraintUnique,
-					Label:      constraint.Label,
-					Properties: []string{constraint.Property},
-				})
-			}
+		definition, err := schema.ExportDefinition(ctx)
+		if err != nil {
+			return err
 		}
-
-		// Also get all constraints from the constraints map (includes all types)
-		allConstraints := constituentSchema.GetAllConstraints()
-		for i := range allConstraints {
-			constraint := &allConstraints[i]
-			mergedConstraints, _ := mergedSchema.GetConstraints(context.Background()) // context-free schema composition cannot cancel
-			found := false
-			for j := range mergedConstraints {
-				existing := &mergedConstraints[j]
-				if existing.Name == constraint.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				_ = mergedSchema.AddConstraint(*constraint)
-			}
-		}
-
-		// Merge property type constraints.
-		typeConstraints := constituentSchema.GetAllPropertyTypeConstraints()
-		for _, constraint := range typeConstraints {
-			existing := mergedSchema.GetAllPropertyTypeConstraints()
-			found := false
-			for _, current := range existing {
-				if current.Name == constraint.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				_ = mergedSchema.AddPropertyTypeConstraint(
-					constraint.Name,
-					constraint.Label,
-					constraint.Property,
-					constraint.ExpectedType, PropertyTypeConstraintOptions{},
-				)
-			}
-		}
-
-		// Merge indexes from constituent
-		// Note: We merge index metadata only - the actual indexed data stays in constituent engines
-		// This allows SHOW INDEXES to work correctly while queries use indexes from constituents
-		indexes := constituentSchema.GetIndexes()
-		for _, idx := range indexes {
-			if idxMap, ok := idx.(map[string]interface{}); ok {
-				idxName, _ := idxMap["name"].(string)
-				idxType, _ := idxMap["type"].(string)
-
-				// Check if index already exists in merged schema
-				mergedIndexes := mergedSchema.GetIndexes()
-				found := false
-				for _, existing := range mergedIndexes {
-					if existingMap, ok := existing.(map[string]interface{}); ok {
-						if existingName, _ := existingMap["name"].(string); existingName == idxName {
-							found = true
-							break
-						}
-					}
-				}
-
-				if !found {
-					// Recreate index in merged schema based on type
-					switch idxType {
-					case "PROPERTY":
-						if label, ok := idxMap["label"].(string); ok {
-							properties := anyToStringSlice(idxMap["properties"])
-							if len(properties) > 0 {
-								_ = mergedSchema.AddPropertyIndex(idxName, label, properties)
-							}
-						}
-					case "COMPOSITE":
-						if label, ok := idxMap["label"].(string); ok {
-							properties := anyToStringSlice(idxMap["properties"])
-							if len(properties) >= 2 {
-								_ = mergedSchema.AddCompositeIndex(idxName, label, properties)
-							}
-						}
-					case "FULLTEXT":
-						labels := anyToStringSlice(idxMap["labels"])
-						relationshipTypes := anyToStringSlice(idxMap["relationshipTypes"])
-						properties := anyToStringSlice(idxMap["properties"])
-						if len(labels) > 0 && len(properties) > 0 {
-							_ = mergedSchema.AddFulltextIndex(idxName, labels, properties, ConstraintEntityNode)
-						} else if len(relationshipTypes) > 0 && len(properties) > 0 {
-							_ = mergedSchema.AddFulltextIndex(idxName, relationshipTypes, properties, ConstraintEntityRelationship)
-						}
-					case "VECTOR":
-						if label, ok := idxMap["label"].(string); ok {
-							if property, ok := idxMap["property"].(string); ok {
-								dimensions := 0
-								if dims, ok := idxMap["dimensions"].(int); ok {
-									dimensions = dims
-								} else if dims, ok := idxMap["dimensions"].(int64); ok {
-									dimensions = int(dims)
-								}
-								similarityFunc := "cosine"
-								if sim, ok := idxMap["similarityFunc"].(string); ok {
-									similarityFunc = sim
-								}
-								entityType := ConstraintEntityNode
-								if etRaw, ok := idxMap["entityType"].(string); ok && strings.EqualFold(etRaw, string(ConstraintEntityRelationship)) {
-									entityType = ConstraintEntityRelationship
-								}
-								_ = mergedSchema.AddVectorIndex(idxName, label, property, dimensions, similarityFunc, entityType)
-							}
-						}
-					case "RANGE":
-						if label, ok := idxMap["label"].(string); ok {
-							// Support both legacy scalar "property" and newer
-							// plural "properties" shapes from GetIndexes().
-							if properties := anyToStringSlice(idxMap["properties"]); len(properties) > 0 {
-								entityType := ConstraintEntityNode
-								if etRaw, ok := idxMap["entityType"].(string); ok && strings.EqualFold(etRaw, string(ConstraintEntityRelationship)) {
-									entityType = ConstraintEntityRelationship
-								}
-								_ = mergedSchema.AddRangeIndexForEntity(idxName, label, properties, entityType)
-							} else if property, ok := idxMap["property"].(string); ok {
-								_ = mergedSchema.AddRangeIndex(idxName, label, property)
-							}
-						}
-					}
-				}
-			}
-		}
+		definitions[alias] = definition
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return mergedSchema
+	// Merge detached metadata only. Apply the same name precedence even when
+	// map iteration or participant admission order differs across invocations.
+	merged := SchemaDefinition{Version: schemaDefinitionVersion}
+	constraintNames := make(map[string]bool)
+	indexNames := map[string]bool{
+		DefaultNodeLookupIndexName:         true,
+		DefaultRelationshipLookupIndexName: true,
+	}
+	for _, alias := range collection.SortedKeys(definitions) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		source := definitions[alias]
+		merged.Constraints = appendCompositeSchemaEntries(merged.Constraints, source.Constraints, constraintNames, func(v Constraint) string { return v.Name })
+		merged.PropertyTypeConstraints = appendCompositeSchemaEntries(merged.PropertyTypeConstraints, source.PropertyTypeConstraints, constraintNames, func(v PropertyTypeConstraint) string { return v.Name })
+		merged.PropertyIndexes = appendCompositeSchemaEntries(merged.PropertyIndexes, source.PropertyIndexes, indexNames, func(v SchemaPropertyIndexDef) string { return v.Name })
+		merged.CompositeIndexes = appendCompositeSchemaEntries(merged.CompositeIndexes, source.CompositeIndexes, indexNames, func(v SchemaCompositeIndexDef) string { return v.Name })
+		merged.FulltextIndexes = appendCompositeSchemaEntries(merged.FulltextIndexes, source.FulltextIndexes, indexNames, func(v FulltextIndex) string { return v.Name })
+		merged.VectorIndexes = appendCompositeSchemaEntries(merged.VectorIndexes, source.VectorIndexes, indexNames, func(v VectorIndex) string { return v.Name })
+		for i := range source.RangeIndexes {
+			index := &source.RangeIndexes[i]
+			if len(index.Properties) == 0 && index.Property != "" {
+				index.Properties = []string{index.Property}
+			}
+		}
+		merged.RangeIndexes = appendCompositeSchemaEntries(merged.RangeIndexes, source.RangeIndexes, indexNames, func(v SchemaRangeIndexDef) string { return v.Name })
+	}
+
+	schema := NewSchemaManager()
+	if err := schema.replaceFromDefinitionLocked(ctx, &merged); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return schema, nil
+}
+
+func appendCompositeSchemaEntries[T any](dst, source []T, seen map[string]bool, name func(T) string) []T {
+	for _, entry := range source {
+		key := name(entry)
+		if !seen[key] {
+			dst = append(dst, entry)
+			seen[key] = true
+		}
+	}
+	return dst
 }
 
 // ============================================================================
@@ -1428,7 +1293,7 @@ func (c *CompositeEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) er
 		for _, alias := range readConstituents {
 			engine, err := c.getConstituent(alias)
 			if err != nil {
-				continue
+				return err
 			}
 
 			_, err = engine.GetNode(ctx, edge.StartNode)
@@ -1475,36 +1340,22 @@ func (c *CompositeEngine) BulkCreateEdges(ctx context.Context, edges []*Edge) er
 
 // BulkDeleteNodes deletes nodes in bulk from all constituents.
 func (c *CompositeEngine) BulkDeleteNodes(ctx context.Context, ids []NodeID) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		// Try to delete - ignore errors for nodes not in this constituent
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		// Per-source delete failures are discarded: each source deletes the
+		// IDs it holds, and only an unreadable source fails the broadcast.
 		_ = engine.BulkDeleteNodes(ctx, ids)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // BulkDeleteEdges deletes edges in bulk from all constituents.
 func (c *CompositeEngine) BulkDeleteEdges(ctx context.Context, ids []EdgeID) error {
-	readConstituents := c.getConstituentsForRead()
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		// Try to delete - ignore errors for edges not in this constituent
+	return walkReadableConstituents(c, constituentAccessRequired, func(_ string, engine Engine) error {
+		// Per-source delete failures are discarded: each source deletes the
+		// IDs it holds, and only an unreadable source fails the broadcast.
 		_ = engine.BulkDeleteEdges(ctx, ids)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // ============================================================================
@@ -1517,7 +1368,7 @@ func (c *CompositeEngine) BatchGetNodes(ctx context.Context, ids []NodeID) (map[
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		database := c.constituentDatabase(alias, engine)
 		requests := make([]NodeID, 0, len(ids))
@@ -1576,104 +1427,87 @@ func (c *CompositeEngine) Close() error {
 // Stats
 // ============================================================================
 
-// NodeCount returns the total node count across all constituents.
-func (c *CompositeEngine) NodeCount(ctx context.Context) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
+// constituentCountKind selects the localized failure a summed entity count
+// publishes.
+type constituentCountKind int
 
-	for _, alias := range readConstituents {
+const (
+	constituentCountNodes constituentCountKind = iota
+	constituentCountEdges
+)
+
+func (kind constituentCountKind) wrap(alias string, err error) error {
+	if kind == constituentCountNodes {
+		return localizedError(localization.StorageCompositeNodeCountFailed(alias, err), err)
+	}
+	return localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
+}
+
+// sumConstituentCounts is the canonical total and per-type count owner: every
+// readable source contributes one counter value, and a failed source or counter
+// yields zero rather than a partial total.
+func (c *CompositeEngine) sumConstituentCounts(kind constituentCountKind, count func(Engine) (int64, error)) (int64, error) {
+	var total int64
+	for _, alias := range c.readConstituentAliases(constituentAccessRequired) {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return 0, err
 		}
-
-		count, err := engine.NodeCount(ctx)
+		value, err := count(engine)
 		if err != nil {
-			return 0, localizedError(localization.StorageCompositeNodeCountFailed(alias, err), err)
+			return 0, kind.wrap(alias, err)
 		}
-
-		total += count
+		total += value
 	}
-
 	return total, nil
+}
+
+// NodeCount returns the total node count across all constituents.
+func (c *CompositeEngine) NodeCount(ctx context.Context) (int64, error) {
+	return c.sumConstituentCounts(constituentCountNodes, func(engine Engine) (int64, error) {
+		return engine.NodeCount(ctx)
+	})
 }
 
 // EdgeCount returns the total edge count across all constituents.
 func (c *CompositeEngine) EdgeCount(ctx context.Context) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
-
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		count, err := engine.EdgeCount(ctx)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-
-		total += count
-	}
-
-	return total, nil
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return engine.EdgeCount(ctx)
+	})
 }
 
 // EdgeCountByType returns the typed edge count summed across all
 // constituents' per-type counters (issue #638).
 func (c *CompositeEngine) EdgeCountByType(ctx context.Context, edgeType string) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return engine.EdgeCountByType(ctx, edgeType)
+	})
+}
 
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-
-		count, err := engine.EdgeCountByType(ctx, edgeType)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-
-		total += count
-	}
-
-	return total, nil
+// edgeCountByPositionalLabel is the single owner of the positional (label,
+// type) edge-count sum (issue #638). The two positional counters differ only in
+// which per-source counter they select, which the caller supplies as the
+// counter itself.
+func (c *CompositeEngine) edgeCountByPositionalLabel(
+	ctx context.Context,
+	label, edgeType string,
+	counter func(Engine, context.Context, string, string) (int64, error),
+) (int64, error) {
+	return c.sumConstituentCounts(constituentCountEdges, func(engine Engine) (int64, error) {
+		return counter(engine, ctx, label, edgeType)
+	})
 }
 
 // EdgeCountByStartLabel returns the positional (label, type) count summed
 // across all constituents' counters (issue #638).
 func (c *CompositeEngine) EdgeCountByStartLabel(ctx context.Context, label, edgeType string) (int64, error) {
-	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
-		return engine.EdgeCountByStartLabel(ctx, label, edgeType)
-	})
+	return c.edgeCountByPositionalLabel(ctx, label, edgeType, Engine.EdgeCountByStartLabel)
 }
 
 // EdgeCountByEndLabel returns the positional (label, type) count summed
 // across all constituents' counters (issue #638).
 func (c *CompositeEngine) EdgeCountByEndLabel(ctx context.Context, label, edgeType string) (int64, error) {
-	return c.sumConstituentPositionalCounts(func(engine Engine) (int64, error) {
-		return engine.EdgeCountByEndLabel(ctx, label, edgeType)
-	})
-}
-
-func (c *CompositeEngine) sumConstituentPositionalCounts(count func(Engine) (int64, error)) (int64, error) {
-	readConstituents := c.getConstituentsForRead()
-	var total int64
-	for _, alias := range readConstituents {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		value, err := count(engine)
-		if err != nil {
-			return 0, localizedError(localization.StorageCompositeEdgeCountFailed(alias, err), err)
-		}
-		total += value
-	}
-	return total, nil
+	return c.edgeCountByPositionalLabel(ctx, label, edgeType, Engine.EdgeCountByEndLabel)
 }
 
 // ============================================================================
@@ -1721,7 +1555,7 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 
 		database := c.constituentDatabase(alias, engine)

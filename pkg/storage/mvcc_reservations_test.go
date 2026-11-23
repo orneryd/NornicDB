@@ -15,18 +15,26 @@ func takeReservationCut(t *testing.T, ledger *mvccReservations, cut uint64) *mvc
 	return copied
 }
 
+func reservationTestLedger(t *testing.T) (*mvccReservations, func(*badger.Txn) MVCCVersion) {
+	t.Helper()
+	ledger := &mvccReservations{}
+	state := &namespaceMVCCState{}
+	state.reservedThrough.Store(mvccSequenceBlockSize)
+	return ledger, func(txn *badger.Txn) MVCCVersion {
+		t.Helper()
+		version, issued, err := ledger.reserve(txn, "test", state, time.Now(), false)
+		require.NoError(t, err)
+		require.True(t, issued)
+		return version
+	}
+}
+
 // A cut copies the versions in flight and the ones published since it
 // started; a version published before it started is in its snapshot and is
 // neither copied nor kept.
 func TestReservationCutCopiesWhatItsSnapshotMayNotHold(t *testing.T) {
-	ledger := &mvccReservations{}
-	state := &namespaceMVCCState{}
+	ledger, reserve := reservationTestLedger(t)
 	var before, during, inflight badger.Txn
-	reserve := func(txn *badger.Txn) MVCCVersion {
-		version, err := ledger.reserve(txn, "test", state, time.Now(), false)
-		require.NoError(t, err)
-		return version
-	}
 	publishedBefore := reserve(&before)
 	older := ledger.cutStarted()
 	ledger.publishTxn(&before)
@@ -58,13 +66,11 @@ func TestReservationCutCopiesWhatItsSnapshotMayNotHold(t *testing.T) {
 // Cuts that keep overlapping, so that one is always in progress, retain only
 // the versions published since the oldest of them started.
 func TestOverlappingReservationCutsDoNotRetainThePublishedVersions(t *testing.T) {
-	ledger := &mvccReservations{}
-	state := &namespaceMVCCState{}
+	ledger, reserve := reservationTestLedger(t)
 	previous := ledger.cutStarted()
 	for round := 0; round < 1000; round++ {
 		var txn badger.Txn
-		_, err := ledger.reserve(&txn, "test", state, time.Now(), false)
-		require.NoError(t, err)
+		reserve(&txn)
 		ledger.publishTxn(&txn)
 		next := ledger.cutStarted()
 		copied := takeReservationCut(t, ledger, previous)
@@ -79,12 +85,10 @@ func TestOverlappingReservationCutsDoNotRetainThePublishedVersions(t *testing.T)
 
 // Ending a later cut must not retire the publications an earlier cut needs.
 func TestReservationCutsRetainPublicationsUntilOldestFinishes(t *testing.T) {
-	ledger := &mvccReservations{}
-	state := &namespaceMVCCState{}
+	ledger, reserve := reservationTestLedger(t)
 	older, newer := ledger.cutStarted(), ledger.cutStarted()
 	var txn badger.Txn
-	version, err := ledger.reserve(&txn, "test", state, time.Now(), false)
-	require.NoError(t, err)
+	version := reserve(&txn)
 	ledger.publishTxn(&txn)
 	ledger.cutAbandoned(newer)
 	require.Len(t, ledger.published, 1)

@@ -58,7 +58,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 	ctx = WithConversationScope(ctx, req.ConversationID)
-	prompt := &PromptContext{Context: ctx, Thinking: req.Thinking, ConversationID: req.ConversationID, SourceDatabase: turn.Database, RequestID: generateID(), RequestTime: time.Now(), ActionPrompt: ActionPrompt(), UserMessage: content, Messages: turn.Messages, PluginData: map[string]interface{}{"message_id": req.MessageID}}
+	prompt := &PromptContext{Context: ctx, Thinking: req.Thinking, ConversationID: req.ConversationID, SourceDatabase: turn.Database, RequestID: generateID(), RequestTime: time.Now(), ActionPrompt: ActionPromptForRequest(ctx, turn.Database), UserMessage: content, Messages: turn.Messages, PluginData: map[string]interface{}{"message_id": req.MessageID}}
 	prompt.SetBifrost(h.bifrost)
 	lifecycle := &requestLifecycle{promptCtx: prompt, requestID: prompt.RequestID, database: newConversationDatabase(h.database, prompt), metrics: h.metrics, principalRoles: PrincipalRolesFromContext(ctx), databaseAccessMode: DatabaseAccessModeFromContext(ctx), resolvedAccessResolver: ResolvedAccessResolverFromContext(ctx)}
 	var flusher http.Flusher
@@ -94,7 +94,7 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	CallPrePromptHooks(prompt)
-	h.sendStreamNotifications(lifecycle, prompt.DrainNotifications())
+	h.sendStreamNotifications(lifecycle, prompt.DrainNotifications(), false)
 	params := DefaultGenerateParams()
 	params.MaxTokens = req.MaxTokens
 	if params.MaxTokens <= 0 {
@@ -153,6 +153,17 @@ func (h *Handler) handleConversationTurn(w http.ResponseWriter, r *http.Request,
 	response.Choices[0].Delta = &ChatMessage{Role: "assistant"}
 	if lifecycle.streamedAnswer.Len() == 0 {
 		response.Choices[0].Delta.Content = reply
+	}
+	if len(lifecycle.postExecute) != 0 {
+		if response.Choices[0].Delta.Content != "" {
+			response.Choices[0].FinishReason = ""
+			data, _ := valueconvert.PropertyJSON.Marshal(response)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+			response.Choices[0].Delta.Content = ""
+			response.Choices[0].FinishReason = "stop"
+		}
+		h.flushPostExecute(ctx, lifecycle)
 	}
 	data, _ := valueconvert.PropertyJSON.Marshal(response)
 	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", data)

@@ -5,6 +5,9 @@
 // number of text tokens: a provider tokenizer never yields more tokens than the
 // input has bytes. A zero limit means the provider documents no such bound, so
 // that limit never splits a request.
+//
+// The package also owns the one record of provider-reported token usage for a
+// completed request, which the embedding and rerank providers share.
 package providerbatch
 
 import (

@@ -17,7 +17,7 @@ var credentialedClientErrorBoundaries = map[string]map[string]bool{
 		"*safeClient.Get": true, "*safeClient.Post": true, "*HTTPSearcher.Search": true,
 	},
 	"pkg/auth/oauth.go": {
-		"*OAuthManager.ExchangeCode": true, "*OAuthManager.GetUserInfo": true, "*OAuthManager.RefreshOAuthToken": true,
+		"*OAuthManager.ExchangeCode": true, "*OAuthManager.getOAuthUserInfo": true, "*OAuthManager.RefreshOAuthToken": true,
 	},
 	"pkg/embed/embed.go": {
 		"*OllamaEmbedder.Embed": true, "*OllamaEmbedder.EmbedBatch": true, "*OpenAIEmbedder.embedBatchRequest": true,

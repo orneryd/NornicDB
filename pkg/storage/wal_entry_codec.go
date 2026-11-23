@@ -67,14 +67,25 @@ func processWALEntryPayload(mode walPayloadMode, buf *bytes.Buffer, entry *WALEn
 	}
 }
 
-// encodeWALEntryPayload encodes the entry payload layout. A payload that fits
-// one frame is encoded to the same bytes whatever spanning says. Without
-// spanning, a record that does not fit is refused before its payload is
-// allocated, with the frame-size error. With spanning (WALRecordsLarge, or a
-// stored spanned record being rewritten) the payload is returned whole and
-// reported large for the frame writer to split, unless its header alone
-// exceeds a frame or its data exceeds the format's 32-bit length (NOR-412).
-func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (encoded []byte, large bool, err error) {
+// walEntryPayload is one entry payload in the pieces its layout frames:
+// [jsonLen:4 LE][json header][dataLen:4 LE][data]. The one-frame encoder joins
+// them into the payload it returns; a spanned record's parts are cut from them
+// without first allocating a contiguous copy of the logical payload.
+// header points into the buffer that encoded it until own is called.
+type walEntryPayload struct {
+	jsonLen [4]byte
+	header  []byte
+	dataLen [4]byte
+	data    []byte
+	large   bool
+}
+
+// layoutWALEntryPayload is the one owner of the entry payload layout. It encodes
+// the entry's metadata header and decides, with the capacity check the frame
+// writer applies, whether the payload it frames needs more than one frame
+// (large) or is refused under spanning. A payload that fits one frame is the
+// same bytes whatever spanning says.
+func layoutWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (walEntryPayload, error) {
 	header := WALEntry{
 		Sequence:      entry.Sequence,
 		Timestamp:     entry.Timestamp,
@@ -85,19 +96,71 @@ func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (e
 	}
 	jsonBytes, err := marshalJSONCompact(buf, &header)
 	if err != nil {
-		return nil, false, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
+		return walEntryPayload{}, &walRecordRejection{cause: fmt.Errorf("wal: failed to serialize entry header: %w", err)}
 	}
-	large, err = checkWALEntrySize(len(jsonBytes), len(entry.Data), spanning)
+	large, err := checkWALEntrySize(len(jsonBytes), len(entry.Data), spanning)
+	if err != nil {
+		return walEntryPayload{}, err
+	}
+	var payload walEntryPayload
+	binary.LittleEndian.PutUint32(payload.jsonLen[:], uint32(len(jsonBytes)))
+	binary.LittleEndian.PutUint32(payload.dataLen[:], uint32(len(entry.Data)))
+	payload.header, payload.data, payload.large = jsonBytes, entry.Data, large
+	return payload, nil
+}
+
+// size is the length of the payload this layout frames.
+func (p walEntryPayload) size() int {
+	return len(p.jsonLen) + len(p.header) + len(p.dataLen) + len(p.data)
+}
+
+// join returns the whole payload in one buffer, which the caller owns.
+func (p walEntryPayload) join() []byte {
+	encoded := make([]byte, p.size())
+	copy(encoded[:4], p.jsonLen[:])
+	headerEnd := 4 + len(p.header)
+	copy(encoded[4:headerEnd], p.header)
+	copy(encoded[headerEnd:headerEnd+4], p.dataLen[:])
+	copy(encoded[headerEnd+4:], p.data)
+	return encoded
+}
+
+// copyRange copies the payload's bytes [start:end) into dst, which holds
+// end-start of them. It walks the pieces instead of joining them first, so a
+// caller that cuts frames pays only for the bytes it copies.
+func (p walEntryPayload) copyRange(dst []byte, start, end int) {
+	copied, offset := 0, 0
+	for _, piece := range [4][]byte{p.jsonLen[:], p.header, p.dataLen[:], p.data} {
+		low, high := offset, offset+len(piece)
+		offset = high
+		if high <= start || low >= end {
+			continue
+		}
+		copied += copy(dst[copied:], piece[max(start, low)-low:min(end, high)-low])
+	}
+}
+
+// own detaches the layout's header from the buffer that encoded it, for a caller
+// that keeps this payload while that buffer encodes other entries.
+func (p *walEntryPayload) own() {
+	if p.header != nil {
+		p.header = append([]byte(nil), p.header...)
+	}
+}
+
+// encodeWALEntryPayload encodes the entry payload layout. A payload that fits
+// one frame is encoded to the same bytes whatever spanning says. Without
+// spanning, a record that does not fit is refused before its payload is
+// allocated, with the frame-size error. With spanning (WALRecordsLarge, or a
+// stored spanned record being rewritten) the payload is returned whole and
+// reported large for the frame writer to split, unless its header alone
+// exceeds a frame or its data exceeds the format's 32-bit length (NOR-412).
+func encodeWALEntryPayload(buf *bytes.Buffer, entry *WALEntry, spanning bool) (encoded []byte, large bool, err error) {
+	payload, err := layoutWALEntryPayload(buf, entry, spanning)
 	if err != nil {
 		return nil, false, err
 	}
-	encoded = make([]byte, 4+len(jsonBytes)+4+len(entry.Data))
-	binary.LittleEndian.PutUint32(encoded[0:4], uint32(len(jsonBytes)))
-	copy(encoded[4:], jsonBytes)
-	dataOff := 4 + len(jsonBytes)
-	binary.LittleEndian.PutUint32(encoded[dataOff:dataOff+4], uint32(len(entry.Data)))
-	copy(encoded[dataOff+4:], entry.Data)
-	return encoded, large, nil
+	return payload.join(), payload.large, nil
 }
 
 // checkWALEntrySize is shared by capacity admission and physical encoding.

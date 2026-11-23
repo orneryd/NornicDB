@@ -260,7 +260,7 @@ func (s *Service) graphRerankContent(ctx context.Context, result *SearchResult, 
 	match := graphBestMatch(result)
 	if relationship := result.Relationship; relationship != nil {
 		edge := relationship
-		if stored, err := s.engine.GetEdge(ctx, relationship.ID); err == nil && stored != nil {
+		if stored, err := s.searchReadEngine(ctx).GetEdge(ctx, relationship.ID); err == nil && stored != nil {
 			edge = stored
 		}
 		if match != nil && s.relationshipPropertyListed(match.Property) {

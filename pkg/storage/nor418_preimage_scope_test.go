@@ -39,13 +39,14 @@ func TestPlainMixedImportPreimageValidationAllocatesNothing(t *testing.T) {
 func TestWriteBehindMixedImportFoldKeepsOnlyUpdateTargets(t *testing.T) {
 	b := newWriteBehindTestEngine(t, time.Hour)
 	ctx := t.Context()
-	_, err := b.CreateNode(ctx, &Node{ID: "test:existing", Properties: map[string]any{"n": int64(0)}})
+	_, err := b.CreateNode(ctx, &Node{ID: "test:existing", Labels: []string{"Existing"}, Properties: map[string]any{"n": int64(0)}})
 	require.NoError(t, err)
 	tx, err := b.BeginTransaction(ctx, OrdinaryBegin)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	before, err := tx.GetNode(ctx, "test:existing")
 	require.NoError(t, err)
+	before.SetRuntimeMetadata(NodeRuntimeMetadata{Database: "test"})
 	after := CopyNode(before)
 	after.Properties["n"] = int64(1)
 	require.NoError(t, tx.UpdateGraphNode(ctx, NodeUpdateRequest{Before: before, After: after}))
@@ -57,7 +58,13 @@ func TestWriteBehindMixedImportFoldKeepsOnlyUpdateTargets(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, distinct)
 	require.Len(t, folded, 1)
-	require.Same(t, before, folded["test:existing"])
+	preimage := folded["test:existing"]
+	require.NotNil(t, preimage)
+	require.NotSame(t, before, preimage)
+	require.Equal(t, before.ID, preimage.ID)
+	require.Equal(t, before.Labels, preimage.Labels)
+	require.Equal(t, before.Properties, preimage.Properties)
+	require.Equal(t, before.RuntimeMetadata(), preimage.RuntimeMetadata())
 	require.NoError(t, tx.Commit())
 }
 

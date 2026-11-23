@@ -232,9 +232,6 @@ func (b *BadgerEngine) streamEdgesByTypeInScopeAtView(ctx context.Context, read 
 			continue
 		}
 		if err := visit(copyEdge(e)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
 			return err
 		}
 	}
@@ -409,7 +406,7 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return err
 		}
 		var visitErr error
 		err = StreamEdgesByType(ctx, engine, edgeType, func(edge *Edge) error {

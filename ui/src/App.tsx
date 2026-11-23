@@ -24,7 +24,9 @@ import {PivotDemo} from './pages/PivotDemo';
 import {Demos} from './pages/Demos';
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BASE_PATH } from "./utils/basePath";
+import {AssistantAvailabilityProvider} from "./components/common/AssistantAvailability";
 import { AppNavigation } from "./components/common/AppNavigation";
+import { ServerStatus } from "./components/common/ServerStatus";
 import {useUrlState,UrlStateProvider} from './utils/useUrlState';
 import {DemoSeedProvider} from './components/common/DemoSeed';
 
@@ -70,11 +72,13 @@ function AppContent() {
   const [assistantRunning,setAssistantRunning]=useState(0);
   return (
       <UrlStateProvider>
+      <AssistantAvailabilityProvider>
       <DemoSeedProvider>
       <TrailingSlashCanonicalizer />
       <div className="application-shell">
       <AppNavigation assistantRunning={assistantRunning} />
       <div id="workspace" className="min-w-0 flex-1" tabIndex={-1}>
+      <header className="flex justify-end border-b border-norse-rune bg-norse-shadow px-4 py-2"><ServerStatus /></header>
       <Suspense fallback={<p role="status" className="p-6 text-norse-silver">Loading demo…</p>}>
       <Routes>
         <Route path="/demos" element={<Demos />} />
@@ -218,6 +222,7 @@ function AppContent() {
       </div>
       <AssistantRoot onActivityChange={setAssistantRunning}/>
       </DemoSeedProvider>
+      </AssistantAvailabilityProvider>
       </UrlStateProvider>
   );
 }

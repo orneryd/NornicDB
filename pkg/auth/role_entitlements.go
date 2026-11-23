@@ -47,7 +47,7 @@ func (r *RoleEntitlementsStore) Load(ctx context.Context) error {
 	}
 	defer r.writes.unlock()
 	m := make(map[string][]string)
-	err := storage.StreamNodesWithFallback(ctx, r.storage, 1000, func(n *storage.Node) error {
+	err := r.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Prefix: roleEntitlementPrefix}, func(n *storage.Node) error {
 		for _, l := range n.Labels {
 			if l != roleEntitlementLabel {
 				continue

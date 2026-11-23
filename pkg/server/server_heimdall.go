@@ -258,6 +258,9 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 	if !selectable {
 		return nil, "", r.databaseForbidden(database)
 	}
+	if !auth.FineGrainedDatabaseActionAllowed(ctx, dbName) {
+		return nil, "", auth.ErrFineGrainedForbidden
+	}
 	if !allows(dbName, permission) {
 		if permission == auth.Permission("access") {
 			return nil, "", r.databaseForbidden(database)
@@ -332,8 +335,13 @@ func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall
 		return heimdall.DatabaseStats{}, err
 	}
 
-	nodeCount, _ := engine.NodeCount(ctx)
-	edgeCount, _ := engine.EdgeCount(ctx)
+	// A failed count read stays observable to the caller: this interface is
+	// error-returning, and its consumers report the failure to their own
+	// clients instead of publishing an unqualified zero.
+	nodeCount, edgeCount, err := readDatabaseCounts(ctx, engine)
+	if err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
 
 	result := heimdall.DatabaseStats{
 		NodeCount:         nodeCount,

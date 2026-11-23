@@ -237,9 +237,9 @@ func TestCommittedRelationshipConstraintReadsCarryTheCommitContext(t *testing.T)
 
 		probe := &Edge{ID: "test:e2", StartNode: "test:a", EndNode: "test:b", Type: "RECORDS", Properties: interval(2, 7)}
 		var violation *ConstraintViolationError
-		require.ErrorAs(t, tx.checkEdgeTemporalConstraint(context.Background(), probe, c, "test"), &violation,
+		require.ErrorAs(t, tx.checkEdgeTemporalConstraint(context.Background(), probe, c, "test", &temporalValidationRead{}), &violation,
 			"a live context still reports the committed overlap")
-		require.ErrorIs(t, tx.checkEdgeTemporalConstraint(cancelledCtx(), probe, c, "test"), context.Canceled)
+		require.ErrorIs(t, tx.checkEdgeTemporalConstraint(cancelledCtx(), probe, c, "test", &temporalValidationRead{}), context.Canceled)
 	})
 
 	t.Run("cardinality", func(t *testing.T) {

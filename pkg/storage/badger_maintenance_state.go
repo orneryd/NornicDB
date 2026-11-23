@@ -13,6 +13,34 @@ var cleanShutdownMarkerKey = []byte{prefixMVCCMeta, prefixMVCCMetaCleanShutdown}
 // shutdown marker. Removing it before serving traffic makes an ungraceful exit
 // conservative: the next startup cannot mistake the crashed run for a clean one.
 func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
+	b.cleanShutdownMu.Lock()
+	defer b.cleanShutdownMu.Unlock()
+	clean := b.startupCleanShutdown
+	observed, err := b.takeCleanShutdownMarker(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !b.startupCleanShutdownChecked {
+		clean = observed
+	}
+	b.startupCleanShutdown = false
+	b.startupCleanShutdownChecked = true
+	if clean {
+		// The marker also certifies the temporal index format.
+		current, err := b.temporalIndexFormatIsCurrent()
+		if err != nil {
+			return false, err
+		}
+		if current {
+			b.temporalIndexReady.Store(true)
+		} else if err := b.RebuildTemporalIndexes(ctx); err != nil {
+			return false, err
+		}
+	}
+	return clean, nil
+}
+
+func (b *BadgerEngine) takeCleanShutdownMarker(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -43,21 +71,6 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		if err := b.db.Sync(); err != nil {
 			return false, err
 		}
-		// The marker certifies the derived storage indexes as current, which
-		// the startup rebuild then skips; the temporal history index is one of
-		// them, so NO OVERLAP validation can trust it (#1126). Without this a
-		// clean restart left every temporal constraint on the label scan.
-		// A store whose temporal index predates the stable key format is
-		// rebuilt once first: its entries were keyed per process.
-		current, err := b.temporalIndexFormatIsCurrent()
-		if err != nil {
-			return false, err
-		}
-		if current {
-			b.temporalIndexReady.Store(true)
-		} else if err := b.RebuildTemporalIndexes(ctx); err != nil {
-			return false, err
-		}
 	}
 	return clean, nil
 }
@@ -65,6 +78,8 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 // MarkCleanShutdown durably records that all writers were stopped and flushed.
 // It must be called only at the end of an orderly owner shutdown.
 func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
+	b.cleanShutdownMu.Lock()
+	defer b.cleanShutdownMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -80,5 +95,9 @@ func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	return b.db.Sync()
+	if err := b.db.Sync(); err != nil {
+		return err
+	}
+	b.startupCleanShutdownChecked = false
+	return nil
 }

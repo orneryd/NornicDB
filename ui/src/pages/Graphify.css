@@ -1,0 +1,81 @@
+.graphify-workspace{--rail:280px;position:relative;display:grid;grid-template-columns:0 minmax(0,1fr) 0;grid-template-rows:auto auto auto minmax(180px,1fr) auto auto;height:100dvh;min-height:700px;background:#0b0f1b;color:#c6cbd5;overflow:hidden;font-size:.8125rem}
+.graphify-workspace.has-source{grid-template-columns:var(--rail) minmax(0,1fr) 0}
+.graphify-workspace.has-inspector{grid-template-columns:0 minmax(0,1fr) 340px}
+.graphify-workspace.has-source.has-inspector{grid-template-columns:var(--rail) minmax(0,1fr) 340px}
+.graphify-workspace>header{grid-column:1/-1;grid-row:1;z-index:4}
+.graphify-workspace :is(button,input,select,textarea,[class*="rounded"]){border-radius:3px}
+.graphify-workspace button{min-height:36px;padding:.4rem .65rem}
+.graphify-workspace button:focus-visible,.graphify-workspace summary:focus-visible{outline:2px solid #34d399;outline-offset:2px}
+.graphify-workspace button:disabled{opacity:.45;cursor:not-allowed}
+.graphify-workspace header button{border:1px solid #2a3247;background:#141824;color:#c6cbd5}
+.graphify-context{grid-column:2;grid-row:2;padding:1rem 1.25rem .65rem;min-width:0;border-bottom:1px solid #2a3247}
+.graphify-context>div:first-child>span:first-child{font-size:1rem;letter-spacing:normal}
+.graphify-context>div:first-child>span:last-child{font-size:.6875rem;letter-spacing:.08em}
+.graphify-canvas{grid-column:2;grid-row:4;min-width:0;min-height:0;position:relative;overflow:hidden;background:#04060c}
+.graphify-source-toggle{grid-column:1;grid-row:2;display:flex;align-items:center;gap:.5rem;color:#85beff;border-bottom:1px solid #2a3247;border-right:1px solid #2a3247;background:#141824;z-index:3;white-space:nowrap}
+.graphify-workspace:not(.has-source) .graphify-source-toggle{position:absolute;left:12px;bottom:64px;border:1px solid #2a3247}
+.graphify-source{grid-column:1;grid-row:3/7;overflow:auto;min-width:0;background:#141824;padding:1rem;border-right:1px solid #2a3247}
+.graphify-source select{min-width:0;max-width:100%}
+.graphify-scope-controls{display:grid;gap:.75rem;margin-top:1rem}
+.graphify-scope-controls label{justify-content:space-between;gap:.5rem}
+.graphify-source input[type="number"],.graphify-source select{min-height:36px}
+.graphify-entry{display:grid;gap:.5rem;margin-top:1rem;padding-top:1rem;border-top:1px solid #2a3247}
+.graphify-entry label{font-weight:600;color:#f3f4f6}
+.graphify-entry select{width:100%;background:#0b0f1b;border:1px solid #2a3247;padding:.4rem}
+.graphify-entry p,.graphify-help p,.graphify-symbols p{font-size:.75rem;color:#a9b2c4;line-height:1.6}
+.graphify-advanced{margin-top:1rem;padding-top:.75rem;border-top:1px solid #2a3247}
+.graphify-advanced>summary{cursor:pointer;font-weight:600;padding:.5rem 0;color:#f3f4f6;min-height:36px}
+.graphify-search{grid-column:2;grid-row:3;min-width:0;padding:.75rem 1.25rem;position:relative;border-bottom:1px solid #2a3247;background:#101522;z-index:3}
+.graphify-search input{width:100%;min-height:40px;font-size:.8125rem;background:#141824}
+.graphify-search>div{position:absolute;left:1.25rem;right:1.25rem;background:#141824;max-height:320px;box-shadow:0 10px 24px #0008}
+.graphify-search button{white-space:normal;overflow-wrap:anywhere}
+.graphify-empty{grid-column:2;grid-row:4;place-self:center;padding:2rem;z-index:1;max-width:480px;pointer-events:none;background:#101522e8;border:1px solid #2a3247}
+.graphify-empty h2{font-size:1.15rem;font-weight:600;color:#f3f4f6;margin-bottom:.75rem}
+.graphify-empty p{line-height:1.7;color:#a9b2c4}
+.graphify-help,.graphify-symbols{grid-column:2;grid-row:4;align-self:start;z-index:2;background:#141824;border:1px solid #2a3247;padding:1rem;margin:.75rem;max-width:360px;max-height:calc(100% - 1.5rem);overflow:auto}
+.graphify-help{justify-self:end}
+.graphify-help h2,.graphify-symbols h2{color:#f3f4f6;font-weight:600;margin-bottom:.5rem}
+.graphify-symbols ul{margin-top:.5rem}.graphify-symbols button{display:grid;text-align:left;width:100%;border-bottom:1px solid #2a3247;overflow-wrap:anywhere;color:#85beff}
+.graphify-symbols button[aria-pressed="true"]{background:#103c32;border-left:2px solid #34d399}.graphify-symbols small{font-size:.6875rem;color:#a9b2c4}
+.graphify-status{grid-column:2;grid-row:5;display:flex;gap:.75rem;align-items:center;padding:.75rem 1.25rem;min-width:0;background:#141824;border-top:1px solid #2a3247}
+.graphify-status>div:nth-child(2){white-space:normal;line-height:1.6}
+.graphify-inspector{grid-column:3;grid-row:2/7;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:#141824;border-left:1px solid #2a3247;z-index:3}
+.graphify-inspector>div:first-child{cursor:default;flex-wrap:wrap;gap:.5rem;touch-action:auto}
+.graphify-inspector>div:first-child>div{flex:1 1 100%}
+.graphify-inspector button{font-size:.75rem}
+.graphify-inspector [class*="grid-cols"]{grid-template-columns:64px minmax(0,1fr)}
+.graphify-inspector .truncate{white-space:normal;overflow-wrap:anywhere}
+.graphify-inspector pre{font-size:.75rem;line-height:1.7}
+.floating-inspector .graphify-inspector{position:fixed;border:1px solid #2a3247;box-shadow:0 12px 48px #0008;z-index:20}
+.floating-inspector .graphify-inspector>div:first-child{cursor:grab;touch-action:none}
+.graphify-upload{grid-column:2;grid-row:4;align-self:start;z-index:4;margin:1rem;padding:1.25rem;border:1px solid #2a3247;background:#141824;max-height:calc(100% - 2rem);overflow:auto;box-shadow:0 8px 24px #0005}
+.graphify-upload input[type="file"]{display:block;margin-top:.75rem;max-width:100%;font-size:.75rem}
+.graphify-upload-content{max-width:640px;margin:auto}
+.graphify-workspace [data-testid="graphify-components-drawer"]{position:relative;grid-column:2;grid-row:6;left:auto;top:auto;width:auto;max-width:none;transform:none!important;background:#141824;border-top:1px solid #2a3247}
+.graphify-workspace [data-testid="graphify-components-drawer"]>button{position:static;transform:none;width:100%}
+.graphify-workspace #graphify-components[aria-hidden="true"]{display:none}
+@media(min-width:1700px){.graphify-workspace{--rail:320px}.graphify-workspace.has-source.has-inspector{grid-template-columns:var(--rail) minmax(0,1fr) 400px}}
+@media(max-width:1100px) and (min-width:768px){.graphify-workspace{--rail:240px}.graphify-workspace.has-source.has-inspector{grid-template-columns:var(--rail) minmax(0,1fr) 280px}}
+@media(max-width:767px){
+ .graphify-workspace,.graphify-workspace.has-source,.graphify-workspace.has-inspector,.graphify-workspace.has-source.has-inspector{display:flex;flex-direction:column;height:auto;min-height:100dvh;overflow:visible}
+ .graphify-workspace>header{order:0}.graphify-context{order:1}.graphify-source-toggle{order:2;position:static!important;align-self:stretch;min-height:44px}
+ .graphify-source{order:3;max-height:55dvh;border-bottom:1px solid #2a3247;padding:1rem}.graphify-search{order:4}
+ .graphify-canvas{order:6;height:440px;min-height:440px;width:100%}.graphify-empty{order:5;max-width:none;margin:1rem;padding:1rem}
+ .graphify-help,.graphify-symbols{order:5;max-height:300px;max-width:none;align-self:stretch}.graphify-status{order:7}.graphify-upload{order:5;max-height:none}
+ .graphify-inspector{order:8;max-height:70dvh;border-top:1px solid #2a3247}.graphify-workspace [data-testid="graphify-components-drawer"]{order:7}
+ .graphify-workspace :is(button,select,input:not([type="checkbox"])){min-height:44px}.graphify-search{padding:.75rem 1rem}
+}
+
+/* Secondary guidance and keyboard browsing get their own space, never cover the map. */
+.graphify-context .graphify-help{display:block;margin:.75rem 0 0;max-width:none;max-height:none;padding:.75rem;background:#141824}
+.graphify-symbols{grid-row:6;grid-column:2;max-width:none;max-height:160px;margin:0;padding:.75rem 1.25rem;border-width:1px 0 0}
+.graphify-workspace:has(.graphify-symbols){grid-template-rows:auto auto auto minmax(180px,1fr) auto auto auto}
+.graphify-workspace [data-testid="graphify-components-drawer"]{grid-row:7}
+.graphify-source{grid-row:3/8}.graphify-inspector{grid-row:2/8}
+.graphify-source [class*="text-[10px]"],.graphify-inspector [class*="text-[10px]"]{font-size:.75rem;letter-spacing:normal}
+.graphify-scope-controls label:has(input[type="checkbox"]){justify-content:flex-start;gap:.65rem}
+.graphify-inspector summary{cursor:pointer;min-height:36px;display:list-item;padding:.5rem 0;font-weight:600}
+@media(max-width:767px){.graphify-context .graphify-help{margin-bottom:0}.graphify-symbols{max-height:260px;margin:0}.graphify-source{max-height:65dvh}.graphify-workspace:has(.graphify-symbols){display:flex}}
+
+.graphify-source-toggle{align-self:start;min-height:44px}.graphify-source{grid-row:2/8;padding-top:4.5rem}
+@media(max-width:767px){.graphify-source{padding-top:1rem}}

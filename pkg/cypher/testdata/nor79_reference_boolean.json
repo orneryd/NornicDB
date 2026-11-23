@@ -1,0 +1,392 @@
+[
+  {
+    "id": "population/9795",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, $l AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/9819",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, ($l) + 1 AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/9867",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, ($l) + 'a' AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/9891",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, ($l) + ($l) AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10019",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE $l END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10027",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 1 END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10035",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE 'a' END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10043",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l ELSE null END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10051",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE WHEN true THEN $l END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10059",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, CASE 1 WHEN 1 THEN $l ELSE [1] END AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10067",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, head([$l]) AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "population/10075",
+    "query": "UNWIND [] AS r MATCH (n) WITH n, coalesce($l, $l) AS v RETURN NOT v AS a",
+    "parameters": {
+      "i": "5",
+      "f": "1.5",
+      "s": "'a'",
+      "l": "[1]",
+      "m": "{a:1}",
+      "z": "null",
+      "b": "true"
+    },
+    "historical_accepts": true,
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "parameter/[1]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[1]",
+    "query": "UNWIND [] AS r WITH [1] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 41 (offset: 40))\n\"UNWIND [] AS r WITH [1] AS v RETURN NOT v AS a\"\n                                         ^\n"
+  },
+  {
+    "id": "parameter/['a']",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "['a']"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/['a']",
+    "query": "UNWIND [] AS r WITH ['a'] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "['a']"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 43 (offset: 42))\n\"UNWIND [] AS r WITH ['a'] AS v RETURN NOT v AS a\"\n                                           ^\n"
+  },
+  {
+    "id": "parameter/[true]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[true]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[true]",
+    "query": "UNWIND [] AS r WITH [true] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[true]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 44 (offset: 43))\n\"UNWIND [] AS r WITH [true] AS v RETURN NOT v AS a\"\n                                            ^\n"
+  },
+  {
+    "id": "parameter/[]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[]",
+    "query": "UNWIND [] AS r WITH [] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 40 (offset: 39))\n\"UNWIND [] AS r WITH [] AS v RETURN NOT v AS a\"\n                                        ^\n"
+  },
+  {
+    "id": "parameter/[null]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[null]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[null]",
+    "query": "UNWIND [] AS r WITH [null] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[null]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 44 (offset: 43))\n\"UNWIND [] AS r WITH [null] AS v RETURN NOT v AS a\"\n                                            ^\n"
+  },
+  {
+    "id": "parameter/[[1]]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[[1]]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[[1]]",
+    "query": "UNWIND [] AS r WITH [[1]] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[[1]]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 43 (offset: 42))\n\"UNWIND [] AS r WITH [[1]] AS v RETURN NOT v AS a\"\n                                           ^\n"
+  },
+  {
+    "id": "parameter/[1.5]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1.5]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[1.5]",
+    "query": "UNWIND [] AS r WITH [1.5] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1.5]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 43 (offset: 42))\n\"UNWIND [] AS r WITH [1.5] AS v RETURN NOT v AS a\"\n                                           ^\n"
+  },
+  {
+    "id": "parameter/[1,true]",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1,true]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "literal/[1,true]",
+    "query": "UNWIND [] AS r WITH [1,true] AS v RETURN NOT v AS a",
+    "parameters": {
+      "p": "[1,true]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 46 (offset: 45))\n\"UNWIND [] AS r WITH [1,true] AS v RETURN NOT v AS a\"\n                                              ^\n"
+  },
+  {
+    "id": "boolean-position/$p/RETURN v AND true AS a",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN v AND true AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "boolean-position/$p/RETURN CASE WHEN v THEN 1 ELSE 2 END AS a",
+    "query": "UNWIND [] AS r WITH $p AS v RETURN CASE WHEN v THEN 1 ELSE 2 END AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "boolean-position/$p/WITH v WHERE v RETURN 1 AS a",
+    "query": "UNWIND [] AS r WITH $p AS v WITH v WHERE v RETURN 1 AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "id": "boolean-position/[1]/RETURN v AND true AS a",
+    "query": "UNWIND [] AS r WITH [1] AS v RETURN v AND true AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 37 (offset: 36))\n\"UNWIND [] AS r WITH [1] AS v RETURN v AND true AS a\"\n                                     ^\n"
+  },
+  {
+    "id": "boolean-position/[1]/RETURN CASE WHEN v THEN 1 ELSE 2 END AS a",
+    "query": "UNWIND [] AS r WITH [1] AS v RETURN CASE WHEN v THEN 1 ELSE 2 END AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 47 (offset: 46))\n\"UNWIND [] AS r WITH [1] AS v RETURN CASE WHEN v THEN 1 ELSE 2 END AS a\"\n                                               ^\n"
+  },
+  {
+    "id": "boolean-position/[1]/WITH v WHERE v RETURN 1 AS a",
+    "query": "UNWIND [] AS r WITH [1] AS v WITH v WHERE v RETURN 1 AS a",
+    "parameters": {
+      "p": "[1]"
+    },
+    "exit_code": 1,
+    "output": "Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. (line 1, column 43 (offset: 42))\n\"UNWIND [] AS r WITH [1] AS v WITH v WHERE v RETURN 1 AS a\"\n                                           ^\n"
+  }
+]

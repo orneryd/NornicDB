@@ -1060,8 +1060,9 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 			return err
 		}
 	}
+	var reads edgeConstraintValidation
 	for _, edge := range tx.pendingEdges {
-		if err := tx.validateEdgeConstraints(ctx, edge); err != nil {
+		if err := tx.validateEdgeConstraints(ctx, edge, &reads); err != nil {
 			return err
 		}
 	}
@@ -1071,11 +1072,17 @@ func (tx *BadgerTransaction) validateAllConstraints(ctx context.Context) error {
 	return nil
 }
 
+type edgeConstraintValidation struct {
+	temporal    temporalValidationRead
+	cardinality cardinalityValidationRead
+	unique      pendingRelationshipUniqueRead
+}
+
 // validateEdgeConstraints checks relationship constraints for an edge in a transaction.
 // ctx is the lifetime of the committed enumerations the checks perform, like
 // validateNodeConstraints': a commit passes the commit preparation context and
 // a terminated statement stops inside the canonical bulk reader.
-func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge) error {
+func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *Edge, reads *edgeConstraintValidation) error {
 	if edge == nil || edge.Type == "" {
 		return nil
 	}
@@ -1097,7 +1104,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 		}
 		switch c.Type {
 		case ConstraintUnique:
-			if err := tx.checkEdgeUniqueness(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeUniqueness(ctx, edge, c, tx.namespace, &reads.unique); err != nil {
 				return err
 			}
 		case ConstraintExists:
@@ -1108,11 +1115,11 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 			if err := checkEdgeExistence(edge, c); err != nil {
 				return err
 			}
-			if err := tx.checkEdgeUniqueness(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeUniqueness(ctx, edge, c, tx.namespace, &reads.unique); err != nil {
 				return err
 			}
 		case ConstraintTemporal:
-			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.checkEdgeTemporalConstraint(ctx, edge, c, tx.namespace, &reads.temporal); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -1125,7 +1132,7 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 				}
 			}
 		case ConstraintCardinality:
-			if err := tx.checkEdgeCardinality(ctx, edge, c, tx.namespace); err != nil {
+			if err := tx.validateEdgeCardinality(ctx, edge, c, tx.namespace, &reads.cardinality); err != nil {
 				return err
 			}
 		}
@@ -1159,6 +1166,10 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 // ctx is the lifetime of the committed edge enumeration (see
 // validateEdgeConstraints).
 func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
+	return tx.validateEdgeUniqueness(ctx, edge, c, namespace, nil)
+}
+
+func (tx *BadgerTransaction) validateEdgeUniqueness(ctx context.Context, edge *Edge, c Constraint, namespace string, read *pendingRelationshipUniqueRead) error {
 	values := make([]interface{}, len(c.Properties))
 	for i, prop := range c.Properties {
 		if values[i] = edge.Properties[prop]; values[i] == nil {
@@ -1180,12 +1191,46 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 		return newLocalizedConstraintViolation(c.Type, edge.Type, c.Properties, message, nil)
 	}
 
-	for id, otherEdge := range tx.pendingEdges {
-		if id == edge.ID || otherEdge.Type != edge.Type {
-			continue
-		}
-		if err := collides(otherEdge); err != nil {
+	scanAll := true
+	if read != nil && len(values) > 0 && len(tx.pendingEdges) > 1 {
+		key, supported, err := pendingRelationshipUniqueKey(ctx, edge.Properties, c.Properties)
+		if err != nil {
 			return err
+		}
+		if supported {
+			scope := pendingRelationshipUniqueScope{edge.Type, relationshipPropertyKey(c.Properties)}
+			buckets, err := read.get(ctx, tx, scope, c.Properties)
+			if err != nil {
+				return err
+			}
+			for _, group := range [2][]*Edge{buckets.scalar[key], buckets.other} {
+				var cancel bulkReadCancellation
+				for _, candidate := range group {
+					if err := cancel.check(ctx); err != nil {
+						return err
+					}
+					if candidate.ID != edge.ID {
+						if err := collides(candidate); err != nil {
+							return err
+						}
+					}
+				}
+			}
+			scanAll = false
+		}
+	}
+	if scanAll {
+		var cancel bulkReadCancellation
+		for id, otherEdge := range tx.pendingEdges {
+			if err := cancel.check(ctx); err != nil {
+				return err
+			}
+			if id == edge.ID || otherEdge.Type != edge.Type {
+				continue
+			}
+			if err := collides(otherEdge); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1240,12 +1285,61 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(ctx context.Context, edge *Edge
 	return nil
 }
 
+// temporalValidationRead retains only the last stored relationship type for
+// one validation pass. The oracle cut is sampled before reading, so any
+// publication during the scan makes the result ineligible for later reuse.
+type temporalValidationRead struct {
+	edgeType  string
+	namespace string
+	readCut   uint64
+	edges     []*Edge
+	pending   map[pendingTemporalScope]pendingTemporalEdges
+}
+
+func (r *temporalValidationRead) get(ctx context.Context, tx *BadgerTransaction, edgeType, namespace string) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engine := tx.engine
+	oracle, _ := nativePublicationOracle(engine)
+	if oracle == nil || engine.work.Closing() {
+		return nil, ErrStorageClosed
+	}
+	cut := oracle.published.Load()
+	if r.edgeType == edgeType && r.namespace == namespace && r.readCut == cut {
+		if err := engine.pendingNamespaceConflict(""); err != nil {
+			return nil, err
+		}
+		return r.edges, nil
+	}
+	edges, err := engine.GetStoredEdgesByType(ctx, edgeType)
+	if err != nil {
+		return nil, err
+	}
+	// Stored reads own their materialized slice. Retain only rows this
+	// transaction has not deleted or replaced, and only in the target scope.
+	kept := edges[:0]
+	prefix := namespace + ":"
+	var cancel bulkReadCancellation
+	for _, edge := range edges {
+		if err := cancel.check(ctx); err != nil {
+			return nil, err
+		}
+		if !tx.committedEdgeSupersededLocked(edge.ID) && (namespace == "" || strings.HasPrefix(string(edge.ID), prefix)) {
+			kept = append(kept, edge)
+		}
+	}
+	clear(edges[len(kept):])
+	r.edgeType, r.namespace, r.readCut, r.edges = edgeType, namespace, cut, kept
+	return kept, nil
+}
+
 // checkEdgeTemporalConstraint checks temporal no-overlap constraints for an edge in a transaction.
 // The namespace parameter filters committed edges to the same database namespace.
 // Supports composite key properties: all properties except the last 2 form the key.
 // ctx is the lifetime of the committed edge enumeration (see
 // validateEdgeConstraints).
-func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
+func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, edge *Edge, c Constraint, namespace string, temporalRead *temporalValidationRead) error {
 	if len(c.Properties) < 3 {
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
@@ -1270,39 +1364,30 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, ed
 	}
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 
-	// Check against pending edges in this transaction
-	nsPrefix := namespace + ":"
-	for id, otherEdge := range tx.pendingEdges {
-		if id == edge.ID || otherEdge.Type != edge.Type {
-			continue
+	if len(tx.pendingEdges) > 1 || (len(tx.pendingEdges) == 1 && tx.pendingEdges[edge.ID] == nil) {
+		pending, err := temporalRead.pendingTemporalEdges(ctx, tx, pendingTemporalScope{
+			namespace: namespace, edgeType: edge.Type, start: startProp, end: endProp,
+		})
+		if err != nil {
+			return err
 		}
-		if namespace != "" && !strings.HasPrefix(string(id), nsPrefix) {
-			continue
-		}
-		if !edgeTemporalCompositeKeyMatch(otherEdge, keyProps, keyVals) {
-			continue
-		}
-		otherStart, otherEnd, otherHasEnd, ok := ReadTemporalBounds(otherEdge.Properties[startProp], otherEdge.Properties[endProp])
-		if !ok {
-			continue
-		}
-		if intervalsOverlap(newInterval, temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd}) {
-			message := localization.StorageValidationTemporalEdgeOverlap(string(id), keyVals)
-			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+		for _, other := range pending.overlapping(newInterval) {
+			if other.edge.ID != edge.ID && intervalsOverlap(newInterval, other.interval) &&
+				edgeTemporalCompositeKeyMatch(other.edge, keyProps, keyVals) {
+				message := localization.StorageValidationTemporalEdgeOverlap(string(other.edge.ID), keyVals)
+				return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
+			}
 		}
 	}
 
 	// Check against committed edges (filtered by namespace) on the read's
 	// lifetime (ctx).
-	existingEdges, err := tx.engine.GetStoredEdgesByType(ctx, edge.Type)
+	existingEdges, err := temporalRead.get(ctx, tx, edge.Type, namespace)
 	if err != nil {
 		return err
 	}
 	for _, existingEdge := range existingEdges {
-		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
-		}
-		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
+		if existingEdge.ID == edge.ID {
 			continue
 		}
 		if !edgeTemporalCompositeKeyMatch(existingEdge, keyProps, keyVals) {
@@ -1337,41 +1422,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(ctx context.Context, ed
 // ctx is the lifetime of the committed adjacency enumeration (see
 // validateEdgeConstraints).
 func (tx *BadgerTransaction) checkEdgeCardinality(ctx context.Context, edge *Edge, c Constraint, namespace string) error {
-	counter := newEdgeCardinalityCounter(c, edge, namespace, edge.ID)
-
-	// Count pending edges in this transaction that match type + anchor + direction.
-	for id, pendingEdge := range tx.pendingEdges {
-		if counter.anchored(pendingEdge) && counter.admits(id) {
-			counter.counts(pendingEdge.Type)
-		}
-	}
-
-	// Count committed edges from the engine on the read's lifetime (ctx).
-	var committedEdges []*Edge
-	var err error
-	adjacency := AdjacentEdgeRead{Node: counter.anchor}
-	if c.Direction != "OUTGOING" {
-		adjacency.Direction = AdjacentIncoming
-	}
-	committedEdges, err = tx.engine.ReadStoredAdjacentEdges(ctx, adjacency)
-	if err != nil {
-		return err
-	}
-	for _, existingEdge := range committedEdges {
-		// Edges deleted here don't count; rewritten ones are counted as pending.
-		if tx.committedEdgeSupersededLocked(existingEdge.ID) {
-			continue
-		}
-		if counter.admits(existingEdge.ID) {
-			counter.counts(existingEdge.Type)
-		}
-	}
-
-	if counter.reached() {
-		return counter.violation()
-	}
-
-	return nil
+	return tx.validateEdgeCardinality(ctx, edge, c, namespace, nil)
 }
 
 // checkEdgePolicy validates DISALLOWED and ALLOWED endpoint policies within a transaction.
@@ -1498,6 +1549,28 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 				continue
 			}
 
+			// Check policy constraints.
+			constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type}, ConstraintPolicy)
+			if err != nil {
+				return err
+			}
+			var allowedPolicies []Constraint
+			var disallowedPolicies []Constraint
+			for _, c := range constraints {
+				if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
+					continue
+				}
+				if c.PolicyMode == "ALLOWED" {
+					allowedPolicies = append(allowedPolicies, c)
+				} else if c.PolicyMode == "DISALLOWED" {
+					disallowedPolicies = append(disallowedPolicies, c)
+				}
+			}
+
+			if len(allowedPolicies) == 0 && len(disallowedPolicies) == 0 {
+				continue
+			}
+
 			// Get the other node's labels.
 			var otherNodeID NodeID
 			if isOutgoing {
@@ -1520,28 +1593,6 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 			} else {
 				srcLabels = otherLabels
 				tgtLabels = node.Labels
-			}
-
-			// Check policy constraints.
-			constraints, err := schema.GetConstraintsForLabels(ctx, []string{edge.Type})
-			if err != nil {
-				return err
-			}
-			var allowedPolicies []Constraint
-			var disallowedPolicies []Constraint
-			for _, c := range constraints {
-				if c.Type != ConstraintPolicy || c.EffectiveEntityType() != ConstraintEntityRelationship {
-					continue
-				}
-				if c.PolicyMode == "ALLOWED" {
-					allowedPolicies = append(allowedPolicies, c)
-				} else if c.PolicyMode == "DISALLOWED" {
-					disallowedPolicies = append(disallowedPolicies, c)
-				}
-			}
-
-			if len(allowedPolicies) == 0 && len(disallowedPolicies) == 0 {
-				continue
 			}
 
 			for _, c := range disallowedPolicies {
@@ -1573,23 +1624,8 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(ctx context.Context
 // getNodeLabels returns labels for a node, checking pending nodes first for read-your-writes.
 // Storage failures are preserved for fail-closed policy validation.
 func (tx *BadgerTransaction) getNodeLabels(ctx context.Context, nodeID NodeID) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if _, deleted := tx.deletedNodes[nodeID]; deleted {
-		return nil, nil
-	}
-	if pending, exists := tx.pendingNodes[nodeID]; exists {
-		return pending.Labels, nil
-	}
-	node, err := tx.getCommittedNodeLocked(ctx, nodeID)
-	if errors.Is(err, ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return node.Labels, nil
+	labels, _, err := tx.visibleNodeLabelsLocked(ctx, nodeID)
+	return labels, err
 }
 
 // Helper: check if node has label

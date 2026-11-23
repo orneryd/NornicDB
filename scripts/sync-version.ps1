@@ -1,8 +1,8 @@
 # sync-version.ps1
 # Windows PowerShell port of scripts/sync-version.sh.
 #
-# Resolves the project version (from $env:VERSION override, latest git tag, or
-# pkg/buildinfo/VERSION) and synchronises it into:
+# Resolves the project version from the explicit override, the checkout
+# version file, or the latest git tag and synchronises it into:
 #   - pkg/buildinfo/VERSION
 #   - README.md badge markup
 #
@@ -27,19 +27,21 @@ $version  = $null
 
 if ($override -and $override -ne 'latest') {
     $version = $override -replace '^v', ''
-} elseif (Get-Command git -ErrorAction SilentlyContinue) {
-    $latestTag = (& git -C $RootDir tag --sort=-version:refname 2>$null | Select-Object -First 1)
-    if ($latestTag) {
-        $version = ($latestTag -replace '^v', '').Trim()
-    }
 }
 
 if (-not $version -and (Test-Path $VersionFile)) {
     $version = Get-CleanVersion (Get-Content -Raw $VersionFile)
 }
 
+if (-not $version -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    $latestTag = (& git -C $RootDir tag --sort=-version:refname 2>$null | Select-Object -First 1)
+    if ($latestTag) {
+        $version = ($latestTag -replace '^v', '').Trim()
+    }
+}
+
 if (-not $version) {
-    Write-Error "sync-version: unable to determine version from git tags or $VersionFile"
+    Write-Error "sync-version: unable to determine version from $VersionFile or git tags"
     exit 1
 }
 

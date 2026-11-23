@@ -75,14 +75,17 @@ func TestTypedNumericContextSubscriptPolicies(t *testing.T) {
 			code  string
 		}{
 			{"RETURN 'a\u00e9\U0001f642'[1] AS v", nil, "Neo.ClientError.Statement.SyntaxError"},
-			{"RETURN apoc.map.setKey({},'v',coalesce($text,'')[1]) AS v", nil, "Neo.ClientError.Statement.TypeError"},
+			{"RETURN apoc.map.setKey({},'v',coalesce($text,'')[1]) AS v", nil, "Neo.ClientError.Statement.SyntaxError"},
 			{"RETURN apoc.map.setKey({},'v',{a:7}['a']) AS v", map[string]interface{}{"v": int64(7)}, ""},
 			{"RETURN apoc.map.setKey({},'v',{a:7}[0]) AS v", nil, "Neo.ClientError.Statement.SyntaxError"},
-			{"RETURN apoc.map.setKey({},'v',coalesce($xs,[])['1']) AS v", nil, "Neo.ClientError.Statement.TypeError"},
+			{"RETURN apoc.map.setKey({},'v',coalesce($xs,[])['1']) AS v", nil, "Neo.ClientError.Statement.SyntaxError"},
 		} {
 			t.Run(fmt.Sprintf("programsDisabled=%t/%s", disabled, check.query), func(t *testing.T) {
-				got, err := exec.Execute(context.Background(), check.query, map[string]interface{}{"text": "a\u00e9\U0001f642", "xs": []int64{3, 1, 3}})
+				params := map[string]interface{}{"text": "a\u00e9\U0001f642", "xs": []int64{3, 1, 3}}
+				got, err := exec.Execute(t.Context(), check.query, params)
 				if check.code != "" {
+					requireStatusCode(t, err, check.code)
+					_, err = exec.Execute(t.Context(), "EXPLAIN "+check.query, params)
 					requireStatusCode(t, err, check.code)
 					return
 				}

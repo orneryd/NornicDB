@@ -36,7 +36,20 @@ const (
 // was constructed with, for every operation whose framing that policy alone
 // decides (walRecordMaySpan).
 func (w *WAL) encodeNewRecord(buf *bytes.Buffer, entry *WALEntry) (walRecordFrames, error) {
-	return encodeWALRecord(buf, entry, w.recordPolicy == WALRecordsLarge || walRecordMaySpan(entry.Operation))
+	payload, err := w.layoutNewRecord(buf, entry)
+	if err != nil {
+		return walRecordFrames{}, err
+	}
+	return payload.frames(buf, entry)
+}
+
+// layoutNewRecord lays out the record this WAL would write for entry under its
+// policy: the entry payload and whether that payload needs more than one frame.
+// The append that must decide before it writes a spanned record asks this
+// (appendDecidingLargeRecord) and cuts the frames only after the decision, so
+// the record it writes is the one it laid out.
+func (w *WAL) layoutNewRecord(buf *bytes.Buffer, entry *WALEntry) (walEntryPayload, error) {
+	return layoutWALEntryPayload(buf, entry, w.recordPolicy == WALRecordsLarge || walRecordMaySpan(entry.Operation))
 }
 
 // walRecordMaySpan reports whether a record of op is written in parts whatever
@@ -53,8 +66,8 @@ func walRecordMaySpan(op OperationType) bool {
 
 // encodeStoredRecord re-encodes a record a WAL already holds, for maintenance
 // that rewrites its file. The record keeps the form it was stored in whatever
-// policy the WAL writes new records with: a spanned record stays spanned, and
-// a one-frame record is encoded by the one-frame encoder.
+// policy the WAL writes new records with: a spanned record stays spanned, and a
+// one-frame record is encoded by the one-frame encoder.
 func encodeStoredRecord(buf *bytes.Buffer, entry *WALEntry) (walRecordFrames, error) {
 	return encodeWALRecord(buf, entry, entry.framingVersion == walFormatVersionSpanned)
 }

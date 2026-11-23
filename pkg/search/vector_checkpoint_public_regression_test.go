@@ -14,6 +14,7 @@ import (
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,15 +120,14 @@ func vectorCheckpointService(t *testing.T, source storage.Engine, directory, mod
 }
 
 // A regular file as a path parent fails deterministically even as root. This
-// probes both the build and first-live-write entries, without chmod assumptions.
+// probes the build and first-live-write entries, without chmod assumptions.
+// The operator-visible VectorStorageStatus is part of the contract: an explicit
+// disk failure reports the failed backing instead of a memory admission, and
+// auto either exposes its accepted memory fallback with a reason or refuses the
+// unusable destination through the returned error.
 func TestExplicitDiskFailurePublic(t *testing.T) {
 	for _, entry := range []string{"build", "live_create", "live_load"} {
 		for _, mode := range []string{"disk", "auto"} {
-			if entry == "build" && mode == "auto" {
-				// Auto is allowed to fail an unusable persistence destination;
-				// permission to fall back does not require it on every error.
-				continue
-			}
 			t.Run(entry+"/"+mode, func(t *testing.T) {
 				source := vectorCheckpointPhysicalSource(t)
 				node := vectorOwnerChunkNode("doc", 0)
@@ -157,12 +157,48 @@ func TestExplicitDiskFailurePublic(t *testing.T) {
 				} else {
 					err = s.IndexNode(node)
 				}
+				status := s.VectorStorageStatus()
+				require.Equal(t, mode, status.Configured)
 				if mode == "disk" {
 					require.Error(t, err, "explicit disk must not acknowledge an in-memory replacement")
+					if entry == "build" {
+						// The obstruction fails the build's population-artifact
+						// preparation, so the operational filesystem error is
+						// this entry's outcome. The status must still identify
+						// the failed disk backing rather than a working memory
+						// index.
+						require.Contains(t, err.Error(), "not-a-directory",
+							"the obstructed vector destination must surface as an operational error")
+					} else {
+						require.Contains(t, err.Error(), "explicit vector disk storage",
+							"the public error must identify the operator's selected storage")
+					}
+					assert.Equal(t, "error", status.Active,
+						"explicit disk must report the failed backing, not memory or disk")
+					assert.NotEmpty(t, status.Reason, "the failed disk admission must stay operator-visible")
+					if entry == "build" {
+						s.SetVectorIndexPath(filepath.Join(dir, "vectors"))
+						require.NoError(t, s.BuildIndexes(t.Context()))
+						recovered := s.VectorStorageStatus()
+						require.Equal(t, "disk", recovered.Active)
+						require.Empty(t, recovered.Reason)
+						require.Equal(t, 1, s.EmbeddingCount())
+					}
+					return
+				}
+				if err != nil {
+					// Auto is allowed to refuse an unusable persistence
+					// destination rather than replace it with memory. The
+					// returned error is then the outcome; the status must not
+					// present the obstructed destination as an admitted store.
+					require.NotEqual(t, "disk", status.Active,
+						"an obstructed destination must not be reported as an admitted disk store")
+					t.Logf("auto %s refused the obstruction: err=%v active=%q reason=%q", entry, err, status.Active, status.Reason)
 					return
 				}
 				// Auto may fall back; the public vector source must still work.
-				require.NoError(t, err)
+				require.Equal(t, "memory", status.Active, "the allowed fallback must be the reported active mode")
+				assert.NotEmpty(t, status.Reason, "the fallback reason must be operator-visible")
 				hits, err := s.VectorQueryNodes(t.Context(), vectorOwnerAxis(0), VectorQuerySpec{Label: "Doc", Limit: 1, ScoreScale: VectorScoreSimilarity})
 				require.NoError(t, err)
 				require.Len(t, hits, 1)
@@ -170,6 +206,36 @@ func TestExplicitDiskFailurePublic(t *testing.T) {
 				require.Equal(t, float64(1), hits[0].Score)
 			})
 		}
+	}
+}
+
+func TestExplicitDiskPopulationDestinationStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, active string
+		shareParent  bool
+	}{
+		{name: "shared vector parent", active: "error", shareParent: true},
+		{name: "separate fulltext parent", active: "memory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			s := vectorCheckpointService(t, vectorCheckpointPhysicalSource(t), dir, "disk")
+			blocked := filepath.Join(dir, "not-a-directory")
+			require.NoError(t, os.WriteFile(blocked, nil, 0o600))
+			s.SetFulltextIndexPath(filepath.Join(blocked, "bm25"))
+			if tc.shareParent {
+				s.SetVectorIndexPath(filepath.Join(blocked, "vectors"))
+			}
+			require.ErrorContains(t, s.BuildIndexes(t.Context()), "not-a-directory")
+			status := s.VectorStorageStatus()
+			require.Equal(t, "disk", status.Configured)
+			require.Equal(t, tc.active, status.Active)
+			if tc.shareParent {
+				require.Contains(t, status.Reason, "not-a-directory")
+			} else {
+				require.Empty(t, status.Reason)
+			}
+		})
 	}
 }
 
@@ -250,6 +316,13 @@ func TestVectorCheckpointSourcePublic(t *testing.T) {
 				require.Equal(t, string(node.ID), hits[0].ID, fmt.Sprintf("%s must rebuild the authoritative entry", damage))
 				require.Equal(t, float64(1), hits[0].Score)
 			}
+			// A rejected derived checkpoint is replaced by an ordinary on-disk
+			// population, not a silent memory index; the rejection stays visible
+			// as the recorded rebuild reason on the same public status.
+			status := second.VectorStorageStatus()
+			require.Equal(t, "disk", status.Configured)
+			require.Equal(t, "disk", status.Active, "the rejected checkpoint must be rebuilt on disk")
+			require.NotEmpty(t, status.LastRebuild, "the operator must be able to see that vectors were rebuilt")
 		})
 	}
 }

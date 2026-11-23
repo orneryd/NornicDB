@@ -51,3 +51,36 @@ func TestSearchReadObservesCallerBeforeCancellationRelay(t *testing.T) {
 		t.Fatal("Err must close the owned read's Done channel")
 	}
 }
+
+// Cancel when beginRead subscribes to the caller. As with a statement's lazy
+// relay, the derived Done stays open until the request is polled.
+type cancelOnSearchReadSubscription struct {
+	*fulltextDelayedContext
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnSearchReadSubscription) Done() <-chan struct{} {
+	c.cancel()
+	return c.fulltextDelayedContext.Done()
+}
+
+func TestVectorQueryRelationshipsObservesCallerBeforeCancellationRelay(t *testing.T) {
+	store := testfixture.Own(t, testfixture.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	svc := NewService(store, 2, nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.NoError(t, svc.IndexEdge(&storage.Edge{
+		ID: "match", StartNode: "a", EndNode: "b", Type: "R",
+		Properties: map[string]any{"emb": []float32{1, 0}},
+	}))
+	caller, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	parent := &cancelOnSearchReadSubscription{
+		fulltextDelayedContext: &fulltextDelayedContext{Context: caller, done: make(chan struct{})},
+		cancel:                 cancel,
+	}
+	hits, err := svc.VectorQueryRelationships(parent, []float32{1, 0}, RelationshipVectorQuerySpec{
+		Type: "R", Property: "emb", Similarity: "cosine", Limit: 1,
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, hits)
+}

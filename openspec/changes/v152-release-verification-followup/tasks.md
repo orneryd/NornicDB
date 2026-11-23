@@ -1,0 +1,16 @@
+- [x] Identify the release job failures and reproduce the numeric ownership failure and lexical inventory difference.
+- [x] Restore numeric input ownership and record the reviewed traversal dependency.
+- [x] Index generic SSA instances for source call attribution.
+- [ ] Verify the release checks and the whole-module capture census.
+- [x] Map the failed release jobs to CALL compatibility, trusted-runner disk exhaustion, and context census findings.
+- [x] Recover trusted-runner disk space and scope release Go scratch files to the job.
+- [x] Preserve the existing context owners for privilege parsing, authentication, and startup.
+- [ ] Verify the integrated context census, affected packages, and exact release candidate.
+- [x] Reproduce stale stored-entity locations and the retired Bolt adapter boundary on the current release head.
+- [x] Refresh the reports and use the request-scoped native Bolt adapter in production. Verify the stored-entity and nil-context censuses and focused Bolt behavior.
+- [x] Set the release build metadata and move the changelog entries under 1.5.2.
+- [ ] Verify all release shards after reconciling the final release head with main.
+- [x] Reproduce both failures from release CI run 45079590652 on 98c70efcf.
+- [x] Review the discovered lexical inventory differences and register the composite schema test engines with the shared fixture owner.
+- [x] Verify both failing checks and the composite schema admission test locally.
+- [ ] Verify the fixes on the integrated release head in CI.

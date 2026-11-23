@@ -17,7 +17,12 @@ type returnProjection struct {
 	// direct preserves a variable identity, including parenthesized identities.
 	direct bool
 	// grouped distinguishes that identity from a bare pass-through projection.
-	grouped                        bool
+	grouped bool
+	// named records that the item's column is a name - an explicit AS alias or
+	// a bare variable identity - instead of the item's expression text as
+	// written. A name is a decoded identity, so a source rewrite never maps it
+	// back to the spelling the client wrote.
+	named                          bool
 	alias                          string
 	isAggr                         bool
 	aggregateName                  string
@@ -50,6 +55,9 @@ type returnProjectionPlan struct {
 	projections     []returnProjection
 	columns         []string
 	hasAggregate    bool
+	// parameterPassthrough proves the entire cached source is one plain RETURN
+	// of bare parameters. Its admission cannot depend on their runtime types.
+	parameterPassthrough bool
 }
 
 // returnProjectionPlans caches parsed RETURN clauses by text. Plans are
@@ -95,6 +103,7 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	if ctx.Err() != nil {
 		return &returnProjectionPlan{}
 	}
+	plan.parameterPassthrough = plan.provesParameterPassthrough(ctx, clause)
 	returnProjectionPlans.Lock()
 	if ctx.Err() != nil {
 		returnProjectionPlans.Unlock()
@@ -106,6 +115,26 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	returnProjectionPlans.plans[clause] = plan
 	returnProjectionPlans.Unlock()
 	return plan
+}
+
+func (plan *returnProjectionPlan) provesParameterPassthrough(ctx context.Context, source string) bool {
+	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) == 0 {
+		return false
+	}
+	for _, projection := range plan.projections {
+		whole := false
+		cyphertext.ParameterReferences(projection.expr, func(_ string, start, end int) {
+			whole = start == 0 && end == len(projection.expr)
+		})
+		if !whole {
+			return false
+		}
+	}
+	// canonicalQueryClause can return the first clause of a larger statement.
+	// The shared pipeline reader proves the whole source has one branch and
+	// one RETURN; no UNION, importing clause or tail can inherit this proof.
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, source)
+	return ok && len(clauses) == 1 && clauses[0].kind == pipelineClauseReturn
 }
 
 // tryFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
@@ -127,6 +156,7 @@ func tryFlatReturnProjection(ctx context.Context, clause string) *returnProjecti
 		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(rawItem), projectionAdmitted)
 		expr, alias := itemSource.expression, itemSource.alias
 		plan.addProjection(expr, alias)
+		plan.projections[len(plan.projections)-1].named = projectionItemNamesColumn(itemSource.syntax)
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan
@@ -148,6 +178,7 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 		last := &expanded.projections[len(expanded.projections)-1]
 		last.variable = column
 		last.direct = true
+		last.named = true
 		last.definitionStart, last.definitionEnd = -1, -1
 	}
 	for _, projection := range plan.starProjections {
@@ -156,6 +187,39 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 		expanded.hasAggregate = expanded.hasAggregate || projection.isAggr
 	}
 	return expanded
+}
+
+// namesColumn reports whether the plan names the result column at index: an
+// alias or a bare variable names its column, and a star names each column it
+// expands from the statement's scope. Any other item's column is its
+// expression text as written.
+func (plan *returnProjectionPlan) namesColumn(index, columns int) bool {
+	if plan == nil || !plan.valid || index < 0 || index >= columns {
+		return false
+	}
+	if plan.star {
+		// The star's expanded scope columns precede the items written after it.
+		first := columns - len(plan.starProjections)
+		if index < first {
+			return true
+		}
+		index -= first
+		return index >= 0 && index < len(plan.starProjections) && plan.starProjections[index].named
+	}
+	return len(plan.projections) == columns && plan.projections[index].named
+}
+
+// statementNamesColumn reports whether the statement names the result column at
+// index instead of carrying expression text there. Only an expression column is
+// source spelling a rewrite maps back, so this is the one question column
+// restoration asks. A statement with no column-naming RETURN (CALL ... YIELD,
+// SHOW ...) names every column it produces.
+func statementNamesColumn(ctx context.Context, statement string, columns, index int) bool {
+	start, end, ok := columnReturnBody(ctx, statement)
+	if !ok {
+		return true
+	}
+	return returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(statement[start:end])).namesColumn(index, columns)
 }
 
 // starProjectionItems writes out the * of `WITH *, items` or
@@ -305,65 +369,28 @@ func pipelineScopeFailure(ctx context.Context) error {
 	return err
 }
 
-// returnShapeItems returns the trimmed projection items of query's RETURN clause
-// with the trailing ORDER BY / SKIP / LIMIT clauses removed. It is the single
-// owner of that RETURN-location, trailing-clause trimming and comma-splitting
-// step for the narrow optimized return shapes below; each shape keeps its own
-// arity and expression grammar on top of the returned items.
-//
-// query is the canonical statement text supplied to pattern detection. The RETURN
-// offset is kept on its own so only the clause body below it is trimmed.
-func returnShapeItems(ctx context.Context, query string) []string {
-	returnAt := findKeywordIndex(ctx, query, "RETURN")
-	if returnAt < 0 {
-		return nil
-	}
-	returnPart := strings.TrimSpace(query[returnAt+len("RETURN"):])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(ctx, returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return nil
-	}
-
-	return splitTopLevelComma(returnPart)
-}
-
-// trimReturnItemAlias strips the established space-delimited "AS" alias from one RETURN item. The
-// surrounding spaces are part of the match, as before canonicalization.
-func trimReturnItemAlias(item string) string {
-	item = strings.TrimSpace(item)
-	if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
-		item = strings.TrimSpace(item[:asIdx])
-	}
-	return item
-}
-
 // restoreResultColumns preserves final RETURN spelling after quoted variables
-// have executed with internal identities. Parsed aliases are already decoded.
+// have executed with internal identities: a named column is the decoded
+// identity its canonical item carries, and an expression column the text the
+// client wrote.
 func (names *quotedVariableNames) restoreResultColumns(ctx context.Context, result *ExecuteResult, parseItems func(string) []returnItem) {
-	if start, end, ok := finalReturnBody(ctx, names.Text); ok {
+	if start, end, ok := columnReturnBody(ctx, names.Text); ok {
 		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
 		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(ctx, body, "UNION") < 0 {
 			sortColumnsByName(result)
 		} else {
 			originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
 			items := parseItems(originalText)
-			canonicalItems := parseItems(names.Text[start:end])
-			if len(items) == len(result.Columns) && len(canonicalItems) == len(items) {
+			canonical := returnProjectionPlanFor(ctx, "RETURN "+names.Text[start:end])
+			if len(items) == len(result.Columns) && len(canonical.projections) == len(items) {
 				for index, item := range items {
-					if item.alias != strings.TrimSpace(item.expr) {
-						result.Columns[index] = item.alias
-					} else if name, isName := isOneSymbolicName(item.expr); isName {
-						result.Columns[index] = name
+					if canonical.namesColumn(index, len(items)) {
+						// The statement names this column, so its text is the decoded
+						// identity the canonical item carries, never the written spelling
+						// the original item keeps for expression columns.
+						result.Columns[index] = names.restoreColumn(canonical.projections[index].alias)
 					} else {
-						result.Columns[index] = strings.TrimSpace(item.expr)
+						result.Columns[index] = item.alias
 					}
 				}
 			}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -45,7 +46,11 @@ const (
 
 // capturesChanges reports whether the executor's database captures changes.
 func (e *StorageExecutor) capturesChanges() bool {
-	capture, ok := storage.ChangeCaptureOf(e.storage)
+	engine := e.storage
+	if e.fineGrainedSource != nil {
+		engine = e.fineGrainedSource
+	}
+	capture, ok := storage.ChangeCaptureOf(engine)
 	return ok && capture.ChangeCapture(e.databaseName()) != storage.ChangeCaptureOff
 }
 
@@ -57,7 +62,14 @@ func (e *StorageExecutor) capturesChanges() bool {
 // capture changes.
 func (e *StorageExecutor) changeCapture(ctx context.Context) (storage.ChangeFeed, string, error) {
 	database := e.databaseName()
-	capture, ok := storage.ChangeCaptureOf(e.storage)
+	engine := e.storage
+	if e.fineGrainedSource != nil {
+		if request := auth.FineGrainedRequestFromContext(ctx); request == nil || !request.AllowsDatabase("database.cdc.read", database, "") {
+			return nil, database, auth.ErrFineGrainedForbidden
+		}
+		engine = e.fineGrainedSource
+	}
+	capture, ok := storage.ChangeCaptureOf(engine)
 	if !ok || capture.ChangeCapture(database) == storage.ChangeCaptureOff {
 		return nil, database, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.Disabled", "Disabled",
 			localization.CypherSpecializedCallsCDCDisabled(database))

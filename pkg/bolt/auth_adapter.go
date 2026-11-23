@@ -117,6 +117,21 @@ func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *Au
 	return adapter
 }
 
+// SetRequestAuthenticator configures the native adapter for request-scoped
+// authentication. Custom servers can continue using Config.Authenticator.
+func (c *Config) SetRequestAuthenticator(adapter *AuthenticatorAdapter) {
+	c.requestAuthenticator = adapter
+}
+
+// authenticationProvider supplies the selected authenticator's optional
+// identity and configuration capabilities.
+func (c *Config) authenticationProvider() any {
+	if c.requestAuthenticator != nil {
+		return c.requestAuthenticator
+	}
+	return c.Authenticator
+}
+
 // SetGetEffectivePermissions sets the callback used to resolve roles to effective permission IDs.
 // When set, BoltAuthResult.Permissions is filled so HasPermission uses stored role entitlements.
 func (a *AuthenticatorAdapter) SetGetEffectivePermissions(fn func(roles []string) []string) {
@@ -153,6 +168,11 @@ func (a *AuthenticatorAdapter) SetGetEffectivePermissions(fn func(roles []string
 //	driver = GraphDatabase.driver("bolt://node:7687",
 //		basic_auth("", token))  # Empty username = bearer auth
 func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials string) (*BoltAuthResult, error) {
+	return a.AuthenticateContext(context.Background(), scheme, principal, credentials)
+}
+
+// AuthenticateContext authenticates using the connection's lifetime when provided.
+func (a *AuthenticatorAdapter) AuthenticateContext(ctx context.Context, scheme, principal, credentials string) (*BoltAuthResult, error) {
 	// Handle anonymous authentication (canonical role from auth)
 	if scheme == "none" || scheme == "" {
 		if !a.allowAnonymous.Load() {
@@ -175,12 +195,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 
 		// Validate the JWT token using the shared authenticator
 		// The token was generated with the same JWT secret
-		claims, err := a.auth.ValidateToken(credentials)
+		claims, provider, err := a.auth.ValidateTokenWithFineGrainedProvider(ctx, credentials)
 		if err != nil {
 			return nil, fmt.Errorf("invalid bearer token: %w", err)
 		}
 
-		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles}
+		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles, providerSession: provider}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(claims.Roles)
 		}
@@ -191,12 +211,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// This supports Neo4j drivers that only support basic auth:
 	// When principal is empty and credentials looks like a JWT, treat as bearer
 	if scheme == "basic" && principal == "" && looksLikeJWT(credentials) {
-		claims, err := a.auth.ValidateToken(credentials)
+		claims, provider, err := a.auth.ValidateTokenWithFineGrainedProvider(ctx, credentials)
 		if err != nil {
 			return nil, fmt.Errorf("invalid bearer token: %w", err)
 		}
 
-		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles}
+		result := &BoltAuthResult{Authenticated: true, Username: claims.Username, PrincipalID: auth.PrincipalID(claims), Roles: claims.Roles, providerSession: provider}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(claims.Roles)
 		}
@@ -209,11 +229,11 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	}
 
 	if a.basicAuthCache != nil {
-		if cached, ok := a.basicAuthCache.Get(principal, credentials); ok {
+		if cached, generation, ok := a.basicAuthCache.GetWithGeneration(principal, credentials); ok {
 			// The cache spares the password check, not the current roles. A
 			// cached account that is gone (deleted, disabled, replaced) is
 			// checked again in full below.
-			if current, err := a.auth.CurrentClaims(cached); err == nil {
+			if current, err := a.auth.CurrentBasicClaimsContext(ctx, cached, a.basicAuthCache, generation); err == nil {
 				result := &BoltAuthResult{
 					Authenticated: true,
 					Username:      current.Username,
@@ -234,14 +254,8 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// - Account lockout (after failed attempts)
 	// - Account disabled status
 	// - Audit logging
-	//
-	// BoltAuthenticator.Authenticate is a connection-scoped HELLO contract and
-	// carries no request context. This is an independent credential check, not
-	// connection-bound cancellation. Giving Bolt's HELLO a cancelable lifetime
-	// means changing BoltAuthenticator itself, which is a
-	// separate contract decision rather than a caller migration.
 	generation := a.basicAuthCache.Generation()
-	_, user, err := a.auth.Authenticate(context.Background(), principal, credentials, "bolt", "Bolt/4.4")
+	_, user, err := a.auth.Authenticate(ctx, principal, credentials, "bolt", "Bolt/4.4")
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +301,11 @@ const anonymousPrincipal = "anonymous"
 // roles. A result whose roles and permissions haven't changed is returned as
 // it is.
 func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAuthResult {
+	return a.CurrentAuthResultContext(context.Background(), result)
+}
+
+// CurrentAuthResultContext refreshes the session principal and roles using ctx.
+func (a *AuthenticatorAdapter) CurrentAuthResultContext(ctx context.Context, result *BoltAuthResult) *BoltAuthResult {
 	if result == nil || (result.PrincipalID == anonymousPrincipal && a.allowAnonymous.Load()) {
 		return result
 	}
@@ -295,7 +314,7 @@ func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAu
 		userID = ""
 	}
 	roles, permissions := []string{}, []string{}
-	if current, err := a.auth.CurrentClaims(&auth.JWTClaims{Sub: userID, Username: result.Username, Roles: result.Roles}); err == nil {
+	if current, err := a.auth.CurrentClaimsContext(ctx, &auth.JWTClaims{Sub: userID, Username: result.Username, Roles: result.Roles}); err == nil {
 		roles = current.Roles
 		permissions = result.Permissions
 		if a.getEffectivePermissions != nil {

@@ -30,12 +30,12 @@ type transactionStart struct {
 //
 // Author: Claude, NOR-180. Its failure is a BEGIN failure and is classified
 // here, where it is produced, so every route reports the same status. A
-// snapshot opened before the failure is rolled back; BadgerTransaction.Rollback
-// only reports an already-closed transaction, so no cleanup failure is lost.
+// snapshot opened before the failure is rolled back; any cleanup failure stays
+// observable alongside the setup failure, including an already-closed handle.
 func (e *StorageExecutor) openTransaction(ctx context.Context, txEngine TransactionCapableEngine, start transactionStart, drain func() error) (tx *storage.BadgerTransaction, bookkeeping transactionWAL, retErr error) {
 	defer func() {
 		if retErr != nil && tx != nil {
-			_ = tx.Rollback()
+			retErr = nornicerrors.CombineTerminalOutcomes(retErr, tx.Rollback())
 			tx = nil
 		}
 		retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr)

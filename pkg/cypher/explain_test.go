@@ -529,12 +529,20 @@ func TestExplainHelpersInferColumns(t *testing.T) {
 func TestExplainHelpersInferYieldAliases(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
-	// YIELD items without RETURN should infer yielded column names.
-	cols := exec.StatementColumns("CALL db.info() YIELD name, version")
-	require.Equal(t, []string{"name", "version"}, cols)
+	// YIELD items without RETURN should infer the declared yielded column
+	// names. db.info declares id, name, creationDate, nodeCount and
+	// relationshipCount (dbInfoColumns); it declares no version field.
+	cols := exec.StatementColumns("CALL db.info() YIELD name, nodeCount")
+	require.Equal(t, []string{"name", "nodeCount"}, cols)
 
 	// YIELD aliases without RETURN should use aliases.
-	cols = exec.StatementColumns("CALL db.info() YIELD name AS dbName, version AS ver")
-	require.Equal(t, []string{"dbName", "ver"}, cols)
+	cols = exec.StatementColumns("CALL db.info() YIELD name AS dbName, nodeCount AS nodes")
+	require.Equal(t, []string{"dbName", "nodes"}, cols)
+
+	// A field db.info never declares cannot resolve to a header, and the
+	// declared item beside it must not survive as a partial header.
+	_, err := exec.StatementResultColumns("CALL db.info() YIELD name, version", RawSource)
+	require.ErrorContains(t, err, "version", "undeclared YIELD field must not resolve")
+	require.Nil(t, exec.StatementColumns("CALL db.info() YIELD name, version"), "undeclared YIELD field must not fabricate a header")
 
 }

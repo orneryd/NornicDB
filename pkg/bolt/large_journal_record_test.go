@@ -604,14 +604,7 @@ func TestManyChunkNodeCommitsAndIsCompacted(t *testing.T) {
 			lab.mustRun("CREATE (:Many {id: 'many', text: 'alpha', flag: false})", nil)
 			lab.embed("Many", chunks)
 			lab.requireVectors("Many", 1, chunks)
-			newest := func() string {
-				files, err := filepath.Glob(filepath.Join(lab.root, "snapshots", "snapshot-*"))
-				require.NoError(t, err)
-				if len(files) == 0 {
-					return ""
-				}
-				return files[len(files)-1]
-			}
+			newest := func() string { return newestPublishedSnapshot(t, lab.root) }
 			before := newest()
 			_, err := lab.run("MATCH (n:Many {id: 'many'}) SET n.flag = true", nil, explicit)
 			require.NoError(t, err, "a property SET on a node with %d chunk vectors commits", chunks)

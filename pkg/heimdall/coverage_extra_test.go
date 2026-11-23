@@ -917,7 +917,7 @@ func TestHeimdallCoverage_HandlerAutocompleteAndHelpers(t *testing.T) {
 	assert.Nil(t, handler.inMemoryRunner)
 
 	RegisterBuiltinAction(ActionFunc{
-		Name:        "heimdall_autocomplete_suggest",
+		Name:        autocompleteActionName,
 		Description: "Autocomplete coverage action",
 		Category:    "testing",
 		Handler: func(ctx ActionContext) (*ActionResult, error) {
@@ -974,9 +974,16 @@ func TestHeimdallCoverage_HandlerAutocompleteAndHelpers(t *testing.T) {
 	handler.sendStreamNotifications(lifecycle, []QueuedNotification{
 		{Type: "info", Title: "Info", Message: "hello"},
 		{Type: "progress", Title: "Progress", Message: "working"},
-	})
+	}, false)
 	assert.Contains(t, streamRec.Body.String(), "[Heimdall]: ℹ️ Info: hello")
 	assert.Contains(t, streamRec.Body.String(), "[Heimdall]: 🔄 Progress: working")
+
+	lifecycle.compatMode = true
+	compatibilityNotice := []QueuedNotification{{Type: "info", Title: "Compatibility", Message: "legacy post-execute notice"}}
+	handler.sendStreamNotifications(lifecycle, compatibilityNotice, false)
+	assert.NotContains(t, streamRec.Body.String(), "legacy post-execute notice")
+	handler.sendStreamNotifications(lifecycle, compatibilityNotice, true)
+	assert.Contains(t, streamRec.Body.String(), "legacy post-execute notice")
 
 	assert.Equal(t, "No results available.", handler.defaultFormatResponse(nil))
 	assert.Equal(t, "Action failed: nope", handler.defaultFormatResponse(&ActionResult{Success: false, Message: "nope"}))
@@ -1804,7 +1811,7 @@ var Plugin = &pluginImpl{}
 			{Type: "error", Title: "Error", Message: "bad"},
 			{Type: "warning", Title: "Warn", Message: "careful"},
 			{Type: "success", Title: "Success", Message: "done"},
-		})
+		}, false)
 		assert.Contains(t, notifyRec.Body.String(), "❌ Error: bad")
 		assert.Contains(t, notifyRec.Body.String(), "⚠️ Warn: careful")
 		assert.Contains(t, notifyRec.Body.String(), "✅ Success: done")

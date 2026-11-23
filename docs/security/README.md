@@ -8,6 +8,7 @@ This section is the canonical source for runtime security controls.
 - Query-cache threat model: [query-cache-security.md](query-cache-security.md)
 - LLM/plugin safety model: [llm-ast-security.md](llm-ast-security.md)
 - Per-database authorization: [per-database-rbac.md](per-database-rbac.md)
+- Optional fine-grained access control: [fine-grained-access-control.md](fine-grained-access-control.md)
 - Entitlements reference: [entitlements.md](entitlements.md)
 
 ## Security by Domain

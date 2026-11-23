@@ -1,0 +1,20 @@
+File: n152-134-after.test
+Type: cpu
+Time: 2026-11-21 20:31:42 MST
+Duration: 12.51s, Total samples = 18.41s (147.12%)
+Showing nodes accounting for 16.78s, 91.15% of 18.41s total
+Dropped 161 nodes (cum <= 0.09s)
+Showing top 12 nodes out of 102
+      flat  flat%   sum%        cum   cum%
+     4.12s 22.38% 22.38%      4.12s 22.38%  runtime.kevent
+     3.84s 20.86% 43.24%      3.84s 20.86%  runtime.pthread_cond_wait
+     2.25s 12.22% 55.46%      2.25s 12.22%  runtime.pthread_kill
+     2.09s 11.35% 66.81%      2.09s 11.35%  runtime.pthread_cond_signal
+     1.90s 10.32% 77.13%      1.90s 10.32%  runtime.madvise
+     1.22s  6.63% 83.76%      1.22s  6.63%  runtime.usleep
+     0.38s  2.06% 85.82%      0.38s  2.06%  runtime.procyieldAsm
+     0.26s  1.41% 87.24%      0.26s  1.41%  runtime.memmove
+     0.23s  1.25% 88.48%      0.23s  1.25%  runtime.nanotime1
+     0.22s  1.20% 89.68%      0.22s  1.20%  runtime.pthread_cond_timedwait_relative_np
+     0.15s  0.81% 90.49%      0.15s  0.81%  runtime.asyncPreempt
+     0.12s  0.65% 91.15%      0.19s  1.03%  runtime.tryDeferToSpanScan

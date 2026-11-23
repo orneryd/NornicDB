@@ -4,6 +4,7 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -24,14 +25,14 @@ func edgeKey(id EdgeID) []byte {
 }
 
 // mvccSequenceKey returns the legacy engine-global MVCC sequence key.
-// New commits write per-namespace keys via mvccNamespaceSequenceKey; the
+// Sequence reservations use per-namespace keys; the
 // legacy key is read once on open as a migration seed.
 func mvccSequenceKey() []byte {
 	return []byte{prefixMVCCMeta, 0x01}
 }
 
 // mvccNamespaceSequenceKey returns the on-disk key for one namespace's
-// committed MVCC sequence. The namespace is appended as a length-bounded
+// reserved MVCC sequence ceiling. The namespace is appended as a length-bounded
 // trailing segment so distinct namespaces hash to distinct keys.
 func mvccNamespaceSequenceKey(namespace string) []byte {
 	out := []byte{prefixMVCCMeta, prefixMVCCMetaNamespaceSeq}
@@ -1063,10 +1064,13 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		metadata.EmbeddingsStoredSeparately = true
 		bodyCopy.SetRuntimeMetadata(metadata)
 	}
-	if bodyCopy.EmbedMeta == nil {
-		bodyCopy.EmbedMeta = make(map[string]any)
-	}
 	if _, hasChunkCount := bodyCopy.EmbedMeta["chunk_count"]; !hasChunkCount {
+		// The shallow body copy still shares caller metadata. Only this new
+		// entry belongs to the encoded body; existing values remain read-only.
+		bodyCopy.EmbedMeta = maps.Clone(bodyCopy.EmbedMeta)
+		if bodyCopy.EmbedMeta == nil {
+			bodyCopy.EmbedMeta = make(map[string]any)
+		}
 		bodyCopy.EmbedMeta["chunk_count"] = chunkCount
 	}
 
@@ -1194,6 +1198,9 @@ func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *
 			node.SetRuntimeMetadata(metadata)
 		}
 		chunkCount := chunkCountFromMeta(sidecarMeta)
+		if callerPending, _ := sidecarMeta[EmbeddingCallerPendingKey].(bool); callerPending && chunkCount == 0 {
+			node.ChunkEmbeddings = nil
+		}
 		if !vectors {
 			if chunkCount > 0 {
 				node.ChunkEmbeddings = nil

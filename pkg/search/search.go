@@ -4121,6 +4121,9 @@ func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string,
 	if !errors.Is(err, storage.ErrNotFound) {
 		return false
 	}
+	if s.indexedScope(ctx) != nil {
+		return true // An invisible node must never be treated as an index orphan.
+	}
 	if seenOrphans != nil && seenOrphans[nodeIDStr] {
 		return true // already logged and refreshed this request
 	}
@@ -5127,11 +5130,27 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	ctx, scope, err := s.withIndexedSearchScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer finishRead()
+	if scope != nil {
+		defer func(checkCtx context.Context) {
+			if err == nil {
+				if invalid := scope.check(checkCtx); invalid != nil {
+					resp, err = nil, invalid
+				} else if resp != nil {
+					// Raw retrieval counters describe the shared corpus.
+					resp.Metrics = nil
+				}
+			}
+		}(ctx)
+	}
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,
@@ -5196,7 +5215,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
 	cacheKey := s.cacheNamespace + "\x00" + strconv.FormatUint(s.IndexRevision(), 10) + "\x00" + searchCacheKey(query, embedding, opts)
 	resultCache := s.resultCache
-	if opts.Where != nil || storage.NewQueryResultProjection(s.engine).Enabled() {
+	if scope != nil || opts.Where != nil || storage.NewQueryResultProjection(s.engine).Enabled() {
 		resultCache = nil
 	}
 	if resultCache != nil {
@@ -5371,6 +5390,10 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	seenOrphans := make(map[string]bool)
 	if pipelineErr == nil {
 		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) ([]indexResult, error) {
+			results, err := s.filterIndexedVectors(ctx, results)
+			if err != nil {
+				return nil, err
+			}
 			results = s.filterDecayedCandidates(ctx, results)
 			if opts.filtersCandidates() {
 				return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
@@ -5688,6 +5711,9 @@ func (s *Service) adaptiveVectorSearch(
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
 	}
+	if s.indexedScope(ctx) != nil {
+		observation = nil // Shared candidate population is outside the authorized result.
+	}
 	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
 	ctx = withHNSWEf(ctx, opts.HNSWEf)
@@ -5928,8 +5954,10 @@ func (s *Service) adaptiveBM25Search(
 	}
 	observation := queryprofile.Access(ctx, profileKindNodeFulltextCandidates, "")
 	search := index.Search
-	if opts != nil && len(opts.Types) > 0 {
-		allowed := s.indexedTypeAdmitter(opts.Types)
+	scope := s.indexedScope(ctx)
+	var allowed func(string) bool
+	if scope == nil && opts != nil && len(opts.Types) > 0 {
+		allowed = s.indexedTypeAdmitter(opts.Types)
 		search = func(query string, limit int) []indexResult {
 			// Lock order indexMu -> index lock, as index writes take them.
 			s.indexMu.RLock()
@@ -5937,7 +5965,44 @@ func (s *Service) adaptiveBM25Search(
 			return index.SearchAllowed(query, limit, allowed)
 		}
 	}
+	var documents map[string]string
+	if scope != nil {
+		observation = nil
+		reader, ok := index.(interface {
+			searchDocuments(string, int, func(string) bool, map[string]string) []indexResult
+		})
+		if !ok {
+			return nil, vectorOverfetchStats{exhausted: true}, nil
+		}
+		documents = make(map[string]string)
+		search = func(query string, limit int) []indexResult {
+			clear(documents)
+			s.indexMu.RLock()
+			defer s.indexMu.RUnlock()
+			return reader.searchDocuments(query, limit, allowed, documents)
+		}
+	}
 	filter := func(results []indexResult) ([]indexResult, error) {
+		if scope != nil {
+			admitted := results[:0]
+			for _, hit := range results {
+				document, found := documents[hit.ID]
+				if !found {
+					continue
+				}
+				node, err := scope.engine.GetNode(ctx, storage.NodeID(hit.ID))
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				if document == s.extractSearchableText(node) {
+					admitted = append(admitted, hit)
+				}
+			}
+			results = admitted
+		}
 		if postProcess == nil {
 			return results, nil
 		}
@@ -7185,7 +7250,7 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 	candidates := make([]docWithEmbed, 0, len(results))
 	for _, r := range results {
 		// Get embedding from storage
-		node, err := s.engine.GetNode(ctx, storage.NodeID(r.ID))
+		node, err := s.searchReadEngine(ctx).GetNode(ctx, storage.NodeID(r.ID))
 		if err != nil {
 			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
 				continue
@@ -7425,6 +7490,10 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	}
 	seenOrphans := make(map[string]bool)
 	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) ([]indexResult, error) {
+		results, err := s.filterIndexedVectors(ctx, results)
+		if err != nil {
+			return nil, err
+		}
 		if opts.filtersCandidates() {
 			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
@@ -8006,7 +8075,7 @@ func (s *Service) filterByTypeAndProperties(
 	properties := len(opts.Filters) > 0 || opts.Where != nil
 
 	typesResolved := false
-	if len(types) > 0 {
+	if len(types) > 0 && s.indexedScope(ctx) == nil {
 		if indexedResults, complete := s.filterByIndexedType(results, types); complete {
 			results = indexedResults
 			typesResolved = true

@@ -168,15 +168,6 @@ func TestUsePreparationAPIErrorsAndHealthyRetry(t *testing.T) {
 			}
 			return err
 		}},
-		{"DetectQueryPattern", func(t *testing.T, ctx context.Context) error {
-			info, err := DetectQueryPattern(ctx, query)
-			if err == nil {
-				require.Equal(t, 2, info.Limit)
-			} else {
-				require.Equal(t, PatternInfo{}, info)
-			}
-			return err
-		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

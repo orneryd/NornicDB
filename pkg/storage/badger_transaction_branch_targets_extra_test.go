@@ -108,7 +108,7 @@ func TestBadgerTransaction_CheckEdgeTemporalConstraint_GetEdgesByTypeErrorIsProp
 	c := Constraint{Type: ConstraintTemporal, Label: "REL", Properties: []string{"k", "vf", "vt"}}
 
 	require.NoError(t, engine.Close())
-	err = tx.checkEdgeTemporalConstraint(context.Background(), edge, c, "test")
+	err = tx.checkEdgeTemporalConstraint(context.Background(), edge, c, "test", &temporalValidationRead{})
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"slices"
 	"sort"
 	"strings"
 
@@ -150,11 +151,24 @@ func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, scope, err := s.withIndexedSearchScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer finishRead()
+	if scope != nil {
+		defer func(checkCtx context.Context) {
+			if err == nil {
+				if invalid := scope.check(checkCtx); invalid != nil {
+					hits, err = nil, invalid
+				}
+			}
+		}(ctx)
+	}
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
@@ -216,11 +230,24 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	ctx, scope, err := s.withIndexedSearchScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ctx, finishRead, err := s.beginRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer finishRead()
+	if scope != nil {
+		defer func(checkCtx context.Context) {
+			if err == nil {
+				if invalid := scope.check(checkCtx); invalid != nil {
+					hits, err = nil, invalid
+				}
+			}
+		}(ctx)
+	}
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
@@ -244,7 +271,17 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	// writes): lock order indexMu -> mu.
 	s.indexMu.RLock()
 	s.mu.RLock()
+	// Poll Err at bounded checkpoints. The read context observes caller
+	// cancellation synchronously even while the Done relay is pending.
+	const cancelPollMask = 127
+	visited := 0
 	for edgeID, props := range s.edgePropVector {
+		if visited&cancelPollMask == 0 {
+			if err = ctx.Err(); err != nil {
+				break
+			}
+		}
+		visited++
 		if spec.Type != "" && s.edgeTypes[edgeID] != spec.Type {
 			continue
 		}
@@ -259,6 +296,12 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	}
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -273,10 +316,22 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 	scored := make([]scoredEdge, 0, len(candidates))
 	for index, cand := range candidates {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		if index&cancelPollMask == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if scope != nil {
+			edge, err := scope.engine.GetEdge(ctx, storage.EdgeID(cand.id))
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if !slices.Equal(toFloat32SliceAny(edge.Properties[spec.Property]), cand.vec) {
+				continue
+			}
 		}
 		rank := prepared.rank(cand.vec)
 		if math.IsInf(rank, -1) {
@@ -285,6 +340,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		scored = append(scored, scoredEdge{candidate: index, score: rank})
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
@@ -292,6 +350,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	// The hits' exact scores, kept in descending order (an insertion sort:
 	// the ranking left them in order but for near-ties).
 	for i := range scored {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		scored[i].score = prepared.score(candidates[scored[i].candidate].vec)
 		for j := i; j > 0 && scored[j].score > scored[j-1].score; j-- {
 			scored[j], scored[j-1] = scored[j-1], scored[j]
@@ -300,6 +361,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	out := make([]RelationshipVectorQueryHit, 0, len(scored))
 	for _, r := range scored {
 		out = append(out, RelationshipVectorQueryHit{ID: candidates[r.candidate].id, Score: r.score})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -466,31 +530,48 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 			}
 		}
 
+		score := scoreVector
+		if scope := s.indexedScope(ctx); scope != nil {
+			node, err := scope.engine.GetNode(ctx, storage.NodeID(nodeID))
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			score = func(key string) (float64, bool) {
+				entry, valid := decodeVectorEntryKey(key)
+				if !valid || entry.NodeID != nodeID || !indexedVectorVisible(node, entry) {
+					return 0, false
+				}
+				return scoreVector(key)
+			}
+		}
 		// The vector that represents this node (VectorSourcePrecedence).
 		bestScore := -2.0
 		for _, source := range VectorSourcePrecedence(spec.Property) {
 			switch source {
 			case VectorSourceNamed:
 				if vecID, ok := nodeMeta.named[vectorName]; ok {
-					if score, ok := scoreVector(vecID); ok {
+					if score, ok := score(vecID); ok {
 						bestScore = score
 					}
 				}
 			case VectorSourceAnyNamed:
 				for _, vecID := range nodeMeta.named {
-					if score, ok := scoreVector(vecID); ok && score > bestScore {
+					if score, ok := score(vecID); ok && score > bestScore {
 						bestScore = score
 					}
 				}
 			case VectorSourceProperty:
 				if vecID, ok := nodeMeta.props[spec.Property]; ok {
-					if score, ok := scoreVector(vecID); ok {
+					if score, ok := score(vecID); ok {
 						bestScore = score
 					}
 				}
 			case VectorSourceChunks:
 				for _, vecID := range nodeMeta.chunks {
-					if score, ok := scoreVector(vecID); ok && score > bestScore {
+					if score, ok := score(vecID); ok && score > bestScore {
 						bestScore = score
 					}
 				}
@@ -582,6 +663,18 @@ func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery 
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+		}
+		if scope := s.indexedScope(ctx); scope != nil {
+			node, err := scope.engine.GetNode(ctx, storage.NodeID(cand.nodeID))
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if _, visible := node.Properties[property]; !visible {
+				continue
+			}
 		}
 		score, ok := scoreVector(cand.vecID)
 		if !ok {
@@ -760,7 +853,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	s.mu.RUnlock()
 	var scored []vectorQueryScoredNode
 	var err error
-	if fileBacked {
+	if fileBacked || s.indexedScope(ctx) != nil {
 		scored, err = s.exactStoredNodeScores(ctx, prepared, spec, vectorName)
 	} else {
 		scored, err = scoreAll()
@@ -838,7 +931,7 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		node, err := s.engine.GetNode(ctx, storage.NodeID(id))
+		node, err := s.searchReadEngine(ctx).GetNode(ctx, storage.NodeID(id))
 		queryprofile.EntityReadResult(counter, node, err)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue

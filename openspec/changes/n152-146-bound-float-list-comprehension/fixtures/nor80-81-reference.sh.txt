@@ -1,0 +1,62 @@
+#!/bin/bash
+set -u
+printf "%s\n" '0 RUN'
+cypher-shell --non-interactive --format plain <<'CYPHER'
+UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { MATCH (m) } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '0 EXPLAIN '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+EXPLAIN UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { MATCH (m) } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '0 PROFILE '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+PROFILE UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { MATCH (m) } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '1 RUN'
+cypher-shell --non-interactive --format plain <<'CYPHER'
+UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { CALL { MATCH (m) RETURN m } RETURN m } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '1 EXPLAIN '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+EXPLAIN UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { CALL { MATCH (m) RETURN m } RETURN m } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '1 PROFILE '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+PROFILE UNWIND [] AS s CALL db.labels() YIELD label WHERE COUNT { CALL { MATCH (m) RETURN m } RETURN m } > 0 RETURN label;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '2 RUN'
+cypher-shell --non-interactive --format plain <<'CYPHER'
+UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '2 EXPLAIN '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+EXPLAIN UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '2 PROFILE '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+PROFILE UNWIND [] AS s MATCH (n) DELETE CASE WHEN COUNT { MATCH (m) } > 0 THEN n END;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '3 RUN'
+cypher-shell --non-interactive --format plain <<'CYPHER'
+UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '3 EXPLAIN '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '3 PROFILE '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"

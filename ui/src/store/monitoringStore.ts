@@ -10,13 +10,15 @@ function resetPrivateHistory(){useMonitoringStore.setState({stats:null,metrics:n
 async function poll(){
  if(request||document.hidden||!consumers||!identityReady)return;
  const current=generation,controller=new AbortController();request=controller;
- const timeout=setTimeout(()=>{controller.abort();if(current===generation)useMonitoringStore.setState({...(!stats?{connected:false,error:'Status refresh timed out'}:{}),metricsError:detailConsumers?'Metrics refresh timed out':''});},10000);
+ const timeout=setTimeout(()=>{controller.abort();if(current===generation)useMonitoringStore.setState({...(!stats?{stats:null,connected:healthy,error:'Status refresh timed out'}:{}),metricsError:detailConsumers?'Metrics refresh timed out':''});},10000);
  useMonitoringStore.setState({refreshing:true});
- const started=Date.now();let stats:DatabaseStats|null=null,metrics:MetricsSnapshot|null=null;
+ const started=Date.now();let stats:DatabaseStats|null=null,metrics:MetricsSnapshot|null=null,healthy=false;
  const valid=()=>current===generation&&!controller.signal.aborted;
+ const health=api.getHealth(controller.signal).then(()=>{if(valid()){healthy=true;useMonitoringStore.setState({connected:true,updatedAt:Date.now()});}return true;}).catch(()=>false);
  try{
   await Promise.all([
-   api.getStatus(controller.signal).then(value=>{if(valid()){stats=value;useMonitoringStore.setState({stats:value,connected:true,updatedAt:Date.now(),error:''});}}).catch(error=>{if(valid()){const status=(error as {status?:number}).status;if(status===401||status===403)resetPrivateHistory();useMonitoringStore.setState({connected:false,error:error instanceof Error?error.message:'Status request failed'});}}),
+   health,
+   api.getStatus(controller.signal).then(value=>{if(valid()){stats=value;useMonitoringStore.setState({stats:value,connected:true,updatedAt:Date.now(),error:''});}}).catch(async error=>{if(valid()){const status=(error as {status?:number}).status;if(status===401||status===403)resetPrivateHistory();const message=error instanceof Error?error.message:'Status request failed';const reachable=await health;if(valid())useMonitoringStore.setState({stats:null,connected:reachable,updatedAt:reachable?Date.now():null,error:message});}}),
    detailConsumers?api.getMonitoringMetrics(controller.signal).then(value=>{if(valid()){metrics=value;if(useMonitoringStore.getState().metrics?.scope&&useMonitoringStore.getState().metrics?.scope!==value.scope){useMonitoringStore.setState({history:[]});lastMetrics=null;}useMonitoringStore.setState({metrics:value,metricsError:'',metricsStatus:200});}}).catch(error=>{if(valid()){const status=(error as {status?:number}).status??null;useMonitoringStore.setState({metrics:null,metricsError:error instanceof Error?error.message:'Metrics request failed',metricsStatus:status});if(status===401||status===403)useMonitoringStore.setState({history:[]});}}):Promise.resolve()
   ]);
   if(!valid())return;

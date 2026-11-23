@@ -48,12 +48,13 @@ import (
 // commitPublication is a commit's derived-state publication and the keys it
 // is ordered on.
 type commitPublication struct {
-	metadata   bool
-	cacheScope *cacheWriteScope
-	keys       []any
-	owner      *commitWriter // prepares images and reserves notifications at the physical owner
-	run        func()
-	ts         uint64 // assigned by register, before any publication can run
+	metadata     bool
+	syncMetadata bool // synchronize metadata while the commit gate is exclusive
+	cacheScope   *cacheWriteScope
+	keys         []any
+	owner        *commitWriter // prepares images and reserves notifications at the physical owner
+	run          func()
+	ts           uint64 // assigned by register, before any publication can run
 }
 
 type stagedPublication struct {

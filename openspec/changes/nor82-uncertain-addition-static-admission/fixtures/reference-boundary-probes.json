@@ -1,0 +1,497 @@
+{
+  "reference": "Neo4j 5.26.30",
+  "status": "executed on Radeon, Neo4j 5.26.30 community; 66 cells; 36 rejected and 30 accepted",
+  "statement_prefixes": [
+    "",
+    "EXPLAIN ",
+    "PROFILE "
+  ],
+  "probes": [
+    {
+      "id": "date/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + date()) AS a"
+    },
+    {
+      "id": "date/unknown_left/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(n.k + date()) AS a"
+    },
+    {
+      "id": "date/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + date()) AS a"
+    },
+    {
+      "id": "date/unknown_left/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(n.k + date()) AS a"
+    },
+    {
+      "id": "date/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a"
+    },
+    {
+      "id": "date/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(date() + n.k) AS a"
+    },
+    {
+      "id": "date/unknown_right/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(date() + n.k) AS a"
+    },
+    {
+      "id": "date/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(date() + n.k) AS a"
+    },
+    {
+      "id": "date/unknown_right/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(date() + n.k) AS a"
+    },
+    {
+      "id": "date/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(date() + n.k)) AS a"
+    },
+    {
+      "id": "duration/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + duration('P1D')) AS a"
+    },
+    {
+      "id": "duration/unknown_left/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(n.k + duration('P1D')) AS a"
+    },
+    {
+      "id": "duration/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + duration('P1D')) AS a"
+    },
+    {
+      "id": "duration/unknown_left/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(n.k + duration('P1D')) AS a"
+    },
+    {
+      "id": "duration/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a"
+    },
+    {
+      "id": "duration/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(duration('P1D') + n.k) AS a"
+    },
+    {
+      "id": "duration/unknown_right/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(duration('P1D') + n.k) AS a"
+    },
+    {
+      "id": "duration/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(duration('P1D') + n.k) AS a"
+    },
+    {
+      "id": "duration/unknown_right/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(duration('P1D') + n.k) AS a"
+    },
+    {
+      "id": "duration/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(duration('P1D') + n.k)) AS a"
+    },
+    {
+      "id": "control/empty_list",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a"
+    },
+    {
+      "id": "control/property",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a"
+    }
+  ],
+  "results": [
+    {
+      "id": "date/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/direct",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 53 (offset: 52))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/direct",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 53 (offset: 52))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 44 (offset: 43))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/node_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN labels(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 52 (offset: 51))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/node_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN labels(n.k + date()) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 52 (offset: 51))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/list_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN size(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/list_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN size(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/head",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN head(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/head",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN head(n.k + date()) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/head_string",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_left/head_string",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + date())) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 48 (offset: 47))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/direct",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 56 (offset: 55))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/direct",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Date, List<Any> or List<Date> (line 1, column 56 (offset: 55))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 47 (offset: 46))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/node_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN labels(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 55 (offset: 54))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/node_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN labels(date() + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 55 (offset: 54))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/list_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN size(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/list_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN size(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/head",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN head(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/head",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN head(date() + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "date/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(date() + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/head_string",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(date() + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "date/unknown_right/head_string",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(date() + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Date (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 45 (offset: 44))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/direct",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 53 (offset: 52))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/direct",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 53 (offset: 52))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 44 (offset: 43))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/node_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN labels(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 52 (offset: 51))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/node_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN labels(n.k + duration('P1D')) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 52 (offset: 51))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/list_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN size(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/list_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN size(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/head",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN head(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/head",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN head(n.k + duration('P1D')) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_left/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/head_string",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_left/head_string",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + duration('P1D'))) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/direct",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 57 (offset: 56))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/direct",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 65 (offset: 64))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/direct",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected String but was Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any> or List<Duration> (line 1, column 65 (offset: 64))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/node_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN labels(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 56 (offset: 55))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/node_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN labels(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 64 (offset: 63))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/node_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN labels(duration('P1D') + n.k) AS a",
+      "verdict": "Type mismatch: expected Node but was Float, Integer, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Any>, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime> (line 1, column 64 (offset: 63))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/list_consumer",
+      "query": "UNWIND [] AS s MATCH (n) RETURN size(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/list_consumer",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN size(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/list_consumer",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN size(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/head",
+      "query": "UNWIND [] AS s MATCH (n) RETURN head(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/head",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN head(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/head",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN head(duration('P1D') + n.k) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "duration/unknown_right/head_string",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(duration('P1D') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 41 (offset: 40))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/head_string",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(duration('P1D') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "duration/unknown_right/head_string",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(duration('P1D') + n.k)) AS a",
+      "verdict": "Type mismatch: expected String but was Any or Duration (line 1, column 49 (offset: 48))",
+      "exit": "EXIT 1"
+    },
+    {
+      "id": "control/empty_list",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "control/empty_list",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "control/empty_list",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + [])) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "control/property",
+      "query": "UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "control/property",
+      "query": "EXPLAIN UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    },
+    {
+      "id": "control/property",
+      "query": "PROFILE UNWIND [] AS s MATCH (n) RETURN toUpper(head(n.k + n.j)) AS a",
+      "verdict": null,
+      "exit": "EXIT 0"
+    }
+  ]
+}

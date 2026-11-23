@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -20,6 +21,7 @@ import (
 // mutation, preserving statement atomicity while retaining input rows for
 // subsequent WITH and RETURN clauses.
 func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
 	targets, detach, ok := deleteClauseTargets(clause)
 	if !ok || len(targets) == 0 {
 		return nil, false, nil
@@ -38,9 +40,9 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				return nil, true, deleteUndefinedVariableError(name)
 			}
 		}
-		// A row-dependent target is evaluated with its row below, never with
-		// an empty planning scope (id(n) is not a constant).
-		if len(references) > 0 {
+		// Targets that depend on row bindings or statement execution state are
+		// evaluated only for reached rows, never against an empty planning row.
+		if len(references) > 0 || rowContextShapeOf(ctx, expression).statementContext {
 			continue
 		}
 		if value, evaluated, err := e.evaluateRowValue(ctx, strings.TrimSpace(expression), pipelineRow{}); err != nil {
@@ -60,8 +62,8 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		values := make([]interface{}, 0, len(targets))
 		for _, expression := range targets {
-			value, ok, err := e.evaluateRowValue(ctx, strings.TrimSpace(expression), row)
-			if err != nil {
+			value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expression), row)
+			if err := getExpressionFailure(ctx); err != nil {
 				return nil, true, err
 			}
 			if !ok {
@@ -207,6 +209,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			}
 		}
 	}
+	useSimplePropertyPath := simplePropertyAssignment && auth.FineGrainedRequestFromContext(ctx) == nil
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, true, err
@@ -218,7 +221,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 			return nil, true, err
 		}
 		evalNodes := nodes
-		if simplePropertyAssignment {
+		if useSimplePropertyPath {
 			if node := nodes[simpleTarget]; node != nil {
 				value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
 				if err != nil {

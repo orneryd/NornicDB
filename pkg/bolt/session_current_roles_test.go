@@ -37,13 +37,14 @@ func TestBoltSessionLosesDeletedRole(t *testing.T) {
 	adapter.SetGetEffectivePermissions(func(roles []string) []string {
 		return auth.PermissionsForRoles(roles, entitlements)
 	})
-	result, err := adapter.Authenticate("basic", "bob", "password123")
+	serverConfig := DefaultConfig()
+	serverConfig.SetRequestAuthenticator(adapter)
+	server := &Server{config: serverConfig, sessions: map[string]*Session{}}
+	session := &Session{server: server}
+	result, err := session.authenticateHello("basic", "bob", "password123")
 	require.NoError(t, err)
 	require.Equal(t, []string{"ops"}, result.Roles)
 
-	serverConfig := DefaultConfig()
-	serverConfig.Authenticator = adapter
-	server := &Server{config: serverConfig, sessions: map[string]*Session{}}
 	run := func() (bool, string) {
 		return runOnBoltSession(t, server, result, "CALL dbms.listConfig()", func(context.Context, string, map[string]any) error { return nil })
 	}

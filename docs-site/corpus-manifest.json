@@ -72,8 +72,8 @@
     },
     {
       "path": "api-reference/bolt-protocol.md",
-      "sha256": "b2d5b7a18d9d3685977124c25ee33c2f4708c7367f9a958c76cedd9bfa65f842",
-      "bytes": 12457
+      "sha256": "3bef61c65770d49d9db01dddf2620805f9f3c58e4208ad75b0b876e0212822fa",
+      "bytes": 13212
     },
     {
       "path": "api-reference/cypher-functions/README.md",
@@ -246,6 +246,26 @@
       "bytes": 10640
     },
     {
+      "path": "assets/images/fgac/create-role.png",
+      "sha256": "fa40f089f4c4576efdb94c86cbbd97b4e27db77513abf23e1ecfab4dcd7a8963",
+      "bytes": 21096
+    },
+    {
+      "path": "assets/images/fgac/entitlement-editor.png",
+      "sha256": "874beaf5104625586434f7db854944029ebc58876176e8ad00adde0fc46eb252",
+      "bytes": 121626
+    },
+    {
+      "path": "assets/images/fgac/role-entitlements.png",
+      "sha256": "838fd51a2e968cc1fc9ea75c77a8a71e52321025c3feb2bef77484e240c9f66b",
+      "bytes": 138371
+    },
+    {
+      "path": "assets/images/fgac/role-members-mobile.png",
+      "sha256": "f6a683d600fe320a98f16b2fce15dc522cdb405858d3bad7b8b1c4cdedd5bfc0",
+      "bytes": 63676
+    },
+    {
       "path": "assets/images/mimir.png",
       "sha256": "6ed4e9a57ab56bbe2ad2a86d0f164d6a1c883b61f0fc8fb511baaeb0fe86829c",
       "bytes": 385209
@@ -342,8 +362,8 @@
     },
     {
       "path": "compliance/rbac.md",
-      "sha256": "3a4544bc27783e758a2556c14c4e0eab32ff94911f019fea03e7d601781a28b8",
-      "bytes": 21607
+      "sha256": "d8199794f712ffe0e557da80e4e1c7701855f5debb4929caad38261806e91de7",
+      "bytes": 22085
     },
     {
       "path": "compliance/soc2-compliance.md",
@@ -392,8 +412,8 @@
     },
     {
       "path": "development/contributing.md",
-      "sha256": "4502ee938111cde4290b50d047f224f46f8e0d42102d8b7fdcf0b77ec01d3e1e",
-      "bytes": 16591
+      "sha256": "0fda3a5ecf59fa316a523e875c26a9d74f458cca5198c2a5ae2838868b7d1d7a",
+      "bytes": 16695
     },
     {
       "path": "development/count-store-visibility.md",
@@ -402,8 +422,8 @@
     },
     {
       "path": "development/cypher-preparation-context-api.md",
-      "sha256": "61d36d041ed11ae372a83b01b49729eda25d7fc5398a37bbd6cc91d77616642b",
-      "bytes": 6017
+      "sha256": "167ec75bf85f66ddc80c2fb4584db618b79d254b94f3a0e347a3e77a4718bcf5",
+      "bytes": 5947
     },
     {
       "path": "development/cypher-source-stage-api.md",
@@ -449,6 +469,11 @@
       "path": "development/graphify-relationship-outdated-investigation.md",
       "sha256": "3e18dad8a84a9f43a2c899f404cf0468bc3bf5d21212fbf6618d4a9091ebef12",
       "bytes": 6978
+    },
+    {
+      "path": "development/graphify-workspace.md",
+      "sha256": "ca226b2e83e78eff2f7006845220ed3d11e25a23652dfd20958a1fb20d1ba8d1",
+      "bytes": 7740
     },
     {
       "path": "development/graphml-go-api.md",
@@ -552,13 +577,13 @@
     },
     {
       "path": "development/setup.md",
-      "sha256": "c8b7343543e5fd6b10ba9abb4ad2b2b2bd5b1cbf1dc67b0f4c587f798cdfd9c6",
+      "sha256": "668fea1da1bc68bd46ee69e97c6e1c4fa2ad6819014b924189393d2c6b6935fe",
       "bytes": 8564
     },
     {
       "path": "development/storage-bulk-read-go-api.md",
-      "sha256": "f2bae80b7f19cfc180b090b74f18389f35acd1df8e2c2c1198d054a9a8f26625",
-      "bytes": 7211
+      "sha256": "2787f9258e79b3f9b5d11a2679cefbd24a3e5e8e6bb8e008116dd7903a9c1102",
+      "bytes": 8515
     },
     {
       "path": "development/storage-preparation-context.md",
@@ -702,13 +727,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "5d62933d32c160677fb79b4094975cd5bc51b36a2427e617f2660e3cfbec41bc",
-      "bytes": 218113
+      "sha256": "208720a1394e879230ce765b35422df2c12e275ce0e5e855e6c29efcdeae2d84",
+      "bytes": 220994
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "5ab8aaa9cb589280e8c5e56cd6529c412f694100eb0ce46f73df5555a679f1c6",
-      "bytes": 159251
+      "sha256": "fbd5082d70001da4814bab054fac840565a9327a2fa9c341a6ef6596120513d8",
+      "bytes": 161328
     },
     {
       "path": "getting-started/README.md",
@@ -737,8 +762,8 @@
     },
     {
       "path": "getting-started/quick-start.md",
-      "sha256": "dac6549439966eea1075fee9aa1b5a5f2f0bbcd856de75e35130ab744620232e",
-      "bytes": 7656
+      "sha256": "29e4a96501a39bf12714b74ed5046cfdeeaa7dc9e519fecdbfe96b92507568c0",
+      "bytes": 7770
     },
     {
       "path": "getting-started/windows-cuda.md",
@@ -772,13 +797,13 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "61f6d37ab00420666776d7223e842da0d266b5c997dd478e65e29773db3ad948",
-      "bytes": 35537
+      "sha256": "fd76ed21717112527627260968a95745bb485f43ee1e985addea2b98d13e8b2c",
+      "bytes": 36087
     },
     {
       "path": "neo4j-migration/feature-parity.md",
-      "sha256": "0a56ecd1f868d6872d3b63c22c8709bd7b5dba729c9c31bd92d007f17a12899d",
-      "bytes": 23099
+      "sha256": "c525961bf1ca33e43e6c12a15c73ba942943b4f75b06a2dfc769c1c856439ec0",
+      "bytes": 23428
     },
     {
       "path": "nornicdb-vs-neo4j-tradeoffs.md",
@@ -797,8 +822,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "d248c76512fbfa172f06ee5b63d499ace2f5abea6cf820c0f9874631dede1838",
-      "bytes": 7313
+      "sha256": "131a8a1c7c63c57b2ddcdc7ea03cdcad516c2b2becb7bff07089949dc01cefc4",
+      "bytes": 7959
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -822,8 +847,8 @@
     },
     {
       "path": "operations/configuration.md",
-      "sha256": "db7fb161a97ebc69b9ca8da2f97fe5f461794abf0433808363e877122e342c46",
-      "bytes": 79770
+      "sha256": "1cf606ccaa76c9170e60e48e276f24f4f3ae37aa78fada803b41cba69890dc75",
+      "bytes": 79938
     },
     {
       "path": "operations/dashboards/nornicdb-overview.json",
@@ -847,8 +872,8 @@
     },
     {
       "path": "operations/environment-variables.md",
-      "sha256": "09569916e91785b9c69b35262014de994b5ed922f963eddf4e3c9834571f6fbc",
-      "bytes": 266728
+      "sha256": "105a1e5671f345ae224a3534931d8d3ada5e9e15420f8e7fbab5e44e6d9afe8d",
+      "bytes": 266953
     },
     {
       "path": "operations/low-memory-mode.md",
@@ -867,8 +892,8 @@
     },
     {
       "path": "operations/monitoring.md",
-      "sha256": "daeb75c413119aafe4ba28d464af5471f5fb86cf5406d6057a79a0f4c52ebaaf",
-      "bytes": 14412
+      "sha256": "397f0ceb9cc19d4a5224794dc73b80031d8083c6831915835138e1499cffe5ce",
+      "bytes": 16244
     },
     {
       "path": "operations/mvcc-lifecycle-compaction.md",
@@ -1347,8 +1372,8 @@
     },
     {
       "path": "performance/hot-path-query-cookbook.md",
-      "sha256": "32b11577a08b20566cce9660705678c53b17ccc8c5ff04ed0727733cbe488efc",
-      "bytes": 30233
+      "sha256": "95c6e6d9100ec18980bb57d01bbc5c75e23c14b016fc87331cf51d8e3197a4cd",
+      "bytes": 29863
     },
     {
       "path": "performance/http-api-vs-neo4j.md",
@@ -1442,8 +1467,8 @@
     },
     {
       "path": "performance/v150-rc-corrections.md",
-      "sha256": "02716d2628ca276fe41df9b23ff84eebc20a1b901b841ac46b78dbfa61a6b0f7",
-      "bytes": 79952
+      "sha256": "c35af63385bad9fd307ef4eba79da7ab1bfd72beefded5063f1c397e7ab6fbf4",
+      "bytes": 84748
     },
     {
       "path": "performance/v150-result-copy-scratch.md",
@@ -1522,13 +1547,18 @@
     },
     {
       "path": "security/README.md",
-      "sha256": "141bf0ebee0e897a0ca5f291215eec4e89d9ce7ad55e483c1ab48b74a39c4970",
-      "bytes": 1611
+      "sha256": "146f763f71a1c40e8c47ea857f5c536aa0657325084d66588d982a9910061d4d",
+      "bytes": 1716
     },
     {
       "path": "security/entitlements.md",
       "sha256": "6fa1c63f8b9e0c4b580d1840c7b2fdb214e33eb7ee8a7f5d33baed31419e24db",
       "bytes": 4107
+    },
+    {
+      "path": "security/fine-grained-access-control.md",
+      "sha256": "e6adc354de2e329a3ecac9c71aeb90379e27d741104168c9910efd358ee1ccef",
+      "bytes": 12397
     },
     {
       "path": "security/http-security.md",
@@ -1587,8 +1617,8 @@
     },
     {
       "path": "skills/neo4j-migration.skill.md",
-      "sha256": "729d9647fe5cafd6ba152002f7fb0d78b520f38d671227f49ff82fe0fc999512",
-      "bytes": 9287
+      "sha256": "839281b739ddcd6ff73b33411ee5e36a26449d85a7c27ff5319514070f193bc7",
+      "bytes": 9876
     },
     {
       "path": "skills/promotion-policies.skill.md",
@@ -1642,8 +1672,8 @@
     },
     {
       "path": "user-guides/change-data-capture.md",
-      "sha256": "fc8e6ca6d368c3ba82c5ea554d2f5acb297c216b7b568186c127435acb8284da",
-      "bytes": 8253
+      "sha256": "b8670a70932f23def65ea7dc8aa39ffcef547c2ad96d04fa780acce1c2cbc098",
+      "bytes": 8533
     },
     {
       "path": "user-guides/clustering.md",
@@ -1707,8 +1737,8 @@
     },
     {
       "path": "user-guides/heimdall-ai-assistant.md",
-      "sha256": "7d12fc24e97f3c3a33b9e8e8135c75731a2a86612a433e9f519fda46163bc079",
-      "bytes": 30133
+      "sha256": "e1f3eface0c9aea83a2c0cf2e7f757ba37d4d96884b54350fe3e00ee378d0eb8",
+      "bytes": 31284
     },
     {
       "path": "user-guides/heimdall-context.md",
@@ -1737,8 +1767,8 @@
     },
     {
       "path": "user-guides/hybrid-search.md",
-      "sha256": "c3490d311dd99ca16eb38ab1fb961dc1daa534622e424a4386cd373deb6ddc86",
-      "bytes": 17030
+      "sha256": "64bf0429648bebef9911795d820f3d0aabcff50fae41059d5291292f35a9ebf5",
+      "bytes": 17453
     },
     {
       "path": "user-guides/infinigraph-topology.md",
@@ -1832,8 +1862,8 @@
     },
     {
       "path": "user-guides/visibility-suppression-deindex.md",
-      "sha256": "9579db738c69d92dd1b36bcd5e056d9bf836b3efba68709eff5076ec3e96c299",
-      "bytes": 5064
+      "sha256": "4fbfb48a9558012245a1696ce8670c67739532653e081c1935674df5994f535f",
+      "bytes": 5200
     }
   ],
   "exactDuplicates": []

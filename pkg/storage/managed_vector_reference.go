@@ -121,6 +121,10 @@ type ManagedVectorReferences struct{ entries []managedVectorReference }
 // for an image whose anchor this call left durable, so no record ever omits
 // coordinates the journal could not restore, and no proof of an anchor reaches
 // the journal's cache before the anchor itself is on disk.
+//
+// Later updates of the same node may use the committed predecessor's anchor
+// when their coordinates still match its fingerprint. Each update keeps its
+// own properties and any coordinates that differ from the anchored image.
 func (w *WAL) managedReferences(ctx context.Context, operations []Operation, admission func() error) (ManagedVectorReferences, error) {
 	var references ManagedVectorReferences
 	if !config.IsWALEnabled() {
@@ -128,9 +132,37 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation, adm
 	}
 	checkedAdmission := false
 	anchors := w.newManagedVectorAnchorBatch()
+	// Index existing proofs only when a staged update needs one. A commit with
+	// one update per node keeps the existing anchor path and allocation cost.
+	var anchoredImages map[NodeID][sha256.Size]byte
 	for index := range operations {
 		operation := &operations[index]
-		if operation.Type != OpUpdateNode || !operation.nodeAnchorEligible || operation.Node == nil || operation.OldNode == nil || len(operation.Node.ChunkEmbeddings) == 0 {
+		if operation.Type != OpUpdateNode || operation.Node == nil || operation.OldNode == nil || len(operation.Node.ChunkEmbeddings) == 0 {
+			continue
+		}
+		if !operation.nodeAnchorEligible {
+			if len(references.entries) == 0 {
+				continue
+			}
+			if anchoredImages == nil {
+				anchoredImages = make(map[NodeID][sha256.Size]byte, len(references.entries))
+				for _, reference := range references.entries {
+					anchoredImages[operations[reference.Change].Node.ID] = reference.Digest
+				}
+			}
+			proof, anchored := anchoredImages[operation.Node.ID]
+			if !anchored {
+				continue
+			}
+			digest, err := managedVectorFingerprint(ctx, operation.Node.ChunkEmbeddings)
+			if err != nil {
+				anchors.discard()
+				return ManagedVectorReferences{}, err
+			}
+			if digest != proof {
+				continue
+			}
+			references.entries = append(references.entries, managedVectorReference{Change: uint32(index), Digest: digest})
 			continue
 		}
 		before, err := managedVectorFingerprint(ctx, operation.OldNode.ChunkEmbeddings)
@@ -156,13 +188,17 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation, adm
 			}
 			checkedAdmission = true
 		}
-		anchored, err := anchors.anchored(ctx, operation.OldNode, sha256.Sum256([]byte(operation.Node.ID)), before)
+		identity := sha256.Sum256([]byte(operation.Node.ID))
+		anchored, err := anchors.anchored(ctx, operation.OldNode, identity, before)
 		if err != nil {
 			anchors.discard()
 			return ManagedVectorReferences{}, err
 		}
 		if !anchored {
 			continue
+		}
+		if anchoredImages != nil {
+			anchoredImages[operation.Node.ID] = before
 		}
 		references.entries = append(references.entries, managedVectorReference{Change: uint32(index), Digest: before})
 	}
@@ -177,6 +213,12 @@ func (w *WAL) managedReferences(ctx context.Context, operations []Operation, adm
 // resolve binds omitted coordinates only to the exact predecessor visible in
 // this accepted transaction. Receipt observation happens before this call, so a
 // duplicate replay never needs an image already replaced by the same command.
+//
+// The whole sequence resolves against the transaction's committed predecessor,
+// before any operation is staged: every reference names the coordinates the
+// store held before the command, so several updates of one node in the same
+// command that carry that same image each bind it, and each keeps its own
+// properties.
 func (references ManagedVectorReferences) resolve(ctx context.Context, tx *BadgerTransaction, operations []Operation) ([]Operation, error) {
 	if len(references.entries) == 0 {
 		return operations, nil

@@ -646,14 +646,15 @@ func DefaultConfig() *Config {
 //	defer cancel()
 //	server.Stop(ctx)
 type Server struct {
-	shutdown        serverShutdown
-	pendingListener net.Listener // owned until transferred to http.Server.Serve
-	listenNative    func(string, string) (net.Listener, error)
-	config          *Config
-	db              *nornicdb.DB
-	dbManager       *multidb.DatabaseManager // Manages multiple databases
-	auth            *auth.Authenticator
-	audit           *audit.Logger
+	shutdown               serverShutdown
+	pendingListener        net.Listener // owned until transferred to http.Server.Serve
+	listenNative           func(string, string) (net.Listener, error)
+	config                 *Config
+	queryAPICurrentSummary bool
+	db                     *nornicdb.DB
+	dbManager              *multidb.DatabaseManager // Manages multiple databases
+	auth                   *auth.Authenticator
+	audit                  *audit.Logger
 
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
@@ -772,6 +773,8 @@ type Server struct {
 	processConfig         *nornicConfig.Config
 	memoryPolicy          *memory.Policy
 	dbConfigStateMu       sync.RWMutex
+	fgacDBConfigWriteMu   sync.Mutex
+	fineGrainedRuntime    *auth.FineGrainedRuntime
 	dbConfigActive        map[string]map[string]string
 	dbConfigPending       map[string]map[string]struct{}
 	// perDBYAMLOverrides carries the `databases:` map from nornicdb.yaml,
@@ -1027,6 +1030,35 @@ func (rl *IPRateLimiter) Stop() {
 	<-rl.work.BeginStop(nil)
 }
 
+func newExternalReranker(provider, model, apiURL, apiKey string, disableTruncation bool) (search.Reranker, error) {
+	const timeout = 30 * time.Second
+	if provider == "voyage" {
+		reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
+			Enabled:           true,
+			APIURL:            apiURL,
+			APIKey:            apiKey,
+			Model:             model,
+			Timeout:           timeout,
+			DisableTruncation: disableTruncation,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return reranker, nil
+	}
+	if model == "" && provider == "ollama" {
+		model = "reranker"
+	}
+	return search.NewCrossEncoder(&search.CrossEncoderConfig{
+		Enabled: true,
+		APIURL:  apiURL,
+		APIKey:  apiKey,
+		Model:   model,
+		TopK:    100,
+		Timeout: timeout,
+	}), nil
+}
+
 // New creates a new HTTP server with the given database, authenticator, and configuration.
 //
 // The server is created but not started. Call Start() to begin accepting connections.
@@ -1125,6 +1157,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	if globalConfig == nil {
 		globalConfig = nornicConfig.LoadFromEnv()
 	}
+	s.queryAPICurrentSummary = globalConfig.Server.QueryAPICompatibility == nornicConfig.QueryAPICompatibilityCurrent
 
 	// Create MCP server for LLM tool interface (if enabled)
 	var mcpServer *mcp.Server
@@ -1313,41 +1346,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		if apiURL == "" {
 			return nil
 		}
-		if provider == "voyage" {
-			reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
-				Enabled: true,
-				APIURL:  apiURL,
-				APIKey:  apiKey,
-				Model:   model,
-				Timeout: 30 * time.Second,
-				// The provider-wide setting, as for every database.
-				DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
-			})
-			if err != nil {
-				return nil
-			}
-			rerankerResolverMu.Lock()
-			perDBRerankerCache[key] = reranker
-			rerankerResolverMu.Unlock()
-			return reranker
+		reranker, err := newExternalReranker(provider, model, apiURL, apiKey, featuresConfig.SearchRerankDisableTruncation)
+		if err != nil {
+			return nil
 		}
-		ceConfig := &search.CrossEncoderConfig{
-			Enabled:  true,
-			APIURL:   apiURL,
-			APIKey:   apiKey,
-			Model:    model,
-			TopK:     100,
-			Timeout:  30 * time.Second,
-			MinScore: 0.0,
-		}
-		if ceConfig.Model == "" && provider == "ollama" {
-			ceConfig.Model = "reranker"
-		}
-		ce := search.NewCrossEncoder(ceConfig)
 		rerankerResolverMu.Lock()
-		perDBRerankerCache[key] = ce
+		perDBRerankerCache[key] = reranker
 		rerankerResolverMu.Unlock()
-		return ce
+		return reranker
 	}
 	// Install per-DB reranker resolver. It respects DB overrides and falls back to global resolver.
 	db.SetRerankerResolver(func(dbName string) search.Reranker {
@@ -1371,7 +1377,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	})
 	if featuresConfig.HeimdallEnabled {
 		s.logEvent(context.Background(), slog.LevelInfo, localization.ServerHeimdallInitializingEvent())
-		s.runBackground(context.Background(), func(initCtx context.Context) {
+		s.runBackground(dbCtx, func(initCtx context.Context) {
 			// Configure token budget from environment variables
 			heimdall.SetTokenBudget(featuresConfig)
 			heimdallCfg := heimdall.ConfigFromFeatureFlags(featuresConfig)
@@ -1482,7 +1488,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 					"search_rerank", "local", modelPath,
 					"server starts immediately; reranking available after model loads"))
 
-			s.runBackground(context.Background(), func(initCtx context.Context) {
+			s.runBackground(dbCtx, func(initCtx context.Context) {
 				opts := localllm.DefaultRerankerOptions(modelPath)
 				opts.GPULayers = -1
 				// Apply rerank context features from config
@@ -1558,17 +1564,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerSearchRerankAPIURLMissingEvent(
 						"search_rerank", safeRerankProvider, "NORNICDB_SEARCH_RERANK_API_URL"))
-			} else if provider == "voyage" {
+			} else {
 				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
-				reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
-					Enabled: true,
-					APIURL:  apiURL,
-					APIKey:  apiKey,
-					Model:   model,
-					Timeout: 30 * time.Second,
-					// Voyage shortens an over-long query or pair unless this is false.
-					DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
-				})
+				reranker, err := newExternalReranker(provider, model, apiURL, apiKey, featuresConfig.SearchRerankDisableTruncation)
 				if err != nil {
 					s.logEvent(context.Background(), slog.LevelWarn,
 						localization.ServerSearchRerankerModelUnavailableEvent(
@@ -1579,25 +1577,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 					s.logEvent(context.Background(), slog.LevelInfo,
 						localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 				}
-			} else {
-				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
-				ceConfig := &search.CrossEncoderConfig{
-					Enabled:  true,
-					APIURL:   apiURL,
-					APIKey:   apiKey,
-					Model:    model,
-					TopK:     100,
-					Timeout:  30 * time.Second,
-					MinScore: 0.0,
-				}
-				if ceConfig.Model == "" && provider == "ollama" {
-					ceConfig.Model = "reranker"
-				}
-				ce := search.NewCrossEncoder(ceConfig)
-				db.SetSearchReranker(ce)
-				setGlobalRerankerResolver(func(string) search.Reranker { return ce })
-				s.logEvent(context.Background(), slog.LevelInfo,
-					localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 			}
 		}
 	} else {
@@ -1701,7 +1680,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	// DB.Open() warms namespaces present in storage; this loop ensures known DB metadata
 	// also gets initialized, and keeps doing so without requiring first-search triggers.
 	s.ensureSearchBuildStartedForKnownDatabases()
-	s.runBackground(context.Background(), func(context.Context) {
+	s.runBackground(dbCtx, func(context.Context) {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -1743,7 +1722,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 	// Load RBAC stores from system DB when available so roles/allowlist/privileges/entitlements APIs
 	// work even with --no-auth (e.g. fetch roles, configure RBAC before enabling auth).
 	if systemStorage, err := dbManager.GetStorage("system"); err == nil {
-		ctx := context.Background()
+		ctx := dbCtx
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRolesLoadFailedEvent(loadErr))
@@ -1777,6 +1756,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
 		} else {
 			s.roleEntitlementsStore = roleEntitlementsStore
+		}
+		if globalConfig.Auth.FGACEnabled {
+			if err := s.initializeFineGrainedRuntime(ctx); err != nil {
+				return nil, err
+			}
 		}
 		dbConfigStore := dbconfig.NewStore(systemStorage)
 		// Seed yaml-declared per-DB overrides on first boot. After the

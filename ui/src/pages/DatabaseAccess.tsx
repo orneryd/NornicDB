@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useId, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatefulGrid as UiGrid } from "../components/common/StatefulGrid";
 import type { GridCellTemplateContext, GridColumnDef, GridOptions, GridRecord } from '@ornery/ui-grid-core';
@@ -8,9 +8,16 @@ import { Button } from '../components/common/Button';
 import { Alert } from '../components/common/Alert';
 import { FormInput } from '../components/common/FormInput';
 import { Modal } from '../components/common/Modal';
-import { api } from '../utils/api';
+import { api, loadFgacEffectiveRules } from '../utils/api';
 import { Database, Plus, Save, Trash2, Edit2, Shield } from 'lucide-react';
 import { BASE_PATH, joinBasePath } from '../utils/basePath';
+import { permitsFgacAction } from '../utils/fgacEffectiveRules';
+import type { FgacRolePermissions } from '../components/security/FgacRoleWorkspace';
+
+const FineGrainedEntitlements = lazy(async () => {
+  const editor = await import('../components/security/FineGrainedEntitlements');
+  return { default: editor.FineGrainedEntitlements };
+});
 
 const BUILTIN_ROLES = ['admin', 'editor', 'viewer'];
 const SYSTEM_DB = 'system';
@@ -67,6 +74,7 @@ export function DatabaseAccess() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [fineGrainedPermissions, setFineGrainedPermissions] = useState<FgacRolePermissions>();
   const [roles, setRoles] = useState<string[]>([]);
   const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([]);
   const [privilegesMatrix, setPrivilegesMatrix] = useState<PrivilegeEntry[]>([]);
@@ -147,7 +155,25 @@ export function DatabaseAccess() {
   useEffect(() => {
     fetch(joinBasePath(BASE_PATH, '/auth/me'), { credentials: 'include' })
       .then((res) => res.json())
-      .then((data) => {
+      .then(async (data) => {
+        if (data.fgac_enabled === true) {
+          const rules = await loadFgacEffectiveRules();
+          if (!permitsFgacAction(rules, 'dbms.security.policy.manage')) {
+            navigate('/security');
+            return;
+          }
+          setFineGrainedPermissions({
+            create: permitsFgacAction(rules, 'dbms.role.create'),
+            rename: permitsFgacAction(rules, 'dbms.role.rename'),
+            remove: permitsFgacAction(rules, 'dbms.role.drop'),
+            listUsers: permitsFgacAction(rules, 'dbms.user.show'),
+            assignUsers: permitsFgacAction(rules, 'dbms.role.assign'),
+            removeUsers: permitsFgacAction(rules, 'dbms.role.remove'),
+          });
+          setIsAdmin(true);
+          setLoading(false);
+          return;
+        }
         const r = data.roles || [];
         if (!r.includes('admin')) {
           navigate('/security');
@@ -480,6 +506,18 @@ export function DatabaseAccess() {
     [entitlementColumnDefs, renderEntitlementCell],
   );
   if (!isAdmin) return null;
+  if (fineGrainedPermissions) {
+    return (
+      <PageLayout>
+        <PageHeader title="Database Access" backTo="/security" backLabel="Back to Security" />
+        <div className="w-full min-w-0 mx-auto p-6">
+          <Suspense fallback={<p role="status">Loading fine-grained access…</p>}>
+            <FineGrainedEntitlements rolePermissions={fineGrainedPermissions} />
+          </Suspense>
+        </div>
+      </PageLayout>
+    );
+  }
 
   if (loading) {
     return (
@@ -561,6 +599,7 @@ export function DatabaseAccess() {
             </div>
           </div>
         )}
+
 
         {/* User-defined roles */}
         <div className="bg-norse-shadow border border-norse-rune rounded-lg overflow-hidden">

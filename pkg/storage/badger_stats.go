@@ -430,7 +430,7 @@ func (b *BadgerEngine) RunGC() error {
 		return ErrStorageClosed
 	}
 	defer b.work.Leave()
-	return b.db.RunValueLogGC(0.5)
+	return b.db.RunValueLogGC(b.work.Context(), 0.5)
 }
 
 // Size returns the approximate size of the database in bytes.

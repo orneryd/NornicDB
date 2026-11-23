@@ -53,12 +53,12 @@ func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID
 // getCommittedNodeProjectedLocked is getCommittedNodeLocked for a projected
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
-func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
+func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context, nodeID NodeID, projection projectedNodeRead) (*Node, error) {
 	if tx.engine != nil && (tx.engine.writeBehind != nil || tx.readsNodeLastCommittedLocked(nodeID)) {
-		return tx.engine.GetNodeProjected(ctx, nodeID, properties)
+		return tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
-		return projectCachedNodeForRead(node, properties, true), nil
+		return projectCachedNodeForRead(node, projection.properties, true), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		// Like the prefix cache, a node with worker-sidecar embeddings is
@@ -74,23 +74,23 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 			return nil, sidecarErr
 		}
 		if !sidecar {
-			return projectCachedNodeForRead(node, properties, true), nil
+			return projectCachedNodeForRead(node, projection.properties, true), nil
 		}
 	}
 	if tx.readTS.IsZero() {
-		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
 	}
-	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, properties, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedVisibleAtInTxn)
+	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, projection, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
 		}
 		return nil, ErrNotFound
 	}
 	if err == ErrNotFound {
-		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(projection.properties))
 		if fallbackErr == nil {
 			return fallbackNode, nil
 		}
@@ -98,7 +98,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 			return nil, fallbackErr
 		}
 		if tx.engine.writeBehind != nil {
-			if fresh, freshErr := tx.engine.GetNodeProjected(ctx, nodeID, properties); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -911,14 +911,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 // GetFirstNodeByLabel returns the first visible node with the given label.
 func (tx *BadgerTransaction) GetFirstNodeByLabel(ctx context.Context, label string) (*Node, error) {
 	// Label discovery retains this statement's own admission context.
-	nodes, err := tx.GetNodesByLabel(ctx, label)
-	if err != nil {
-		return nil, err
-	}
-	if len(nodes) == 0 {
-		return nil, ErrNotFound
-	}
-	return nodes[0], nil
+	return FirstNodeResult(tx.GetNodesByLabel(ctx, label))
 }
 
 // AllNodes returns all visible nodes including pending transaction writes.
@@ -1084,8 +1077,9 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 		bytes += int64(len(key) + 48)
 	}
 	nodes := make(map[*Node]struct{}, len(tx.pendingNodes))
+	countedChunks := make(map[*[]float32]struct{})
 	for _, node := range tx.pendingNodes {
-		bytes += estimateRetainedNodeBytes(node)
+		bytes += estimateRetainedNodeBytes(node, countedChunks)
 		nodes[node] = struct{}{}
 	}
 	edges := make(map[*Edge]struct{}, len(tx.pendingEdges))
@@ -1099,7 +1093,7 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 				continue
 			}
 			if _, counted := nodes[node]; !counted {
-				bytes += estimateRetainedNodeBytes(node)
+				bytes += estimateRetainedNodeBytes(node, countedChunks)
 				nodes[node] = struct{}{}
 			}
 		}
@@ -1122,13 +1116,20 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 	return bytes
 }
 
-func estimateRetainedNodeBytes(node *Node) int64 {
+func estimateRetainedNodeBytes(node *Node, countedChunks map[*[]float32]struct{}) int64 {
 	if node == nil {
 		return 0
 	}
 	bytes := estimateNodeBodyCacheBytes(node)
 	for _, vector := range node.NamedEmbeddings {
 		bytes += int64(32 + 4*len(vector))
+	}
+	if len(node.ChunkEmbeddings) > 0 && countedChunks != nil {
+		chunks := &node.ChunkEmbeddings[0]
+		if _, counted := countedChunks[chunks]; counted {
+			return bytes
+		}
+		countedChunks[chunks] = struct{}{}
 	}
 	for _, vector := range node.ChunkEmbeddings {
 		bytes += int64(24 + 4*len(vector))

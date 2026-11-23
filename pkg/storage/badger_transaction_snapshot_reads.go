@@ -110,7 +110,7 @@ func (tx *BadgerTransaction) committedNodeLabelsLocked(ctx context.Context, iden
 	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
 		return labels, nil
 	}
-	node, err := tx.getCommittedNodeLocked(ctx, identifier)
+	node, err := tx.getCommittedNodeProjectedLocked(ctx, identifier, projectedNodeRead{properties: []string{}, visibility: storedRead})
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +569,10 @@ func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error
 
 	tx.observed = true
 	if tx.snapshotTx != nil {
-		return read(tx.snapshotTx)
+		// The pinned reader belongs to a Badger handle the engine may have closed
+		// since this transaction began; the engine closed outcome is returned
+		// through the same owner that converts a closed handle panic (NOR-358).
+		return recoverBadgerClosedPanic(func() error { return read(tx.snapshotTx) })
 	}
 	// Legacy manually constructed transactions lack a lifetime-pinned reader.
 	return tx.engine.withView(read)

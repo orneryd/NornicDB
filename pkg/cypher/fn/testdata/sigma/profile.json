@@ -1,0 +1,20 @@
+{
+  "neo4j": "5.26.30",
+  "image": "sha256:174ca8edaafb189d2676027a738815b04afd56d7dc720bd08bbb37afb469483e",
+  "image_digest": "sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c",
+  "java": "21.0.12+8-LTS",
+  "java_character_unicode": "15.0",
+  "go": "1.27.4",
+  "go_unicode": "17.0.0",
+  "snapshots": {
+    "java-break-context.bin.gz": "d37f131ea36a736100c6d69ab47aa18e7578f90920a61381f67f372e709ebe83",
+    "go-context.bin.gz": "e03eedd6e434539ec5a00f50105a509436a8f186f7647160ec81ccbda748cb96",
+    "java-context.bin.gz": "d605e8f8544421e15e5e6f3a280e05254ed66794d108527c33e3c61c7e27ee90"
+  },
+  "oracle": {
+    "file": "neo4j-sigma-decisions.json.gz",
+    "rows": 20801,
+    "sha256": "4b17c2bd80c2df1105f1b5ffd0d60fa946215c7e587f2a802af6616cf3d65eef"
+  },
+  "generated_ranges": 83
+}

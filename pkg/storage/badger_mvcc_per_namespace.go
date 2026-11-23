@@ -1,11 +1,11 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+
 	"sync/atomic"
 	"time"
 
@@ -55,36 +55,22 @@ func namespaceForEdgeIDs(ids []EdgeID) (string, error) {
 	return namespaceForIDs(ids, namespaceForEdgeID, "edge")
 }
 
-// namespaceMVCCState holds the per-database MVCC sequence counter and the
-// high-water clamp on commit timestamps. One instance lives in
-// BadgerEngine.mvccByNamespace per active namespace.
-//
-// The two atomics are independent: seq is the strictly-increasing logical
-// commit sequence used by snapshotIsolationConflict for total ordering, and
-// highWaterNanos is the largest commit-timestamp ever stamped onto a version
-// in this namespace. Reads clamp their sample to >= highWaterNanos so a
-// backward NTP step cannot make a new transaction observe an earlier
-// timestamp than something already committed.
-//
-// A persistKey is cached so allocate paths never re-encode the namespace
-// segment for the on-disk sequence key on the hot path.
+// namespaceMVCCState keeps the last issued sequence apart from its durable
+// reservation ceiling. Snapshot cuts use seq, so unused numbers in a block
+// never advance a running transaction's snapshot. highWaterNanos clamps
+// version timestamps against backward clock steps.
 type namespaceMVCCState struct {
-	seq            atomic.Uint64
-	highWaterNanos atomic.Int64
-	persistKey     []byte
+	seq             atomic.Uint64
+	highWaterNanos  atomic.Int64
+	persistKey      []byte
+	reservedThrough atomic.Uint64
+	refillMu        contextRWMutex
 }
 
-// namespaceMVCC returns the per-namespace MVCC state, lazily loading the
-// persisted sequence and seeding the high-water clamp from the legacy
-// engine-global counter on first access.
-//
-// Backward compatibility: the legacy engine-global mvccSequenceKey is read
-// once at engine open into b.mvccLegacyGlobalSeed. The first time any
-// namespace is touched, its starting sequence is set to
-// max(persisted-per-ns, legacyGlobalSeed) — guaranteeing that no version
-// in any namespace can ever sit at or below a sequence previously emitted
-// under the global counter, so MVCC head records persisted by older
-// binaries remain strictly older than anything we mint going forward.
+// namespaceMVCC seeds an unopened namespace from the durable sequence
+// ceiling, the legacy global key and surviving entity heads. Older
+// binaries stored the last committed sequence in the same eight bytes;
+// it is still a valid lower bound when opening that data.
 func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, error) {
 	if namespace == "" {
 		return nil, fmt.Errorf("namespaceMVCC: empty namespace")
@@ -119,15 +105,13 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 			persistKey: mvccNamespaceSequenceKey(namespace),
 		}
 		state.seq.Store(starting)
+		state.reservedThrough.Store(persisted)
 		if recoveredHighWater > 0 {
 			state.highWaterNanos.Store(recoveredHighWater)
 		}
 		b.mvccByNamespace[namespace] = state
 	}
 	b.mvccByNamespaceMu.Unlock()
-	if !ok && recoveredSeq > persisted {
-		b.persistMVCCSequence(namespace)
-	}
 	return state, nil
 }
 
@@ -150,10 +134,6 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 	if state.seq.Load() > 0 && state.highWaterNanos.Load() > 0 {
 		return nil
 	}
-	persisted, err := b.loadPersistedNamespaceSequence(namespace)
-	if err != nil {
-		return err
-	}
 	recoveredSeq, recoveredHighWater, err := b.recoverNamespaceMVCCFloor(namespace)
 	if err != nil {
 		return err
@@ -161,9 +141,6 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 	wantSeq := state.seq.Load()
 	if b.mvccLegacyGlobalSeed > wantSeq {
 		wantSeq = b.mvccLegacyGlobalSeed
-	}
-	if persisted > wantSeq {
-		wantSeq = persisted
 	}
 	if recoveredSeq > wantSeq {
 		wantSeq = recoveredSeq
@@ -187,9 +164,6 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 				break
 			}
 		}
-	}
-	if wantSeq > persisted {
-		b.persistMVCCSequence(namespace)
 	}
 	return nil
 }
@@ -236,7 +210,7 @@ func (b *BadgerEngine) snapshotNamespaceVersionsAt(ctx context.Context, now time
 	return out, ctx.Err()
 }
 
-// loadPersistedNamespaceSequence reads the persisted commit sequence for
+// loadPersistedNamespaceSequence reads the durable sequence ceiling for
 // namespace from disk; returns 0 if the key is absent (fresh namespace).
 func (b *BadgerEngine) loadPersistedNamespaceSequence(namespace string) (uint64, error) {
 	var seq uint64
@@ -281,14 +255,12 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 
 	err := b.withView(func(txn *badger.Txn) error {
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
-			opts := badgerIteratorOptions()
-			opts.Prefix = []byte{prefix}
-			it := txn.NewIterator(opts)
-			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+			// Seek to this namespace so a first write never walks other
+			// databases' primary keys while recovering its MVCC floors.
+			scanPrefix := append([]byte{prefix}, namespacePrefix...)
+			it := txn.NewIterator(badgerPrefixIteratorOptions(scanPrefix))
+			for it.Seek(scanPrefix); it.ValidForPrefix(scanPrefix); it.Next() {
 				key := it.Item().Key()
-				if len(key) <= 1 || !bytes.HasPrefix(key[1:], namespacePrefix) {
-					continue
-				}
 				if prefix == prefixNode {
 					head, err := b.loadNodeMVCCHeadInTxn(txn, NodeID(string(key[1:])))
 					if errors.Is(err, ErrNotFound) {

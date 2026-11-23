@@ -540,7 +540,7 @@ func (e *StorageExecutor) evaluateRowListParts(operationCtx context.Context, val
 // splitRowArithmeticTier splits at the rightmost top-level operator in one
 // precedence tier. Cypher's binary arithmetic operators are left-associative,
 // so evaluating the left side recursively preserves source order even when a
-// tier contains different operators.
+// tier contains different operators. CASE expressions are single operands.
 func splitRowArithmeticTier(expr, operators string) (left, right string, operator byte, ok bool) {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	var operatorMask [4]uint64
@@ -581,7 +581,18 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 			braceDepth--
 			continue
 		}
-		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 || operatorMask[current>>6]&(uint64(1)<<(current&63)) == 0 {
+		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
+			continue
+		}
+		if current|0x20 == 'c' && caseKeywordAt(expr, index, "CASE") {
+			remaining := expr[index:]
+			end := enclosingCaseBlockEnd(remaining, len("CASE"))
+			if end >= len("END")-1 && caseKeywordAt(remaining, end-len("END")+1, "END") {
+				index += end
+				continue
+			}
+		}
+		if operatorMask[current>>6]&(uint64(1)<<(current&63)) == 0 {
 			continue
 		}
 		if (current == '+' || current == '-') && rowArithmeticSignIsUnary(expr, index) {
@@ -624,7 +635,7 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 	leftNumber, leftIsNumber := strictNumericValue(left)
 	rightNumber, rightIsNumber := strictNumericValue(right)
 	if leftIsNumber || rightIsNumber {
-		if !leftIsNumber || !rightIsNumber {
+		if !leftIsNumber || !rightIsNumber || math.IsNaN(leftNumber) || math.IsNaN(rightNumber) {
 			return 0, false
 		}
 		switch {

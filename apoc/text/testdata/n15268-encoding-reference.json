@@ -1,0 +1,1384 @@
+[
+  {
+    "id": "urldecode_ED",
+    "function": "urldecode",
+    "args": [
+      "%ED"
+    ],
+    "reference": {
+      "id": "urldecode_ED",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_ED",
+    "function": "base64Decode",
+    "args": [
+      "7Q=="
+    ],
+    "reference": {
+      "id": "base64Decode_ED",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_EDA0",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0"
+    ],
+    "reference": {
+      "id": "urldecode_EDA0",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_EDA0",
+    "function": "base64Decode",
+    "args": [
+      "7aA="
+    ],
+    "reference": {
+      "id": "base64Decode_EDA0",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_EDA041",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0%41"
+    ],
+    "reference": {
+      "id": "urldecode_EDA041",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_EDA041",
+    "function": "base64Decode",
+    "args": [
+      "7aBB"
+    ],
+    "reference": {
+      "id": "base64Decode_EDA041",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "urldecode_EDA080",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0%80"
+    ],
+    "reference": {
+      "id": "urldecode_EDA080",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_EDA080",
+    "function": "base64Decode",
+    "args": [
+      "7aCA"
+    ],
+    "reference": {
+      "id": "base64Decode_EDA080",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_EDA0EDA080",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0%ED%A0%80"
+    ],
+    "reference": {
+      "id": "urldecode_EDA0EDA080",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_EDA0EDA080",
+    "function": "base64Decode",
+    "args": [
+      "7aDtoIA="
+    ],
+    "reference": {
+      "id": "base64Decode_EDA0EDA080",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_ED9F",
+    "function": "urldecode",
+    "args": [
+      "%ED%9F"
+    ],
+    "reference": {
+      "id": "urldecode_ED9F",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_ED9F",
+    "function": "base64Decode",
+    "args": [
+      "7Z8="
+    ],
+    "reference": {
+      "id": "base64Decode_ED9F",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_ED9F80",
+    "function": "urldecode",
+    "args": [
+      "%ED%9F%80"
+    ],
+    "reference": {
+      "id": "urldecode_ED9F80",
+      "kind": "value",
+      "value": "\ud7c0",
+      "units": [
+        55232
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_ED9F80",
+    "function": "base64Decode",
+    "args": [
+      "7Z+A"
+    ],
+    "reference": {
+      "id": "base64Decode_ED9F80",
+      "kind": "value",
+      "value": "\ud7c0",
+      "units": [
+        55232
+      ]
+    }
+  },
+  {
+    "id": "urldecode_EDBFBF",
+    "function": "urldecode",
+    "args": [
+      "%ED%BF%BF"
+    ],
+    "reference": {
+      "id": "urldecode_EDBFBF",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_EDBFBF",
+    "function": "base64Decode",
+    "args": [
+      "7b+/"
+    ],
+    "reference": {
+      "id": "base64Decode_EDBFBF",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_C0AF",
+    "function": "urldecode",
+    "args": [
+      "%C0%AF"
+    ],
+    "reference": {
+      "id": "urldecode_C0AF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_C0AF",
+    "function": "base64Decode",
+    "args": [
+      "wK8="
+    ],
+    "reference": {
+      "id": "base64Decode_C0AF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_C1BF",
+    "function": "urldecode",
+    "args": [
+      "%C1%BF"
+    ],
+    "reference": {
+      "id": "urldecode_C1BF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_C1BF",
+    "function": "base64Decode",
+    "args": [
+      "wb8="
+    ],
+    "reference": {
+      "id": "base64Decode_C1BF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_C2",
+    "function": "urldecode",
+    "args": [
+      "%C2"
+    ],
+    "reference": {
+      "id": "urldecode_C2",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_C2",
+    "function": "base64Decode",
+    "args": [
+      "wg=="
+    ],
+    "reference": {
+      "id": "base64Decode_C2",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_C241",
+    "function": "urldecode",
+    "args": [
+      "%C2%41"
+    ],
+    "reference": {
+      "id": "urldecode_C241",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_C241",
+    "function": "base64Decode",
+    "args": [
+      "wkE="
+    ],
+    "reference": {
+      "id": "base64Decode_C241",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "urldecode_C280",
+    "function": "urldecode",
+    "args": [
+      "%C2%80"
+    ],
+    "reference": {
+      "id": "urldecode_C280",
+      "kind": "value",
+      "value": "\u0080",
+      "units": [
+        128
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_C280",
+    "function": "base64Decode",
+    "args": [
+      "woA="
+    ],
+    "reference": {
+      "id": "base64Decode_C280",
+      "kind": "value",
+      "value": "\u0080",
+      "units": [
+        128
+      ]
+    }
+  },
+  {
+    "id": "urldecode_E2",
+    "function": "urldecode",
+    "args": [
+      "%E2"
+    ],
+    "reference": {
+      "id": "urldecode_E2",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_E2",
+    "function": "base64Decode",
+    "args": [
+      "4g=="
+    ],
+    "reference": {
+      "id": "base64Decode_E2",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_E282",
+    "function": "urldecode",
+    "args": [
+      "%E2%82"
+    ],
+    "reference": {
+      "id": "urldecode_E282",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_E282",
+    "function": "base64Decode",
+    "args": [
+      "4oI="
+    ],
+    "reference": {
+      "id": "base64Decode_E282",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_E28241",
+    "function": "urldecode",
+    "args": [
+      "%E2%82%41"
+    ],
+    "reference": {
+      "id": "urldecode_E28241",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_E28241",
+    "function": "base64Decode",
+    "args": [
+      "4oJB"
+    ],
+    "reference": {
+      "id": "base64Decode_E28241",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "urldecode_E08080",
+    "function": "urldecode",
+    "args": [
+      "%E0%80%80"
+    ],
+    "reference": {
+      "id": "urldecode_E08080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_E08080",
+    "function": "base64Decode",
+    "args": [
+      "4ICA"
+    ],
+    "reference": {
+      "id": "base64Decode_E08080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F0",
+    "function": "urldecode",
+    "args": [
+      "%F0"
+    ],
+    "reference": {
+      "id": "urldecode_F0",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F0",
+    "function": "base64Decode",
+    "args": [
+      "8A=="
+    ],
+    "reference": {
+      "id": "base64Decode_F0",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F090",
+    "function": "urldecode",
+    "args": [
+      "%F0%90"
+    ],
+    "reference": {
+      "id": "urldecode_F090",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F090",
+    "function": "base64Decode",
+    "args": [
+      "8JA="
+    ],
+    "reference": {
+      "id": "base64Decode_F090",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F09080",
+    "function": "urldecode",
+    "args": [
+      "%F0%90%80"
+    ],
+    "reference": {
+      "id": "urldecode_F09080",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F09080",
+    "function": "base64Decode",
+    "args": [
+      "8JCA"
+    ],
+    "reference": {
+      "id": "base64Decode_F09080",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F0908041",
+    "function": "urldecode",
+    "args": [
+      "%F0%90%80%41"
+    ],
+    "reference": {
+      "id": "urldecode_F0908041",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F0908041",
+    "function": "base64Decode",
+    "args": [
+      "8JCAQQ=="
+    ],
+    "reference": {
+      "id": "base64Decode_F0908041",
+      "kind": "value",
+      "value": "\ufffdA",
+      "units": [
+        65533,
+        65
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F0808080",
+    "function": "urldecode",
+    "args": [
+      "%F0%80%80%80"
+    ],
+    "reference": {
+      "id": "urldecode_F0808080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F0808080",
+    "function": "base64Decode",
+    "args": [
+      "8ICAgA=="
+    ],
+    "reference": {
+      "id": "base64Decode_F0808080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_F4908080",
+    "function": "urldecode",
+    "args": [
+      "%F4%90%80%80"
+    ],
+    "reference": {
+      "id": "urldecode_F4908080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_F4908080",
+    "function": "base64Decode",
+    "args": [
+      "9JCAgA=="
+    ],
+    "reference": {
+      "id": "base64Decode_F4908080",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd\ufffd",
+      "units": [
+        65533,
+        65533,
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_FFFF",
+    "function": "urldecode",
+    "args": [
+      "%FF%FF"
+    ],
+    "reference": {
+      "id": "urldecode_FFFF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_FFFF",
+    "function": "base64Decode",
+    "args": [
+      "//8="
+    ],
+    "reference": {
+      "id": "base64Decode_FFFF",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "urldecode_8081",
+    "function": "urldecode",
+    "args": [
+      "%80%81"
+    ],
+    "reference": {
+      "id": "urldecode_8081",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "base64Decode_8081",
+    "function": "base64Decode",
+    "args": [
+      "gIE="
+    ],
+    "reference": {
+      "id": "base64Decode_8081",
+      "kind": "value",
+      "value": "\ufffd\ufffd",
+      "units": [
+        65533,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "mixed_50",
+    "function": "urldecode",
+    "args": [
+      "\ud800%41"
+    ],
+    "reference": {
+      "id": "mixed_50",
+      "kind": "value",
+      "value": "\ud800A",
+      "units": [
+        55296,
+        65
+      ]
+    }
+  },
+  {
+    "id": "mixed_51",
+    "function": "urldecode",
+    "args": [
+      "%41\ud800"
+    ],
+    "reference": {
+      "id": "mixed_51",
+      "kind": "value",
+      "value": "A\ud800",
+      "units": [
+        65,
+        55296
+      ]
+    }
+  },
+  {
+    "id": "mixed_52",
+    "function": "urldecode",
+    "args": [
+      "\ud800%C3%28\udfff"
+    ],
+    "reference": {
+      "id": "mixed_52",
+      "kind": "value",
+      "value": "\ud800\ufffd(\udfff",
+      "units": [
+        55296,
+        65533,
+        40,
+        57343
+      ]
+    }
+  },
+  {
+    "id": "mixed_53",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0x%80"
+    ],
+    "reference": {
+      "id": "mixed_53",
+      "kind": "value",
+      "value": "\ufffdx\ufffd",
+      "units": [
+        65533,
+        120,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "mixed_54",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0%80"
+    ],
+    "reference": {
+      "id": "mixed_54",
+      "kind": "value",
+      "value": "\ufffd",
+      "units": [
+        65533
+      ]
+    }
+  },
+  {
+    "id": "mixed_55",
+    "function": "urldecode",
+    "args": [
+      "\ud800"
+    ],
+    "reference": {
+      "id": "mixed_55",
+      "kind": "value",
+      "value": "\ud800",
+      "units": [
+        55296
+      ]
+    }
+  },
+  {
+    "id": "mixed_56",
+    "function": "urldecode",
+    "args": [
+      "\ud83d\ude00%41"
+    ],
+    "reference": {
+      "id": "mixed_56",
+      "kind": "value",
+      "value": "\ud83d\ude00A",
+      "units": [
+        55357,
+        56832,
+        65
+      ]
+    }
+  },
+  {
+    "id": "mixed_57",
+    "function": "urldecode",
+    "args": [
+      "%E2%82x%AC"
+    ],
+    "reference": {
+      "id": "mixed_57",
+      "kind": "value",
+      "value": "\ufffdx\ufffd",
+      "units": [
+        65533,
+        120,
+        65533
+      ]
+    }
+  },
+  {
+    "id": "compare_58",
+    "function": "compareCleaned",
+    "args": [
+      "\u00c9 a \u03bb-42!",
+      "ea\u03bb42"
+    ],
+    "reference": {
+      "id": "compare_58",
+      "kind": "value",
+      "value": true
+    }
+  },
+  {
+    "id": "compare_59",
+    "function": "compareCleaned",
+    "args": [
+      "a b",
+      "ab"
+    ],
+    "reference": {
+      "id": "compare_59",
+      "kind": "value",
+      "value": true
+    }
+  },
+  {
+    "id": "compare_60",
+    "function": "compareCleaned",
+    "args": [
+      "Hello!",
+      "hello"
+    ],
+    "reference": {
+      "id": "compare_60",
+      "kind": "value",
+      "value": true
+    }
+  },
+  {
+    "id": "compare_61",
+    "function": "compareCleaned",
+    "args": [
+      "\u00c9",
+      "e"
+    ],
+    "reference": {
+      "id": "compare_61",
+      "kind": "value",
+      "value": true
+    }
+  },
+  {
+    "id": "compare_62",
+    "function": "compareCleaned",
+    "args": [
+      "a",
+      "b"
+    ],
+    "reference": {
+      "id": "compare_62",
+      "kind": "value",
+      "value": false
+    }
+  },
+  {
+    "id": "boundary_0",
+    "function": "base64Decode",
+    "args": [
+      "Zg"
+    ],
+    "reference": {
+      "id": "boundary_0",
+      "kind": "value",
+      "value": "f"
+    }
+  },
+  {
+    "id": "boundary_1",
+    "function": "base64Decode",
+    "args": [
+      "Zg="
+    ],
+    "reference": {
+      "id": "boundary_1",
+      "kind": "function_error",
+      "error": "java.lang.IllegalArgumentException: Input byte array has wrong 4-byte ending unit"
+    }
+  },
+  {
+    "id": "boundary_2",
+    "function": "base64Decode",
+    "args": [
+      "Zg=="
+    ],
+    "reference": {
+      "id": "boundary_2",
+      "kind": "value",
+      "value": "f"
+    }
+  },
+  {
+    "id": "boundary_3",
+    "function": "base64Decode",
+    "args": [
+      "Zg==="
+    ],
+    "reference": {
+      "id": "boundary_3",
+      "kind": "function_error",
+      "error": "java.lang.IllegalArgumentException: Input byte array has incorrect ending byte at 4"
+    }
+  },
+  {
+    "id": "boundary_4",
+    "function": "base64Decode",
+    "args": [
+      "Z\ng=="
+    ],
+    "reference": {
+      "id": "boundary_4",
+      "kind": "function_error",
+      "error": "java.lang.IllegalArgumentException: Illegal base64 character a"
+    }
+  },
+  {
+    "id": "boundary_5",
+    "function": "base64Decode",
+    "args": [
+      "Z\rg=="
+    ],
+    "reference": {
+      "id": "boundary_5",
+      "kind": "function_error",
+      "error": "java.lang.IllegalArgumentException: Illegal base64 character d"
+    }
+  },
+  {
+    "id": "boundary_6",
+    "function": "base64Decode",
+    "args": [
+      "Zh=="
+    ],
+    "reference": {
+      "id": "boundary_6",
+      "kind": "value",
+      "value": "f"
+    }
+  },
+  {
+    "id": "boundary_7",
+    "function": "base64Decode",
+    "args": [
+      "/w=="
+    ],
+    "reference": {
+      "id": "boundary_7",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_8",
+    "function": "base64Decode",
+    "args": [
+      "//8="
+    ],
+    "reference": {
+      "id": "boundary_8",
+      "kind": "value",
+      "value": "\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "boundary_9",
+    "function": "base64Decode",
+    "args": [
+      "wMA="
+    ],
+    "reference": {
+      "id": "boundary_9",
+      "kind": "value",
+      "value": "\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "boundary_10",
+    "function": "base64Decode",
+    "args": [
+      "7aCA"
+    ],
+    "reference": {
+      "id": "boundary_10",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_11",
+    "function": "base64Decode",
+    "args": [
+      "8J8="
+    ],
+    "reference": {
+      "id": "boundary_11",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_12",
+    "function": "urldecode",
+    "args": [
+      "%FF%FF"
+    ],
+    "reference": {
+      "id": "boundary_12",
+      "kind": "value",
+      "value": "\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "boundary_13",
+    "function": "urldecode",
+    "args": [
+      "%C0%AF"
+    ],
+    "reference": {
+      "id": "boundary_13",
+      "kind": "value",
+      "value": "\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "boundary_14",
+    "function": "urldecode",
+    "args": [
+      "%ED%A0%80"
+    ],
+    "reference": {
+      "id": "boundary_14",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_15",
+    "function": "urldecode",
+    "args": [
+      "%E2%82"
+    ],
+    "reference": {
+      "id": "boundary_15",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_16",
+    "function": "urldecode",
+    "args": [
+      "%C3%28"
+    ],
+    "reference": {
+      "id": "boundary_16",
+      "kind": "value",
+      "value": "\ufffd("
+    }
+  },
+  {
+    "id": "boundary_17",
+    "function": "urldecode",
+    "args": [
+      "%F0%90%80"
+    ],
+    "reference": {
+      "id": "boundary_17",
+      "kind": "value",
+      "value": "\ufffd"
+    }
+  },
+  {
+    "id": "boundary_18",
+    "function": "urldecode",
+    "args": [
+      "%F4%90%80%80"
+    ],
+    "reference": {
+      "id": "boundary_18",
+      "kind": "value",
+      "value": "\ufffd\ufffd\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "boundary_19",
+    "function": "urldecode",
+    "args": [
+      "%80%81"
+    ],
+    "reference": {
+      "id": "boundary_19",
+      "kind": "value",
+      "value": "\ufffd\ufffd"
+    }
+  },
+  {
+    "id": "urlencode_0",
+    "function": "urlencode",
+    "args": [
+      "\ud800"
+    ],
+    "reference": {
+      "id": "urlencode_0",
+      "kind": "value",
+      "value": "%3F",
+      "units": [
+        37,
+        51,
+        70
+      ]
+    }
+  },
+  {
+    "id": "urlencode_1",
+    "function": "urlencode",
+    "args": [
+      "A\udfffB"
+    ],
+    "reference": {
+      "id": "urlencode_1",
+      "kind": "value",
+      "value": "A%3FB",
+      "units": [
+        65,
+        37,
+        51,
+        70,
+        66
+      ]
+    }
+  },
+  {
+    "id": "urlencode_2",
+    "function": "urlencode",
+    "args": [
+      "\ud83d\ude00"
+    ],
+    "reference": {
+      "id": "urlencode_2",
+      "kind": "value",
+      "value": "%F0%9F%98%80",
+      "units": [
+        37,
+        70,
+        48,
+        37,
+        57,
+        70,
+        37,
+        57,
+        56,
+        37,
+        56,
+        48
+      ]
+    }
+  },
+  {
+    "id": "urlencode_3",
+    "function": "urlencode",
+    "args": [
+      "a *~"
+    ],
+    "reference": {
+      "id": "urlencode_3",
+      "kind": "value",
+      "value": "a+*%7E",
+      "units": [
+        97,
+        43,
+        42,
+        37,
+        55,
+        69
+      ]
+    }
+  },
+  {
+    "id": "base64Encode_0",
+    "function": "base64Encode",
+    "args": [
+      "\ud800"
+    ],
+    "reference": {
+      "id": "base64Encode_0",
+      "kind": "value",
+      "value": "Pw==",
+      "units": [
+        80,
+        119,
+        61,
+        61
+      ]
+    }
+  },
+  {
+    "id": "base64Encode_1",
+    "function": "base64Encode",
+    "args": [
+      "A\udfffB"
+    ],
+    "reference": {
+      "id": "base64Encode_1",
+      "kind": "value",
+      "value": "QT9C",
+      "units": [
+        81,
+        84,
+        57,
+        67
+      ]
+    }
+  },
+  {
+    "id": "base64Encode_2",
+    "function": "base64Encode",
+    "args": [
+      "\ud83d\ude00"
+    ],
+    "reference": {
+      "id": "base64Encode_2",
+      "kind": "value",
+      "value": "8J+YgA==",
+      "units": [
+        56,
+        74,
+        43,
+        89,
+        103,
+        65,
+        61,
+        61
+      ]
+    }
+  },
+  {
+    "id": "base64Encode_3",
+    "function": "base64Encode",
+    "args": [
+      "a *~"
+    ],
+    "reference": {
+      "id": "base64Encode_3",
+      "kind": "value",
+      "value": "YSAqfg==",
+      "units": [
+        89,
+        83,
+        65,
+        113,
+        102,
+        103,
+        61,
+        61
+      ]
+    }
+  }
+]

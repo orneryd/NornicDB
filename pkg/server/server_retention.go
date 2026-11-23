@@ -13,13 +13,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/retention"
 )
 
-func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *retention.Manager {
+func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request, operation retentionOperation) *retention.Manager {
 	permissions := []auth.Permission{auth.PermRead, auth.PermAdmin}
 	if r.Method != http.MethodGet {
 		permissions = append(permissions, auth.PermWrite)
 	}
 	// Retention records and sweeps use DB.storage, the default namespace.
-	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), permissions...) {
+	if !s.authorizeFineGrainedDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), retentionActions[operation][r.Method], permissions...) {
 		return nil
 	}
 	rm := s.db.GetRetentionManager()
@@ -44,10 +44,22 @@ const (
 	retentionStatusRoute
 )
 
+var retentionActions = map[retentionOperation]map[string]string{
+	retentionPoliciesRoute: {http.MethodGet: "retention.policy.list", http.MethodPost: "retention.policy.create"},
+	retentionPolicyRoute:   {http.MethodGet: "retention.policy.read", http.MethodPut: "retention.policy.update", http.MethodDelete: "retention.policy.delete"},
+	retentionDefaultsRoute: {http.MethodPost: "retention.defaults.update"},
+	retentionHoldsRoute:    {http.MethodGet: "retention.hold.list", http.MethodPost: "retention.hold.create"},
+	retentionHoldRoute:     {http.MethodDelete: "retention.hold.delete"},
+	retentionErasuresRoute: {http.MethodGet: "retention.erasure.list", http.MethodPost: "retention.erasure.create"},
+	retentionProcessRoute:  {http.MethodPost: "retention.erasure.process"},
+	retentionSweepRoute:    {http.MethodPost: "retention.sweep"},
+	retentionStatusRoute:   {http.MethodGet: "retention.status"},
+}
+
 // handleRetention owns the administrative retention request boundary. The
 // original method, ID-validation order and manager transitions remain per route.
 func (s *Server) handleRetention(w http.ResponseWriter, r *http.Request, operation retentionOperation) {
-	rm := s.retentionManagerOr503(w, r)
+	rm := s.retentionManagerOr503(w, r, operation)
 	if rm == nil {
 		return
 	}

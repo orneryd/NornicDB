@@ -1,0 +1,123 @@
+# NOR-81 reference evidence (verbatim excerpts)
+
+Provenance: extracted programmatically from the inline code blocks of the
+Plane N152-148 card (`/tmp/n152-148-ticket.json`). The source script blocks are
+`/tmp/nor79-82-reference.sh` (ticket block 2 of 7) and `/tmp/nor80-81-reference.sh`
+(block 3 of 7); the result blocks are `/tmp/nor79-82-reference-results.log`
+(block 4 of 7) and `/tmp/nor80-81-reference-results.log` (block 5 of 7). Added text is
+limited to these headers. Result logs begin with an SSH post-quantum warning at
+the top of the connection; it is omitted here as transport noise, and each
+excerpt begins at the first statement label it quotes. Headers are not part
+of the original evidence.
+
+## Exact NOR-81 script sections (Neo4j 5.26.30 reference run)
+
+```bash
+printf "%s\n" '81-accept RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-accept EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-accept PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN any(x IN timestamp() WHERE true) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject RUN'
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject EXPLAIN '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '81-list-reject PROFILE '
+cypher-shell --non-interactive --format plain -P '{i:5,f:1.5}' <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN [x IN date() | x] AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+```
+
+```bash
+printf "%s\n" '3 RUN'
+cypher-shell --non-interactive --format plain <<'CYPHER'
+UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '3 EXPLAIN '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+EXPLAIN UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+printf "%s\n" '3 PROFILE '
+cypher-shell --non-interactive --format plain <<'CYPHER'
+PROFILE UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a;
+CYPHER
+printf "exit=%s\n" "$?"
+```
+
+## Exact result sections
+
+```text
+81-accept RUN
+exit=0
+81-accept EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+exit=0
+81-accept PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 13
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+81-list-reject RUN
+Type mismatch: expected List<T> but was Date (line 1, column 29 (offset: 28))
+"UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                             ^
+exit=1
+81-list-reject EXPLAIN 
+Type mismatch: expected List<T> but was Date (line 1, column 37 (offset: 36))
+"EXPLAIN UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                                     ^
+exit=1
+81-list-reject PROFILE 
+Type mismatch: expected List<T> but was Date (line 1, column 37 (offset: 36))
+"PROFILE UNWIND [] AS s RETURN [x IN date() | x] AS a"
+                                     ^
+exit=1
+```
+
+```text
+3 RUN
+Type mismatch: expected List<T> but was Integer (line 1, column 42 (offset: 41))
+"UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                          ^
+exit=1
+3 EXPLAIN 
+Type mismatch: expected List<T> but was Integer (line 1, column 50 (offset: 49))
+"EXPLAIN UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                                  ^
+exit=1
+3 PROFILE 
+Type mismatch: expected List<T> but was Integer (line 1, column 50 (offset: 49))
+"PROFILE UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                                  ^
+exit=1
+```

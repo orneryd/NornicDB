@@ -2,12 +2,12 @@ package cypher
 
 // Author: NOR-406 retrieval-profile lane, 2026-11-01: public Cypher screening
 // benchmark. It measures db.retrieve and db.rretrieve over a SearchSource
-// population at three sizes, as a one-shot search, as the first page of a
+// population at small and production-reported sizes, as a one-shot search, as the first page of a
 // ranked continuation, and as five pages of one continuation, with and without
 // the retrieval "where" pattern that retrieve_where_test.go establishes, at one
 // and sixteen concurrent workers.
 //
-// Workload: 12,500 / 25,000 / 49,000 synthetic SearchSource nodes belong to 356
+// Workload: 1,000 / 2,000 / 12,500 / 25,000 / 49,000 synthetic SearchSource nodes belong to 356
 // source groups. Each group has one Document, one Version and one Collection
 // edge set, so the EXISTS pattern (node)<-[:HAS_SOURCE]-(v:Version)
 // <-[:HAS_VERSION]-(:Document)-[:MEMBER_OF]->(c:Collection) can admit a node.
@@ -78,7 +78,7 @@ const (
 // nor406PopulationSizes is the population ladder. Each size is one benchmark
 // level, so the standard benchmark regex selects sizes and cases; there is no
 // environment knob.
-var nor406PopulationSizes = []int{12500, 25000, 49000}
+var nor406PopulationSizes = []int{1000, 2000, 12500, 25000, 49000}
 
 // BenchmarkSearchSourceRetrieval qualifies public retrieval at each corpus
 // size. One disposable fixture serves the operation/filter/concurrency matrix;
@@ -200,10 +200,19 @@ func nor406PopulationName(population int) string {
 
 // newNOR406RetrievalFixture creates the graph, indexes it, and returns the
 // shared values. The search response cache must already be off.
-func newNOR406RetrievalFixture(b *testing.B, population int) *nor406RetrievalFixture {
-	b.Helper()
-	ctx := b.Context()
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "nor406")
+func newNOR406RetrievalFixture(tb testing.TB, population int) *nor406RetrievalFixture {
+	tb.Helper()
+	return newNOR406RetrievalFixtureOnEngine(tb, population, newTestMemoryEngine(tb))
+}
+
+// newNOR406RetrievalFixtureOnEngine is newNOR406RetrievalFixture over a
+// caller-supplied engine. The graph, the indexes and the request values stay
+// the benchmark's, so a test that observes that engine measures the same
+// public retrieval the benchmark qualifies.
+func newNOR406RetrievalFixtureOnEngine(tb testing.TB, population int, engine storage.Engine) *nor406RetrievalFixture {
+	tb.Helper()
+	ctx := tb.Context()
+	store := storage.NewNamespacedEngine(engine, "nor406")
 
 	nodes := make([]*storage.Node, 0, nor406Collections+2*nor406SourceGroups+population)
 	edges := make([]*storage.Edge, 0, 2*nor406SourceGroups+population)
@@ -251,17 +260,17 @@ func newNOR406RetrievalFixture(b *testing.B, population int) *nor406RetrievalFix
 		})
 	}
 
-	nor406BulkCreateNodes(b, store, nodes)
-	nor406BulkCreateEdges(b, store, edges)
+	nor406BulkCreateNodes(tb, store, nodes)
+	nor406BulkCreateEdges(tb, store, edges)
 
 	service := search.NewService(store, nor406EmbeddingDimensions, nil)
-	b.Cleanup(func() {
+	tb.Cleanup(func() {
 		if err := service.Close(); err != nil {
-			b.Errorf("close search service: %v", err)
+			tb.Errorf("close search service: %v", err)
 		}
 	})
 	if err := service.BuildIndexes(ctx); err != nil {
-		b.Fatalf("build search indexes: %v", err)
+		tb.Fatalf("build search indexes: %v", err)
 	}
 
 	fixture := &nor406RetrievalFixture{
@@ -580,24 +589,24 @@ func nor406SourceContent(index int) string {
 	return strings.Repeat(nor406ContentSentence, 8) + "Source record " + strconv.Itoa(index) + "."
 }
 
-func nor406BulkCreateNodes(b *testing.B, store *storage.NamespacedEngine, nodes []*storage.Node) {
-	b.Helper()
+func nor406BulkCreateNodes(tb testing.TB, store *storage.NamespacedEngine, nodes []*storage.Node) {
+	tb.Helper()
 	const chunk = 500
 	for start := 0; start < len(nodes); start += chunk {
 		end := min(start+chunk, len(nodes))
-		if err := store.BulkCreateNodes(b.Context(), nodes[start:end]); err != nil {
-			b.Fatalf("create nodes %d-%d: %v", start, end, err)
+		if err := store.BulkCreateNodes(tb.Context(), nodes[start:end]); err != nil {
+			tb.Fatalf("create nodes %d-%d: %v", start, end, err)
 		}
 	}
 }
 
-func nor406BulkCreateEdges(b *testing.B, store *storage.NamespacedEngine, edges []*storage.Edge) {
-	b.Helper()
+func nor406BulkCreateEdges(tb testing.TB, store *storage.NamespacedEngine, edges []*storage.Edge) {
+	tb.Helper()
 	const chunk = 2000
 	for start := 0; start < len(edges); start += chunk {
 		end := min(start+chunk, len(edges))
-		if err := store.BulkCreateEdges(b.Context(), edges[start:end]); err != nil {
-			b.Fatalf("create edges %d-%d: %v", start, end, err)
+		if err := store.BulkCreateEdges(tb.Context(), edges[start:end]); err != nil {
+			tb.Fatalf("create edges %d-%d: %v", start, end, err)
 		}
 	}
 }

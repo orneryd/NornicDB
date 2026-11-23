@@ -43,7 +43,7 @@ func (e *StorageExecutor) validateStatementTypes(ctx context.Context, cypher str
 	// form (PR #1043 #6), looked up only when the exact text misses: a
 	// canonical hit still runs the lexical check on its own text, then
 	// returns.
-	cacheable := len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
+	cacheable := !hasConditionalFrames(ctx) && len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
 	cached := cacheable && e.semanticValidationCache.contains(cacheKey)
 	var canonical string
 	var normalized bool

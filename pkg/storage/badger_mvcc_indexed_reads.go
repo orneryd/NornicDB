@@ -76,11 +76,16 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	return node, nil
 }
 
-// getNodeProjectedVisibleAtInTxn is the MVCC node kernel for a projected
+type projectedNodeRead struct {
+	properties []string
+	visibility readVisibility
+}
+
+// getNodeProjectedAtInTxn is the MVCC node kernel for a projected
 // read. The visibility resolution (MVCC head) is identical; only the body
 // decode and embedding hydration are skipped.
-func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
-	include := propertyProjectionSet(properties)
+func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, projection projectedNodeRead) (*Node, error) {
+	include := propertyProjectionSet(projection.properties)
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -107,7 +112,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			}); err != nil {
 				return nil, err
 			}
-			if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
+			if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -140,8 +145,8 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := projectCachedNodeForRead(record.Node, properties, true)
-	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
+	node := projectCachedNodeForRead(record.Node, projection.properties, true)
+	if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil

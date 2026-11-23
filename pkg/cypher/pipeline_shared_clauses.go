@@ -27,7 +27,7 @@ func cypherGrammarVersion(query string) string {
 			version = rest[:end]
 			rest = strings.TrimSpace(rest[end:])
 		}
-		for rest != "" && !startsWithClauseKeyword(rest) {
+		for rest != "" && !startsCypherPreambleBody(rest) {
 			end := strings.IndexFunc(rest, cyphertext.IsWhitespace)
 			if end < 0 {
 				rest = ""
@@ -232,8 +232,8 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 			return err
 		}
 		types[projection.alias] = projectedOperand(ctx, types, input, projection.expression)
-		next := types.static(input.cypher25)
-		next.params, next.complete = input.params, input.complete
+		next := types.static(input.cypher25, input.params)
+		next.complete = input.complete
 		input = next
 	}
 	return e.validateStaticOperatorTypes(ctx, clause, input, nil, nil)

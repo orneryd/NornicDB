@@ -8,6 +8,7 @@ import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -402,8 +403,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 	}
 
-	// Relationship inline equality values a declared relationship constraint
-	// indexes select the pattern's relationship from the relationship equality
+	// Relationship inline equality values a declared relationship RANGE index
+	// covers select the pattern's relationship from the relationship equality
 	// index, before any type scan. The pin below then keeps the relationship's
 	// type, direction, inline properties, endpoint admission and the WHERE with
 	// their existing owners, and no indexed relationship means no match at all.
@@ -445,11 +446,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// answered. An empty answer means no path starts anywhere; scanning the
 	// start label again would only find the same nothing.
 	startDecided := false
-	// A bound end node with an unbound start is where a non-chained pattern
-	// starts (traverseFromEndSeeds): searching the start side first, for
+	// A bound end with an unbound start is the traversal seed when the
+	// pattern can run backwards (traverseFromEndSeeds): searching the start side first, for
 	// instance for every node whose property the WHERE requires to be non-null,
 	// only finds a population the bound end reaches by its own relationships.
-	endBound := len(seedNodes) == 0 && len(endSeedNodes) > 0 && !matches.IsChained
+	endBound := len(seedNodes) == 0 && len(endSeedNodes) > 0 && matches.canSeedEnd()
 	// Inline preparation without WHERE must not hydrate a common posting
 	// merely to discard it after choosing the opposite endpoint. Existing
 	// posting counts can prove a zero/single candidate seek before reading it.
@@ -866,7 +867,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 	return false
 }
 
-// traverseFromEndSeeds walks a non-chained pattern backwards from nodes
+// traverseFromEndSeeds walks a pattern backwards from nodes
 // already bound to its end variable, when no start-side seed exists. Rather
 // than expanding the pattern over every relationship in the store and joining
 // the bound value afterward (O(|E|)), it reverses the pattern, traverses from
@@ -877,7 +878,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 // properties and node visibility the end pattern requires are the ones a
 // start-side scan applies, including for a seed an index seek returned.
 func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
-	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
+	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 {
 		return nil, false
 	}
 	reversed := reverseTraversalMatch(matches)
@@ -885,9 +886,15 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 		return nil, false
 	}
 	paths = make([]PathResult, 0, util.SafePreallocCap(len(endSeedNodes)))
-	for _, endNode := range endSeedNodes {
-		for _, reversedPath := range e.traverseFromNode(ctx, endNode, reversed) {
-			paths = append(paths, reversePathResult(reversedPath))
+	if reversed.IsChained {
+		for _, path := range e.traverseChainedGraph(ctx, reversed, endSeedNodes) {
+			paths = append(paths, reversePathResult(path))
+		}
+	} else {
+		for _, endNode := range endSeedNodes {
+			for _, path := range e.traverseFromNode(ctx, endNode, reversed) {
+				paths = append(paths, reversePathResult(path))
+			}
 		}
 	}
 	if whereClause != "" {
@@ -896,26 +903,51 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 	return paths, true
 }
 
+// canSeedEnd retains the single-segment contract and admits fixed chains
+// whose segment topology can be reversed without changing their quantifiers.
+func (match *TraversalMatch) canSeedEnd() bool {
+	if match == nil {
+		return false
+	}
+	if !match.IsChained {
+		return true
+	}
+	if len(match.Segments) < 2 {
+		return false
+	}
+	for _, segment := range match.Segments {
+		relationship := segment.Relationship
+		if relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
+			return false
+		}
+	}
+	return true
+}
+
 func reverseTraversalMatch(match *TraversalMatch) *TraversalMatch {
-	if match == nil || match.IsChained {
+	if !match.canSeedEnd() {
 		return nil
 	}
 	reversed := *match
-	reversed.StartNode = match.EndNode
-	reversed.EndNode = match.StartNode
-	reversed.Relationship = match.Relationship
-	// The read tail's endpoint projection names the original end node's
-	// properties; the reversed walk loads the original start node as its end,
-	// so it loads complete endpoints.
+	reversed.StartNode, reversed.EndNode = match.EndNode, match.StartNode
+	// The tail's endpoint projection names the original end. A reversed
+	// walk loads the original start as its end and needs complete entities.
 	reversed.endpointProperties = nil
-	switch match.Relationship.Direction {
-	case "outgoing":
-		reversed.Relationship.Direction = "incoming"
-	case "incoming":
-		reversed.Relationship.Direction = "outgoing"
-	default:
-		reversed.Relationship.Direction = match.Relationship.Direction
+	if !match.IsChained {
+		reversed.Relationship.Direction = reverseDirection(match.Relationship.Direction)
+		return &reversed
 	}
+
+	reversed.Segments = slices.Clone(match.Segments)
+	slices.Reverse(reversed.Segments)
+	for i := range reversed.Segments {
+		segment := &reversed.Segments[i]
+		segment.FromNode, segment.ToNode = segment.ToNode, segment.FromNode
+		segment.Relationship.Direction = reverseDirection(segment.Relationship.Direction)
+	}
+	reversed.Relationship = reversed.Segments[0].Relationship
+	reversed.IntermediateNodes = slices.Clone(match.IntermediateNodes)
+	slices.Reverse(reversed.IntermediateNodes)
 	return &reversed
 }
 
@@ -928,7 +960,9 @@ func reversePathResult(path PathResult) PathResult {
 	for i := range path.Relationships {
 		reversedEdges[len(path.Relationships)-1-i] = path.Relationships[i]
 	}
-	return PathResult{Nodes: reversedNodes, Relationships: reversedEdges, Length: path.Length}
+	reversedLengths := slices.Clone(path.SegmentLengths)
+	slices.Reverse(reversedLengths)
+	return PathResult{Nodes: reversedNodes, Relationships: reversedEdges, Length: path.Length, SegmentLengths: reversedLengths}
 }
 
 func topKSeedLimit(limit int) int {
@@ -1041,6 +1075,9 @@ type TraversalMatch struct {
 	// conjuncts as soon as a path prefix binds every variable it names
 	// (chainPrefixPrune), so a prefix that fails it is not extended.
 	pruneWhere string
+	// preparedPrune is immutable statement-owned prefix syntax, when supplied.
+	// Each evaluation keeps its predicate selection state local.
+	preparedPrune *chainPrefixPrune
 }
 
 // TraversalSegment represents one segment in a chained pattern
@@ -1705,7 +1742,10 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 		currentPaths = e.traverseGraph(ctx, simpleMatch)
 	}
 	repeats := chainRepeatedNodes(match.Segments)
-	prune := e.newChainPrefixPrune(ctx, match)
+	prune := match.preparedPrune
+	if prune == nil {
+		prune = e.newChainPrefixPrune(ctx, match)
+	}
 	kept := currentPaths[:0]
 	for _, path := range currentPaths {
 		path.SegmentLengths = []int{len(path.Relationships)}
@@ -1778,163 +1818,6 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	}
 
 	return currentPaths
-}
-
-// chainPrefixPrune applies a chain's WHERE (TraversalMatch.pruneWhere) to its
-// path prefixes: after k segments, the conjuncts whose every variable the
-// first k segments bind, which no later segment can change. A prefix that
-// fails one is not extended: its complete paths would fail the same conjunct
-// in the WHERE the caller still applies to them. Conjuncts that name the path
-// variable, a variable bound only later or outside the pattern, or no
-// variable, or that hold a subquery expression, or that are not
-// deterministic, wait for that WHERE.
-type chainPrefixPrune struct {
-	levels []chainPrefixLevel // levels[k-1]: after k segments
-}
-
-type chainPrefixLevel struct {
-	match *TraversalMatch // the chain's first k segments
-	where *preparedRowPredicate
-}
-
-func (e *StorageExecutor) newChainPrefixPrune(ctx context.Context, match *TraversalMatch) *chainPrefixPrune {
-	if match.pruneWhere == "" || len(match.Segments) < 2 || len(match.IntermediateNodes) < len(match.Segments)-1 {
-		return nil
-	}
-	conjuncts := splitTopLevelAndConjuncts(ctx, strings.TrimSpace(match.pruneWhere))
-	decided := make([]bool, len(conjuncts))
-	bound := map[string]bool{}
-	bind := func(name string) {
-		if name != "" {
-			bound[name] = true
-		}
-	}
-	bind(match.Segments[0].FromNode.variable)
-	prune := &chainPrefixPrune{levels: make([]chainPrefixLevel, len(match.Segments)-1)}
-	found := false
-	for k := 1; k < len(match.Segments); k++ {
-		segment := match.Segments[k-1]
-		bind(segment.Relationship.Variable)
-		bind(segment.ToNode.variable)
-		var parts []string
-		for i, conjunct := range conjuncts {
-			if decided[i] || !chainPrefixDecides(ctx, conjunct, bound, match.PathVariable) {
-				continue
-			}
-			decided[i] = true
-			parts = append(parts, "("+conjunct+")")
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		found = true
-		prune.levels[k-1] = chainPrefixLevel{match: chainPrefixMatch(match, k), where: prepareRowPredicate(strings.Join(parts, " AND "))}
-	}
-	if !found {
-		return nil
-	}
-	return prune
-}
-
-// chainPrefixDecides reports whether conjunct can be decided on a path prefix
-// that binds bound.
-func chainPrefixDecides(ctx context.Context, conjunct string, bound map[string]bool, pathVariable string) bool {
-	if referencesVariable(conjunct, pathVariable) || !chainConjunctIsStable(ctx, conjunct) {
-		return false
-	}
-	// A subquery expression (EXISTS / COUNT / COLLECT { … }) reads outer
-	// variables in its body, which expressionFreeVariables does not list: a
-	// conjunct that holds one waits for the final WHERE, where every variable
-	// its body may read is bound.
-	if mayContainSubqueryExpression(conjunct) && len(findSubqueryExpressions(conjunct)) > 0 {
-		return false
-	}
-	names := expressionFreeVariables(ctx, conjunct)
-	if len(names) == 0 {
-		return false
-	}
-	for _, name := range names {
-		if name == pathVariable || !bound[name] {
-			return false
-		}
-	}
-	return true
-}
-
-// chainConjunctIsStable reports whether every function call in conjunct returns
-// the same value when the statement evaluates it again. The function catalog's
-// volatility declarations own that decision, so no spelling of a call decides
-// it: a call the catalog does not declare (a plugin's function, for example) or
-// declares volatile is not stable, and neither is a function that is volatile
-// only without arguments unless the call has one.
-func chainConjunctIsStable(ctx context.Context, conjunct string) bool {
-	stable := true
-	err := forEachFunctionInvocation(ctx, conjunct, func(name, normalized string, open int) error {
-		if !stable {
-			return nil
-		}
-		volatility, args, known := stableFunctionInvocation(conjunct, normalized, open)
-		if !known {
-			stable = false
-			return nil
-		}
-		if PluginFunctionLookup != nil {
-			if _, opaque := PluginFunctionLookup(name); opaque {
-				stable = false
-				return nil
-			}
-		}
-		if volatility == functionTemporalConstructor {
-			for _, argument := range args {
-				value, known := compileExecutionInput(argument, 1)
-				if !known || value.bound {
-					stable = false
-					return nil
-				}
-				if _, text := value.literal.(string); !text {
-					stable = false
-					return nil
-				}
-			}
-		}
-		return nil
-	})
-	return err == nil && stable
-}
-
-// chainPrefixMatch is match's first k segments as a pattern of their own, so
-// buildPathContext binds a k-segment prefix's variables.
-func chainPrefixMatch(match *TraversalMatch, k int) *TraversalMatch {
-	segments := match.Segments[:k]
-	prefix := &TraversalMatch{
-		StartNode:    match.StartNode,
-		EndNode:      segments[k-1].ToNode,
-		Relationship: segments[k-1].Relationship,
-		Segments:     segments,
-	}
-	if k > 1 {
-		prefix.IsChained = true
-		prefix.IntermediateNodes = match.IntermediateNodes[:k-1]
-	}
-	return prefix
-}
-
-// keep returns the paths of k segments whose prefix passes the conjuncts
-// decided after k segments.
-func (p *chainPrefixPrune) keep(ctx context.Context, e *StorageExecutor, paths []PathResult, k int) []PathResult {
-	if p == nil || k < 1 || k > len(p.levels) || p.levels[k-1].where == nil {
-		return paths
-	}
-	level := p.levels[k-1]
-	kept := paths[:0]
-	for _, path := range paths {
-		values := e.pathContextValues(ctx, e.buildPathContext(path, level.match))
-		bindParameterRow(ctx, values)
-		if level.where.holds(e, ctx, values) {
-			kept = append(kept, path)
-		}
-	}
-	return kept
 }
 
 // chainNodeRepeats lists, for each node position of a chain (position j

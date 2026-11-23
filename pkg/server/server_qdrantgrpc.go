@@ -136,6 +136,9 @@ func (s *Server) startQdrantGRPC() error {
 	if err != nil {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
 	}
+	// Fine-grained access control admits the same policy Bolt and HTTP use. A nil
+	// callback (fine-grained access control not enabled) keeps the RBAC principal.
+	grpcServer.SetFineGrainedAdmission(s.FineGrainedAdmission())
 
 	rerankEnabled := searchSvc.RerankerAvailable(s.shutdown.work.Context())
 	nornicSearchSvc, err := nornicgrpc.NewService(

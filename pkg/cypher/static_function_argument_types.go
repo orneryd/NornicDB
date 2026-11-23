@@ -629,7 +629,7 @@ func validateStaticFunctionParameters(ctx context.Context, cypher string, params
 			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
 			// types it: radians(x) for s = 'xy' is a type mismatch.
 			operand := staticParameterOperand(params[parameter])
-			if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
+			if !operand.known() || operand.fits(argument.accepts) {
 				return nil
 			}
 			return typeNameMismatchError(argument.expected, operand.display)
@@ -643,7 +643,7 @@ func validateStaticFunctionParameters(ctx context.Context, cypher string, params
 		}
 		// A missing parameter (nil) has no static type.
 		operand := staticParameterOperand(params[name.Value])
-		if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
+		if !operand.known() || operand.fits(argument.accepts) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",

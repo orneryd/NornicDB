@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
@@ -78,7 +77,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		// A USE-bearing body keeps the explicit text admission: USE selects the
 		// graph its remaining clauses run on, and that remaining text stays the
 		// body the pipeline reads for this one form.
-		use, remaining, hasUse, err := parseUseClause(ctx, text(), true, cyphertext.AcceptedSource)
+		use, remaining, hasUse, err := parseAcceptedSubqueryUseClause(ctx, text())
 		if err != nil {
 			return nil, nil, true, err
 		}

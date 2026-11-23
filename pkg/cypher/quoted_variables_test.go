@@ -189,3 +189,29 @@ func TestQuotedProjectionCacheKeepsClientColumnIdentity(t *testing.T) {
 		}
 	})
 }
+
+// TestPlainVariableNameRejectsQuotedIdentity: the canonicalizer writes a quoted
+// variable's name into the statement as plain text only when the name reads
+// back as itself there. A name that only scans as one backtick-quoted
+// identifier - the identity of an alias written with doubled backticks - does
+// not, so it takes the internal identifier and is decoded once on the way out.
+func TestPlainVariableNameRejectsQuotedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plain bool
+	}{
+		{name: "n", plain: true},
+		{name: "n0", plain: true},
+		{name: "n n"},
+		{name: "`a`"},
+		{name: "`a"},
+		{name: "a`"},
+		{name: "a`b"},
+		{name: "MATCH"},
+		{name: "NaN"},
+		{name: "$p"},
+		{name: ""},
+	} {
+		require.Equal(t, tc.plain, isPlainVariableName(tc.name), "isPlainVariableName(%q)", tc.name)
+	}
+}

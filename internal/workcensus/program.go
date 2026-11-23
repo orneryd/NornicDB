@@ -39,6 +39,8 @@ type Program struct {
 	guardedFields map[*types.Var]bool              // complete private inline-field use proof
 	// dynamicTargets is CallTargets' memo of DynamicCallTargets.
 	dynamicTargets map[ssa.CallInstruction][]*ssa.Function
+	// genericInstances indexes the immutable function population by source origin.
+	genericInstances map[*ssa.Function][]*ssa.Function
 	// channelFamilies is channelFamilyOf's memo of one exact element type's
 	// closed channel population.
 	channelFamilies map[types.Type]*channelFamily

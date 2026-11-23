@@ -1,0 +1,81 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+0 RUN
+exit=0
+0 EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 14
+exit=0
+0 PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 16
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+1 RUN
+exit=0
+1 EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 17
+exit=0
+1 PROFILE 
+Plan: "PROFILE"
+Statement: "READ_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+DbHits: 0
+Rows: 0
+Memory (Bytes): 64
+exit=0
+2 RUN
+exit=0
+2 EXPLAIN 
+Plan: "EXPLAIN"
+Statement: "WRITE_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+exit=0
+2 PROFILE 
+Plan: "PROFILE"
+Statement: "WRITE_ONLY"
+Version: "5"
+Planner: "COST"
+Runtime: "SLOTTED"
+Time: 15
+DbHits: 0
+Rows: 0
+Memory (Bytes): 4376
+exit=0
+3 RUN
+Type mismatch: expected List<T> but was Integer (line 1, column 42 (offset: 41))
+"UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                          ^
+exit=1
+3 EXPLAIN 
+Type mismatch: expected List<T> but was Integer (line 1, column 50 (offset: 49))
+"EXPLAIN UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                                  ^
+exit=1
+3 PROFILE 
+Type mismatch: expected List<T> but was Integer (line 1, column 50 (offset: 49))
+"PROFILE UNWIND [] AS s RETURN reduce(a = 0, x IN toInteger('1') | a) AS a"
+                                                  ^
+exit=1

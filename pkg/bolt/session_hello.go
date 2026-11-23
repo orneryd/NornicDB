@@ -76,7 +76,7 @@ func (s *Session) handleHello(data []byte) error {
 	}
 
 	// Check if authentication is required
-	if s.server != nil && s.server.config.Authenticator != nil {
+	if s.server != nil && s.server.config.authenticationProvider() != nil {
 		scheme := authParams["scheme"]
 		principal := authParams["principal"]
 		credentials := authParams["credentials"]
@@ -94,7 +94,7 @@ func (s *Session) handleHello(data []byte) error {
 				localization.BoltHelloSchemeNoneEvent(s.implicitBearer != "", s.server.config.AllowAnonymous))
 			cookieAuthed := false
 			if s.implicitBearer != "" {
-				result, err := s.server.config.Authenticator.Authenticate("bearer", "", s.implicitBearer)
+				result, err := s.authenticateHello("bearer", "", s.implicitBearer)
 				if err == nil {
 					s.authenticated = true
 					s.authResult = result
@@ -118,7 +118,7 @@ func (s *Session) handleHello(data []byte) error {
 			}
 		} else if scheme == "basic" {
 			// Authenticate with provided credentials
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
+			result, err := s.authenticateHello(scheme, principal, credentials)
 			if err != nil {
 				remoteAddr := "unknown"
 				if s.conn != nil {
@@ -133,7 +133,7 @@ func (s *Session) handleHello(data []byte) error {
 			s.forwardedAuthHeader = ""
 		} else if scheme == "bearer" {
 			// JWT token authentication - used for cluster inter-node auth
-			result, err := s.server.config.Authenticator.Authenticate(scheme, principal, credentials)
+			result, err := s.authenticateHello(scheme, principal, credentials)
 			if err != nil {
 				remoteAddr := "unknown"
 				if s.conn != nil {
@@ -168,7 +168,7 @@ func (s *Session) handleHello(data []byte) error {
 
 	// Extract and validate database name
 	dbName := authParams["database"]
-	if dbName == "" && s.server != nil && s.server.dbManager != nil {
+	if dbName == "" && s.server != nil && s.server.dbManager != nil && s.server.fineGrainedAdmission == nil {
 		// Use default database if not specified
 		dbName = s.server.dbManager.DefaultDatabaseName()
 	}
@@ -212,12 +212,16 @@ func (s *Session) handleHello(data []byte) error {
 			localization.BoltHelloEvent(remoteAddr, s.authResult.Username, s.authResult.Roles, dbName))
 	}
 
-	return s.sendSuccess(map[string]any{
+	response := map[string]any{
 		"server":        s.server.config.serverAnnouncement(),
 		"connection_id": "nornic-1",
 		"hints":         map[string]any{},
 		"patch_bolt":    []any{"utc"},
-	})
+	}
+	if principal, _, err := s.fineGrainedPrincipal(s.parentContext(), nil); err == nil && principal != nil && principal.PasswordChangeRequired {
+		response["credentials_expired"] = true
+	}
+	return s.sendSuccess(response)
 }
 
 func (s *Session) bindDatabaseConnection(databaseName string) error {
@@ -336,4 +340,17 @@ func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func (s *Session) authenticateHello(scheme, principal, credentials string) (*BoltAuthResult, error) {
+	if adapter := s.server.config.requestAuthenticator; adapter != nil {
+		return adapter.AuthenticateContext(s.parentContext(), scheme, principal, credentials)
+	}
+	authenticator := s.server.config.Authenticator
+	if contextual, ok := authenticator.(interface {
+		AuthenticateContext(context.Context, string, string, string) (*BoltAuthResult, error)
+	}); ok {
+		return contextual.AuthenticateContext(s.parentContext(), scheme, principal, credentials)
+	}
+	return authenticator.Authenticate(scheme, principal, credentials)
 }

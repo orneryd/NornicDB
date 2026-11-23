@@ -187,3 +187,17 @@ func TestEmbedWorkerBatchesStructuredNodesForTheSameProvider(t *testing.T) {
 	require.Equal(t, 1, provider.batchCalls)
 	require.Zero(t, provider.singleCalls)
 }
+
+func TestEmbedWorkerMonitoringStatsDoesNotWaitForClaimOwner(t *testing.T) {
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	worker := &EmbedWorker{storage: engine}
+	worker.processed.Store(4)
+	worker.inFlight.Store(1)
+
+	worker.claimMu.Lock()
+	defer worker.claimMu.Unlock()
+	stats := worker.monitoringStats(t.Context())
+	require.Equal(t, -1, stats.Pending)
+	require.Equal(t, 4, stats.Processed)
+	require.True(t, stats.Running)
+}

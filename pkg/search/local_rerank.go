@@ -141,7 +141,7 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 	for i, c := range candidates {
 		doc := strings.TrimSpace(c.Content)
 		if len(doc) > maxDocChars {
-			doc = doc[:maxDocChars]
+			doc = boundedPrefix(doc, maxDocChars)
 		}
 		score, err := r.scorer.Score(callCtx, q, doc)
 		if err != nil {

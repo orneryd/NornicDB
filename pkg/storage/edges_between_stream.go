@@ -386,7 +386,7 @@ func (c *CompositeEngine) MatchEdgesBetween(ctx context.Context, startID, endID 
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		edges, err := MatchEdgesBetween(ctx, engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
 			if _, dup := seen[edge.ID]; dup {

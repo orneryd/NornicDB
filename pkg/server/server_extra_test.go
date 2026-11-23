@@ -2052,6 +2052,7 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	rec = httptest.NewRecorder()
 	server.handleStatus(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"embeddings":{"enabled":false}`)
 	server.dbManager = origManager
 
 	// NOTE: the handleMetrics slow-query content assertion was removed in

@@ -467,7 +467,7 @@ func (h *Handler) handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		ResolvedAccess:     ResolvedAccessResolverFromContext(r.Context()),
 	}
 
-	result, err := ExecuteAction("heimdall_autocomplete_suggest", ctx)
+	result, err := ExecuteAction(autocompleteActionName, ctx)
 	if err != nil {
 		h.writeLocalizedError(w, r, localization.HeimdallAutocompleteFailed(err), http.StatusInternalServerError)
 		return
@@ -542,84 +542,18 @@ Complete Cypher query (one line only):`,
 				schemaContext.String(),
 				req.Query)
 
-			// Use raw prompt for direct completion with stricter parameters to prevent repetition
+			// Bound completion by token count and model EOS. Text stop strings can
+			// occur inside Cypher quotes and truncate output before extraction.
 			slmResult, err := h.manager.Generate(r.Context(), prompt, GenerateParams{
 				MaxTokens:   128, // Reduced to prevent repetition
 				Temperature: 0.2, // Lower temperature for more focused output
 				TopP:        0.8,
 				TopK:        20,
-				StopTokens:  []string{"The user", "They are", "I need to", "IMPORTANT", "Rules:", "Available", "Complete query:", "\n\n\n"},
 			})
 			if err == nil && slmResult != "" {
-				// Clean up the suggestion - extract only the first valid Cypher query
-				cleanSuggestion := strings.TrimSpace(slmResult)
-
-				// Remove markdown code blocks
-				cleanSuggestion = strings.TrimPrefix(cleanSuggestion, "```cypher")
-				cleanSuggestion = strings.TrimPrefix(cleanSuggestion, "```")
-				cleanSuggestion = strings.TrimSuffix(cleanSuggestion, "```")
-				cleanSuggestion = strings.TrimSpace(cleanSuggestion)
-
-				// Split by newlines and extract the first complete query
-				lines := strings.Split(cleanSuggestion, "\n")
-				cypherKeywordRegex := regexp.MustCompile(`^(MATCH|CREATE|MERGE|DELETE|SET|RETURN|WITH|UNWIND|CALL|LOAD|START|UNION|OPTIONAL)`)
-				instructionPattern := regexp.MustCompile(`(?i)^(IMPORTANT|Rules?:|Available|Complete)`)
-
-				var queryParts []string
-				foundQuery := false
-
-				for _, line := range lines {
-					line = strings.TrimSpace(line)
-					if line == "" {
-						continue
-					}
-
-					// Stop immediately if we hit instruction patterns
-					if instructionPattern.MatchString(line) {
-						break
-					}
-
-					// If we found a query line, start collecting
-					if cypherKeywordRegex.MatchString(line) {
-						// If we already found a query and hit another one, stop (prevent repetition)
-						if foundQuery {
-							break
-						}
-						foundQuery = true
-						queryParts = []string{line}
-					} else if foundQuery {
-						// Continue collecting query parts until we hit an instruction or another query
-						if instructionPattern.MatchString(line) || cypherKeywordRegex.MatchString(line) {
-							break
-						}
-						queryParts = append(queryParts, line)
-					}
-				}
-
-				if len(queryParts) > 0 {
-					cleanSuggestion = strings.Join(queryParts, " ")
-					// Remove any remaining instruction text using regex
-					cleanSuggestion = regexp.MustCompile(`(?i)\s+(IMPORTANT|Rules?:|Available|Complete).*$`).ReplaceAllString(cleanSuggestion, "")
-					// Strip trailing model prose (e.g. "The user is a student..." or "They are asking for help...")
-					proseStart := regexp.MustCompile(`(?i)\s+(The user|They are|I need to|I don't know|So they|Probably not|correct syntax|asking for help).*$`)
-					cleanSuggestion = proseStart.ReplaceAllString(cleanSuggestion, "")
-					cleanSuggestion = strings.TrimSpace(cleanSuggestion)
-
-					// Remove any repetition patterns (query repeated multiple times)
-					// Split by common delimiters and take the first unique query
-					parts := regexp.MustCompile(`\s{2,}|\n{2,}`).Split(cleanSuggestion, -1)
-					if len(parts) > 0 {
-						cleanSuggestion = parts[0]
-					}
-
-					// Only use if it's a valid improvement and doesn't contain instruction text
-					if cleanSuggestion != "" &&
-						len(cleanSuggestion) > len(req.Query) &&
-						cleanSuggestion != req.Query &&
-						!strings.Contains(strings.ToUpper(cleanSuggestion), "IMPORTANT") &&
-						!strings.Contains(strings.ToUpper(cleanSuggestion), "RULES") {
-						suggestion = cleanSuggestion
-					}
+				cleanSuggestion := extractAutocompleteCypher(slmResult)
+				if cleanSuggestion != "" && len(cleanSuggestion) > len(req.Query) && cleanSuggestion != req.Query {
+					suggestion = cleanSuggestion
 				}
 			}
 		}
@@ -725,7 +659,7 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		Context:       r.Context(),
 		RequestID:     requestID,
 		RequestTime:   time.Now(),
-		ActionPrompt:  ActionPrompt(), // IMMUTABLE - always first
+		ActionPrompt:  ActionPromptForRequest(r.Context(), ""), // IMMUTABLE - always first
 		UserMessage:   userMessage,
 		Messages:      req.Messages,
 		ExternalTools: chatRequestToolsToMCPTools(req.Tools),
@@ -836,15 +770,47 @@ type requestLifecycle struct {
 	StreamWriter                http.ResponseWriter // optional: for streaming notifications during agentic loop
 	StreamFlusher               http.Flusher        // optional: flush after each SSE chunk
 	StreamModel                 string              // optional: model name for SSE chunk payloads
+	postExecute                 []streamPostExecute
+	legacyPostExecuteStream     bool
 	// RBAC: from request context (set by server when Bifrost is behind auth)
 	principalRoles         []string
 	databaseAccessMode     auth.DatabaseAccessMode
 	resolvedAccessResolver func(string) auth.ResolvedAccess
 }
 
+type streamPostExecute struct {
+	context *PostExecuteContext
+	done    <-chan struct{}
+}
+
+func (l *requestLifecycle) enqueuePostExecute(ctx *PostExecuteContext) {
+	track := (!l.compatMode || l.legacyPostExecuteStream) && l.StreamWriter != nil && l.StreamFlusher != nil && l.StreamModel != ""
+	if done := enqueuePostExecuteHooks(ctx, track); done != nil {
+		l.postExecute = append(l.postExecute, streamPostExecute{context: ctx, done: done})
+	}
+}
+
+// flushPostExecute runs on the response owner after the action reply is flushed.
+// The request can leave on cancellation while the host still owns callback work.
+func (h *Handler) flushPostExecute(ctx context.Context, l *requestLifecycle) {
+	pending := l.postExecute
+	l.postExecute = nil
+	for _, work := range pending {
+		select {
+		case <-ctx.Done():
+			return
+		case <-work.done:
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		h.sendStreamNotifications(l, work.context.DrainNotifications(), l.legacyPostExecuteStream)
+	}
+}
+
 // sendStreamNotifications writes queued notifications as SSE chunks (used when streaming with tools).
-func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []QueuedNotification) {
-	if lifecycle.compatMode {
+func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []QueuedNotification, includeCompatibility bool) {
+	if lifecycle.compatMode && !includeCompatibility {
 		return
 	}
 	if lifecycle.StreamWriter == nil || lifecycle.StreamFlusher == nil || lifecycle.StreamModel == "" {
@@ -877,7 +843,7 @@ func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []
 				},
 			},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(lifecycle.StreamWriter, "data: %s\n\n", data)
 		lifecycle.StreamFlusher.Flush()
 	}
@@ -887,9 +853,13 @@ func (h *Handler) sendStreamNotifications(lifecycle *requestLifecycle, notifs []
 // For tool-capable providers (OpenAI/Ollama) uses GenerateWithTools; for local GGUF uses prompt-based multi-round.
 // When inMemoryRunner is set (e.g. MCP server), its tools (store, recall, discover, etc.) are included so the LLM can manage memories in process.
 func (h *Handler) runAgenticLoop(ctx context.Context, lifecycle *requestLifecycle, systemPrompt, userMessage string, params GenerateParams) (finalResponse string, err error) {
-	tools := mergeMCPTools(ActionsAsMCPTools(), lifecycle.promptCtx.ExternalTools)
+	var database string
+	if lifecycle.database != nil {
+		database = lifecycle.database.DefaultDatabaseName()
+	}
+	tools := mergeMCPTools(mcpToolsForActionCatalog(ActionCatalogForRequest(ctx, database)), lifecycle.promptCtx.ExternalTools)
 	if h.inMemoryRunner != nil {
-		tools = mergeMCPTools(tools, h.inMemoryRunner.ToolDefinitions())
+		tools = mergeMCPTools(tools, fineGrainedMemoryTools(ctx, h.inMemoryRunner.ToolDefinitions(), database))
 	}
 	if h.manager.SupportsTools() && len(tools) > 0 {
 		return h.runAgenticLoopWithTools(ctx, lifecycle, systemPrompt, userMessage, tools, params)
@@ -958,7 +928,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 			}
 			preExecCtx.SetBifrost(h.bifrost)
 			preExecResult := CallPreExecuteHooks(preExecCtx)
-			h.sendStreamNotifications(lifecycle, preExecCtx.DrainNotifications())
+			h.sendStreamNotifications(lifecycle, preExecCtx.DrainNotifications(), false)
 			if preExecCtx.Cancelled() {
 				messages = append(messages, ToolRoundMessage{Role: "tool", ToolCallID: tc.Id, Content: "Cancelled: " + preExecCtx.CancelReason()})
 				continue
@@ -975,7 +945,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 			var toolContent string
 			if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), tc.Name) {
 				dbName := lifecycle.database.DefaultDatabaseName()
-				raw, execErr := h.inMemoryRunner.CallTool(ctx, tc.Name, paramsMap, dbName)
+				raw, execErr := h.callInMemoryTool(ctx, tc.Name, paramsMap, dbName)
 				lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 				toolContent = FormatInMemoryToolResult(raw, execErr)
 				execDuration := time.Since(startTime)
@@ -988,8 +958,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 					hookResult.Data = map[string]interface{}{"result": raw}
 				}
 				postExecCtx := &PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: tc.Name, Params: paramsMap, Result: hookResult, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData}
-				CallPostExecuteHooks(postExecCtx)
-				h.sendStreamNotifications(lifecycle, postExecCtx.DrainNotifications())
+				lifecycle.enqueuePostExecute(postExecCtx)
 			} else {
 				actCtx := ActionContext{
 					Context: ctx, UserMessage: userMessage, Params: paramsMap,
@@ -1006,8 +975,7 @@ func (h *Handler) runAgenticLoopWithTools(ctx context.Context, lifecycle *reques
 					toolContent = FormatActionResultForModel(&ActionResult{Success: false, Message: execErr.Error()})
 				} else {
 					postExecCtx := &PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: tc.Name, Params: paramsMap, Result: result, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData}
-					CallPostExecuteHooks(postExecCtx)
-					h.sendStreamNotifications(lifecycle, postExecCtx.DrainNotifications())
+					lifecycle.enqueuePostExecute(postExecCtx)
 					toolContent = FormatActionResultForModel(result)
 				}
 			}
@@ -1146,7 +1114,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 		var resultStr string
 		if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
 			dbName := lifecycle.database.DefaultDatabaseName()
-			raw, execErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, paramsToUse, dbName)
+			raw, execErr := h.callInMemoryTool(ctx, parsedAction.Action, paramsToUse, dbName)
 			lifecycle.endTool(toolIndex, raw, execErr, time.Since(startTime))
 			resultStr = FormatInMemoryToolResult(raw, execErr)
 			execDuration := time.Since(startTime)
@@ -1158,7 +1126,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 				hookResult.Message = "tool completed successfully"
 				hookResult.Data = map[string]interface{}{"result": raw}
 			}
-			CallPostExecuteHooks(&PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: parsedAction.Action, Params: paramsToUse, Result: hookResult, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData})
+			lifecycle.enqueuePostExecute(&PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: parsedAction.Action, Params: paramsToUse, Result: hookResult, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData})
 		} else {
 			actCtx := ActionContext{
 				Context: ctx, UserMessage: userMessage, Params: paramsToUse,
@@ -1175,7 +1143,7 @@ func (h *Handler) runAgenticLoopPromptBased(ctx context.Context, lifecycle *requ
 				prompt = prompt + response + "\n\nTool result: " + FormatActionResultForModel(&ActionResult{Success: false, Message: execErr.Error()}) + "\n\nOutput exactly one line: either {\"action\": \"<name>\", \"params\": {...}} or a brief direct answer. no repetition.\n\nAssistant: "
 				continue
 			}
-			CallPostExecuteHooks(&PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: parsedAction.Action, Params: paramsToUse, Result: result, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData})
+			lifecycle.enqueuePostExecute(&PostExecuteContext{Context: ctx, RequestID: lifecycle.requestID, Action: parsedAction.Action, Params: paramsToUse, Result: result, Duration: execDuration, PluginData: lifecycle.promptCtx.PluginData})
 			resultStr = FormatActionResultForModel(result)
 		}
 		prompt = prompt + response + "\n\nTool result: " + resultStr + "\n\nOutput exactly one line: either {\"action\": \"<name>\", \"params\": {...}} or a brief direct answer to the user. No thinking, no examples, no repetition.\n\nAssistant: "
@@ -1275,7 +1243,7 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 	lifecycle.StreamWriter = w
 	lifecycle.StreamFlusher = flusher
 	lifecycle.StreamModel = model
-	h.sendStreamNotifications(lifecycle, lifecycle.promptCtx.DrainNotifications())
+	h.sendStreamNotifications(lifecycle, lifecycle.promptCtx.DrainNotifications(), false)
 
 	// systemPrompt already carries the native tool contract, so the model answers from
 	// context when possible instead of calling tools.
@@ -1307,6 +1275,8 @@ func (h *Handler) handleStreamingWithTools(w http.ResponseWriter, ctx context.Co
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
+
+	h.flushPostExecute(ctx, lifecycle)
 
 	// Send finish chunk and [DONE]
 	doneChunk := ChatResponse{
@@ -1358,6 +1328,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 		return
 	}
 
+	lifecycle.StreamWriter, lifecycle.StreamFlusher, lifecycle.StreamModel = w, flusher, model
+	// The legacy action-envelope stream also exposed post-execute notices on the alias.
+	lifecycle.legacyPostExecuteStream = true
 	id := lifecycle.requestID
 
 	// === Send queued notifications from PrePrompt hooks inline ===
@@ -1394,7 +1367,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(notifChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1434,7 +1407,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				Delta: &ChatMessage{Content: response},
 			}},
 		}
-		data, _ := json.Marshal(chunk)
+		data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
@@ -1457,7 +1430,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						FinishReason: "tool_calls",
 					}},
 				}
-				data, _ := json.Marshal(chunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(chunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				fmt.Fprintf(w, "data: [DONE]\n\n")
 				flusher.Flush()
@@ -1514,7 +1487,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(cancelChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(cancelChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -1549,7 +1522,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 						},
 					},
 				}
-				data, _ := json.Marshal(notifChunk)
+				data, _ := valueconvert.PropertyJSON.Marshal(notifChunk)
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 			}
@@ -1569,7 +1542,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 				var err error
 				if h.inMemoryRunner != nil && sliceContains(h.inMemoryRunner.ToolNames(), parsedAction.Action) {
 					dbName := lifecycle.database.DefaultDatabaseName()
-					raw, callErr := h.inMemoryRunner.CallTool(ctx, parsedAction.Action, parsedAction.Params, dbName)
+					raw, callErr := h.callInMemoryTool(ctx, parsedAction.Action, parsedAction.Params, dbName)
 					err = callErr
 					execDuration = time.Since(startTime)
 					if err != nil {
@@ -1613,41 +1586,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					Duration:   execDuration,
 					PluginData: lifecycle.promptCtx.PluginData,
 				}
-				CallPostExecuteHooks(postExecCtx)
-
-				// === Send PostExecute notifications inline ===
-				postExecNotifications := postExecCtx.DrainNotifications()
-				for _, notif := range postExecNotifications {
-					icon := "ℹ️"
-					switch notif.Type {
-					case "error":
-						icon = "❌"
-					case "warning":
-						icon = "⚠️"
-					case "success":
-						icon = "✅"
-					case "progress":
-						icon = "🔄"
-					}
-					notifChunk := ChatResponse{
-						ID:      id,
-						Object:  "chat.completion.chunk",
-						Model:   model,
-						Created: time.Now().Unix(),
-						Choices: []ChatChoice{
-							{
-								Index: 0,
-								Delta: &ChatMessage{
-									Role:    "heimdall",
-									Content: fmt.Sprintf("[Heimdall]: %s %s: %s\n", icon, notif.Title, notif.Message),
-								},
-							},
-						},
-					}
-					data, _ := json.Marshal(notifChunk)
-					fmt.Fprintf(w, "data: %s\n\n", data)
-					flusher.Flush()
-				}
+				lifecycle.enqueuePostExecute(postExecCtx)
 
 				// === Phase 7: Synthesis hooks ===
 				// Allow plugins to provide custom response formatting
@@ -1689,11 +1628,13 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 					},
 				},
 			}
-			data, _ := json.Marshal(resultChunk)
+			data, _ := valueconvert.PropertyJSON.Marshal(resultChunk)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	}
+
+	h.flushPostExecute(ctx, lifecycle)
 
 	// Send final chunk with finish_reason (OpenAI format)
 	doneChunk := ChatResponse{
@@ -1709,7 +1650,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, ctx context.Con
 			},
 		},
 	}
-	data, _ := json.Marshal(doneChunk)
+	data, _ := valueconvert.PropertyJSON.Marshal(doneChunk)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	// OpenAI sends [DONE] to signal stream end
 	fmt.Fprintf(w, "data: [DONE]\n\n")

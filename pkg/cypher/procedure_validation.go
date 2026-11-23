@@ -148,7 +148,7 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"UnexpectedSyntax",
-			"YIELD * is only valid for a standalone procedure call",
+			"Cannot use `YIELD *` outside standalone call",
 		)
 	}
 

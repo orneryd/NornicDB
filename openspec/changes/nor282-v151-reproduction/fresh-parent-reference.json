@@ -1,0 +1,780 @@
+{
+  "metadata": {
+    "neo4j_version": "5.26.30",
+    "apoc_version": "5.26.30",
+    "image_digest": "sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c",
+    "apoc_jar_sha256": "4c60fdab264230d60745d31d55d6cb668e66061daba7c5fa6777ed457b49b798"
+  },
+  "cases": [
+    {
+      "id": "clean_recorded",
+      "query": "RETURN apoc.text.clean('  a  b  ') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "ab"
+      },
+      "fresh_reference": {
+        "id": "clean_spaces",
+        "query": "RETURN apoc.text.clean('  a  b  ') AS value",
+        "kind": "value",
+        "value": "ab"
+      }
+    },
+    {
+      "id": "clean_internal_spaces",
+      "query": "RETURN apoc.text.clean('hello   world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "helloworld"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "helloworld"
+      }
+    },
+    {
+      "id": "clean_empty",
+      "query": "RETURN apoc.text.clean('') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": ""
+      },
+      "fresh_reference": {
+        "id": "clean_empty",
+        "query": "RETURN apoc.text.clean('') AS value",
+        "kind": "value",
+        "value": ""
+      }
+    },
+    {
+      "id": "clean_controls",
+      "query": "RETURN apoc.text.clean('a\\tb\\nc') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "abc"
+      }
+    },
+    {
+      "id": "split_recorded",
+      "query": "RETURN apoc.text.split('a1b2c','[0-9]') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "fresh_reference": {
+        "id": "split_digits",
+        "query": "RETURN apoc.text.split('a1b2c','[0-9]') AS value",
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    },
+    {
+      "id": "split_empty_pattern",
+      "query": "RETURN apoc.text.split('abc','') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "fresh_reference": {
+        "id": "split_empty_pattern",
+        "query": "RETURN apoc.text.split('abc','') AS value",
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    },
+    {
+      "id": "split_no_match",
+      "query": "RETURN apoc.text.split('abc','[0-9]') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      }
+    },
+    {
+      "id": "split_multiple_matches",
+      "query": "RETURN apoc.text.split('a1b22c','[0-9]') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "",
+          "c"
+        ]
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "b",
+          "",
+          "c"
+        ]
+      }
+    },
+    {
+      "id": "split_invalid_pattern",
+      "query": "RETURN apoc.text.split('a1b2c','[') AS value",
+      "previous_reference": {
+        "kind": "error"
+      },
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "replace_recorded",
+      "query": "RETURN apoc.text.replace('a1b2c','[0-9]','X') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "aXbXc"
+      },
+      "fresh_reference": {
+        "id": "replace_digits",
+        "query": "RETURN apoc.text.replace('a1b2c','[0-9]','X') AS value",
+        "kind": "value",
+        "value": "aXbXc"
+      }
+    },
+    {
+      "id": "replace_multiple_literals",
+      "query": "RETURN apoc.text.replace('hello','l','L') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "heLLo"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "heLLo"
+      }
+    },
+    {
+      "id": "replace_no_match",
+      "query": "RETURN apoc.text.replace('abc','[0-9]','X') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "abc"
+      },
+      "fresh_reference": {
+        "id": "replace_nomatch",
+        "query": "RETURN apoc.text.replace('abc','[0-9]','X') AS value",
+        "kind": "value",
+        "value": "abc"
+      }
+    },
+    {
+      "id": "replace_capture_group",
+      "query": "RETURN apoc.text.replace('a1b2','([0-9])','[$1]') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "a[1]b[2]"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "a[1]b[2]"
+      }
+    },
+    {
+      "id": "replace_invalid_pattern",
+      "query": "RETURN apoc.text.replace('abc','[','X') AS value",
+      "previous_reference": {
+        "kind": "error"
+      },
+      "fresh_reference": {
+        "id": "replace_invalid",
+        "query": "RETURN 'replace_invalid' AS case_id, apoc.text.replace('abc','[','X') AS value;",
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "urlencode_recorded",
+      "query": "RETURN apoc.text.urlencode('a+b/é') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "a%2Bb%2F%C3%A9"
+      },
+      "fresh_reference": {
+        "id": "urlencode_original",
+        "query": "RETURN apoc.text.urlencode('a+b/é') AS value",
+        "kind": "value",
+        "value": "a%2Bb%2F%C3%A9"
+      }
+    },
+    {
+      "id": "urlencode_space",
+      "query": "RETURN apoc.text.urlencode('hello world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello+world"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "hello+world"
+      }
+    },
+    {
+      "id": "urlencode_unicode",
+      "query": "RETURN apoc.text.urlencode('é') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "%C3%A9"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "%C3%A9"
+      }
+    },
+    {
+      "id": "urldecode_recorded",
+      "query": "RETURN apoc.text.urldecode('%C3%A9%2B') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "é+"
+      },
+      "fresh_reference": {
+        "id": "urldecode_original",
+        "query": "RETURN apoc.text.urldecode('%C3%A9%2B') AS value",
+        "kind": "value",
+        "value": "é+"
+      }
+    },
+    {
+      "id": "urldecode_percent20",
+      "query": "RETURN apoc.text.urldecode('hello%20world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "hello world"
+      }
+    },
+    {
+      "id": "urldecode_plus",
+      "query": "RETURN apoc.text.urldecode('hello+world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "hello world"
+      }
+    },
+    {
+      "id": "urldecode_malformed",
+      "query": "RETURN apoc.text.urldecode('%zz') AS value",
+      "previous_reference": {
+        "kind": "error"
+      },
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "indexof_recorded",
+      "query": "RETURN apoc.text.indexOf('aλb','b') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": 2
+      },
+      "fresh_reference": {
+        "id": "index_bmp",
+        "query": "RETURN apoc.text.indexOf('aλb','b') AS value",
+        "kind": "value",
+        "value": 2
+      }
+    },
+    {
+      "id": "indexof_ascii",
+      "query": "RETURN apoc.text.indexOf('hello world','world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": 6
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": 6
+      }
+    },
+    {
+      "id": "indexof_bmp",
+      "query": "RETURN apoc.text.indexOf('aλb','λ') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": 1
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": 1
+      }
+    },
+    {
+      "id": "indexof_supplementary",
+      "query": "RETURN apoc.text.indexOf('𐐨abc','abc') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": 3
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": 2
+      }
+    },
+    {
+      "id": "indexof_missing",
+      "query": "RETURN apoc.text.indexOf('abc','z') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": -1
+      },
+      "fresh_reference": {
+        "id": "index_missing",
+        "query": "RETURN apoc.text.indexOf('abc','z') AS value",
+        "kind": "value",
+        "value": -1
+      }
+    },
+    {
+      "id": "capitalize_empty",
+      "query": "RETURN apoc.text.capitalize('') AS value",
+      "previous_reference": {
+        "kind": "error",
+        "source": "pinned APOC 5.26.30 Strings.java substring throws on the empty string"
+      },
+      "fresh_reference": {
+        "id": "capitalize_empty",
+        "query": "RETURN 'capitalize_empty' AS case_id, apoc.text.capitalize('') AS value;",
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "decapitalize_null",
+      "query": "RETURN apoc.text.decapitalize(null) AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": null
+      },
+      "fresh_reference": {
+        "id": "decapitalize_null",
+        "query": "RETURN apoc.text.decapitalize(null) AS value",
+        "kind": "value",
+        "value": null
+      }
+    },
+    {
+      "id": "text_base64_encode_hello",
+      "query": "RETURN apoc.text.base64Encode('hello') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "fresh_reference": {
+        "id": "base64_encode",
+        "query": "RETURN apoc.text.base64Encode('hello') AS value",
+        "kind": "value",
+        "value": "aGVsbG8="
+      }
+    },
+    {
+      "id": "text_base64_decode_hello",
+      "query": "RETURN apoc.text.base64Decode('aGVsbG8=') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "fresh_reference": {
+        "id": "base64_decode",
+        "query": "RETURN apoc.text.base64Decode('aGVsbG8=') AS value",
+        "kind": "value",
+        "value": "hello"
+      }
+    },
+    {
+      "id": "text_base64_encode_unicode",
+      "query": "RETURN apoc.text.base64Encode('é') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "w6k="
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "w6k="
+      }
+    },
+    {
+      "id": "util_base64_encode_hello",
+      "query": "RETURN apoc.util.encodeBase64('hello') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "aGVsbG8="
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "util_base64_decode_hello",
+      "query": "RETURN apoc.util.decodeBase64('aGVsbG8=') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello"
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "util_encode_url_space",
+      "query": "RETURN apoc.util.encodeURL('hello world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello%20world"
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "util_decode_url_percent20",
+      "query": "RETURN apoc.util.decodeURL('hello%20world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "hello world"
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "util_encode_url_unicode",
+      "query": "RETURN apoc.util.encodeURL('é') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "%C3%A9"
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "util_decode_url_plus",
+      "query": "RETURN apoc.util.decodeURL('hello+world') AS value",
+      "previous_reference": {
+        "kind": "ambiguous",
+        "alternatives": [
+          "hello world",
+          "hello+world"
+        ]
+      },
+      "fresh_reference": {
+        "kind": "missing_function"
+      },
+      "nornicdb_contract": "advertised extension value; do not replace its standard-semantics expectation with an APOC unknown-function error"
+    },
+    {
+      "id": "upper_camel_eszett",
+      "query": "RETURN apoc.text.upperCamelCase('ßeta world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "SSetaWorld"
+      },
+      "fresh_reference": {
+        "id": "uppercamel_sharp_s",
+        "query": "RETURN apoc.text.upperCamelCase('ßeta world') AS value",
+        "kind": "value",
+        "value": "SSetaWorld"
+      }
+    },
+    {
+      "id": "upper_camel_dz",
+      "query": "RETURN apoc.text.upperCamelCase('ǳungla world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "ǱunglaWorld"
+      },
+      "fresh_reference": {
+        "id": "uppercamel_digraph",
+        "query": "RETURN apoc.text.upperCamelCase('ǳungla world') AS value",
+        "kind": "value",
+        "value": "ǱunglaWorld"
+      }
+    },
+    {
+      "id": "camel_deseret",
+      "query": "RETURN apoc.text.camelCase('𐐨abc world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      },
+      "fresh_reference": {
+        "id": "camel_deseret",
+        "query": "RETURN apoc.text.camelCase('𐐨abc world') AS value",
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      }
+    },
+    {
+      "id": "camel_punctuation",
+      "query": "RETURN apoc.text.camelCase('hello foo.bar') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "helloFooBar"
+      },
+      "fresh_reference": {
+        "id": "camel_punctuation",
+        "query": "RETURN apoc.text.camelCase('hello foo.bar') AS value",
+        "kind": "value",
+        "value": "helloFooBar"
+      }
+    },
+    {
+      "id": "upper_camel_punctuation",
+      "query": "RETURN apoc.text.upperCamelCase('hello foo.bar') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "HelloFooBar"
+      },
+      "fresh_reference": {
+        "id": "uppercamel_punctuation",
+        "query": "RETURN apoc.text.upperCamelCase('hello foo.bar') AS value",
+        "kind": "value",
+        "value": "HelloFooBar"
+      }
+    },
+    {
+      "id": "camel_eszett",
+      "query": "RETURN apoc.text.camelCase('ßeta world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "sSetaWorld"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "ßetaWorld"
+      }
+    },
+    {
+      "id": "camel_dz",
+      "query": "RETURN apoc.text.camelCase('ǳungla world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "ǳunglaWorld"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "ǳunglaWorld"
+      }
+    },
+    {
+      "id": "upper_camel_deseret",
+      "query": "RETURN apoc.text.upperCamelCase('𐐨abc world') AS value",
+      "previous_reference": {
+        "kind": "value",
+        "value": "𐐨abcWorld"
+      },
+      "fresh_reference": {
+        "kind": "value",
+        "value": "𐐀abcWorld"
+      }
+    },
+    {
+      "id": "parent_extra_clean_unicode",
+      "query": "RETURN apoc.text.clean('É a λ-42!') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "eaλ42"
+      }
+    },
+    {
+      "id": "parent_extra_split_empty",
+      "query": "RETURN apoc.text.split('',',') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": [
+          ""
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_split_nomatch",
+      "query": "RETURN apoc.text.split('abc',',') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": [
+          "abc"
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_split_repeated_trailing",
+      "query": "RETURN apoc.text.split('a,,b,',',') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": [
+          "a",
+          "",
+          "b"
+        ]
+      }
+    },
+    {
+      "id": "parent_extra_replace_groups",
+      "query": "RETURN apoc.text.replace('a1b2','([0-9])','$1$1') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "a11b22"
+      }
+    },
+    {
+      "id": "parent_extra_replace_empty",
+      "query": "RETURN apoc.text.replace('','[0-9]','X') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": ""
+      }
+    },
+    {
+      "id": "parent_extra_replace_zero_width",
+      "query": "RETURN apoc.text.replace('abc','','X') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "XaXbXcX"
+      }
+    },
+    {
+      "id": "parent_extra_urlencode_edges",
+      "query": "RETURN apoc.text.urlencode('a b+~/é') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "a+b%2B%7E%2F%C3%A9"
+      }
+    },
+    {
+      "id": "parent_extra_urlencode_empty",
+      "query": "RETURN apoc.text.urlencode('') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": ""
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_plus",
+      "query": "RETURN apoc.text.urldecode('a+b%20c') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "a b c"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_supplementary",
+      "query": "RETURN apoc.text.urldecode('%F0%9F%98%80') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "😀"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_bad_utf8",
+      "query": "RETURN apoc.text.urldecode('%C3%28') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "�("
+      }
+    },
+    {
+      "id": "parent_extra_index_ascii",
+      "query": "RETURN apoc.text.indexOf('abc','b') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": 1
+      }
+    },
+    {
+      "id": "parent_extra_index_supplementary",
+      "query": "RETURN apoc.text.indexOf('a😀b','b') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": 3
+      }
+    },
+    {
+      "id": "parent_extra_index_empty",
+      "query": "RETURN apoc.text.indexOf('abc','') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": 0
+      }
+    },
+    {
+      "id": "parent_extra_base64_unicode",
+      "query": "RETURN apoc.text.base64Encode('é😀') AS value",
+      "fresh_reference": {
+        "kind": "value",
+        "value": "w6nwn5iA"
+      }
+    },
+    {
+      "id": "parent_extra_split_invalid",
+      "query": "RETURN apoc.text.split('abc','[') AS value",
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_bad_escape",
+      "query": "RETURN apoc.text.urldecode('bad%ZZ') AS value",
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "parent_extra_urldecode_incomplete",
+      "query": "RETURN apoc.text.urldecode('x%') AS value",
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    },
+    {
+      "id": "parent_extra_base64_bad",
+      "query": "RETURN apoc.text.base64Decode('%%%') AS value",
+      "fresh_reference": {
+        "kind": "function_error"
+      }
+    }
+  ]
+}

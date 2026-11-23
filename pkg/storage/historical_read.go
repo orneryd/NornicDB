@@ -12,7 +12,8 @@ import (
 )
 
 // OpenHistoricalRead returns a read-only Engine that answers every read at one
-// fixed MVCC cutoff over one pinned physical snapshot of engine's native store.
+// fixed MVCC cutoff over one pinned snapshot of engine's native store and its
+// acknowledged write-behind commits.
 //
 // The cutoff is the requested wall-clock time at.UTC() with the maximum commit
 // sequence, so a read sees every commit that completed at or before that
@@ -39,9 +40,8 @@ import (
 //     ErrHistoryNotRetained. A missing retained record at or after the creation
 //     floor reports ErrHistoryUnavailable, never a silent absence.
 //
-// The population of every scan comes from the MVCC node-head and edge-head
-// keyspaces, streamed one candidate at a time: a current label, property, type
-// or count index describes the live graph and cannot narrow a historical
+// Scans stream the MVCC head keyspaces and then the buffered-only IDs. A
+// current label, property, type or count index cannot narrow a historical
 // population. The returned schema is empty for the same reason, and the current
 // suppression and decay policy is preserved on the entities a read resolves.
 //
@@ -54,6 +54,12 @@ import (
 //	defer historical.Close()
 //	nodes, err := historical.GetNodesByLabel(ctx, "Person")
 func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engine, error) {
+	return OpenHistoricalReadAtVersion(ctx, engine, MVCCVersion{CommitTimestamp: at.UTC(), CommitSequence: ^uint64(0)})
+}
+
+// OpenHistoricalReadAtVersion pins the exact committed version, including
+// its sequence, for every entity and adjacency read in the returned view.
+func OpenHistoricalReadAtVersion(ctx context.Context, engine Engine, version MVCCVersion) (Engine, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -61,7 +67,6 @@ func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engin
 	if err != nil {
 		return nil, err
 	}
-	version := MVCCVersion{CommitTimestamp: at.UTC(), CommitSequence: ^uint64(0)}
 	// The reader registration precedes the snapshot capture: a prune step
 	// decides its floors from the registered readers, so every step that starts
 	// after this registration keeps the versions the cutoff reads. A step
@@ -80,7 +85,11 @@ func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engin
 	if err != nil {
 		return nil, err
 	}
-	view, err := native.captureReadView(ctx, nil, readViewOptions{
+	var pin *transactionBeginPresence
+	var pinErr error
+	view, err := native.captureReadView(ctx, func(buffer *WriteBehindBuffer) {
+		pin, pinErr = buffer.pinTransactionBeginLocked()
+	}, readViewOptions{
 		scopeKind: readNamespaceScope,
 		scope:     namespace,
 		longLived: true,
@@ -89,14 +98,29 @@ func OpenHistoricalRead(ctx context.Context, engine Engine, at time.Time) (Engin
 		release()
 		return nil, err
 	}
-	return &historicalReadEngine{
+	history := &historicalReadEngine{
 		engine:    native,
 		view:      view,
+		pin:       pin,
 		schema:    NewSchemaManager(),
 		release:   release,
 		version:   version,
 		namespace: namespace,
-	}, nil
+	}
+	if pinErr != nil {
+		_ = history.Close()
+		return nil, pinErr
+	}
+	history.buffered, err = indexHistoricalBufferedRead(ctx, pin, history.scopePrefix(), version)
+	if err != nil {
+		_ = history.Close()
+		return nil, err
+	}
+	if history.buffered == nil {
+		pin.release()
+		history.pin = nil
+	}
+	return history, nil
 }
 
 // historicalReadTarget resolves the native store a historical read pins and the
@@ -139,6 +163,8 @@ func historicalReadTarget(engine Engine) (*BadgerEngine, string, error) {
 type historicalReadEngine struct {
 	engine    *BadgerEngine
 	view      *badgerReadView
+	pin       *transactionBeginPresence
+	buffered  *historicalBufferedRead
 	schema    *SchemaManager
 	release   func()
 	version   MVCCVersion
@@ -158,30 +184,31 @@ func (h *historicalReadEngine) Namespace() string { return h.namespace }
 // historical read holds. It does not close the engine it reads, and a second
 // Close is a no-op.
 func (h *historicalReadEngine) Close() error {
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
-		return nil
-	}
-	h.closed = true
-	retire := h.active == 0
-	h.mu.Unlock()
-	if retire {
-		h.view.Close()
-		h.release()
-	}
+	h.leave(false)
 	return nil
 }
 
-func (h *historicalReadEngine) finishRead() {
+// leave retires the view once it is closed and its last admitted read returns.
+func (h *historicalReadEngine) leave(finishingRead bool) {
 	h.mu.Lock()
-	h.active--
+	if finishingRead {
+		h.active--
+	} else {
+		if h.closed {
+			h.mu.Unlock()
+			return
+		}
+		h.closed = true
+	}
 	retire := h.closed && h.active == 0
 	h.mu.Unlock()
-	if retire {
-		h.view.Close()
-		h.release()
+	if !retire {
+		return
 	}
+	h.view.Close()
+	h.buffered = nil
+	h.pin.release()
+	h.release()
 }
 
 // scopePrefix is the stored-ID prefix of this read's database, empty for a
@@ -206,7 +233,7 @@ func (h *historicalReadEngine) withTxn(ctx context.Context, read func(*badger.Tx
 	}
 	h.active++
 	h.mu.Unlock()
-	defer h.finishRead()
+	defer h.leave(true)
 	return h.view.readPinned(ctx, read)
 }
 
@@ -354,14 +381,19 @@ func (h *historicalReadEngine) historicalNodeAtInTxn(ctx context.Context, txn *b
 		return nil, ErrNotFound
 	}
 	head, err := h.engine.loadNodeMVCCHeadInTxn(txn, id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// No head at all: this ID has no incarnation to read.
-			return nil, ErrNotFound
-		}
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	if head.Tombstoned {
+	if h.buffered != nil {
+		if node, found := h.buffered.nodes.images[id].resolve(head.Version, h.version); found {
+			projected := projectCachedNodeForRead(node, projection, true)
+			if projected == nil || h.engine.filterEntityByDecay(visibleRead, projected, DecayScoringTime()) {
+				return nil, ErrNotFound
+			}
+			return projected, nil
+		}
+	}
+	if err != nil || head.Tombstoned {
 		return nil, ErrNotFound
 	}
 	if err := requirePrimaryInTxn(txn, nodeKey(id)); err != nil {
@@ -380,7 +412,7 @@ func (h *historicalReadEngine) historicalNodeAtInTxn(ctx context.Context, txn *b
 	}
 	var node *Node
 	if projection != nil {
-		node, err = h.engine.getNodeProjectedVisibleAtInTxn(txn, id, h.version, projection)
+		node, err = h.engine.getNodeProjectedAtInTxn(txn, id, h.version, projectedNodeRead{properties: projection, visibility: visibleRead})
 	} else {
 		node, err = h.engine.getNodeAtInTxn(txn, id, h.version, mvccEntityRead{vectors: false, visibility: visibleRead})
 	}
@@ -417,13 +449,18 @@ func (h *historicalReadEngine) historicalEdgeAtInTxn(ctx context.Context, txn *b
 		return nil, ErrNotFound
 	}
 	head, err := h.engine.loadEdgeMVCCHeadInTxn(txn, id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrNotFound
-		}
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	if head.Tombstoned {
+	if h.buffered != nil {
+		if edge, found := h.buffered.edges.images[id].resolve(head.Version, h.version); found {
+			if edge == nil || h.engine.filterEntityByDecay(visibleRead, edge, DecayScoringTime()) {
+				return nil, ErrNotFound
+			}
+			return h.historicalEdgeWithEndpointsInTxn(ctx, txn, edge)
+		}
+	}
+	if err != nil || head.Tombstoned {
 		return nil, ErrNotFound
 	}
 	if err := requirePrimaryInTxn(txn, edgeKey(id)); err != nil {
@@ -456,6 +493,10 @@ func (h *historicalReadEngine) historicalEdgeAtInTxn(ctx context.Context, txn *b
 	default:
 		return nil, err
 	}
+	return h.historicalEdgeWithEndpointsInTxn(ctx, txn, edge)
+}
+
+func (h *historicalReadEngine) historicalEdgeWithEndpointsInTxn(ctx context.Context, txn *badger.Txn, edge *Edge) (*Edge, error) {
 	for _, endpoint := range [2]NodeID{edge.StartNode, edge.EndNode} {
 		eligible, err := h.historicalNodeEligibleInTxn(ctx, txn, endpoint)
 		if err != nil {
@@ -482,10 +523,8 @@ func (h *historicalReadEngine) historicalNodeEligibleInTxn(ctx context.Context, 
 }
 
 // streamNodesInTxn visits every node of the scoped population this read lists
-// at the cutoff, one candidate at a time and in head order. The candidates are
-// the MVCC node heads of the pinned snapshot: the live label, property and
-// count indexes cannot narrow a historical population, and no population is
-// materialized before it is visited.
+// at the cutoff, one candidate at a time. It streams the MVCC heads of the
+// pinned snapshot, then visits the buffered nodes without a persisted head.
 func (h *historicalReadEngine) streamNodesInTxn(ctx context.Context, txn *badger.Txn, projection []string, visit func(*Node) error) error {
 	reader := h.engine.newNodeIndexReader(ctx, txn, h.scopePrefix(), []byte{prefixMVCCNodeHead}, "")
 	defer reader.Close()
@@ -501,12 +540,16 @@ func (h *historicalReadEngine) streamNodesInTxn(ctx context.Context, txn *badger
 			return err
 		}
 	}
-	return reader.Err()
+	if err := reader.Err(); err != nil || h.buffered == nil {
+		return err
+	}
+	return visitHistoricalBufferedOnly(ctx, txn, h.buffered.nodes.ids, h.engine.mvccNodeHeadKeyStringLookup,
+		func(id NodeID) (*Node, error) { return h.historicalNodeAtInTxn(ctx, txn, id, projection) }, visit)
 }
 
 // streamEdgesInTxn is the relationship analogue of streamNodesInTxn: it visits
 // every relationship of the scoped population this read lists at the cutoff,
-// streaming the edge heads of the pinned snapshot.
+// streaming the edge heads of the pinned snapshot and the buffered-only IDs.
 func (h *historicalReadEngine) streamEdgesInTxn(ctx context.Context, txn *badger.Txn, visit func(*Edge) error) error {
 	prefix := []byte{prefixMVCCEdgeHead}
 	iterator := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -535,7 +578,44 @@ func (h *historicalReadEngine) streamEdgesInTxn(ctx context.Context, txn *badger
 			return err
 		}
 	}
-	return nil
+	if h.buffered == nil {
+		return nil
+	}
+	return visitHistoricalBufferedOnly(ctx, txn, h.buffered.edges.ids, h.engine.mvccEdgeHeadKeyStringLookup,
+		func(id EdgeID) (*Edge, error) { return h.historicalEdgeAtInTxn(ctx, txn, id) }, visit)
+}
+
+// The persisted-head stream already resolves buffered changes to matching
+// IDs. Only IDs without a persisted head need to be visited after that stream.
+func visitHistoricalBufferedOnly[ID NodeID | EdgeID, E *Node | *Edge](
+	ctx context.Context, txn *badger.Txn, ids []ID, headKey func(ID) []byte,
+	read func(ID) (E, error), visit func(E) error,
+) error {
+	var cancel bulkReadCancellation
+	for _, id := range ids {
+		if err := cancel.check(ctx); err != nil {
+			return err
+		}
+		if key := headKey(id); len(key) != 0 {
+			if _, err := txn.Get(key); err != badger.ErrKeyNotFound {
+				if err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		image, err := read(id)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := visit(image); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 // historicalNodeAdmits applies the stream options this engine honors without a
@@ -565,9 +645,8 @@ func historicalNodeCarriesLabel(node *Node, label string) bool {
 }
 
 // adjacentEdgesInTxn lists the relationships one directional request selects at
-// the cutoff. The MVCC adjacency keyspace of the pinned snapshot supplies the
-// candidates, and every candidate is resolved and endpoint-checked by the one
-// relationship read.
+// the cutoff. Each candidate in the MVCC adjacency prefix and the buffered
+// adjacency overlay is resolved and endpoint-checked by the relationship read.
 func (h *historicalReadEngine) adjacentEdgesInTxn(ctx context.Context, txn *badger.Txn, request AdjacentEdgeRead) ([]*Edge, error) {
 	if !nodeIDInScope(request.Node, h.scopePrefix()) {
 		return nil, nil
@@ -581,15 +660,30 @@ func (h *historicalReadEngine) adjacentEdgesInTxn(ctx context.Context, txn *badg
 	default:
 		return nil, ErrInvalidData
 	}
-	if len(prefix) == 0 {
-		return nil, nil
+	var ids []EdgeID
+	if len(prefix) != 0 {
+		var err error
+		ids, err = h.engine.collectVisibleAdjacencyEdgeIDsInTxn(ctx, txn, prefix, h.version)
+		if err != nil {
+			return nil, err
+		}
 	}
-	ids, err := h.engine.collectVisibleAdjacencyEdgeIDsInTxn(ctx, txn, prefix, h.version)
-	if err != nil {
-		return nil, err
+	var cancel bulkReadCancellation
+	if buffered := h.buffered.adjacentIDs(request); len(buffered) != 0 {
+		existing := make(map[EdgeID]struct{}, len(ids))
+		for _, id := range ids {
+			existing[id] = struct{}{}
+		}
+		for _, id := range buffered {
+			if err := cancel.check(ctx); err != nil {
+				return nil, err
+			}
+			if _, found := existing[id]; !found {
+				ids = append(ids, id)
+			}
+		}
 	}
 	var edges []*Edge
-	var cancel bulkReadCancellation
 	for _, id := range ids {
 		if err := cancel.check(ctx); err != nil {
 			return nil, err
@@ -611,41 +705,30 @@ func (h *historicalReadEngine) adjacentEdgesInTxn(ctx context.Context, txn *badg
 
 // GetNode returns the stored state of id at the cutoff.
 func (h *historicalReadEngine) GetNode(ctx context.Context, id NodeID) (*Node, error) {
-	return h.readNode(ctx, id, nil)
+	return readHistoricalEntity(ctx, h, func(txn *badger.Txn) (*Node, error) {
+		return h.historicalNodeAtInTxn(ctx, txn, id, nil)
+	})
 }
 
-func (h *historicalReadEngine) readNode(ctx context.Context, id NodeID, projection []string) (*Node, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	var node *Node
+func readHistoricalEntity[E *Node | *Edge](ctx context.Context, h *historicalReadEngine, read func(*badger.Txn) (E, error)) (E, error) {
+	var entity E
 	err := h.withTxn(ctx, func(txn *badger.Txn) error {
 		var readErr error
-		node, readErr = h.historicalNodeAtInTxn(ctx, txn, id, projection)
+		entity, readErr = read(txn)
 		return readErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	return node, nil
+	return entity, nil
 }
 
 // GetEdge returns the stored state of the relationship id at the cutoff. Its
 // endpoints must be nodes this read lists at the cutoff.
 func (h *historicalReadEngine) GetEdge(ctx context.Context, id EdgeID) (*Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	var edge *Edge
-	err := h.withTxn(ctx, func(txn *badger.Txn) error {
-		var readErr error
-		edge, readErr = h.historicalEdgeAtInTxn(ctx, txn, id)
-		return readErr
+	return readHistoricalEntity(ctx, h, func(txn *badger.Txn) (*Edge, error) {
+		return h.historicalEdgeAtInTxn(ctx, txn, id)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return edge, nil
 }
 
 // GetNodesByLabel lists the nodes that carried label at the cutoff, streamed

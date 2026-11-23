@@ -125,3 +125,32 @@ func RolePermissionsAsStrings() map[string][]string {
 	}
 	return m
 }
+
+// GraphFineGrainedActions returns the action contracts used to define graph
+// entitlements. A node and a relationship use separate action IDs so that an
+// operator can delegate either kind without granting the other.
+func GraphFineGrainedActions() []FineGrainedAction {
+	return []FineGrainedAction{
+		{ID: "database.access", ResourceKind: FineGrainedDatabase},
+		{ID: "database.schema.manage", ResourceKind: FineGrainedDatabase},
+		{ID: "database.procedure.execute", ResourceKind: FineGrainedDatabase, Property: true},
+		{ID: "database.history.read", ResourceKind: FineGrainedDatabase},
+		{ID: "database.reveal", ResourceKind: FineGrainedDatabase},
+		{ID: "graph.node.embedding.read", ResourceKind: FineGrainedNode},
+		{ID: "graph.node.embedding.create", ResourceKind: FineGrainedNode, Creates: true},
+		{ID: "graph.node.embedding.set", ResourceKind: FineGrainedNode},
+		{ID: "graph.node.traverse", ResourceKind: FineGrainedNode},
+		{ID: "graph.node.property.read", ResourceKind: FineGrainedNode, Property: true},
+		{ID: "graph.node.property.set", ResourceKind: FineGrainedNode, Property: true},
+		{ID: "graph.node.create", ResourceKind: FineGrainedNode, Creates: true},
+		{ID: "graph.node.delete", ResourceKind: FineGrainedNode},
+		{ID: "graph.node.label.add", ResourceKind: FineGrainedNode},
+		{ID: "graph.node.label.remove", ResourceKind: FineGrainedNode},
+		{ID: "graph.relationship.embedding.read", ResourceKind: FineGrainedRelationship},
+		{ID: "graph.relationship.traverse", ResourceKind: FineGrainedRelationship},
+		{ID: "graph.relationship.property.read", ResourceKind: FineGrainedRelationship, Property: true},
+		{ID: "graph.relationship.property.set", ResourceKind: FineGrainedRelationship, Property: true},
+		{ID: "graph.relationship.create", ResourceKind: FineGrainedRelationship, Creates: true},
+		{ID: "graph.relationship.delete", ResourceKind: FineGrainedRelationship},
+	}
+}

@@ -284,6 +284,13 @@ func (s *Server) databaseAccessForRoles(roles []string, database string, mode au
 // whose principal may not read dbName (databaseReadAccess), and reports
 // whether the request may go on.
 func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
+	if principal := auth.FineGrainedRequestFromContext(r.Context()); principal != nil {
+		if s.principalAccessForRequest(r.Context(), getClaims(r)).Allows(dbName, "access") {
+			return true
+		}
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		return false
+	}
 	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return false
@@ -329,6 +336,9 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) canReadAllDatabases(r *http.Request) bool {
+	if s.dbManager == nil {
+		return false
+	}
 	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), s.databaseReadPredicate(getClaims(r)))
 	return all
 }
@@ -347,6 +357,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
+	principal := auth.FineGrainedRequestFromContext(ctx)
+	if principal != nil {
+		databaseAccessMode = principal
+	}
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
 	// The principal's one permission resolver (principalAccess), which
@@ -355,6 +369,14 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		// Streaming consumers must observe current database privileges and
 		// allowlists through the mode already bound to this request.
+		if principal != nil {
+			switch permission {
+			case auth.Permission("access"), auth.PermRead, auth.PermWrite:
+				return s.principalAccessForRequest(ctx, claims).Allows(database, string(permission))
+			default:
+				return false
+			}
+		}
 		if permission == auth.PermRead {
 			_, access := s.databaseAccessForRoles(claims.Roles, database, databaseAccessMode, false)
 			return access.Read

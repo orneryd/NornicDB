@@ -159,6 +159,38 @@ func (s *Service) SearchTextContinuation(
 		}
 		return searchPageFromResultStream(page)
 	}
+	ctx, indexedScope, err := s.withIndexedSearchScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if indexedScope != nil {
+		searchQuery = s.Search
+	}
+	return s.startTextContinuation(ctx, query, opts, request, chunkQuery, embedQuery, searchQuery, errorPolicy, registry, scope)
+}
+
+// startTextContinuation starts a stream over the shared database search and
+// retains a fine-grained policy binding for later pages when applicable.
+func (s *Service) startTextContinuation(
+	ctx context.Context,
+	query string,
+	opts *SearchOptions,
+	request SearchContinuationRequest,
+	chunkQuery ChunkQueryFunc,
+	embedQuery EmbedQueryFunc,
+	searchQuery SearchQueryFunc,
+	errorPolicy ChunkedSearchErrorPolicy,
+	registry continuationRegistry,
+	scope resultstream.Scope,
+) (*SearchContinuationPage, error) {
+	indexedScope := s.indexedScope(ctx)
+	ownStream := func(stream resultstream.Stream) resultstream.Stream {
+		if indexedScope == nil {
+			return stream
+		}
+		return &fineGrainedSearchStream{Stream: stream, scope: indexedScope}
+	}
+
 	if request.Mode == "" {
 		request.Mode = SearchContinuationRanked
 	}
@@ -178,7 +210,7 @@ func (s *Service) SearchTextContinuation(
 		if err != nil {
 			return nil, err
 		}
-		page, err := registry.Start(ctx, scope, stream, request.N)
+		page, err := registry.Start(ctx, scope, ownStream(stream), request.N)
 		if err != nil {
 			return nil, err
 		}
@@ -259,7 +291,7 @@ func (s *Service) SearchTextContinuation(
 		if err != nil {
 			return nil, err
 		}
-		page, err := registry.Start(ctx, scope, stream, request.N)
+		page, err := registry.Start(ctx, scope, ownStream(stream), request.N)
 		if err != nil {
 			return nil, err
 		}
@@ -317,10 +349,10 @@ func (s *Service) SearchTextContinuation(
 	if err != nil {
 		return nil, err
 	}
-	page, err := registry.Start(ctx, scope, &searchMetadataStream{
-		Stream: stream, state: state, engine: s.engine, authorizeNode: request.AuthorizeNode,
+	page, err := registry.Start(ctx, scope, ownStream(&searchMetadataStream{
+		Stream: stream, state: state, engine: s.searchReadEngine(ctx), authorizeNode: request.AuthorizeNode,
 		projection: newResultPropertyProjection(ownedOptions.IncludeProperties, ownedOptions.ExcludeProperties),
-	}, request.N)
+	}), request.N)
 	if err != nil {
 		return nil, err
 	}
@@ -462,9 +494,7 @@ func (s *searchMetadataStream) RetainedBytes() int64 {
 }
 
 func (s *searchMetadataStream) SetRetainedBytesGrowthGuard(growthOK func() bool) {
-	if guarded, ok := s.Stream.(resultstream.RetainedBytesGrowthGuard); ok {
-		guarded.SetRetainedBytesGrowthGuard(growthOK)
-	}
+	resultstream.BindRetainedBytesGrowthGuard(s.Stream, growthOK)
 }
 
 func continuationRows(results []SearchResult) [][]any {

@@ -58,22 +58,39 @@ type walRecordFrames struct {
 // returns, with nothing added. Without spanning a larger record is refused by
 // that encoder. The returned payloads are owned by the caller.
 func encodeWALRecord(buf *bytes.Buffer, entry *WALEntry, spanning bool) (walRecordFrames, error) {
-	payload, large, err := encodeWALEntryPayload(buf, entry, spanning)
-	if err != nil || !large {
-		return walRecordFrames{single: payload}, err
+	payload, err := layoutWALEntryPayload(buf, entry, spanning)
+	if err != nil {
+		return walRecordFrames{}, err
 	}
+	return payload.frames(buf, entry)
+}
+
+// frames cuts the entry's payload into the frames its record is written as: the
+// single frame of a record that fits one, or the part frames of a spanned
+// record. buf is the caller's entry buffer, reused for each part's own header.
+// The parts are cut from the payload's pieces, so the logical payload is never
+// joined into a buffer of its own.
+func (p walEntryPayload) frames(buf *bytes.Buffer, entry *WALEntry) (walRecordFrames, error) {
+	if !p.large {
+		return walRecordFrames{single: p.join()}, nil
+	}
+	// Every part's payload is encoded with buf, so the logical header is
+	// detached from buf before the first part is cut.
+	payload := p
+	payload.own()
+	total := payload.size()
 	chunk := walSpannedChunkBytes
-	count := (len(payload) + chunk - 1) / chunk
+	count := (total + chunk - 1) / chunk
 	if count < 2 || count > math.MaxUint32 {
-		return walRecordFrames{}, &walRecordRejection{cause: fmt.Errorf("wal: record of %d bytes cannot be spanned", len(payload))}
+		return walRecordFrames{}, &walRecordRejection{cause: fmt.Errorf("wal: record of %d bytes cannot be spanned", total)}
 	}
 	parts := make([][]byte, 0, count)
 	for i := 0; i < count; i++ {
-		piece := payload[i*chunk : min((i+1)*chunk, len(payload))]
-		data := make([]byte, walSpannedPartHeaderLen+len(piece))
+		start, end := i*chunk, min((i+1)*chunk, total)
+		data := make([]byte, walSpannedPartHeaderLen+end-start)
 		binary.LittleEndian.PutUint32(data[0:4], uint32(i))
 		binary.LittleEndian.PutUint32(data[4:8], uint32(count))
-		copy(data[walSpannedPartHeaderLen:], piece)
+		payload.copyRange(data[walSpannedPartHeaderLen:], start, end)
 		part := WALEntry{
 			Sequence:  entry.Sequence,
 			Timestamp: entry.Timestamp,

@@ -14,7 +14,7 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 	if resultLimit == 0 {
 		return nil
 	}
-	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.searchReadEngine(ctx))
 	defer release()
 	ids := make([]storage.NodeID, resultLimit)
 	for index := 0; index < resultLimit; index++ {
@@ -43,7 +43,7 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 		found = append(found, node)
 	}
 	s.attachSearchMatches(ctx, results, found, query, opts)
-	if visible.Enabled() {
+	if s.indexedScope(ctx) != nil || visible.Enabled() {
 		for i := range results {
 			results[i].Matches = visibleSearchMatches(results[i].Matches, found[i].Properties)
 		}
@@ -59,7 +59,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 	if resultLimit == 0 {
 		return nil
 	}
-	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.searchReadEngine(ctx))
 	defer release()
 	projection := newResultPropertyProjection(opts.IncludeProperties, opts.ExcludeProperties)
 
@@ -117,7 +117,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 		found = append(found, node)
 	}
 	s.attachSearchMatches(ctx, results, found, query, opts)
-	if visible.Enabled() {
+	if s.indexedScope(ctx) != nil || visible.Enabled() {
 		for i := range results {
 			results[i].Matches = visibleSearchMatches(results[i].Matches, found[i].Properties)
 		}
@@ -215,7 +215,7 @@ func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
 	node.Properties = result.Properties
 	node.ChunkEmbeddings = nil
 	node.NamedEmbeddings = nil
-	return &node
+	return storage.CopyNode(&node)
 }
 
 func (result SearchResult) nodeMetadataBytes() int64 {

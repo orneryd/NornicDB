@@ -34,11 +34,16 @@ import (
 // Null passes everywhere; STARTS WITH, ENDS WITH and CONTAINS accept any
 // types (they return null).
 
+// timestamp is deliberately absent: Neo4j 5.26.30 preparatory rewriting turns
+// it into datetime().epochMillis, a property without a concrete static proof.
+// Its runtime Integer signature is not an admission proof. See the exact-version
+// timestampRewriter.scala source linked in the NOR-81 OpenSpec reference evidence.
+//
 // staticFunctionResultTypes are the result types of functions whose result
 // type doesn't depend on their arguments.
 var staticFunctionResultTypes = map[string]string{
 	"size": "Integer", "length": "Integer", "tointeger": "Integer", "char_length": "Integer",
-	"character_length": "Integer", "timestamp": "Integer", "sign": "Integer",
+	"character_length": "Integer", "sign": "Integer",
 	"tofloat": "Float", "sqrt": "Float", "exp": "Float", "log": "Float", "log10": "Float",
 	"sin": "Float", "cos": "Float", "tan": "Float", "cot": "Float", "asin": "Float",
 	"acos": "Float", "atan": "Float", "atan2": "Float", "degrees": "Float", "radians": "Float",
@@ -115,9 +120,12 @@ func operandMismatch(operand staticOperand, expected string) error {
 // XOR, NOT, WHERE, CASE WHEN) whose static type isn't Boolean: a list with
 // Neo4j's coercion error, any other known type with a type mismatch. Null
 // and unknown types pass.
-func requireBooleanOperand(operand staticOperand) error {
+func (checker staticOperatorChecker) requireBooleanOperand(operand staticOperand) error {
 	switch {
-	case operand.list():
+	case operand.list() && len(checker.params) == 0 && len(checker.scope.params) == 0:
+		// Neo4j runs ListCoercedToBooleanCheck before parameter metadata
+		// replacement. The value-independent phase owns this prohibition;
+		// the request phase still checks the Boolean signature below.
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListCoercionToBoolean())
 	case operand.excludes(isBooleanOrListTypeName):
 		// A union with a list alternative passes the type check; only a
@@ -254,7 +262,11 @@ func checkSingleOperator(op byte, left, right staticOperand, cypher25 bool) (sta
 		if right.excludes(isDurationOrNumberTypeName) {
 			return staticOperand{}, operandMismatch(right, "Duration or List<T>")
 		}
-		return left, nil
+		if right.known() {
+			return left, nil
+		}
+		// An unknown right operand can be a list: preserve that alternative
+		// through the same result-type owner used for an unknown left operand.
 	case left.duration():
 		if right.temporal() || right.duration() {
 			return right, nil
@@ -323,9 +335,9 @@ func additionResultTypes(left, right staticOperand) []string {
 	case known.numeric():
 		return []string{"Float", "Integer", "String", "List<T>"}
 	case known.duration():
-		return []string{"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime", "List<T>"}
+		return []string{"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime", "List<Any>", "List<Duration>"}
 	case known.temporal():
-		return []string{known.typeName(), "List<T>"}
+		return []string{known.typeName(), "List<Any>", "List<" + known.typeName() + ">"}
 	}
 	return []string{"List<T>"}
 }
@@ -413,6 +425,9 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // error in it. Its result is proven or unknown (gateProven): a type only a
 // verified rule produced can reach a consumer.
 func (checker staticOperatorChecker) check(ctx context.Context, expression string) (staticOperand, error) {
+	if checker.params == nil {
+		checker.params = checker.scope.params
+	}
 	// Recognising one operand's form can scan its whole text several times, so
 	// a clause's operator check re-enters here once per operand: a canceled
 	// statement stops analysing at its next operand instead of finishing the
@@ -443,12 +458,6 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	if expression == "" {
 		return staticOperand{}, nil
 	}
-	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
-		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, nil); !projection {
-			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-				localization.CypherCoreMapProjectionReceiver(receiver))
-		}
-	}
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		return checker.checkAtom(ctx, expression)
 	}
@@ -461,6 +470,11 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
 	if !expressionTextAccepted(ctx, checker.maskMapProjections(expression), expressionTextOperator) {
+		// Malformed projection receivers still belong to the operand checker,
+		// even when the expression gate declines operator decomposition.
+		if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
+			return checker.checkAtom(ctx, expression)
+		}
 		// A function call or subquery expression over a pattern still has
 		// its result type (size([(n)-->() | 1]) is an Integer).
 		return staticPatternExpressionType(expression), nil
@@ -491,7 +505,7 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 				if err != nil {
 					return staticOperand{}, err
 				}
-				if err := requireBooleanOperand(operand); err != nil {
+				if err := checker.requireBooleanOperand(operand); err != nil {
 					return staticOperand{}, err
 				}
 			}
@@ -504,7 +518,7 @@ func (checker staticOperatorChecker) derive(ctx context.Context, expression stri
 		if err != nil {
 			return staticOperand{}, err
 		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := checker.requireBooleanOperand(operand); err != nil {
 			return staticOperand{}, err
 		}
 		return provenOperand("Boolean"), nil
@@ -666,7 +680,7 @@ func (checker staticOperatorChecker) checkCase(ctx context.Context, parsed *case
 			if err != nil {
 				return staticOperand{}, err
 			}
-			if err := requireBooleanOperand(condition); err != nil {
+			if err := checker.requireBooleanOperand(condition); err != nil {
 				return staticOperand{}, err
 			}
 		}
@@ -1209,6 +1223,14 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
 func (checker staticOperatorChecker) checkAtom(ctx context.Context, expression string) (staticOperand, error) {
+	// Validate the receiver after operators have separated their operands.
+	// Correlated pattern values first arrive at derive as b.k = a{.k}.
+	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
+		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic, &checker.scope); !projection {
+			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+				localization.CypherCoreMapProjectionReceiver(receiver))
+		}
+	}
 	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
@@ -1362,7 +1384,9 @@ func staticParameterOperand(value interface{}) staticOperand {
 		if number.IsInteger() {
 			return knownOperand("Integer")
 		}
-		return knownOperand("Float")
+		// Neo4j 5.26.30 ParameterTypeInfo.FLOAT is CTAny: bound floating
+		// values do not prove a static type, unlike Float literals.
+		return staticOperand{}
 	}
 	switch value.(type) {
 	case nil:
@@ -1379,7 +1403,7 @@ func staticParameterOperand(value interface{}) staticOperand {
 		return knownOperand("List<T>")
 	}
 	if _, isMap := toStringAnyMap(value); isMap {
-		return displayedOperand("Map", "Map, Node or Relationship", "")
+		return typedOperand("Map, Node or Relationship")
 	}
 	return staticOperand{}
 }
@@ -1597,7 +1621,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		if err != nil {
 			return err
 		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := checker.requireBooleanOperand(operand); err != nil {
 			return err
 		}
 	}
@@ -1608,7 +1632,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 		if err != nil {
 			return err
 		}
-		if err := requireBooleanOperand(operand); err != nil {
+		if err := checker.requireBooleanOperand(operand); err != nil {
 			return err
 		}
 	}

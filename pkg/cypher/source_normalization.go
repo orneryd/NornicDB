@@ -16,7 +16,7 @@ func sourceQueryRewrite(source *cyphertext.Source) *queryRewrite {
 	if len(source.Edits) == 0 {
 		return nil
 	}
-	rewrite := &queryRewrite{Source: *source}
+	rewrite := &queryRewrite{Source: *source, preserveColumnIdentity: true}
 	return rewrite
 }
 
@@ -72,7 +72,12 @@ func withSourceRewrite(ctx context.Context, rewrite *queryRewrite) context.Conte
 		return ctx
 	}
 	source := cyphertext.SourceFor(ctx, rewrite.Original)
-	return cyphertext.WithSourceView(ctx, source.Rewrite(rewrite.Text, rewrite.Edits))
+	view := source.Rewrite(rewrite.Text, rewrite.Edits)
+	if len(rewrite.conditionalCalls) != 0 {
+		parent, _ := ctx.Value(conditionalFramesKey{}).(*conditionalFrames)
+		ctx = context.WithValue(ctx, conditionalFramesKey{}, &conditionalFrames{source: view, calls: rewrite.conditionalCalls, parent: parent})
+	}
+	return cyphertext.WithSourceView(ctx, view)
 }
 
 type sourceTrimPolicy uint8

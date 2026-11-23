@@ -348,33 +348,54 @@ type commitStates struct {
 // cancelled caller selects no images and folds none.
 func newCommitStates(ctx context.Context, operationFrames ...[]Operation) (commitStates, error) {
 	var states commitStates
-	var err error
+	node := func(id NodeID, before, after *Node) (err error) {
+		states.nodes, err = foldCommitEntity(ctx, states.nodes, id, before, after)
+		return err
+	}
+	edge := func(id EdgeID, before, after *Edge) (err error) {
+		states.edges, err = foldCommitEntity(ctx, states.edges, id, before, after)
+		return err
+	}
 	for _, operations := range operationFrames {
-		for _, op := range operations {
-			if err := ctx.Err(); err != nil {
-				return commitStates{}, err
-			}
-			switch {
-			case (op.Type == OpCreateNode || op.Type == OpUpdateNode) && op.Node != nil:
-				states.nodes, err = foldCommitEntity(ctx, states.nodes, op.Node.ID, op.OldNode, op.Node)
-			case op.Type == OpDeleteNode:
-				states.nodes, err = foldCommitEntity(ctx, states.nodes, op.NodeID, op.OldNode, nil)
-				for _, id := range op.DeletedEdgeIDs {
-					if err == nil {
-						states.edges, err = foldCommitEntity(ctx, states.edges, id, nil, nil)
-					}
-				}
-			case (op.Type == OpCreateEdge || op.Type == OpUpdateEdge) && op.Edge != nil:
-				states.edges, err = foldCommitEntity(ctx, states.edges, op.Edge.ID, op.OldEdge, op.Edge)
-			case op.Type == OpDeleteEdge:
-				states.edges, err = foldCommitEntity(ctx, states.edges, op.EdgeID, op.OldEdge, nil)
-			}
-			if err != nil {
-				return commitStates{}, err
-			}
+		if err := visitCommitEntityImages(ctx, operations, node, edge); err != nil {
+			return commitStates{}, err
 		}
 	}
 	return states, nil
+}
+
+// visitCommitEntityImages walks the native publication order, including the
+// relationship tombstones carried by a node deletion.
+func visitCommitEntityImages(
+	ctx context.Context, operations []Operation,
+	node func(NodeID, *Node, *Node) error, edge func(EdgeID, *Edge, *Edge) error,
+) error {
+	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		switch {
+		case (op.Type == OpCreateNode || op.Type == OpUpdateNode) && op.Node != nil:
+			err = node(op.Node.ID, op.OldNode, op.Node)
+		case op.Type == OpDeleteNode:
+			err = node(op.NodeID, op.OldNode, nil)
+			for _, id := range op.DeletedEdgeIDs {
+				if err != nil {
+					break
+				}
+				err = edge(id, nil, nil)
+			}
+		case (op.Type == OpCreateEdge || op.Type == OpUpdateEdge) && op.Edge != nil:
+			err = edge(op.Edge.ID, op.OldEdge, op.Edge)
+		case op.Type == OpDeleteEdge:
+			err = edge(op.EdgeID, op.OldEdge, nil)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // foldCommitEntity folds one operation into its entity's pair: the first

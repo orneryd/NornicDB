@@ -267,7 +267,6 @@
     "isDeleteStreamingEligible"
   ],
   "pkg/cypher/executor_mutations_delete_guard.go": [
-    "deleteExpressionRootIdentifier",
     "hasTopLevelDeleteLabelQualifier"
   ],
   "pkg/cypher/executor_query_routing.go": [
@@ -687,13 +686,8 @@
     "setItemKeepsMergeKey"
   ],
   "pkg/cypher/query_patterns.go": [
-    "countRelationshipPatterns",
-    "edgeAggregationProperty",
     "extractNodeVariables",
-    "extractRelationshipType",
-    "extractRelationshipVariable",
-    "functionCallParenAt",
-    "splitEdgeAggregationCall"
+    "functionCallParenAt"
   ],
   "pkg/cypher/query_structure_rewrite.go": [
     "mayUseQueryStructure",

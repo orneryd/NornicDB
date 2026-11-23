@@ -1,38 +1,33 @@
 package cypher
 
 import (
-	"context"
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
-// The interval and line statements at a long source's size: 2,000 sections
-// and a page of 200 spans per statement; a 200 KB text with 200 offsets.
-func newTextIntervalBenchExecutor(b *testing.B) *StorageExecutor {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "textintervalbench"))
+func benchmarkTextIntervalQuery(b *testing.B, query string, params map[string]interface{}) {
+	// The interval and line statements at a long source's size use 2,000
+	// sections and a page of 200 spans or line offsets per statement.
+	// Keep the full document in the disk-backed value log for this fixture.
+	base, err := testfixture.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(b.TempDir()))
+	require.NoError(b, err)
 	starts, ends, labels := make([]interface{}, 2000), make([]interface{}, 2000), make([]interface{}, 2000)
 	for i := range starts {
 		starts[i], ends[i], labels[i] = int64(i*100), int64(i*100+90), "section"
 	}
 	line := strings.Repeat("a line of ordinary text é ", 3) + "\n"
 	text := strings.Repeat(line, 200_000/len(line))
-	_, err := exec.Execute(context.Background(),
+	exec := newTextIntervalExecutor(b, base,
 		"CREATE (:Source {id: 'source-1', text: $text, starts: $starts, ends: $ends, labels: $labels})",
 		map[string]interface{}{"text": text, "starts": starts, "ends": ends, "labels": labels})
-	if err != nil {
-		b.Fatal(err)
-	}
-	return exec
-}
-
-func benchmarkTextIntervalQuery(b *testing.B, query string, params map[string]interface{}) {
-	exec := newTextIntervalBenchExecutor(b)
-	ctx := context.Background()
-	if _, err := exec.Execute(ctx, query, params); err != nil {
-		b.Fatal(err)
-	}
+	ctx := b.Context()
+	warmup, err := exec.Execute(ctx, query, params)
+	require.NoError(b, err)
+	require.Len(b, warmup.Rows, 200)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -109,16 +109,18 @@ CALL db.cdc.query($cursor, [
 
 - Changes are written in the same storage commit as the data, so a rolled
   back transaction leaves no changes.
-- A commit that was written to the journal but not yet applied when the
-  server stopped is applied from the journal at the next start. This happens
-  before the databases' capture options are loaded, so no changes are recorded
-  for such a commit: the feed has no entry for it, and nothing in the feed
-  shows that one is missing.
-- A program that embeds NornicDB's storage, sets a database's capture mode
-  itself and then applies the journal, with the journal opened under the
-  record policy of a single-node server (records larger than one 16 MiB frame
-  are written across several frames), records such a
-  commit's changes in that mode when every change fits in one stored value
+- On managed startup, persisted capture options are loaded before journal
+  replay. Current journal records retain each commit's admitted capture mode,
+  so recovery preserves that decision even if the database option changes.
+  A captured commit that was journaled but not yet applied is recovered with
+  its change events; replaying it again does not duplicate those events.
+  A commit recorded with capture off remains uncaptured.
+- Older journal records without a recorded capture decision use the mode
+  available during replay, including in embedded applications that set the
+  mode themselves before applying the journal. With the single-node server's
+  journal record policy (records larger than one 16 MiB frame are written
+  across several frames), replay records such a commit's changes in that mode
+  when every change fits in one stored value
   (the store's value limit: 256 MiB with the default storage profile, 32 MiB
   with the low-memory one). Otherwise it records them in `DIFF` mode when
   those fit, and else records none. A change recorded this way says so in
@@ -126,9 +128,9 @@ CALL db.cdc.query($cursor, [
   without changes, nothing in the feed shows it.
 - Writes through Bolt and HTTP, auto-commit and explicit transactions, and
   through NornicDB's other APIs (MCP, the Qdrant-compatible API, imports) are
-  all captured, apart from the commits applied from the journal described
-  above. With async writes on (the write-behind buffer), a capturing
-  database's commits still go straight to storage, with their events; other
+  all captured when capture is enabled, subject to the recovery limitations
+  above for records without a recorded capture decision. With async writes on
+  (the write-behind buffer), a capturing database's commits still go straight to storage, with their events; other
   databases keep the buffer.
 
 ## Retention
@@ -147,7 +149,7 @@ a database dropped and created again under the same name, is invalid.
 | Situation | Error |
 | --- | --- |
 | The database's capture is off | `Neo.DatabaseError.ChangeDataCapture.Disabled` |
-| A malformed or foreign identifier, or one older than `db.cdc.earliest()` | `Neo.ClientError.ChangeDataCapture.InvalidIdentifier` |
+| A malformed or foreign identifier, or an expired ordinary event/current-position identifier (the reserved earliest marker is exempt) | `Neo.ClientError.ChangeDataCapture.InvalidIdentifier` |
 | An identifier past `db.cdc.current()` | `Neo.TransientError.ChangeDataCapture.FutureIdentifier` |
 | An invalid selector | `Neo.ClientError.Statement.ArgumentError` |
 

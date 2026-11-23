@@ -1346,9 +1346,12 @@ func resetHTTPDifferentialBackend(post func(string) TransactionResponse) error {
 			}
 		}
 	}
+	// Lookup creation is asynchronous on Neo4j. A reset must leave the
+	// reference ready before any corpus statement or snapshot uses its indexes.
 	for _, statement := range []string{
 		"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
 		"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+		"CALL db.awaitIndexes(10)",
 		"CALL db.clearQueryCaches()",
 	} {
 		if _, err := execute(statement); err != nil {
@@ -1455,6 +1458,7 @@ func TestHTTPDifferentialResetTypedRows(t *testing.T) {
 				"SHOW INDEXES", "DROP INDEX `index`` name` IF EXISTS",
 				"CREATE LOOKUP INDEX differential_node_labels IF NOT EXISTS FOR (n) ON EACH labels(n)",
 				"CREATE LOOKUP INDEX differential_relationship_types IF NOT EXISTS FOR ()-[r]-() ON EACH type(r)",
+				"CALL db.awaitIndexes(10)",
 				"CALL db.clearQueryCaches()",
 			}, statements)
 		})

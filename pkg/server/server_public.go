@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // =============================================================================
@@ -83,8 +85,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 
-	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
+	totalNodeCount, totalEdgeCount, databaseCount, countErr := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
 	if r.Context().Err() != nil {
+		return
+	}
+	if countErr != nil {
+		// The admitted population could not be read, so the reported totals
+		// cannot be distinguished from real zeros.
+		s.writeInternalServerError(w, r)
 		return
 	}
 
@@ -92,17 +100,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	embedInfo := map[string]interface{}{
 		"enabled": false,
 	}
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil && s.canReadAllDatabases(r) {
-		status := "idle"
-		if embedStats.Running {
-			status = "processing"
-		}
-		embedInfo = map[string]interface{}{
-			"enabled":   true,
-			"status":    status,
-			"processed": embedStats.Processed,
-			"pending":   embedStats.Pending,
-			"failed":    embedStats.Failed,
+	if s.canReadAllDatabases(r) {
+		if embedStats := s.readEmbeddingMonitoringStats(r.Context()); embedStats != nil {
+			status := "idle"
+			if embedStats.Running {
+				status = "processing"
+			}
+			embedInfo = map[string]interface{}{
+				"enabled":   true,
+				"status":    status,
+				"processed": embedStats.Processed,
+				"pending":   embedStats.Pending,
+				"failed":    embedStats.Failed,
+			}
 		}
 	}
 
@@ -171,8 +181,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		claims := getClaims(r)
 		administrator = claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin)
 		canRead := s.databaseReadPredicate(claims)
-		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
+		nodes, edges, databases, countErr := s.readableDatabaseCounts(r, true, canRead)
 		if r.Context().Err() != nil {
+			return
+		}
+		if countErr != nil {
+			// A scrape cannot tell a failed count from an empty database, so
+			// the catalogue is not produced.
+			s.writeInternalServerError(w, r)
 			return
 		}
 		anyReadable, allReadable := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), canRead)
@@ -217,81 +233,46 @@ func (s *Server) obsRegistryForHandler() *prometheus.Registry {
 }
 
 // readableDatabaseCounts is the admitted aggregate population shared by
-// /status and legacy /metrics. Each namespace passes databaseReadAccess before
-// reading cached prefix counts; aliases/composites cannot double-count storage.
+// /status and legacy /metrics. Physical database engines own namespace counts;
+// their NodeCount/EdgeCount routes already use the context-aware prefix counters.
 // Status excludes system; metrics includes it only when the caller can read it.
-func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int) {
-	// Calculate stats across the caller's readable physical databases.
-	// Primary source: storage-maintained cached per-namespace counters
-	// (NodeCountByPrefix/EdgeCountByPrefix), which are incrementally updated.
-	// Fallback: physical database engines when prefix counts are unavailable.
-
-	usedCachedPrefixCounts := false
-	if base := s.db.GetBaseStorageForManager(); base != nil {
-		if lister, ok := base.(interface{ ListNamespaces() []string }); ok {
-			if statsEngine, ok := base.(interface {
-				NodeCountByPrefix(prefix string) (int64, error)
-				EdgeCountByPrefix(prefix string) (int64, error)
-			}); ok {
-				for _, ns := range lister.ListNamespaces() {
-					select {
-					case <-r.Context().Done():
-						return
-					default:
-					}
-					if ns == "" || (!includeSystem && ns == "system") {
-						continue
-					}
-					if !canRead(ns) {
-						continue
-					}
-					databaseCount++
-					prefix := ns + ":"
-					if n, err := statsEngine.NodeCountByPrefix(prefix); err == nil {
-						totalNodeCount += n
-						usedCachedPrefixCounts = true
-					}
-					if e, err := statsEngine.EdgeCountByPrefix(prefix); err == nil {
-						totalEdgeCount += e
-						usedCachedPrefixCounts = true
-					}
-				}
-			}
-		}
+// A failed read returns no partial population.
+func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int, countErr error) {
+	if s.dbManager == nil {
+		return
 	}
-
-	// Fallback when cached prefix counters are not available.
-	if !usedCachedPrefixCounts && s.dbManager != nil {
-		databases := s.dbManager.ListDatabases()
-		for _, dbInfo := range databases {
-			select {
-			case <-r.Context().Done():
-				return
-			default:
-			}
-			dbName := dbInfo.Name
-			if !includeSystem && dbName == "system" {
-				continue
-			}
-			if !canRead(dbName) {
-				continue
-			}
-			if dbInfo.Type == "composite" {
-				continue
-			}
-			engine, err := s.dbManager.GetStorage(dbName)
-			if err != nil {
-				continue
-			}
-			databaseCount++
-			if nodes, err := engine.NodeCount(r.Context()); err == nil {
-				totalNodeCount += nodes
-			}
-			if edges, err := engine.EdgeCount(r.Context()); err == nil {
-				totalEdgeCount += edges
-			}
+	for _, dbInfo := range s.dbManager.ListDatabases() {
+		if err := r.Context().Err(); err != nil {
+			return 0, 0, 0, err
 		}
+		dbName := dbInfo.Name
+		if (!includeSystem && dbName == "system") || !canRead(dbName) || dbInfo.Type == "composite" {
+			continue
+		}
+		engine, err := s.dbManager.GetStorage(dbName)
+		if err != nil {
+			continue
+		}
+		nodes, edges, err := readDatabaseCounts(r.Context(), engine)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		databaseCount++
+		totalNodeCount += nodes
+		totalEdgeCount += edges
 	}
-
 	return
+}
+
+// readDatabaseCounts returns a complete pair or the original read error.
+func readDatabaseCounts(ctx context.Context, engine storage.Engine) (int64, int64, error) {
+	nodes, err := engine.NodeCount(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	edges, err := engine.EdgeCount(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return nodes, edges, nil
 }

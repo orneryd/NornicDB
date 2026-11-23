@@ -338,6 +338,12 @@ func (f *FulltextIndexV2) Search(query string, limit int) []indexResult {
 // most once per document, while the index's read lock is held; nil allows
 // every document.
 func (f *FulltextIndexV2) SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult {
+	return f.searchDocuments(query, limit, allowed, nil)
+}
+
+// searchDocuments copies the returned hits' document text while the reader
+// holds the same lock as scoring. FGAC compares it with authorized text.
+func (f *FulltextIndexV2) searchDocuments(query string, limit int, allowed func(string) bool, documents map[string]string) []indexResult {
 	if limit <= 0 {
 		return nil
 	}
@@ -479,6 +485,11 @@ func (f *FulltextIndexV2) SearchAllowed(query string, limit int, allowed func(do
 			continue
 		}
 		out = append(out, indexResult{ID: docID, Score: s.score})
+		if documents != nil {
+			if document, ok := f.documents[docID]; ok {
+				documents[docID] = document
+			}
+		}
 	}
 
 	f.putScoreScratch(scratch)

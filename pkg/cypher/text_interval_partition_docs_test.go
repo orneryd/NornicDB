@@ -22,7 +22,7 @@ func documentedTextIntervalPartition(t testing.TB) string {
 }
 
 func TestTextIntervalPartitionDocumentedStatement(t *testing.T) {
-	exec := newTextIntervalExecutor(t)
+	exec := newTextIntervalExecutor(t, newTestMemoryEngine(t), textIntervalFixture, nil)
 	row := textIntervalRow(t, exec, documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(5), "end": int64(30)})
 	require.Equal(t, []interface{}{textPart(5, 11, "own"), textPart(11, 25, "quoted"), textPart(25, 26, "own"), textPart(26, 30, "own")}, row[0])
 }
@@ -48,7 +48,7 @@ func TestTextIntervalPartitionOrderAndOverlap(t *testing.T) {
 		{"outside span", []interface{}{int64(-5), int64(12)}, []interface{}{int64(-1), int64(15)}, []interface{}{"before", "after"}, []interface{}{textPart(0, 10, "own")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			exec := newTextIntervalExecutor(t)
+			exec := newTextIntervalExecutor(t, newTestMemoryEngine(t), textIntervalFixture, nil)
 			_, err := exec.Execute(context.Background(), "MATCH (s:Source) SET s.starts = $starts, s.ends = $ends, s.roles = $roles", map[string]interface{}{"starts": tc.starts, "ends": tc.ends, "roles": tc.roles})
 			require.NoError(t, err)
 			row := textIntervalRow(t, exec, documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(0), "end": int64(10)})
@@ -58,13 +58,13 @@ func TestTextIntervalPartitionOrderAndOverlap(t *testing.T) {
 }
 
 func TestTextIntervalPartitionEmptySpan(t *testing.T) {
-	exec := newTextIntervalExecutor(t)
+	exec := newTextIntervalExecutor(t, newTestMemoryEngine(t), textIntervalFixture, nil)
 	row := textIntervalRow(t, exec, documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(12), "end": int64(12)})
 	require.Equal(t, []interface{}{}, row[0])
 }
 
 func TestTextIntervalPartitionMultipleSources(t *testing.T) {
-	exec := newTextIntervalExecutor(t)
+	exec := newTextIntervalExecutor(t, newTestMemoryEngine(t), textIntervalFixture, nil)
 	_, err := exec.Execute(context.Background(), "CREATE (:Source {id: 'source-2', starts: [0, 5], ends: [10, 7], roles: ['first', 'second']})", nil)
 	require.NoError(t, err)
 	result, err := exec.Execute(context.Background(), "MATCH (s:Source)"+documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(0), "end": int64(10)})

@@ -1,0 +1,708 @@
+{
+  "name": "nor12-fgac-authorization-flows",
+  "purpose": "Normative compatibility assertions for documented Neo4j Enterprise FGAC authorization flows on synthetic data. This fixture contains no exploit, bypass, escalation or vulnerability-reproduction probe.",
+  "principals": {
+    "admin": {
+      "admin": true
+    },
+    "access": {
+      "user": "fgac_access"
+    },
+    "noaccess": {
+      "user": "fgac_noaccess"
+    },
+    "reader": {
+      "user": "fgac_reader"
+    },
+    "denied": {
+      "user": "fgac_denied"
+    },
+    "property-denied": {
+      "user": "fgac_property_denied"
+    },
+    "predicate-denied": {
+      "user": "fgac_predicate_denied"
+    },
+    "writer": {
+      "user": "fgac_writer"
+    },
+    "policy": {
+      "user": "fgac_policy"
+    }
+  },
+  "setup": {
+    "graph": [
+      "CREATE (a:FGACDoc {id: 'doc-a', title: 'Alpha', published: true}), (b:FGACDoc {id: 'doc-b', title: 'Beta', published: false}), (c:FGACOther {id: 'other-a', title: 'Other'}), (a)-[:FGACLink {id: 'link-a', title: 'Link'}]->(b)"
+    ],
+    "administration": [
+      "CREATE USER fgac_linked SET AUTH 'oidc-comparison' { SET ID 'fgac-profile' }",
+      "CREATE ROLE fgac_reader IF NOT EXISTS",
+      "CREATE ROLE fgac_denier IF NOT EXISTS",
+      "CREATE ROLE fgac_access IF NOT EXISTS",
+      "CREATE ROLE fgac_noaccess IF NOT EXISTS",
+      "CREATE ROLE fgac_writer IF NOT EXISTS",
+      "CREATE USER fgac_access IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_noaccess IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_reader IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "CREATE USER fgac_writer IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_access TO fgac_access",
+      "GRANT ROLE fgac_reader TO fgac_reader",
+      "ALTER USER fgac_reader SET HOME DATABASE ${database}",
+      "GRANT ROLE fgac_reader TO fgac_denied",
+      "GRANT ROLE fgac_denier TO fgac_denied",
+      "GRANT ROLE fgac_noaccess TO fgac_noaccess",
+      "GRANT ROLE fgac_writer TO fgac_writer",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_reader",
+      "GRANT TRAVERSE ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
+      "GRANT READ { id, title } ON GRAPH ${database} NODES FGACDoc TO fgac_reader",
+      "GRANT TRAVERSE ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_reader",
+      "GRANT READ { id, title } ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_reader",
+      "CREATE ROLE fgac_property_denied IF NOT EXISTS",
+      "CREATE USER fgac_property_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_reader, fgac_property_denied TO fgac_property_denied",
+      "DENY READ { title } ON GRAPH ${database} NODES FGACDoc TO fgac_property_denied",
+      "DENY READ { title } ON GRAPH ${database} RELATIONSHIPS FGACLink TO fgac_property_denied",
+      "CREATE ROLE fgac_predicate_denied IF NOT EXISTS",
+      "CREATE USER fgac_predicate_denied IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_reader, fgac_predicate_denied TO fgac_predicate_denied",
+      "DENY READ { title } ON GRAPH ${database} FOR (d:FGACDoc) WHERE d.published = true TO fgac_predicate_denied",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_access",
+      "DENY ACCESS ON DATABASE ${database} TO fgac_noaccess",
+      "DENY MATCH { * } ON GRAPH ${database} NODES FGACDoc TO fgac_denier",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_writer",
+      "GRANT CREATE ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "GRANT SET PROPERTY { * } ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "GRANT READ { id, title } ON GRAPH ${database} NODES FGACDoc TO fgac_writer",
+      "CREATE ROLE fgac_policy IF NOT EXISTS",
+      "CREATE USER fgac_policy IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+      "GRANT ROLE fgac_policy TO fgac_policy",
+      "GRANT ACCESS ON DATABASE ${database} TO fgac_policy",
+      "GRANT MATCH {id} ON GRAPH ${database} FOR (d:FGACDoc) WHERE d.published = true TO fgac_policy"
+    ]
+  },
+  "teardown": {
+    "graph": [
+      "MATCH (n) WHERE n:FGACDoc OR n:FGACOther DETACH DELETE n"
+    ],
+    "administration": [
+      "DROP USER fgac_linked IF EXISTS",
+      "DROP USER fgac_access IF EXISTS",
+      "DROP USER fgac_denied IF EXISTS",
+      "DROP USER fgac_property_denied IF EXISTS",
+      "DROP USER fgac_predicate_denied IF EXISTS",
+      "DROP ROLE fgac_property_denied IF EXISTS",
+      "DROP ROLE fgac_predicate_denied IF EXISTS",
+      "DROP USER fgac_noaccess IF EXISTS",
+      "DROP USER fgac_reader IF EXISTS",
+      "DROP USER fgac_writer IF EXISTS",
+      "DROP ROLE fgac_access IF EXISTS",
+      "DROP ROLE fgac_denier IF EXISTS",
+      "DROP ROLE fgac_noaccess IF EXISTS",
+      "DROP ROLE fgac_reader IF EXISTS",
+      "DROP ROLE fgac_writer IF EXISTS",
+      "DROP USER fgac_policy IF EXISTS",
+      "DROP ROLE fgac_policy IF EXISTS"
+    ]
+  },
+  "cases": [
+    {
+      "id": "role-grant-visible",
+      "covers": [
+        "role-grant"
+      ],
+      "description": "GRANT ROLE assigns the native role to the synthetic principal.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW USERS YIELD user, roles WHERE user = 'fgac_reader' AND 'fgac_reader' IN roles RETURN user AS user"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "fgac_reader"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "access-grant-returns-scalar",
+      "covers": [
+        "access-grant"
+      ],
+      "description": "A granted database ACCESS privilege permits a scalar calculation.",
+      "database": "target",
+      "principal": "access",
+      "statements": [
+        "RETURN 1 AS ok"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "access-deny-refuses-session-work",
+      "covers": [
+        "access-deny"
+      ],
+      "description": "A DENIED database ACCESS privilege refuses work that otherwise needs no graph privilege.",
+      "database": "target",
+      "principal": "noaccess",
+      "statements": [
+        "RETURN 1 AS ok"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security."
+      }
+    },
+    {
+      "id": "traverse-and-property-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "TRAVERSE on the label plus READ on the projected properties returns the synthetic documents.",
+      "database": "target",
+      "principal": "reader",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            "Alpha"
+          ],
+          [
+            "doc-b",
+            "Beta"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "deny-named-node-property-preserves-node",
+      "covers": ["cross-role-deny", "traverse-property-read"],
+      "description": "A denied node property is null while traversal and the granted id remain available.",
+      "database": "target",
+      "principal": "property-denied",
+      "statements": ["MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", null]]}
+    },
+    {
+      "id": "deny-named-relationship-property-preserves-relationship",
+      "covers": ["cross-role-deny", "traverse-property-read"],
+      "description": "A denied relationship property is null while traversal and the granted id remain available.",
+      "database": "target",
+      "principal": "property-denied",
+      "statements": ["MATCH (:FGACDoc)-[r:FGACLink]->(:FGACDoc) RETURN r.id AS id, r.title AS title"],
+      "expect": {"kind": "allow", "rows": [["link-a", null]]}
+    },
+    {
+      "id": "deny-named-property-when-predicate-matches",
+      "covers": ["property-rule", "cross-role-deny"],
+      "description": "A conditional deny masks the named property on the matching node and retains the approved result on the other node.",
+      "database": "target",
+      "principal": "predicate-denied",
+      "statements": ["MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", "Beta"]]}
+    },
+    {
+      "id": "cross-role-deny-hides-documents",
+      "covers": [
+        "cross-role-deny"
+      ],
+      "description": "A DENY held by one of the principal's roles takes precedence over another role's GRANT.",
+      "database": "target",
+      "principal": "denied",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.title AS title ORDER BY id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": []
+      }
+    },
+    {
+      "id": "role-privileges-introspection",
+      "covers": [
+        "introspection"
+      ],
+      "description": "SHOW ROLE ... PRIVILEGES reports the granted access, read and traverse actions for the reader role.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW ROLE fgac_reader PRIVILEGES YIELD access, action WHERE access = 'GRANTED' RETURN DISTINCT action AS action ORDER BY action"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "access"
+          ],
+          [
+            "read"
+          ],
+          [
+            "traverse"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "read-only-role-write-denied",
+      "covers": [
+        "scoped-write-deny"
+      ],
+      "description": "A principal holding read privileges but no scoped write privilege is refused an ordinary CREATE.",
+      "database": "target",
+      "principal": "reader",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'forbidden-write', title: 'Forbidden'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    },
+    {
+      "id": "read-only-role-write-side-effect-absent",
+      "covers": [
+        "scoped-write-deny-side-effect"
+      ],
+      "description": "The refused CREATE left no synthetic node behind, observed through a fresh session.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (d:FGACDoc {id: 'forbidden-write'}) RETURN count(d) AS c"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "transaction-rollback-on-scoped-write-denial",
+      "covers": [
+        "transaction-rollback"
+      ],
+      "description": "A permitted write followed by a scoped write denial fails the transaction and rolls back the permitted write.",
+      "database": "target",
+      "principal": "writer",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'tx-partial', title: 'Partial'})",
+        "CREATE (:FGACOther {id: 'tx-denied', title: 'Denied'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    },
+    {
+      "id": "transaction-rollback-side-effect-absent",
+      "covers": [
+        "transaction-rollback-side-effect"
+      ],
+      "description": "Neither the permitted nor the denied transaction write is observable through a fresh session.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (n) WHERE (n:FGACDoc OR n:FGACOther) AND n.id IN ['tx-partial', 'tx-denied'] RETURN count(n) AS c"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "property-rule-filters-before-projection",
+      "covers": [
+        "property-rule"
+      ],
+      "description": "A row condition is evaluated on the stored property without granting read access to it.",
+      "database": "target",
+      "principal": "policy",
+      "statements": [
+        "MATCH (d:FGACDoc) RETURN d.id AS id, d.published AS published"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "writer-assigns-property-to-new-node",
+      "covers": [
+        "create-then-set"
+      ],
+      "description": "A creator applies its property privilege to a node it bound in the same statement.",
+      "database": "target",
+      "principal": "writer",
+      "statements": [
+        "CREATE (d:FGACDoc {id: 'writer-created', title: 'Draft'}) SET d.title = 'Approved'"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": []
+      }
+    },
+    {
+      "id": "new-node-property-is-stored",
+      "covers": [
+        "create-then-set-side-effect"
+      ],
+      "description": "The approved value is observable through an independent read after commit.",
+      "database": "target",
+      "principal": "admin",
+      "statements": [
+        "MATCH (d:FGACDoc {id: 'writer-created'}) RETURN d.title AS title"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "Approved"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-uses-target-role-for-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "A supported impersonated session reads the graph with the target account's property grants.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-uses-target-role-for-write",
+      "covers": [
+        "scoped-write-deny"
+      ],
+      "description": "An impersonated reader receives the ordinary read-only response to a write.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "statements": [
+        "CREATE (:FGACDoc {id: 'should-not-exist'})"
+      ],
+      "expect": {
+        "kind": "deny",
+        "code": "Neo.ClientError.Security.Forbidden"
+      }
+    },
+    {
+      "id": "impersonation-autocommit-reuses-session",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated auto-commit session returns the target account's visible documents on two successive statements of one reused session.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id",
+        "MATCH (d:FGACDoc) WHERE d.id = 'doc-a' RETURN d.id, d.published"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-autocommit-restricted-session",
+      "covers": ["cross-role-deny"],
+      "description": "A sequential session using a different executing account sees its own denials.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "denied",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": []}
+    },
+    {
+      "id": "ordinary-session-after-impersonation",
+      "covers": ["traverse-property-read"],
+      "description": "A subsequent ordinary session uses the authenticated actor's own graph scope.",
+      "database": "target",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": [["doc-a", true], ["doc-b", false]]}
+    },
+    {
+      "id": "impersonation-autocommit-default-database",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated auto-commit session that omits database selection reads the target account's documents from their assigned home database.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit",
+        "database": "omitted"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-routed-read",
+      "covers": [
+        "traverse-property-read"
+      ],
+      "description": "An impersonated read through a routed session obtains a routing table from the endpoint and returns the target account's documents.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {
+        "transaction": "autocommit",
+        "routing": "routed"
+      },
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "doc-a",
+            null
+          ],
+          [
+            "doc-b",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "impersonation-routed-home-database",
+      "covers": ["traverse-property-read"],
+      "description": "A routed session with no explicit database reads from the executing account's home database.",
+      "database": "target",
+      "principal": "admin",
+      "impersonate": "reader",
+      "session": {"transaction": "autocommit", "database": "omitted", "routing": "routed"},
+      "statements": [
+        "MATCH (d:FGACDoc) WHERE d.id IN ['doc-a', 'doc-b'] RETURN d.id, d.published ORDER BY d.id"
+      ],
+      "expect": {"kind": "allow", "rows": [["doc-a", null], ["doc-b", null]]}
+    },
+    {
+      "id": "external-provider-inspection",
+      "covers": [
+        "introspection"
+      ],
+      "description": "The provider listing reports the configured external ID for the linked account.",
+      "database": "system",
+      "principal": "admin",
+      "statements": [
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {
+        "kind": "allow",
+        "rows": [
+          [
+            "fgac_linked",
+            "oidc-comparison",
+            "fgac-profile"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "external-provider-binding-replacement",
+      "covers": ["introspection"],
+      "description": "Replacing a named provider ID updates the published provider listing.",
+      "database": "system",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "ALTER USER fgac_linked SET AUTH 'oidc-comparison' { SET ID 'fgac-profile-replacement' }",
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {"kind": "allow", "rows": [["fgac_linked", "oidc-comparison", "fgac-profile-replacement"]]}
+    },
+    {
+      "id": "external-provider-binding-removal",
+      "covers": ["introspection"],
+      "description": "Removing one named binding keeps the other configured provider and lists only the remaining ID.",
+      "database": "system",
+      "principal": "admin",
+      "session": {"transaction": "autocommit"},
+      "statements": [
+        "ALTER USER fgac_linked SET AUTH 'oidc-secondary' { SET ID 'fgac-profile-secondary' }",
+        "ALTER USER fgac_linked REMOVE AUTH 'oidc-comparison'",
+        "SHOW USERS WITH AUTH YIELD user, provider, auth WHERE user = 'fgac_linked' RETURN user, provider, auth.id AS externalID"
+      ],
+      "expect": {"kind": "allow", "rows": [["fgac_linked", "oidc-secondary", "fgac-profile-secondary"]]}
+    }
+  ],
+  "referenceExtensions": {
+    "2026.10.2": {
+      "principals": {
+        "ruled": {
+          "user": "fgac_ruled"
+        },
+        "unruled": {
+          "user": "fgac_unruled"
+        }
+      },
+      "setup": {
+        "administration": [
+          "CREATE ROLE fgac_rule_reader IF NOT EXISTS",
+          "CREATE USER fgac_ruled IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+          "GRANT ACCESS ON DATABASE ${database} TO fgac_rule_reader",
+          "GRANT TRAVERSE ON GRAPH ${database} NODES FGACDoc TO fgac_rule_reader",
+          "GRANT READ {id} ON GRAPH ${database} NODES FGACDoc TO fgac_rule_reader",
+          "CYPHER 25 ALTER USER fgac_ruled SET TAGS 'fgac-reports'",
+          "CREATE USER fgac_unruled IF NOT EXISTS SET PASSWORD '${password}' CHANGE NOT REQUIRED",
+          "GRANT ROLE fgac_access TO fgac_unruled",
+          "CYPHER 25 ALTER USER fgac_unruled SET TAGS 'fgac-paused'",
+          "CYPHER 25 CREATE AUTH RULE fgac_reports_rule SET CONDITION all(tag IN ['fgac-reports'] WHERE tag IN abac.native.user_tags()) AND size(abac.native.user_tags()) = 1 AND date.transaction('UTC').year >= 2020 AND localtime.transaction('UTC').hour < 24",
+          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_reports_rule",
+          "CYPHER 25 CREATE AUTH RULE fgac_paused_rule SET CONDITION 'fgac-paused' IN abac.native.user_tags() SET ENABLED false",
+          "CYPHER 25 GRANT ROLE fgac_rule_reader TO AUTH RULE fgac_paused_rule"
+        ]
+      },
+      "teardown": {
+        "administration": [
+          "CYPHER 25 DROP AUTH RULE fgac_reports_rule IF EXISTS",
+          "CYPHER 25 DROP AUTH RULE fgac_paused_rule IF EXISTS",
+          "DROP USER fgac_ruled IF EXISTS",
+          "DROP USER fgac_unruled IF EXISTS",
+          "DROP ROLE fgac_rule_reader IF EXISTS"
+        ]
+      },
+      "cases": [
+        {
+          "id": "current-auth-rule-grants-role",
+          "covers": [
+            "access-grant"
+          ],
+          "description": "An enabled Cypher 25 rule grants database access to the tagged user.",
+          "database": "target",
+          "principal": "ruled",
+          "statements": [
+            "RETURN 1 AS permitted"
+          ],
+          "expect": {
+            "kind": "allow",
+            "rows": [
+              [
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "id": "current-auth-rule-expression-projects-authorized-rows",
+          "covers": ["property-rule"],
+          "description": "The native tag, list, scalar and transaction-clock predicates jointly grant the scoped graph role.",
+          "database": "target",
+          "principal": "ruled",
+          "statements": ["MATCH (n:FGACDoc) WHERE n.id IN ['doc-a', 'doc-b'] RETURN n.id AS id ORDER BY id"],
+          "expect": {"kind": "allow", "rows": [["doc-a"], ["doc-b"]]}
+        },
+        {
+          "id": "current-auth-rule-false-or-disabled-grants-no-rows",
+          "covers": ["property-rule"],
+          "description": "A nonmatching enabled rule and a matching but disabled rule supply no graph access.",
+          "database": "target",
+          "principal": "unruled",
+          "statements": ["MATCH (n:FGACDoc) RETURN n.id AS id ORDER BY id"],
+          "expect": {"kind": "allow", "rows": []}
+        },
+        {
+          "id": "current-auth-rule-inspection",
+          "covers": [
+            "introspection"
+          ],
+          "description": "The rule listing returns the rule name, state and assigned role.",
+          "database": "system",
+          "principal": "admin",
+          "statements": [
+            "CYPHER 25 SHOW AUTH RULES YIELD name, enabled, roles WHERE name = 'fgac_reports_rule' RETURN name, enabled, roles"
+          ],
+          "expect": {
+            "kind": "allow",
+            "rows": [
+              [
+                "fgac_reports_rule",
+                true,
+                [
+                  "fgac_rule_reader"
+                ]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

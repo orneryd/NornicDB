@@ -389,6 +389,10 @@ func (r *mutationResolver) mutationRebuildSearchIndex(ctx context.Context) (bool
 	if err != nil {
 		return false, err
 	}
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil &&
+		!request.AllowsDatabase("database.search.rebuild", database, "") {
+		return false, auth.ErrFineGrainedForbidden
+	}
 	r.DB.ResetSearchService(database)
 	service, err := r.DB.GetOrCreateSearchService(database, engine)
 	if err != nil {
@@ -406,6 +410,10 @@ func (r *mutationResolver) mutationRunDecay(ctx context.Context) (*models.DecayR
 		return nil, err
 	}
 
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil &&
+		!request.Access.AllowsAllDatabases("knowledge.decay.info") {
+		return nil, auth.ErrFineGrainedForbidden
+	}
 	info := r.DB.GetDecayInfo()
 	if info == nil || !info.Enabled {
 		return &models.DecayResult{

@@ -43,25 +43,25 @@ func TestGraphCollectorsPropagateNodeReadFailures(t *testing.T) {
 			run    func(context.Context, storage.Engine) (graphCollection, error)
 		}{
 			{"neighborhood_seed", "a", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestNeighborhood(ctx, e, []string{"a"}, 1, 10, "out", filters)
+				return s.collectLatestNeighborhood(ctx, directGraphRead(e), []string{"a"}, 1, 10, "out", filters)
 			}},
 			{"neighborhood_neighbor", "b", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestNeighborhood(ctx, e, []string{"a"}, 1, 10, "out", filters)
+				return s.collectLatestNeighborhood(ctx, directGraphRead(e), []string{"a"}, 1, 10, "out", filters)
 			}},
 			{"path_same_node", "a", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestPath(ctx, e, "a", "a", 10, filters)
+				return s.collectLatestPath(ctx, directGraphRead(e), "a", "a", 10, filters)
 			}},
 			{"path_neighbor", "b", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestPath(ctx, e, "a", "b", 10, filters)
+				return s.collectLatestPath(ctx, directGraphRead(e), "a", "b", 10, filters)
 			}},
 			{"path_reconstruction", "b", 2, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestPath(ctx, e, "a", "b", 10, filters)
+				return s.collectLatestPath(ctx, directGraphRead(e), "a", "b", 10, filters)
 			}},
 			{"induced_current", "a", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectLatestInducedSubgraph(ctx, e, []string{"a"}, filters)
+				return s.collectLatestInducedSubgraph(ctx, directGraphRead(e), []string{"a"}, filters)
 			}},
 			{"induced_snapshot", "a", 1, func(ctx context.Context, e storage.Engine) (graphCollection, error) {
-				return s.collectSnapshotInducedSubgraph(ctx, e, []string{"a"}, storage.MVCCVersion{}, filters)
+				return s.collectSnapshotInducedSubgraph(ctx, directGraphRead(e), []string{"a"}, storage.MVCCVersion{}, filters)
 			}},
 		} {
 			t.Run(failure.Error()+"/"+tc.name, func(t *testing.T) {
@@ -97,20 +97,20 @@ func TestGraphCollectorsKeepMissingNodesDistinct(t *testing.T) {
 			err: errors.Join(errors.New("missing a"), storage.ErrNotFound),
 		}
 	}
-	collection, err := s.collectLatestNeighborhood(t.Context(), engine(), []string{"a"}, 1, 10, "out", filters)
+	collection, err := s.collectLatestNeighborhood(t.Context(), directGraphRead(engine()), []string{"a"}, 1, 10, "out", filters)
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes)
-	_, err = s.collectLatestPath(t.Context(), engine(), "a", "a", 10, filters)
+	_, err = s.collectLatestPath(t.Context(), directGraphRead(engine()), "a", "a", 10, filters)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	collection, err = s.collectLatestInducedSubgraph(t.Context(), engine(), []string{"a"}, filters)
+	collection, err = s.collectLatestInducedSubgraph(t.Context(), directGraphRead(engine()), []string{"a"}, filters)
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes)
-	collection, err = s.collectSnapshotInducedSubgraph(t.Context(), engine(), []string{"a"}, storage.MVCCVersion{}, filters)
+	collection, err = s.collectSnapshotInducedSubgraph(t.Context(), directGraphRead(engine()), []string{"a"}, storage.MVCCVersion{}, filters)
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes)
 	notVisible := engine()
 	notVisible.err = errors.Join(errors.New("a outside snapshot"), storage.ErrNotVisibleAtSnapshot)
-	collection, err = s.collectSnapshotInducedSubgraph(t.Context(), notVisible, []string{"a"}, storage.MVCCVersion{}, filters)
+	collection, err = s.collectSnapshotInducedSubgraph(t.Context(), directGraphRead(notVisible), []string{"a"}, storage.MVCCVersion{}, filters)
 	require.NoError(t, err)
 	require.Empty(t, collection.nodes, "an entity outside the requested snapshot is absent, not a read failure")
 }

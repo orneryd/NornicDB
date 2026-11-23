@@ -23,12 +23,17 @@ func TestBoltCanonicalStatementMatrix(t *testing.T) {
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })
+	samples := append(statementfactstest.Cases(), statementfactstest.ReviewAdmissionCases()...)
+	samples = append(samples,
+		statementfactstest.Case{Name: "n152_unicode_map_and_alias", Query: "RETURN {`a\\u0062`:1} AS m, 1 AS `a\\u0062`", Columns: []string{"m", "ab"}},
+		statementfactstest.Case{Name: "n152_unicode_zero_rows", Query: "UNWIND [] AS `a\\u0062` RETURN `a\\u0062`", Columns: []string{"ab"}},
+	)
 	for _, normalized := range []bool{false, true} {
 		t.Run(fmt.Sprintf("normalization=%v", normalized), func(t *testing.T) {
 			restore := config.WithCypherQueryNormalizationDisabled()
 			defer restore()
 			config.SetCypherQueryNormalizationEnabled(normalized)
-			for _, sample := range append(statementfactstest.Cases(), statementfactstest.ReviewAdmissionCases()...) {
+			for _, sample := range samples {
 				for _, explicit := range []bool{false, true} {
 					for _, prefix := range []string{"", "EXPLAIN ", "PROFILE "} {
 						t.Run(fmt.Sprintf("%s/explicit=%v/mode=%s", sample.Name, explicit, prefix), func(t *testing.T) {

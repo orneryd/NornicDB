@@ -1,0 +1,10 @@
+## D12: Apply bound parameter types throughout static query checks
+
+Outcome: Using a bound parameter through an expression must retain the type facts needed for the same accept/reject decision as Neo4j.
+
+Reproduction: `UNWIND [] AS r MATCH (n) WITH n, $i * 2 AS w RETURN toUpper(w) AS a`, params `{i:5}`: expected Neo4j SyntaxError/type mismatch, actual accepted. Reverse control: `UNWIND [] AS r MATCH (n) WITH n, [x IN $f | x] AS v RETURN v[0] AS a`, params `{f:1.5}`: reference accepts, NornicDB rejects.
+
+Acceptance: The 258 constructor cases and 120 generated parameter cases match reference acceptance in both modes/parsers.
+
+Source: `bugqueue-1632-r6-out-of-family-20261023.md` §1; constructor oracle index 9402 and listed 258 indices; population G; current [#1632](https://github.com/orneryd/NornicDB/pull/1632) Known differences.
+

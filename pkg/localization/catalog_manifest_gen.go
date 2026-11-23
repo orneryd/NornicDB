@@ -85,6 +85,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "adminimport.duplicate_relationship_id_at_row", Constructor: "AdminImportDuplicateRelationshipIDAtRow", Fields: []string{"Row"}, PluralForms: []string{"other"}},
 	{ID: "adminimport.empty_source", Constructor: "AdminImportEmptySource", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "adminimport.export_custom_quote_unsupported", Constructor: "AdminExportCustomQuoteUnsupported", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "adminimport.export_label_unsupported", Constructor: "AdminExportLabelUnsupported", Fields: []string{"Delimiter", "Label"}, PluralForms: []string{"other"}},
 	{ID: "adminimport.export_output_directory_required", Constructor: "AdminExportOutputDirectoryRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "adminimport.invalid_vector_dimensions", Constructor: "AdminImportInvalidVectorDimensions", Fields: []string{"Header"}, PluralForms: []string{"other"}},
 	{ID: "adminimport.no_csv_files", Constructor: "AdminImportNoCSVFiles", Fields: []string{}, PluralForms: []string{"other"}},

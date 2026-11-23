@@ -26,7 +26,8 @@ import "github.com/orneryd/nornicdb/pkg/storage"
 type setWrites struct {
 	count int
 	// known looks up the database's key names; nil knows none.
-	known storage.PropertyKeyLookup
+	known  storage.PropertyKeyLookup
+	intent *setEntityState
 	// run holds the keys of the current run; runKeys spills past four.
 	run     [4]string
 	runLen  int
@@ -43,6 +44,9 @@ func (w *setWrites) endRun() {
 // not, as part of the current run; merged is true when the run has more than
 // one assignment.
 func (w *setWrites) property(existed bool, key string, value interface{}, merged bool) {
+	if w.intent != nil {
+		w.intent.recordProperty(key, value != nil)
+	}
 	if value == nil && !existed && !(merged && w.knownKey(key)) {
 		return
 	}
@@ -102,7 +106,13 @@ func mapWrites(before, props map[string]interface{}, replace bool) int {
 // holds the map's entries, nulls included.
 func (w *setWrites) mapEntries(before, props map[string]interface{}, replace bool) {
 	w.endRun()
+	if w.intent != nil && replace {
+		w.intent.propertyWrites.Replace = true
+	}
 	for key, value := range props {
+		if w.intent != nil {
+			w.intent.recordProperty(key, value != nil)
+		}
 		if value != nil {
 			w.count++
 		} else if _, existed := before[key]; existed || w.knownKey(key) {

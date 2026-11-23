@@ -1033,10 +1033,15 @@ func startsWithKeywordFold(s string, keywordUpper string) bool {
 // queryRewrite maps a canonical statement back to the text the client sent.
 type queryRewrite struct {
 	cyphertext.Source
+	// conditionalCalls are trusted emitted CALL keyword spans in Text.
+	conditionalCalls []cyphertext.Span
 	// verbatimColumns: a column whose text the client wrote is kept as is.
 	// The label-expression rewrite inserts predicates, in which a short
 	// column name (r) can occur last (#860).
 	verbatimColumns bool
+	// preserveColumnIdentity keeps admitted symbolic names when projecting
+	// lexical source edits back onto anonymous expression headings.
+	preserveColumnIdentity bool
 
 	// Admission is a fact of exact source text, retained by its existing rewrite.
 	commentsAdmitted bool

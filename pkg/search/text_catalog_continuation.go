@@ -121,11 +121,11 @@ func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *
 	observed := queryprofile.EntityVisitor(ctx, queryprofile.KindAllNodesScan, "", visit)
 	// A Where may read any property, so it gets whole nodes.
 	if request.AuthorizeNode == nil && options.Where == nil {
-		if reader, ok := s.engine.(storage.ProjectedPrefixNodeReader); ok {
+		if reader, ok := s.searchReadEngine(ctx).(storage.ProjectedPrefixNodeReader); ok {
 			return reader.StreamNodesByPrefixProjected(ctx, "", s.completeContinuationProjectionProperties(ctx, options, request), observed)
 		}
 	}
-	return storage.StreamNodesWithFallback(ctx, s.engine, 1000, observed)
+	return storage.StreamNodesWithFallback(ctx, s.searchReadEngine(ctx), 1000, observed)
 }
 
 func (s *Service) completeContinuationProjectionProperties(ctx context.Context, options *SearchOptions, request SearchContinuationRequest) []string {
@@ -214,13 +214,13 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	// newly acquired scopes, so they may safely execute their own queries.
 	var projectNode func(*storage.Node) *storage.Node
 	if options.Where == nil && request.AuthorizeNode == nil {
-		scoped, view, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+		scoped, view, release := storage.BeginQueryResultProjectionContext(ctx, s.searchReadEngine(ctx))
 		defer release()
 		ctx = scoped
 		projectNode = view.Node
 	} else {
 		projectNode = func(n *storage.Node) *storage.Node {
-			_, view, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+			_, view, release := storage.BeginQueryResultProjectionContext(ctx, s.searchReadEngine(ctx))
 			defer release()
 			return view.Node(n)
 		}
@@ -407,7 +407,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	resultProjection.groupBy = request.GroupBy
 	return &catalogContinuationStream{
 		results:       results,
-		engine:        s.engine,
+		engine:        s.searchReadEngine(ctx),
 		authorizeNode: request.AuthorizeNode,
 		version:       version,
 		policy:        &s.completePolicyGen,
@@ -519,15 +519,22 @@ func searchResultFromContinuationNode(node *storage.Node, projection resultPrope
 	return result
 }
 
+func checkContinuationGraphVersion(provider graphMutationVersionProvider, expected uint64) error {
+	version, supported := provider.GraphMutationVersion()
+	if !supported || version != expected {
+		return resultstream.ErrInvalidated
+	}
+	return nil
+}
+
 // CheckValid is shared by pulls and registry cleanup of abandoned cursors.
 func (s *catalogContinuationStream) CheckValid() error {
 	provider, ok := s.engine.(graphMutationVersionProvider)
 	if !ok {
 		return resultstream.ErrInvalidated
 	}
-	version, supported := provider.GraphMutationVersion()
-	if !supported || version != s.version {
-		return resultstream.ErrInvalidated
+	if err := checkContinuationGraphVersion(provider, s.version); err != nil {
+		return err
 	}
 	if s.policy == nil || s.policy.Load() != s.policyID {
 		return resultstream.ErrInvalidated

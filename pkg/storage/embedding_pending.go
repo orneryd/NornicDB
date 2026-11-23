@@ -16,7 +16,7 @@ type PendingEmbeddingCounter interface {
 	CountPendingEmbeddingIDs(ctx context.Context, accept func([]byte) bool) int
 }
 
-func (b *BadgerEngine) CountPendingEmbeddingIDs(_ context.Context, accept func([]byte) bool) int {
+func (b *BadgerEngine) CountPendingEmbeddingIDs(ctx context.Context, accept func([]byte) bool) int {
 	if b.pendingNamespaceConflict("") != nil {
 		return 0
 	}
@@ -26,7 +26,11 @@ func (b *BadgerEngine) CountPendingEmbeddingIDs(_ context.Context, accept func([
 		prefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
+		var cancellation bulkReadCancellation
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if err := cancellation.check(ctx); err != nil {
+				return err
+			}
 			if accept == nil || accept(it.Item().Key()[1:]) {
 				count++
 			}
