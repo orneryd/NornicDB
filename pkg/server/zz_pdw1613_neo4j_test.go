@@ -181,4 +181,15 @@ func TestPDW1613Neo4jReference(t *testing.T) {
 	auto("MATCH (d:PDDocument) RETURN d.admission_count AS admission_count, d.registrations AS registrations", nil)
 	cleanup()
 	auto("DROP CONSTRAINT pdw1613_doc IF EXISTS", nil)
+
+	// Side finding: a MERGE (with SET) of a UNIQUE key another transaction
+	// created after this one began and read.
+	cleanup()
+	auto("CREATE CONSTRAINT pdw1613_owed IF NOT EXISTS FOR (n:PDOwed) REQUIRE n.id IS UNIQUE", nil)
+	auto("CREATE (:PDGraphNode:PDDocument {id: 'd'})", nil)
+	owedMerge := "MERGE (o:PDOwed {id: 'holdings:d'}) ON CREATE SET o.n = 0 SET o.n = o.n + 1 RETURN o.n AS n"
+	overlap("side-simple observed-read-first", owedMerge, nil, owedMerge, nil, "")
+	auto("MATCH (o:PDOwed) RETURN count(o) AS count, max(o.n) AS n", nil)
+	cleanup()
+	auto("DROP CONSTRAINT pdw1613_owed IF EXISTS", nil)
 }
