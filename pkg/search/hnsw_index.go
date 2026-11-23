@@ -292,8 +292,14 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 // (the GPU build path); the supplied candidates are caller-owned and never
 // released back to the candidate pool.
 func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint32) error {
-	h.mu.Lock()
+	return h.addLockedTimed(id, vec, level0Candidates, nil)
+}
+
+// addLockedTimed is addLocked with the PR1826B3 diagnostic timing (nil: none).
+func (h *HNSWIndex) addLockedTimed(id string, vec []float32, level0Candidates []uint32, tm *pr1826b3Timing) error {
+	held := tm.lock(&h.mu)
 	defer h.mu.Unlock()
+	defer tm.release(held)
 
 	if id == "" {
 		return nil
@@ -636,9 +642,13 @@ func (h *HNSWIndex) Update(id string, vec []float32) error {
 }
 
 // Remove removes a vector from the index by ID.
-func (h *HNSWIndex) Remove(id string) {
-	h.mu.Lock()
+func (h *HNSWIndex) Remove(id string) { h.removeTimed(id, nil) }
+
+// removeTimed is Remove with the PR1826B3 diagnostic timing (nil: none).
+func (h *HNSWIndex) removeTimed(id string, tm *pr1826b3Timing) {
+	held := tm.lock(&h.mu)
 	defer h.mu.Unlock()
+	defer tm.release(held)
 
 	internalID, ok := h.idToInternal[id]
 	if !ok || !validHNSWIndex(internalID, len(h.nodeLevel)) || h.deleted[internalID] {

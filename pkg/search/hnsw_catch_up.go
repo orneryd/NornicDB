@@ -190,11 +190,16 @@ func (c *hnswCatchUp) completeLocked(id string, err error) {
 }
 
 func applyCatchUpChange(target *HNSWIndex, id string, value []float32) error {
+	return applyCatchUpChangeTimed(target, id, value, nil)
+}
+
+// applyCatchUpChangeTimed is applyCatchUpChange with the PR1826B3 diagnostic timing (nil: none).
+func applyCatchUpChangeTimed(target *HNSWIndex, id string, value []float32, tm *pr1826b3Timing) error {
 	if value == nil {
-		target.Remove(id)
+		target.removeTimed(id, tm)
 		return nil
 	}
-	if err := target.Update(id, value); err != nil {
+	if err := target.updateTimed(id, value, tm); err != nil {
 		return err
 	}
 	// The queue owns immutable normalized canonical records. Insertion used
@@ -214,11 +219,17 @@ func applyCatchUpChange(target *HNSWIndex, id string, value []float32) error {
 // when there is nothing it may take. While the job publishes it takes
 // nothing: it waits for publication to finish or resume, holding no lock but
 // mu's condition.
-func (c *hnswCatchUp) step() (bool, error) {
+func (c *hnswCatchUp) step() (bool, error) { return c.stepTimed(nil) }
+
+// stepTimed is step with the PR1826B3 diagnostic timing (nil: none).
+func (c *hnswCatchUp) stepTimed(tm *pr1826b3Timing) (bool, error) {
+	waitStart := time.Now()
 	c.mu.Lock()
 	for c.target != nil && c.publishing {
+		tm.publishingSeen()
 		c.idle.Wait()
 	}
+	tm.waited(waitStart)
 	if c.target == nil {
 		c.mu.Unlock()
 		return false, nil
@@ -234,7 +245,8 @@ func (c *hnswCatchUp) step() (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	err := applyCatchUpChange(target, id, value)
+	tm.stepped()
+	err := applyCatchUpChangeTimed(target, id, value, tm)
 	c.mu.Lock()
 	c.completeLocked(id, err)
 	c.mu.Unlock()
@@ -251,9 +263,15 @@ func (c *hnswCatchUp) owedMark() uint64 { return c.recorded.Load() }
 // pay applies up to n pending changes on behalf of a writer that recorded n,
 // after it released indexMu and its node's mutation lane. With nothing it may take (the rest is in flight,
 // or the catch-up ended) it returns.
-func (c *hnswCatchUp) pay(n uint64) {
+func (c *hnswCatchUp) pay(n uint64) { c.payTimed(n, nil) }
+
+// payTimed is pay with the PR1826B3 diagnostic timing (nil: none).
+func (c *hnswCatchUp) payTimed(n uint64, tm *pr1826b3Timing) {
+	if pr1826b3SkipPay {
+		return
+	}
 	for ; n > 0; n-- {
-		if more, err := c.step(); !more || err != nil {
+		if more, err := c.stepTimed(tm); !more || err != nil {
 			return
 		}
 	}
@@ -392,18 +410,23 @@ func (s *Service) lockForHNSWPublication(ctx context.Context) error {
 		if err := s.catchUpHNSWBuild(ctx); err != nil {
 			return err
 		}
+		quiesceStart := time.Now()
 		if !s.hnswCatchUp.quiesce() {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			return context.Canceled
 		}
+		lockStart := time.Now()
 		s.pipelineMu.Lock()
 		s.indexMu.Lock()
+		locked := time.Now()
+		pendingBefore := s.hnswCatchUp.pending()
 		finished, err := false, ctx.Err()
 		if err == nil {
 			finished, err = s.hnswCatchUp.finishLocked()
 		}
+		pr1826b3LogPublish(finished, pendingBefore, quiesceStart, lockStart, locked)
 		if finished && err == nil {
 			return nil
 		}

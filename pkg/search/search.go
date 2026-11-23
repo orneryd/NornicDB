@@ -3645,6 +3645,7 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 	if node == nil || applyMutation.id != node.ID {
 		return nil
 	}
+	diagStart := time.Now()
 	if queued, err := s.readLockOrQueue(ctx, reservedWrite(deferredIndexWrite{node: node}, applyMutation)); queued || err != nil {
 		var admission *buildNodeAdmissionError
 		if !queued && errors.As(err, &admission) && withoutRefusals(err) != nil {
@@ -3678,6 +3679,7 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 		}
 		return err
 	}
+	readLocked := time.Now()
 	var owed uint64
 	err := func() error {
 		defer s.buildMu.RUnlock()
@@ -3687,9 +3689,12 @@ func (s *Service) applyReservedNodeIndex(ctx context.Context, node *storage.Node
 			return err
 		})
 	}()
+	indexed := time.Now()
 	// Pay a catching-up graph only now: a writer waiting for this lane (a
 	// commit's storage event) must not wait for these inserts.
-	s.hnswCatchUp.pay(owed)
+	diagTiming := &pr1826b3Timing{}
+	s.hnswCatchUp.payTimed(owed, diagTiming)
+	pr1826b3LogRefresh(node, owed, diagStart, readLocked, indexed, diagTiming)
 	if err != nil && withoutRefusals(err) != nil {
 		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 	}
