@@ -147,6 +147,9 @@ jobs:
     needs:
       - build-macos-release-assets
       - build-homebrew-release-assets
+    concurrency:
+      group: release-assets-${{ needs.build-macos-release-assets.outputs.release_tag }}
+      cancel-in-progress: false
     steps:
       - name: Download macOS release artifacts
         uses: actions/download-artifact@v8
@@ -166,17 +169,47 @@ jobs:
           cd dist/homebrew
           shasum -a 256 nornicdb-darwin-*.tar.gz | sort -k2 > SHA256SUMS
 
-      - name: Create or update release with pkg/dmg assets
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.build-macos-release-assets.outputs.release_tag }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
+      # Maintain custom notes on a draft until the workflow has attached every asset.
+      - name: Publish release after uploading assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build-macos-release-assets.outputs.release_tag }}
+        run: |
+          shopt -s failglob
+          assets=(
             dist/*.pkg
             dist/*.dmg
-            dist/homebrew/*.tar.gz
+            dist/homebrew/nornicdb-darwin-amd64.tar.gz
+            dist/homebrew/nornicdb-darwin-arm64.tar.gz
             dist/homebrew/SHA256SUMS
+          )
+          for asset in "${assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              printf 'Missing or empty release asset: %s\n' "$asset" >&2
+              exit 1
+            fi
+          done
+
+          if ! release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isImmutable,assets); then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes
+            release='{"isDraft":true}'
+          fi
+
+          if jq -e '.isImmutable' <<< "$release" >/dev/null; then
+            for asset in "${assets[@]}"; do
+              if ! jq -e --arg name "${asset##*/}" 'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$release" >/dev/null; then
+                printf 'Immutable release %s is missing %s\n' "$RELEASE_TAG" "${asset##*/}" >&2
+                exit 1
+              fi
+            done
+            exit 0
+          fi
+
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          if jq -e '.isDraft' <<< "$release" >/dev/null; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft=false
+          fi
 
       - name: Open Homebrew tap update PR
         if: ${{ vars.HOMEBREW_TAP_REPOSITORY != '' }}
