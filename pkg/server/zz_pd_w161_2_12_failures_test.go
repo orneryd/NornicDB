@@ -66,6 +66,12 @@ type l2E38_17Store struct {
 // sort before the documents ("a-fail-*" < "doc-*").
 func l2E38_17Open(t *testing.T, name string, nodes, chunks int) *l2E38_17Store {
 	t.Helper()
+	return l2E38_17OpenWith(t, name, nodes, chunks, 20)
+}
+
+// l2E38_17OpenWith is l2E38_17Open with the number of parked failures chosen.
+func l2E38_17OpenWith(t *testing.T, name string, nodes, chunks, failures int) *l2E38_17Store {
+	t.Helper()
 	s, authenticator := setupTestServerWithDatabaseConfig(t, func(c *nornicdb.Config) {
 		c.Memory.EmbeddingEnabled = true
 		c.Memory.EmbeddingDimensions = l2E38_17Dims
@@ -106,7 +112,7 @@ func l2E38_17Open(t *testing.T, name string, nodes, chunks int) *l2E38_17Store {
 			t.Fatalf("%s: UpdateNodeEmbeddingSidecar %s: %v", name, id, err)
 		}
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < failures; i++ {
 		id := storage.NodeID(fmt.Sprintf("a-fail-%02d", i))
 		if _, err := engine.CreateNode(ctx, &storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": text}}); err != nil {
 			t.Fatalf("%s: CreateNode %s: %v", name, id, err)
