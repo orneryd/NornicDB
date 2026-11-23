@@ -87,4 +87,7 @@ func TestN15290DirectPageCPUProfile(t *testing.T) {
 	require.NoError(t, err, string(top))
 	fmt.Printf("N15290_PROFILED_PAGE {\"fixture\":\"d400-degree300\",\"rule\":\"direct\",\"n\":20,\"rows\":%d,\"page_ms\":%.3f}\n", len(ids), pageMS)
 	fmt.Printf("N15290_CPU_PROFILE_TOP\n%s\n", top)
+	cumulative, err := exec.Command("go", "tool", "pprof", "-top", "-cum", "-nodecount=20", profilePath).CombinedOutput()
+	require.NoError(t, err, string(cumulative))
+	fmt.Printf("N15290_CPU_PROFILE_CUMULATIVE_TOP\n%s\n", cumulative)
 }
