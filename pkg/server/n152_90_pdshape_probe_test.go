@@ -45,31 +45,31 @@ type n15290Stats struct {
 // continuation-page samples per fixture, predicate and page size. The complete
 // stream is also drained once per case to verify its returned IDs.
 func TestN15290RetrievalFilterCostProbe(t *testing.T) {
-	ctx := context.Background()
-	queryVector := make([]float64, 2048)
-	queryVector[0] = 1
-	srv, _ := setupTestServer(t)
-	database := srv.dbManager.DefaultDatabaseName()
-	store, err := srv.dbManager.GetStorage(database)
-	require.NoError(t, err)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	boltServer := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), searchNodeWireExecutor{server: srv}, srv.GetDatabaseManager())
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- boltServer.Serve(listener) }()
-	t.Cleanup(func() { _ = boltServer.Close(); <-serveDone })
-	driver, err := neo4j.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4j.NoAuth())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })
-	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database})
-	t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
-
 	for _, fixture := range []struct {
 		documents int
 		degree    int
 	}{{400, 300}, {2000, 200}} {
 		name := fmt.Sprintf("d%d-degree%d", fixture.documents, fixture.degree)
 		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			queryVector := make([]float64, 2048)
+			queryVector[0] = 1
+			srv, _ := setupTestServer(t)
+			database := srv.dbManager.DefaultDatabaseName()
+			store, err := srv.dbManager.GetStorage(database)
+			require.NoError(t, err)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			boltServer := bolt.NewWithDatabaseManager(bolt.DefaultConfig(), searchNodeWireExecutor{server: srv}, srv.GetDatabaseManager())
+			serveDone := make(chan error, 1)
+			go func() { serveDone <- boltServer.Serve(listener) }()
+			t.Cleanup(func() { _ = boltServer.Close(); <-serveDone })
+			driver, err := neo4j.NewDriverWithContext("bolt://"+listener.Addr().String(), neo4j.NoAuth())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, driver.Close(ctx)) })
+			session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database})
+			t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
+
 			want := n15290Library(t, ctx, store, fixture.documents, fixture.degree)
 			searchService, err := srv.db.GetOrCreateSearchService(database, store)
 			require.NoError(t, err)
