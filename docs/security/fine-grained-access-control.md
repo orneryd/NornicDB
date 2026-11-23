@@ -88,15 +88,18 @@ value on a visible entity. See the
 
 Keyword and vector searches query the database's existing indexes. Search
 returns only graph-visible nodes and relationships, with their readable
-properties. A keyword hit is excluded if the indexed document differs from
-the text built from the caller's readable fields. Restricted searches can
-therefore return fewer hits.
+properties. When traversal or property reads are restricted, keyword ranking
+uses only the documents and fields readable by the caller. This requires a
+scan of the shared index population to compute the caller's scoring statistics.
+Callers with unrestricted traversal and property reads use the shared scoring
+path.
 
 A vector stored in a graph property requires read access to that property.
-Managed vectors have separate entitlements: `graph.node.embedding.read` and
-`graph.relationship.embedding.read`. A managed embedding grant allows the
-vector to contribute to ranking independently of access to individual text
-properties. Grant it only when the derived representation may be searched.
+Managed vectors require `graph.node.embedding.read` or
+`graph.relationship.embedding.read` and permission to read all properties of
+the source entity. This also applies to existing vectors, whose stored data
+does not identify every source property. Vectors stored as graph properties
+continue to use the permission on the vector property.
 Matches and result properties are still projected under the caller's read
 permissions. Searches reuse stored vectors without calling the document
 embedder to rebuild them.

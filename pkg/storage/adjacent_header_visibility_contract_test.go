@@ -47,6 +47,57 @@ const (
 	headerVisibilityProperty = "protected"
 )
 
+func TestProjectedNodeKeepsPolicyPromotedRow(t *testing.T) {
+	ctx := t.Context()
+	engine := newTestEngine(t)
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name: "fades", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential,
+		HalfLifeSeconds: 3600, VisibilityThreshold: 0.5, ScoreFrom: knowledgepolicy.ScoreFromVersion,
+		Enabled: true, DecayEnabled: true,
+	}))
+	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+		Name: "article_decay", TargetLabels: []string{"Article"}, ProfileRef: "fades",
+	}))
+	require.NoError(t, schema.CreatePromotionProfile(knowledgepolicy.PromotionProfileDef{
+		Name: "protected", Scope: knowledgepolicy.ScopeNode, Multiplier: 1, ScoreFloor: 1, ScoreCap: 1, Enabled: true,
+	}))
+	require.NoError(t, schema.CreatePromotionPolicy(knowledgepolicy.PromotionPolicyDef{
+		Name: "protect_articles", TargetLabels: []string{"Article"}, Enabled: true,
+		WhenClauses: []knowledgepolicy.PromotionPolicyWhenClause{{Predicate: "n.pinned = true", ProfileRef: "protected", Order: 1}},
+	}))
+	engine.SetDecayEnabled(true)
+	stale := time.Now().Add(-100 * time.Hour)
+	id, err := engine.CreateNode(ctx, &Node{ID: "test:article", Labels: []string{"Article"},
+		Properties: map[string]any{"pinned": true, "title": "Article"}, CreatedAt: stale, UpdatedAt: stale})
+	require.NoError(t, err)
+	full, err := engine.GetNode(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, true, full.Properties["pinned"])
+
+	wanted := []string{"title"}
+	check := func(node *Node) error {
+		require.Equal(t, id, node.ID)
+		require.Equal(t, map[string]any{"title": "Article"}, node.Properties)
+		return nil
+	}
+	projected, err := engine.GetNodeProjected(ctx, id, wanted)
+	require.NoError(t, err)
+	require.NoError(t, check(projected))
+	scanned := 0
+	require.NoError(t, engine.StreamNodesByLabelProjected(ctx, "Article", wanted, func(node *Node) error {
+		scanned++
+		return check(node)
+	}))
+	require.Equal(t, 1, scanned)
+	tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
+	projected, err = tx.GetNodeProjected(ctx, id, wanted)
+	require.NoError(t, err)
+	require.NoError(t, check(projected))
+}
+
 // newHeaderVisibilityContractEngine builds the policy fixture and the graph the
 // contract cases list from test:a:
 //

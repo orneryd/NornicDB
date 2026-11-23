@@ -20,6 +20,24 @@ var fgacTestActions = []FineGrainedAction{
 	{ID: "embedding.worker.settings.update", ResourceKind: FineGrainedDatabase, Property: true},
 }
 
+func TestFineGrainedEntireGraphActionDistinguishesRestrictedReaders(t *testing.T) {
+	policy, err := CompileFineGrainedPolicy(fgacTestActions, FineGrainedCatalog{
+		Definitions: []FineGrainedEntitlement{
+			{ID: "read-home", Action: fgacTestReadProperty, Scope: FineGrainedScope{Kind: FineGrainedNode, HomeDatabase: true}},
+			{ID: "omit-draft", Action: fgacTestReadProperty, Deny: true, Scope: FineGrainedScope{
+				Kind: FineGrainedNode, DatabaseID: "home", Properties: []string{"draft"},
+			}},
+		},
+		Assignments: map[string][]string{"reader": {"read-home"}, "restricted": {"omit-draft"}},
+	})
+	require.NoError(t, err)
+	reader := policy.ForRoles([]string{"reader"})
+	require.True(t, reader.AllowsEntireGraphAction(fgacTestReadProperty, "home", "home"))
+	require.False(t, reader.AllowsEntireGraphAction(fgacTestReadProperty, "other", "home"))
+	restricted := policy.ForRoles([]string{"reader", "restricted"})
+	require.False(t, restricted.AllowsEntireGraphAction(fgacTestReadProperty, "home", "home"))
+}
+
 func TestFineGrainedActionAndResourceScope(t *testing.T) {
 	catalog := FineGrainedCatalog{
 		Definitions: []FineGrainedEntitlement{

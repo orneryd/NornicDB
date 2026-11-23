@@ -47,6 +47,10 @@ func (tx *BadgerTransaction) GetQueryNode(ctx context.Context, nodeID NodeID) (*
 // writes, deletes, connected deletes and the MVCC snapshot all apply exactly
 // as in GetNode.
 func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
+	if properties != nil && tx.engine.decayEnabled && tx.engine.visibilityFiltered() {
+		node, err := tx.GetQueryNode(ctx, nodeID)
+		return projectCachedNodeForRead(node, properties, true), err
+	}
 	return readTransactionEntity(ctx, tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}, properties: properties, projected: true})
 }
 

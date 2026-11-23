@@ -90,7 +90,6 @@ The `retention:` block is inert until retention is enabled.
 database:
   path: /data/nornicdb.db
   default_database: "nornic" # Default database name (like Neo4j's "neo4j")
-  storage_serializer: msgpack # default: msgpack; MVCC metadata uses msgpack on the hot path
   mvcc_retention_max_versions: 1
   mvcc_retention_ttl: 168h
 ```
@@ -110,7 +109,6 @@ database:
 
 - `NORNICDB_DEFAULT_DATABASE` - Set default database name
 - `NEO4J_dbms_default__database` - Neo4j-compatible env var (backwards compat)
-- `NORNICDB_STORAGE_SERIALIZER` - Storage serializer (`gob` or `msgpack`)
 - `NORNICDB_MVCC_RETENTION_MAX_VERSIONS` - Default historical version cap per key
 - `NORNICDB_MVCC_RETENTION_TTL` - Protect recent MVCC history from pruning
 
@@ -120,7 +118,6 @@ NornicDB keeps MVCC history for snapshot and temporal reads. The retention polic
 
 ```yaml
 database:
-  storage_serializer: msgpack
   mvcc_retention_max_versions: 1
   mvcc_retention_ttl: "168h"
 ```
@@ -1097,8 +1094,8 @@ All configuration options can be set via environment variables using the pattern
 
 ```bash
 # Server configuration
-export NORNICDB_SERVER_BOLT_PORT=7687
-export NORNICDB_SERVER_HTTP_PORT=7474
+export NORNICDB_BOLT_PORT=7687
+export NORNICDB_HTTP_PORT=7474
 
 # Async writes
 export NORNICDB_ASYNC_WRITES_ENABLED=true

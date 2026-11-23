@@ -204,7 +204,6 @@ Operationally, this means you should size `mvcc_retention_max_versions` and `mvc
 
 ```yaml
 database:
-  storage_serializer: msgpack
   mvcc_retention_max_versions: 1
   mvcc_retention_ttl: "168h"
 ```
@@ -212,7 +211,6 @@ database:
 ### Environment Variables
 
 ```bash
-export NORNICDB_STORAGE_SERIALIZER=msgpack
 export NORNICDB_MVCC_RETENTION_MAX_VERSIONS=100
 export NORNICDB_MVCC_RETENTION_TTL=168h
 ```

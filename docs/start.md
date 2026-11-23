@@ -4,17 +4,28 @@ Run a local database, write a graph, and read it back. This example uses the CPU
 
 ## 1. Start the database
 
-Create a password and a stable JWT signing secret. Keep both outside source control.
+The image defaults to unauthenticated testing and logs a warning when it starts in that mode. Set `NORNICDB_NO_AUTH=false` for this authenticated setup. Supplying credentials alone does not change the testing default.
+
+Create a password and a stable JWT signing secret. Put a TLS certificate for `localhost` and its private key in `./tls/public.crt` and `./tls/private.key`. The container listens on its own network interface, so HTTPS and Bolt TLS are required even when Docker publishes the ports only on your computer's loopback interface. Use a certificate trusted by your browser and Bolt client. Keep the private key and credentials outside source control.
 
 ```bash
 export NORNICDB_PASSWORD='replace-with-a-long-random-password'
 export NORNICDB_JWT_SECRET='replace-with-at-least-32-random-characters'
 
 docker run -d --name nornicdb \
-  -p 127.0.0.1:7474:7474 -p 127.0.0.1:7687:7687 \
+  -p 127.0.0.1:7473:7473 -p 127.0.0.1:7687:7687 \
   -v nornicdb-data:/data \
+  --mount "type=bind,source=${PWD}/tls,target=/tls,readonly" \
+  -e NORNICDB_NO_AUTH=false \
   -e NORNICDB_AUTH="admin:${NORNICDB_PASSWORD}" \
   -e NORNICDB_AUTH_JWT_SECRET="${NORNICDB_JWT_SECRET}" \
+  -e NORNICDB_CORS_ENABLED=false \
+  -e NORNICDB_HTTPS_ENABLED=true \
+  -e NORNICDB_HTTP_TLS_CERT=/tls/public.crt \
+  -e NORNICDB_HTTP_TLS_KEY=/tls/private.key \
+  -e NORNICDB_BOLT_TLS_ENABLED=true \
+  -e NORNICDB_BOLT_TLS_REQUIRE=true \
+  -e NORNICDB_TLS_DIR=/tls \
   timothyswt/nornicdb-amd64-cpu:latest
 ```
 
@@ -23,17 +34,17 @@ The named volume retains data when the container is removed. For GPU images and 
 ## 2. Check the server
 
 ```bash
-curl --fail http://localhost:7474/health
+curl --fail https://localhost:7473/health
 ```
 
-Open [the database browser](http://localhost:7474) and sign in with `admin` and the password you supplied. HTTP uses port `7474`; Neo4j-compatible Bolt clients use `bolt://localhost:7687`.
+Open [the database browser](https://localhost:7473) and sign in with `admin` and the password you supplied. Neo4j-compatible Bolt clients use `bolt+s://localhost:7687`.
 
 ## 3. Write and query a graph
 
 ```bash
 curl --fail -u "admin:${NORNICDB_PASSWORD}" \
   -H 'Content-Type: application/json' \
-  http://localhost:7474/db/nornic/tx/commit \
+  https://localhost:7473/db/nornic/tx/commit \
   -d '{"statements":[{"statement":"MERGE (a:Person {name: \"Alice\"}) MERGE (b:Person {name: \"Bob\"}) MERGE (a)-[:KNOWS]->(b) RETURN a.name, b.name"}]}'
 ```
 

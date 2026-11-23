@@ -41,7 +41,7 @@ docker run -d \
   -p 7687:7687 \
   -v nornicdb-data:/data \
   -e NORNICDB_EMBEDDING_PROVIDER=ollama \
-  -e NORNICDB_EMBEDDING_ENDPOINT=http://host.docker.internal:11434 \
+  -e NORNICDB_EMBEDDING_API_URL=http://host.docker.internal:11434 \
   -e NORNICDB_EMBEDDING_MODEL=nomic-embed-text \
   timothyswt/nornicdb-arm64-metal:latest
 ```
@@ -106,7 +106,7 @@ services:
     environment:
       - NORNICDB_LOG_LEVEL=info
       - NORNICDB_EMBEDDING_PROVIDER=ollama
-      - NORNICDB_EMBEDDING_ENDPOINT=http://ollama:11434
+      - NORNICDB_EMBEDDING_API_URL=http://ollama:11434
       - NORNICDB_EMBEDDING_MODEL=nomic-embed-text
     depends_on:
       - ollama
@@ -166,7 +166,7 @@ services:
     environment:
       - NORNICDB_LOG_LEVEL=info
       - NORNICDB_EMBEDDING_PROVIDER=ollama
-      - NORNICDB_EMBEDDING_ENDPOINT=http://ollama:11434
+      - NORNICDB_EMBEDDING_API_URL=http://ollama:11434
     restart: unless-stopped
 
   app-server:
@@ -207,15 +207,13 @@ volumes:
 | `NORNICDB_BOLT_PORT`          | `7687`  | Bolt protocol port                        |
 | `NORNICDB_DATA_DIR`           | `/data` | Data directory                            |
 | `NORNICDB_LOG_LEVEL`          | `info`  | Log level (debug, info, warn, error)      |
-| `NORNICDB_AUTH_ENABLED`       | `false` | Enable authentication                     |
-| `NORNICDB_AUTH_USER`          | `admin` | Default username                          |
-| `NORNICDB_AUTH_PASSWORD`      | `admin` | Default password                          |
+| `NORNICDB_NO_AUTH` | `true` | Unauthenticated testing mode. It logs a startup warning. Set to `false` for authenticated deployments. |
+| `NORNICDB_AUTH` | — | Initial credentials in `username:password` form. See the [authenticated quick start](../start.md) for TLS settings. |
 | `NORNICDB_EMBEDDING_PROVIDER` | `none`  | Embedding provider (none, ollama, openai) |
-| `NORNICDB_EMBEDDING_ENDPOINT` | -       | Embedding API endpoint                    |
+| `NORNICDB_EMBEDDING_API_URL` | -       | Embedding API endpoint                    |
 | `NORNICDB_EMBEDDING_MODEL`    | -       | Embedding model name                      |
 | `NORNICDB_EMBEDDING_API_KEY`  | -       | API key for embeddings                    |
 | `NORNICDB_MCP_ENABLED`        | `true`  | Enable MCP server                         |
-| `NORNICDB_MCP_PORT`           | `3100`  | MCP server port                           |
 
 ## GPU Support
 

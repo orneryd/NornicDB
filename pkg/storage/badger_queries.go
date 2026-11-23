@@ -436,11 +436,15 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			return captureErr // the canceled capture retires the scan
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterEntityByDecay(v, node, nowNanos) {
+			if node == nil {
 				return nil
 			}
 			if len(touched) > 0 && touched[node.ID] {
 				return nil // the overlay shadows committed rows for this ID
+			}
+			hidden, err := b.filterProjectedNodeByDecay(txn, v, node, properties != nil || options.Projection != nil, nowNanos)
+			if hidden || err != nil {
+				return err
 			}
 			return visit(node)
 		}

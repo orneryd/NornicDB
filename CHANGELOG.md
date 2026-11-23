@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2-hotfix]
+
+- Apply caller graph authorization to MCP related results and resolve scoped recall IDs in the selected database.
+- Preserve sequential graph writes under fine-grained access control and limit detail in scoped uniqueness errors.
+- Rank restricted keyword searches using readable graph data while preserving the shared scoring path for unrestricted searches.
+- Require source-property read access before scoring managed vectors under fine-grained access control.
+- Evaluate node visibility from complete snapshot properties before applying the requested field projection.
+- Document container authentication, TLS setup, and supported environment settings.
+
 ## [1.5.2]
 
 - Reuse database search indexes under fine-grained access control and filter node and relationship hits by traversal, property and managed-vector permissions.

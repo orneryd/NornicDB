@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -33,6 +34,7 @@ type indexedSearchScope struct {
 }
 
 type indexedSearchScopeKey struct{}
+type visibleNodeBM25Key struct{}
 
 func (s *Service) indexedScope(ctx context.Context) *indexedSearchScope {
 	scope, _ := ctx.Value(indexedSearchScopeKey{}).(*indexedSearchScope)
@@ -61,6 +63,81 @@ func (s *Service) withIndexedSearchScope(ctx context.Context) (context.Context, 
 		}
 	}
 	return context.WithValue(ctx, indexedSearchScopeKey{}, scope), scope, nil
+}
+
+// keywordRestricted determines whether shared text statistics are readable in this database.
+func (scope *indexedSearchScope) keywordRestricted(relationships bool) bool {
+	s := scope.service
+	request := scope.principal
+	database := storage.DatabaseOf(s.engine)
+	if database == "" {
+		database = s.continuationDatabase()
+	}
+	id := request.DatabaseID(database)
+	allows := func(action string) bool {
+		return request.Access.AllowsEntireGraphAction(action, id, request.HomeDatabaseID)
+	}
+	if !allows("graph.node.traverse") {
+		return true
+	}
+	if relationships {
+		return !allows("graph.relationship.traverse") || !allows("graph.relationship.property.read")
+	}
+	return !allows("graph.node.property.read")
+}
+
+// visibleBM25 projects the shared index population into request-local scoring
+// state. No postings, vocabulary, or statistics from unreadable text enter it.
+func visibleBM25(ctx context.Context, index bm25Index, text func(string) (string, error)) (bm25Index, error) {
+	shared, ok := index.(*FulltextIndexV2)
+	if !ok {
+		if _, disabled := index.(disabledBM25Index); disabled || index == nil {
+			return index, nil
+		}
+		return nil, fmt.Errorf("search: cannot project restricted full-text index %T", index)
+	}
+	shared.mu.RLock()
+	ids := append([]string(nil), shared.docNumToID...)
+	analyzer, maxExpansions, minPrefix := shared.analyzer, shared.maxPrefixExpansions, shared.minPrefixLength
+	shared.mu.RUnlock()
+	view := NewFulltextIndexV2WithAnalyzer(analyzer)
+	view.maxPrefixExpansions, view.minPrefixLength = maxExpansions, minPrefix
+	batch := make([]FulltextBatchEntry, 0, min(len(ids), fulltextBuildBatchSize))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if id == "" {
+			continue
+		}
+		document, err := text(id)
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if document != "" {
+			batch = append(batch, FulltextBatchEntry{ID: id, Text: document})
+			if len(batch) == cap(batch) {
+				view.IndexBatch(batch)
+				clear(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+	view.IndexBatch(batch)
+	return view, nil
+}
+
+func (scope *indexedSearchScope) nodeBM25(ctx context.Context, index bm25Index) (bm25Index, error) {
+	return visibleBM25(ctx, index, func(id string) (string, error) {
+		node, err := scope.engine.GetNode(ctx, storage.NodeID(id))
+		if err != nil {
+			return "", err
+		}
+		return scope.service.extractSearchableText(node), nil
+	})
 }
 
 func (scope *indexedSearchScope) check(ctx context.Context) error {

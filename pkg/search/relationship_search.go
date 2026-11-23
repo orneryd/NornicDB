@@ -702,10 +702,24 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		return created
 	}
 
+	fulltext := rs.fulltext
+	scopedScoring := scope != nil && scope.keywordRestricted(true)
+	if scopedScoring && query != "" {
+		fulltext, err = visibleBM25(ctx, fulltext, func(id string) (string, error) {
+			edge, readErr := readEngine.GetEdge(ctx, storage.EdgeID(id))
+			if readErr != nil {
+				return "", readErr
+			}
+			return s.relationshipSearchableText(edge), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	rs.mu.RLock()
-	bm25 := rs.fulltext.Search(query, depth)
+	bm25 := fulltext.Search(query, depth)
 	var indexedDocuments map[string]string
-	if scope != nil {
+	if scope != nil && !scopedScoring {
 		indexedDocuments = make(map[string]string, len(bm25))
 		for _, hit := range bm25 {
 			if document, ok := rs.fulltext.GetDocument(hit.ID); ok {
@@ -756,7 +770,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	var terms map[string]*queryTerm
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	if query != "" && !opts.SkipMatches {
-		terms = matchQueryTerms(analyzer, query, rs.fulltext)
+		terms = matchQueryTerms(analyzer, query, fulltext)
 	}
 	rs.mu.RUnlock()
 
@@ -782,8 +796,8 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			if err != nil {
 				return nil, err
 			}
-			if document, ok := indexedDocuments[candidate.ID]; ok && hit.edge != nil &&
-				document == s.relationshipSearchableText(hit.edge) {
+			document, ok := indexedDocuments[candidate.ID]
+			if hit.edge != nil && (scopedScoring || (ok && document == s.relationshipSearchableText(hit.edge))) {
 				keywords = append(keywords, candidate)
 			}
 		}

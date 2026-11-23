@@ -28,6 +28,45 @@ import (
 // Mock Database for Testing
 // =============================================================================
 
+func TestFineGrainedRecallUsesDatabaseLocalNodeIdentity(t *testing.T) {
+	_, base := newMCPRelatedProbe(t)
+	engine := storage.NewNamespacedEngine(base, "tenant")
+	createMCPRelatedNode(t, engine, "report", map[string]any{"title": "Report"}, "Document")
+	server := NewServer(nil, nil)
+	server.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
+	executor := cypher.NewStorageExecutor(engine, cypher.QueryCachePolicy{MaxEntries: 50})
+	server.SetDatabaseScopedExecutor(func(string) (*cypher.StorageExecutor, func(context.Context, string) (*nornicdb.Node, error), error) {
+		return executor, func(context.Context, string) (*nornicdb.Node, error) {
+			t.Fatal("scoped recall must use the authorized graph")
+			return nil, nil
+		}, nil
+	})
+	databaseScope := auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}
+	nodeScope := auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"Document"}}
+	actions := append(auth.FineGrainedCoreActions(), auth.FineGrainedAction{ID: "mcp.invoke.recall", ResourceKind: auth.FineGrainedDatabase})
+	policy, err := auth.CompileFineGrainedPolicy(actions, auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: databaseScope},
+			{ID: "recall", Action: "mcp.invoke.recall", Scope: databaseScope},
+			{ID: "traverse", Action: "graph.node.traverse", Scope: nodeScope},
+			{ID: "read", Action: "graph.node.property.read", Scope: nodeScope},
+		},
+		Assignments: map[string][]string{"reader": {"access", "recall", "traverse", "read"}},
+	})
+	require.NoError(t, err)
+	ctx := auth.WithFineGrainedRequest(ContextWithDatabase(t.Context(), "tenant"), &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"reader"}), DatabaseID: func(name string) string { return name },
+	})
+	for _, id := range []string{"report", "4:tenant:report"} {
+		result, err := server.CallTool(ctx, ToolRecall, map[string]any{"id": id})
+		require.NoError(t, err, id)
+		recall := result.(RecallResult)
+		require.Len(t, recall.Nodes, 1)
+		require.Equal(t, "4:tenant:report", recall.Nodes[0].ID)
+		require.Equal(t, "Report", recall.Nodes[0].Title)
+	}
+}
+
 // MockDB implements a minimal mock of nornicdb.DB for testing
 type MockDB struct {
 	nodes     map[string]*nornicdb.Node

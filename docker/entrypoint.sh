@@ -23,6 +23,9 @@ fi
 # The Go command reads NORNICDB_* directly. Do not translate environment values
 # into explicit flags here: explicit flags outrank YAML and protocol-specific
 # variables such as NORNICDB_HTTP_ADDRESS and NORNICDB_HTTPS_PORT.
+# Runtime images intentionally default to no authentication for local testing.
+# For an authenticated deployment, set NORNICDB_NO_AUTH=false explicitly and
+# supply credentials and the TLS settings for any non-loopback listeners.
 if [ "${NORNICDB_NO_AUTH:-false}" = "true" ]; then
     printf '%s\n' '{"level":"ERROR","event_id":"security.insecure_no_auth.enabled","component":"entrypoint","message":"Authentication explicitly disabled for container startup"}' >&2
     exec "${NORNICDB_BIN:-/app/nornicdb}" serve --no-auth "$@"
