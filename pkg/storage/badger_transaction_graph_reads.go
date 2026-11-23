@@ -83,7 +83,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 	}
 	node, err := readEntityAtWithView(ctx, tx.engine, nodeID, tx.readTS, projection, tx.withSnapshotViewLocked, (*BadgerEngine).getNodeProjectedAtInTxn)
 	if err == ErrNotVisibleAtSnapshot {
-		if tx.engine.writeBehind != nil {
+		if tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4" {
 			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
@@ -98,7 +98,7 @@ func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(ctx context.Context
 		if fallbackErr != ErrNotFound {
 			return nil, fallbackErr
 		}
-		if tx.engine.writeBehind != nil {
+		if tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4" {
 			if fresh, freshErr := tx.engine.getNodeProjected(ctx, nodeID, projection.properties, projection.visibility); freshErr == nil {
 				return fresh, nil
 			}
@@ -1206,7 +1206,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
 		// would expose a peer's post-begin commit and break SI.
-		if tx.engine.writeBehind != nil {
+		if tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4" {
 			// Write-behind: the write was committed at buffer-append, and
 			// its MVCC head only appears when the flusher lands it, so a
 			// snapshot pinned before the flush can miss a committed node.
@@ -1231,7 +1231,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(ctx context.Context, nod
 		if fallbackErr != ErrNotFound {
 			return nil, fallbackErr
 		}
-		if tx.engine.writeBehind != nil {
+		if tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4" {
 			// The pinned snapshot may predate the flush of a node
 			// committed through the buffer (head and record both
 			// absent at pin time). A fresh read resolves it.
@@ -1355,7 +1355,7 @@ func (tx *BadgerTransaction) getCommittedEdgeReadLocked(ctx context.Context, edg
 		// SI: edge head exists but isn't visible at our snapshot.
 		// Surface as ErrNotFound so callers can't observe peer
 		// commits that landed after our begin.
-		if tx.engine.writeBehind != nil {
+		if tx.engine.writeBehind != nil && os.Getenv("P26_BYPASS") != "F4" {
 			// Write-behind: the edge was committed at buffer-append; its
 			// head appears only when the flusher lands it, so a snapshot
 			// pinned before the flush can miss a committed edge. A fresh
