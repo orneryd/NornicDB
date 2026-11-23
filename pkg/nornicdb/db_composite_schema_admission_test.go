@@ -5,15 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDBGetIndexesRequiresEveryReadableConstituent(t *testing.T) {
-	left := storage.NewMemoryEngine()
-	right := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = left.Close() })
-	t.Cleanup(func() { _ = right.Close() })
+	left := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	right := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	require.NoError(t, left.GetSchema().AddPropertyIndex("left_index", "Left", []string{"name"}))
 	require.NoError(t, right.GetSchema().AddPropertyIndex("right_index", "Right", []string{"title"}))
 	composite := storage.NewCompositeEngine(
@@ -84,7 +83,7 @@ func TestDBGetIndexesRequiresEveryReadableConstituent(t *testing.T) {
 		require.Nil(t, indexes)
 	})
 	t.Run("closed constituent", func(t *testing.T) {
-		closed := storage.NewMemoryEngine()
+		closed := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		require.NoError(t, closed.Close())
 		view := storage.NewCompositeEngine(
 			map[string]storage.Engine{"left": left, "right": closed},
