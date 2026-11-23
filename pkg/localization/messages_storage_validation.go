@@ -338,10 +338,19 @@ func StorageTransactionDeadlockDetected(label, property string) Message {
 func StorageTransactionLockWaitTimedOut(label, property, timeout string) Message {
 	return storageValidationMessage(MessageStorageTransactionLockWaitTimedOut, fmt.Sprintf("transaction timed out: waited %s, the transaction timeout, for the lock on a %s.%s key another transaction holds", timeout, label, property), map[string]any{"Label": label, "Property": property, "Timeout": timeout})
 }
+// NodeChangedHook is a scratch diagnostic (pd-w161-3), not for merge.
+var NodeChangedHook func(nodeID string)
+
 func StorageTransactionNodeChanged(nodeID string) Message {
+	if h := NodeChangedHook; h != nil {
+		h(nodeID)
+	}
 	return storageValidationMessage(MessageStorageTransactionNodeChanged, fmt.Sprintf("conflict detected: node %s changed after transaction start", nodeID), map[string]any{"NodeID": nodeID})
 }
 func StorageTransactionNodeChangedDetailed(nodeID, head, readTimestamp string) Message {
+	if h := NodeChangedHook; h != nil {
+		h(nodeID)
+	}
 	return storageValidationMessage(MessageStorageTransactionNodeChangedDetailed, fmt.Sprintf("conflict detected: node %s changed after transaction start (head=%s, readTS=%s)", nodeID, head, readTimestamp), map[string]any{"NodeID": nodeID, "Head": head, "ReadTimestamp": readTimestamp})
 }
 func StorageTransactionConcurrentModification() Message {
