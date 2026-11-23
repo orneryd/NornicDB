@@ -193,3 +193,47 @@ func TestPDW1614BoltBatchedPull(t *testing.T) {
 		}
 	}
 }
+
+// TestPDW1614BoltDelayedPull waits between RUN SUCCESS and the first PULL:
+// if the statement kept producing rows meanwhile, the PULL after the wait
+// is answered sooner than the same PULL sent at once.
+func TestPDW1614BoltDelayedPull(t *testing.T) {
+	store := nor213BoltStore(t, false)
+	_, port := startBoltIntegrationServer(t, store, boltIntegrationExplicitTx)
+	setup := openBoltTestConn(t, port)
+	runBoltQueryWithParams(t, setup, "UNWIND range(0, 4999) AS i CREATE (:Item {k: i})", nil)
+	for _, statement := range []struct{ name, text string }{{"match", pdw1614BoltMatch}, {"unwind", pdw1614BoltUnwind}} {
+		for _, fetch := range []int64{-1, 1000} {
+			conn := openBoltTestConn(t, port)
+			params := map[string]any{"n": int64(5000), "w": int64(400)}
+			pdw1614BoltRunPull(t, conn, statement.text, params)
+			for round := 0; round < 3; round++ {
+				for _, wait := range []time.Duration{0, 600 * time.Millisecond} {
+					start := time.Now()
+					requireNoError(t, SendRun(t, conn, statement.text, params, nil))
+					msgType, _, err := ReadMessage(conn)
+					requireNoError(t, err)
+					if msgType != MsgSuccess {
+						t.Fatalf("RUN failed")
+					}
+					runAt := time.Since(start)
+					time.Sleep(wait)
+					pullStart := time.Now()
+					out := ""
+					for batch := 0; ; batch++ {
+						requireNoError(t, SendPull(t, conn, map[string]any{"n": fetch}))
+						var timing pdw1614BoltTiming
+						pdw1614BoltRead(t, conn, pullStart, &timing)
+						out += fmt.Sprintf(" batch%d{records=%d PULL0->first=%v PULL0->summary=%v}", batch, timing.records,
+							timing.firstRecord.Round(time.Microsecond), timing.pullTotal.Round(time.Microsecond))
+						if timing.failure != "" || timing.pullSuccess["has_more"] != true {
+							break
+						}
+					}
+					t.Logf("PDW1614BOLT delayed %s n=5000 fetch=%d round=%d wait=%v RUN->SUCCESS=%v%s", statement.name, fetch, round, wait,
+						runAt.Round(time.Microsecond), out)
+				}
+			}
+		}
+	}
+}
