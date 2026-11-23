@@ -39,6 +39,30 @@ const (
 
 func TestPDW161StartupStall(t *testing.T) {
 	if mode := os.Getenv("PD_STALL_CHILD"); mode != "" {
+		if mode == "serve" && os.Getenv("PD_STALL_PRIME") == "1" {
+			openCommandDB = func(dir string, cfg *nornicdb.Config) (*nornicdb.DB, error) {
+				db, err := nornicdb.Open(dir, cfg)
+				if err != nil {
+					return nil, err
+				}
+				engine, ok := storage.UnwrapEngine(db.GetBaseStorageForManager()).(*storage.BadgerEngine)
+				if !ok {
+					_ = db.Close()
+					return nil, fmt.Errorf("namespace primer was unavailable")
+				}
+				for pass := 1; pass <= 2; pass++ {
+					at := time.Now()
+					err := engine.EnsureNamespaceMVCC(stallDB)
+					fmt.Printf("PD_CAUSE pre_listener_prime pass=%d namespace=%s elapsed_ms=%.3f error=%v\n",
+						pass, stallDB, float64(time.Since(at))/float64(time.Millisecond), err)
+					if err != nil {
+						_ = db.Close()
+						return nil, err
+					}
+				}
+				return db, nil
+			}
+		}
 		if mode == "seed" {
 			openCommandDB = func(dir string, cfg *nornicdb.Config) (*nornicdb.DB, error) {
 				db, err := nornicdb.Open(dir, cfg)
@@ -128,10 +152,21 @@ func TestPDW161StartupStall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, mode := range []string{"seed", "serve"} {
+	// PD_STALL_CAUSE=1 adds a third clean start whose namespace MVCC state is
+	// primed before the listeners open (test-side bypass of the first-use
+	// recovery); the second start is the unprimed reproduction.
+	type stallPhase struct{ mode, prime string }
+	phases := []stallPhase{{"seed", ""}, {"serve", os.Getenv("PD_STALL_PRIME")}}
+	if os.Getenv("PD_STALL_CAUSE") == "1" {
+		phases = append(phases, stallPhase{"serve", "1"})
+	}
+	for index, phase := range phases {
+		mode := phase.mode
+		fmt.Printf("PD_PHASE index=%d mode=%s prime=%q\n", index, mode, phase.prime)
 		process := exec.Command(binary, "-test.run=^TestPDW161StartupStall$")
 		process.Dir = dir
-		process.Env = append(append([]string{}, env...), "PD_STALL_CHILD="+mode, "PD_STALL_ARGS="+strings.Join(args, "\n"))
+		process.Env = append(append([]string{}, env...), "PD_STALL_CHILD="+mode,
+			"PD_STALL_ARGS="+strings.Join(args, "\n"), "PD_STALL_PRIME="+phase.prime)
 		output, err := process.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
@@ -352,8 +387,8 @@ func (l *stallServerLog) add(mode, line string) {
 			l.iteration, l.total = time.Now(), count
 		}
 	}
-	for _, marker := range []string{"PD_STAGE", "Clean shutdown", "MVCC lifecycle manager", "Building BM25", "BuildIndexes",
-		"embeddings ready", "queue started", "server listening", "NornicDB is ready", "signal received", "Shutdown complete",
+	for _, marker := range []string{"PD_STAGE", "PD_CAUSE", "Clean shutdown", "MVCC lifecycle manager", "Building BM25", "BuildIndexes",
+		"embeddings ready", "queue started", "Warming up vector search pipeline", "server listening", "NornicDB is ready", "signal received", "Shutdown complete",
 		"slow query", "fatal error", "panic:"} {
 		if strings.Contains(line, marker) {
 			fmt.Printf("PD_SERVER mode=%s received=%s %s\n", mode, time.Now().UTC().Format(time.RFC3339Nano), line)
@@ -423,8 +458,8 @@ func (h stallHTTP) call(ctx context.Context, method, path, body string) (string,
 	}
 	defer res.Body.Close()
 	var reply struct {
-		Commit string          `json:"commit"`
-		Token  string          `json:"access_token"`
+		Commit string            `json:"commit"`
+		Token  string            `json:"access_token"`
 		Errors []json.RawMessage `json:"errors"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&reply); err != nil {
@@ -493,7 +528,7 @@ func stallProbe(httpAddress, boltAddress, pprofAddress string, started time.Time
 	lanes := []*stallLane{}
 	providers := []struct {
 		name, address string
-		lanes []*stallLane
+		lanes         []*stallLane
 	}{
 		{"http", httpAddress, stallHTTPLanes(httpAddress)},
 		{"bolt", boltAddress, stallBoltLanes(boltAddress)},
@@ -590,7 +625,7 @@ func stallDump(address string, threshold time.Duration, stalled []string) {
 	}
 	var selected strings.Builder
 	for stack := range strings.SplitSeq(string(data), "\n\n") {
-		for _, owner := range []string{"pkg/server.(*Server).handle", "pkg/bolt.(*Server).handle", "pkg/auth.(*Authenticator).Authenticate",
+		for _, owner := range []string{"pkg/server.(*Server).handle", "pkg/bolt.(*Session).handle", "pkg/auth.(*Authenticator).Authenticate",
 			"pkg/search.(*Service).BuildIndexes", "pkg/nornicdb.(*DB).", "pkg/storage.(*Badger", "badger/v4", "ristretto", "pkg/storage.(*WAL"} {
 			if strings.Contains(stack, owner) {
 				selected.WriteString(stack)
@@ -633,7 +668,7 @@ func stallHTTPLanes(address string) []*stallLane {
 	}
 }
 
-// Use Bolt 5.1 one-message acknowledgements. A driver may pipeline BEGIN
+// Use Bolt 5.0 one-message acknowledgements. A driver may pipeline BEGIN
 // with the first statement, which would conflate the timings under test.
 func stallBoltLanes(address string) []*stallLane {
 	db := stallMap("db", stallDB)
@@ -702,19 +737,16 @@ func stallBoltHello(ctx context.Context, address string) (net.Conn, error) {
 	deadline, _ := ctx.Deadline()
 	conn.SetDeadline(deadline)
 	var version [4]byte
-	_, err = conn.Write([]byte{0x60, 0x60, 0xb0, 0x17, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	_, err = conn.Write([]byte{0x60, 0x60, 0xb0, 0x17, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 	if err == nil {
 		_, err = io.ReadFull(conn, version[:])
 	}
-	if err == nil && version != [4]byte{0, 0, 1, 5} {
+	if err == nil && version != [4]byte{0, 0, 0, 5} {
 		err = fmt.Errorf("unexpected Bolt version %x", version)
 	}
 	if err == nil {
-		err = stallBoltMessage(conn, append([]byte{0xb1, 0x01}, stallMap("user_agent", "pd-startup-probe/1")...))
-	}
-	if err == nil {
-		err = stallBoltMessage(conn, append([]byte{0xb1, 0x6a},
-			stallMap("scheme", "basic", "principal", "admin", "credentials", stallPassword)...))
+		err = stallBoltMessage(conn, append([]byte{0xb1, 0x01},
+			stallMap("user_agent", "pd-startup-probe/1", "scheme", "basic", "principal", "admin", "credentials", stallPassword)...))
 	}
 	if err != nil {
 		conn.Close()
