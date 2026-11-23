@@ -34,6 +34,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1108,25 +1110,7 @@ func (env *fsEnv) toState(state string) {
 // unique-constraint lookup that decides finding 1.
 func (env *fsEnv) settle(state string) {
 	if fsEmbedded {
-		code, _, body := env.http.do(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true&database="+fsDB, env.admin, nil)
-		env.t.Logf("DIAG [%s] embed trigger: %d %.300s", state, code, body)
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		err := env.server.db.WaitForEmbeddings(ctx)
-		cancel()
-		store, _ := env.server.dbManager.GetStorage(fsDB)
-		count := 0
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			if svc, svcErr := env.server.db.GetOrCreateSearchService(fsDB, store); svcErr == nil {
-				count = svc.EmbeddingCount()
-			}
-			if count >= 5 {
-				break
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		env.t.Logf("DIAG [%s] embeddings settled: err=%v pending=%d searchEmbeddingCount=%d", state, err, env.server.db.PendingEmbeddingsCount(), count)
-		_ = env.http.cypher(fsDB, env.admin, "CALL db.awaitIndexes(60)", nil)
+		env.embedAll(state)
 	}
 	store, err := env.server.dbManager.GetStorage(fsDB)
 	if err != nil {
@@ -1172,11 +1156,117 @@ func (env *fsEnv) settle(state string) {
 	}
 }
 
+// embedAll makes the managed embedding of every fixture node current and
+// logs the evidence: storage pending markers, queue stats, embedder calls and
+// each node's embedding state. Probing starts only when every visible and
+// hidden node has a chunk embedding, or after a 90 s deadline (logged).
+func (env *fsEnv) embedAll(state string) {
+	ctx := context.Background()
+	store, err := env.server.dbManager.GetStorage(fsDB)
+	if err != nil {
+		env.t.Fatalf("storage: %v", err)
+	}
+	queue := env.server.db.GetEmbedQueue()
+	env.t.Logf("EMB [%s] before: queue=%v pendingMarkers=%d pending=%d calls=%d stats=%s", state, queue != nil,
+		storage.CountPendingEmbeddingIDs(ctx, store, nil), env.server.db.PendingEmbeddingsCount(), fsEmbedCalls.Load(), fsJSON(env.server.db.EmbedQueueStats()))
+	ids := map[storage.NodeID]string{}
+	for _, label := range []string{"Person", "Note", "Doc"} {
+		nodes, _ := store.GetNodesByLabel(ctx, label)
+		for _, node := range nodes {
+			ids[node.ID] = fmt.Sprint(node.Labels, node.Properties["name"], node.Properties["title"], node.Properties["text"])
+		}
+	}
+	if queue != nil {
+		queue.StartWorkers()
+		for id := range ids {
+			queue.Enqueue(fsDB + ":" + string(id))
+		}
+		queue.TriggerImmediate()
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	missing := 0
+	for {
+		missing = 0
+		for id := range ids {
+			node, err := store.GetNode(ctx, id)
+			if err != nil || len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0 {
+				if node == nil || len(node.NamedEmbeddings) == 0 {
+					missing++
+				}
+			}
+		}
+		if missing == 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	waitErr := env.server.db.WaitForEmbeddings(waitCtx)
+	cancel()
+	count := 0
+	for end := time.Now().Add(30 * time.Second); time.Now().Before(end); time.Sleep(250 * time.Millisecond) {
+		if svc, svcErr := env.server.db.GetOrCreateSearchService(fsDB, store); svcErr == nil {
+			count = svc.EmbeddingCount()
+		}
+		if count >= len(ids)-3 {
+			break
+		}
+	}
+	env.t.Logf("EMB [%s] after: missing=%d of %d wait=%v pendingMarkers=%d calls=%d searchEmbeddingCount=%d stats=%s", state, missing, len(ids), waitErr,
+		storage.CountPendingEmbeddingIDs(ctx, store, nil), fsEmbedCalls.Load(), count, fsJSON(env.server.db.EmbedQueueStats()))
+	probe := &fsHashEmbedder{dims: 1024}
+	hiddenTerm, _ := probe.Embed(ctx, "zqxkeyword")
+	visibleTerm, _ := probe.Embed(ctx, "alpha")
+	dot := func(a, b []float32) float64 {
+		var sum float64
+		for i := range a {
+			if i < len(b) {
+				sum += float64(a[i] * b[i])
+			}
+		}
+		return sum
+	}
+	for id, what := range ids {
+		node, err := store.GetNode(ctx, id)
+		if err != nil {
+			env.t.Logf("EMB [%s] node %s %s: read error %v", state, id, what, err)
+			continue
+		}
+		var h, v float64
+		if len(node.ChunkEmbeddings) > 0 {
+			h, v = dot(node.ChunkEmbeddings[0], hiddenTerm), dot(node.ChunkEmbeddings[0], visibleTerm)
+		}
+		env.t.Logf("EMB [%s] node %s %s: chunks=%d named=%d meta=%s skipped=%v dot(zqxkeyword)=%.4f dot(alpha)=%.4f", state, id, what,
+			len(node.ChunkEmbeddings), len(node.NamedEmbeddings), fsJSON(node.EmbedMeta), node.Properties["embedding_skipped"], h, v)
+	}
+	fsEmbedMu.Lock()
+	for i, text := range fsEmbedSample {
+		env.t.Logf("EMB [%s] embedded text %d: %.200q", state, i, text)
+	}
+	fsEmbedSample = nil
+	fsEmbedMu.Unlock()
+}
+
 // fsHashEmbedder embeds text deterministically: each lowercased word adds 1
 // to one dimension chosen by its FNV hash; the vector is normalized.
 type fsHashEmbedder struct{ dims int }
 
+// fsEmbedCalls counts every text the test embedder receives; fsEmbedSample
+// keeps the last texts, so the log shows what the product embeds.
+var (
+	fsEmbedCalls  atomic.Int64
+	fsEmbedMu     sync.Mutex
+	fsEmbedSample []string
+)
+
 func (e *fsHashEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
+	fsEmbedCalls.Add(1)
+	fsEmbedMu.Lock()
+	fsEmbedSample = append(fsEmbedSample, text)
+	if len(fsEmbedSample) > 40 {
+		fsEmbedSample = fsEmbedSample[len(fsEmbedSample)-40:]
+	}
+	fsEmbedMu.Unlock()
 	vector := make([]float32, e.dims)
 	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-')
