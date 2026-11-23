@@ -103,7 +103,7 @@ class PolicyTests(unittest.TestCase):
         broken['jobs']['coverage']['if'] = "${{ always() }}"
         self.assertTrue(policy['violations'](name, broken))
         broken = copy.deepcopy(workflow)
-        broken['jobs']['coverage'].pop('environment')
+        broken['jobs']['coverage-plan'].pop('environment')
         self.assertTrue(policy['violations'](name, broken))
 
     def test_ci_test_jobs_enable_cgo_and_do_not_disable_local_llm(self):
