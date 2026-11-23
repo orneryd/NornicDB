@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
 
 	"sync/atomic"
 	"time"
@@ -236,10 +238,28 @@ func (b *BadgerEngine) loadPersistedNamespaceSequence(namespace string) (uint64,
 	return seq, nil
 }
 
+// pdW161RecoverInflight counts concurrent recoveries (PD-W161-2 item 10 diagnostic, scratch only).
+var pdW161RecoverInflight atomic.Int64
+
 func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int64, error) {
 	if namespace == "" {
 		return 0, 0, nil
 	}
+	pdStart := time.Now()
+	pdInflight := pdW161RecoverInflight.Add(1)
+	var pdNodeKeys, pdEdgeKeys int
+	pdCaller := "unknown"
+	if pc, _, line, ok := runtime.Caller(1); ok {
+		pdCaller = fmt.Sprintf("%s:%d", runtime.FuncForPC(pc).Name(), line)
+	}
+	defer func() {
+		pdW161RecoverInflight.Add(-1)
+		if elapsed := time.Since(pdStart); elapsed >= 5*time.Millisecond {
+			fmt.Fprintf(os.Stderr, "PD_CAUSE recover_namespace_mvcc_floor namespace=%s caller=%s inflight_at_start=%d node_keys=%d edge_keys=%d start=%s end=%s elapsed_ms=%.3f\n",
+				namespace, pdCaller, pdInflight, pdNodeKeys, pdEdgeKeys, pdStart.UTC().Format(time.RFC3339Nano),
+				time.Now().UTC().Format(time.RFC3339Nano), float64(elapsed)/float64(time.Millisecond))
+		}
+	}()
 	namespacePrefix := []byte(namespace + ":")
 	var maxSeq uint64
 	var maxTS int64
@@ -262,6 +282,7 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 			for it.Seek(scanPrefix); it.ValidForPrefix(scanPrefix); it.Next() {
 				key := it.Item().Key()
 				if prefix == prefixNode {
+					pdNodeKeys++
 					head, err := b.loadNodeMVCCHeadInTxn(txn, NodeID(string(key[1:])))
 					if errors.Is(err, ErrNotFound) {
 						continue
@@ -274,6 +295,7 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 					track(head.FloorVersion)
 					continue
 				}
+				pdEdgeKeys++
 				head, err := b.loadEdgeMVCCHeadInTxn(txn, EdgeID(string(key[1:])))
 				if errors.Is(err, ErrNotFound) {
 					continue
