@@ -757,6 +757,7 @@ func fsEndpointQueries(aliceID string) []fsEndpointQ {
 		mcpq("mcp-discover-person", "discover", map[string]any{"query": "alpha", "type": []any{"Person"}, "limit": 10}),
 		mcpq("mcp-discover-depth2", "discover", map[string]any{"query": "alpha", "depth": 2, "limit": 10}),
 		mcpq("mcp-discover-doc", "discover", map[string]any{"query": "doc", "limit": 10}),
+		mcpq("mcp-discover-charlie-depth2", "discover", map[string]any{"query": "charlie", "depth": 2, "limit": 10}),
 		mcpq("mcp-recall-person", "recall", map[string]any{"type": []any{"Person"}, "limit": 20}),
 		mcpq("mcp-recall-all", "recall", map[string]any{"limit": 50}),
 		fsEndpointQ{name: "mcp-other-db", path: "/mcp/" + fsOtherDB + "/tools/call", request: map[string]any{"name": "discover", "arguments": map[string]any{"query": "alpha"}}},
@@ -1091,7 +1092,7 @@ func (env *fsEnv) restricted(rec *fsRecorder, variant, position, state string) {
 		rec.put(fsKey{variant, position, "endpoint", q.name}, state, out)
 		if strings.HasPrefix(q.path, "/mcp") {
 			env.t.Logf("MCPFULL [%s] %s: %s", where, q.name, out.Canon)
-			if q.name == "mcp-discover-depth2" && position != "after-wide-repeat" {
+			if strings.HasSuffix(q.name, "-depth2") && position != "after-wide-repeat" {
 				env.followRelated(where, out)
 			}
 		}
