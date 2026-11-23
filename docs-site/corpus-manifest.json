@@ -762,8 +762,8 @@
     },
     {
       "path": "getting-started/quick-start.md",
-      "sha256": "29e4a96501a39bf12714b74ed5046cfdeeaa7dc9e519fecdbfe96b92507568c0",
-      "bytes": 7770
+      "sha256": "dac6549439966eea1075fee9aa1b5a5f2f0bbcd856de75e35130ab744620232e",
+      "bytes": 7656
     },
     {
       "path": "getting-started/windows-cuda.md",
@@ -1497,8 +1497,8 @@
     },
     {
       "path": "privacy.md",
-      "sha256": "2a571958f5723d3143b996257561f7aab01f6a7caa63f958984ab30fea8711f0",
-      "bytes": 2335
+      "sha256": "bf82742dafc70f45df658b961438b3cbb5dcc48108e08c2a01e05cca85bed264",
+      "bytes": 2332
     },
     {
       "path": "project-details.md",
@@ -1642,8 +1642,8 @@
     },
     {
       "path": "start.md",
-      "sha256": "636a0da092b8de6dd92338c216c9bcc88a9f2c07a6967489a690d8e30ebd705a",
-      "bytes": 2338
+      "sha256": "d509b97091acb702ea2aeaa622bec705d34d35e47bed62534fe7ca766a609380",
+      "bytes": 2434
     },
     {
       "path": "support/reply-user-config-gpu-embeddings-ui.md",

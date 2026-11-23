@@ -46,6 +46,8 @@ RETURN a.name, b.name
 
 Expected names: `Alice` and `Bob`. Repeating the `MERGE` example matches the same nodes and relationship.
 
+To save the project for later, [star NornicDB on GitHub](https://github.com/orneryd/NornicDB).
+
 ## 4. Choose your next task
 
 - [Write application queries](user-guides/cypher-queries.md)
