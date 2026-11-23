@@ -282,8 +282,7 @@ func TestV152P26MetadataMapAllocation(t *testing.T) {
 	mutated[at] = 0xdf
 	claimed := uint32(mutated[at+1])<<24 | uint32(mutated[at+2])<<16 | uint32(mutated[at+3])<<8 | uint32(mutated[at+4])
 	t.Logf("P26ROW F6M body of %d bytes, metadata map header %02x -> df: the map now claims %d entries", len(body), body[at], claimed)
-	fmt.Printf("P26ROW F6M body of %d bytes, metadata map header %02x -> df: the map now claims %d entries
-", len(body), body[at], claimed)
+	fmt.Printf("P26ROW F6M body of %d bytes, metadata map header %02x -> df: the map now claims %d entries\n", len(body), body[at], claimed)
 	done := make(chan struct{})
 	go func() {
 		for {
@@ -297,12 +296,10 @@ func TestV152P26MetadataMapAllocation(t *testing.T) {
 			if m.HeapAlloc < 1536<<20 {
 				continue
 			}
-			fmt.Printf("P26ROW F6M heap %d MiB while decoding one body of %d bytes
-", m.HeapAlloc>>20, len(body))
+			fmt.Printf("P26ROW F6M heap %d MiB while decoding one body of %d bytes\n", m.HeapAlloc>>20, len(body))
 			var out bytes.Buffer
 			_ = pprof.Lookup("goroutine").WriteTo(&out, 2)
-			fmt.Printf("P26STACK %s
-", out.String())
+			fmt.Printf("P26STACK %s\n", out.String())
 			os.Exit(3)
 		}
 	}()
