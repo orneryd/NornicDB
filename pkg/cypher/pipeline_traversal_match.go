@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -228,18 +229,23 @@ func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, patter
 	if matches == nil {
 		return nil, nil, false
 	}
-	if node, ok := pipelineBoundNode(row, matches.StartNode.variable); ok {
-		if !e.matchesEndPattern(node, &matches.StartNode) {
+	startNode, startBound := pipelineBoundNode(row, matches.StartNode.variable)
+	if startBound {
+		if !e.matchesEndPattern(startNode, &matches.StartNode) {
 			return nil, nil, true
 		}
-		startSeedNodes = []*storage.Node{node}
+		startSeedNodes = []*storage.Node{startNode}
 	}
-	if node, ok := pipelineBoundNode(row, matches.EndNode.variable); ok &&
-		(!matches.IsChained || len(startSeedNodes) == 0 && matches.canSeedEnd()) {
-		if !e.matchesEndPattern(node, &matches.EndNode) {
+	endNode, endBound := pipelineBoundNode(row, matches.EndNode.variable)
+	canSeedEnd := matches.canSeedEnd()
+	endBranch := !matches.IsChained || len(startSeedNodes) == 0 && canSeedEnd
+	fmt.Printf("C25_SEED pattern=%q start_bound=%t start_seed_count=%d end_bound=%t chained=%t can_seed_end=%t end_branch=%t\n",
+		pattern, startBound, len(startSeedNodes), endBound, matches.IsChained, canSeedEnd, endBranch)
+	if endBound && endBranch {
+		if !e.matchesEndPattern(endNode, &matches.EndNode) {
 			return nil, nil, true
 		}
-		endSeedNodes = []*storage.Node{node}
+		endSeedNodes = []*storage.Node{endNode}
 	}
 	return startSeedNodes, endSeedNodes, false
 }
