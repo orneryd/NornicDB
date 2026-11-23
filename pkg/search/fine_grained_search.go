@@ -88,7 +88,7 @@ func (scope *indexedSearchScope) keywordRestricted(relationships bool) bool {
 
 // visibleBM25 projects the shared index population into request-local scoring
 // state. No postings, vocabulary, or statistics from unreadable text enter it.
-func visibleBM25(ctx context.Context, index bm25Index, text func(string) (string, error)) (bm25Index, error) {
+func visibleBM25(ctx context.Context, index bm25Index, text func(context.Context, string) (string, error)) (bm25Index, error) {
 	shared, ok := index.(*FulltextIndexV2)
 	if !ok {
 		if _, disabled := index.(disabledBM25Index); disabled || index == nil {
@@ -110,7 +110,7 @@ func visibleBM25(ctx context.Context, index bm25Index, text func(string) (string
 		if id == "" {
 			continue
 		}
-		document, err := text(id)
+		document, err := text(ctx, id)
 		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
@@ -131,8 +131,8 @@ func visibleBM25(ctx context.Context, index bm25Index, text func(string) (string
 }
 
 func (scope *indexedSearchScope) nodeBM25(ctx context.Context, index bm25Index) (bm25Index, error) {
-	return visibleBM25(ctx, index, func(id string) (string, error) {
-		node, err := scope.engine.GetNode(ctx, storage.NodeID(id))
+	return visibleBM25(ctx, index, func(readCtx context.Context, id string) (string, error) {
+		node, err := scope.engine.GetNode(readCtx, storage.NodeID(id))
 		if err != nil {
 			return "", err
 		}

@@ -192,13 +192,13 @@
     },
     {
       "path": "architecture/observability.md",
-      "sha256": "3c07dd16cd058fef5266d4f1e0be2d8d6f3a69662bd15a0b7d54492d2d573189",
-      "bytes": 63753
+      "sha256": "4bb8f693cce52d598fa697e000ff3fdf971f410e2f678224ee37398b5f086732",
+      "bytes": 63726
     },
     {
       "path": "architecture/plugin-system.md",
-      "sha256": "d372275465f9e102df9b4656f4e18093d0a3721529827c44a232d32235ad7b8b",
-      "bytes": 4279
+      "sha256": "4debf49f567dcc05ec44b9a0346ad253dc09c02dddc3cac8fd1ab915ba196944",
+      "bytes": 4216
     },
     {
       "path": "architecture/qdrant-collection-to-database-diagrams.md",
@@ -692,8 +692,8 @@
     },
     {
       "path": "features/gpu-acceleration.md",
-      "sha256": "2474549f0e191b725337a0bb522a2bf89126f319569a8a3dd4b2951ba7e1a4fd",
-      "bytes": 5193
+      "sha256": "dc10f04003ea23a9baf9b2ed91ead919bd57e38b75642951f31064de09711191",
+      "bytes": 5157
     },
     {
       "path": "features/link-prediction.md",
@@ -707,8 +707,8 @@
     },
     {
       "path": "features/memory-decay.md",
-      "sha256": "f223b21e1dd5c269d40526e0543df8ab3210fdebd5b494920f364a8e7857577d",
-      "bytes": 7997
+      "sha256": "4cf4343f6b2209c315a4c02c179a867f337a5d1fc164fb8af368b45f412d52ea",
+      "bytes": 8004
     },
     {
       "path": "features/plugin-system.md",
@@ -767,8 +767,8 @@
     },
     {
       "path": "getting-started/windows-cuda.md",
-      "sha256": "11b0e2924bb1418e03f85becb084aac6bad3400aecb5bfc8beed01c793397d8d",
-      "bytes": 7212
+      "sha256": "40cec9b6f32955e636e1ac4381c334cabe05d65b226fd0b3ee4e0e0683007247",
+      "bytes": 7228
     },
     {
       "path": "issues-index.md",
@@ -847,8 +847,8 @@
     },
     {
       "path": "operations/configuration.md",
-      "sha256": "4b9b34877e525ef1d117d611d5a029c75a2da0aff495b365372872c77cd4f930",
-      "bytes": 79886
+      "sha256": "47ae4266a347bb6564a0b055132877aeb9471459287d14419194b212fe63f0a3",
+      "bytes": 79675
     },
     {
       "path": "operations/dashboards/nornicdb-overview.json",
@@ -862,8 +862,8 @@
     },
     {
       "path": "operations/docker.md",
-      "sha256": "8792c1e7619b3222550e87571ea4b83e9350b9bc7d49058971496382244d991f",
-      "bytes": 11590
+      "sha256": "29804176eac731e7b3deb645392cf81b9a7ec8003f7a9257bc6a149e5f3581cd",
+      "bytes": 11543
     },
     {
       "path": "operations/durability.md",
@@ -872,8 +872,8 @@
     },
     {
       "path": "operations/environment-variables.md",
-      "sha256": "e79d87e48ea3beda1ffe9099101997ed16581a9eebf13b4aac569344f283fe69",
-      "bytes": 266996
+      "sha256": "f34538c1760f0bf9be2830652a180e335e5060949db00ed3480df354ce3f9d78",
+      "bytes": 265568
     },
     {
       "path": "operations/low-memory-mode.md",
@@ -892,8 +892,8 @@
     },
     {
       "path": "operations/monitoring.md",
-      "sha256": "980f25525a556848cbbc144390b944908b5ce01a3526f011186fe5ce680278b0",
-      "bytes": 16238
+      "sha256": "b36ca272757aa9b287188375ffce44ef9f8fdf7748180c876f8f35d7ce2d8036",
+      "bytes": 16209
     },
     {
       "path": "operations/mvcc-lifecycle-compaction.md",
@@ -912,13 +912,13 @@
     },
     {
       "path": "operations/scaling.md",
-      "sha256": "8210fecdbcca5c54dfd667e37cf6906125d658e7d88c0846d8b92b3ca3406da6",
-      "bytes": 7009
+      "sha256": "05bd24054dad7a7c8e33b9cf8f95fab13df6c1052bf7f1b03a1a2640ac5b11d6",
+      "bytes": 7017
     },
     {
       "path": "operations/storage-serialization.md",
-      "sha256": "8dea369f85528a4172d66bee1652c852f2aa49f477a3a98fcc47e9f53bb97835",
-      "bytes": 3183
+      "sha256": "afb9ae68a0b4168df6d14cf7d2daf7903fe4588f98265d9a103fedaa1ca9bbd4",
+      "bytes": 399
     },
     {
       "path": "operations/transaction-memory-limits.md",
@@ -942,8 +942,8 @@
     },
     {
       "path": "packaging/docker.md",
-      "sha256": "48810a210a1127e8a2866b47826fdbafd9515772be9c5e437e9ffce306ee9901",
-      "bytes": 10882
+      "sha256": "84eb87131bd94eac101a2d97552810733d5fd435d5481e9eedc6ae4f8ff66aa5",
+      "bytes": 10807
     },
     {
       "path": "packaging/linux.md",
@@ -1557,8 +1557,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "e6adc354de2e329a3ecac9c71aeb90379e27d741104168c9910efd358ee1ccef",
-      "bytes": 12397
+      "sha256": "f7a42cb9a210fd83605b3fc69f08d087979f023261cad9c03ddc9a85828ab9c4",
+      "bytes": 12574
     },
     {
       "path": "security/http-security.md",
@@ -1642,8 +1642,8 @@
     },
     {
       "path": "start.md",
-      "sha256": "d509b97091acb702ea2aeaa622bec705d34d35e47bed62534fe7ca766a609380",
-      "bytes": 2434
+      "sha256": "4886f45d17e9ee356a2898087f08e3eb522707265ec7827dc7e91ee135a75604",
+      "bytes": 3354
     },
     {
       "path": "support/reply-user-config-gpu-embeddings-ui.md",
@@ -1762,8 +1762,8 @@
     },
     {
       "path": "user-guides/historical-reads-mvcc-retention.md",
-      "sha256": "3335fcac358b8c5137d94063df1b51869df5703abaf34bc7cc6a573609e9ce44",
-      "bytes": 15700
+      "sha256": "867aab5dc551fd6432db70c4ed310ad472b91d7e52d4fe6f94cdfd4c4539ee63",
+      "bytes": 15627
     },
     {
       "path": "user-guides/hybrid-search.md",
@@ -1812,8 +1812,8 @@
     },
     {
       "path": "user-guides/plugin-system.md",
-      "sha256": "342c6d94e332ae6872ba921421b0cd0bdc1966816809a0836df306dd5e2dc5ce",
-      "bytes": 9279
+      "sha256": "b823f1095e644d107e02c7ba648a07d47b65ffadd50e0fbb51347481be24be0e",
+      "bytes": 9218
     },
     {
       "path": "user-guides/promotion-policies.md",

@@ -705,8 +705,8 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	fulltext := rs.fulltext
 	scopedScoring := scope != nil && scope.keywordRestricted(true)
 	if scopedScoring && query != "" {
-		fulltext, err = visibleBM25(ctx, fulltext, func(id string) (string, error) {
-			edge, readErr := readEngine.GetEdge(ctx, storage.EdgeID(id))
+		fulltext, err = visibleBM25(ctx, fulltext, func(readCtx context.Context, id string) (string, error) {
+			edge, readErr := readEngine.GetEdge(readCtx, storage.EdgeID(id))
 			if readErr != nil {
 				return "", readErr
 			}
