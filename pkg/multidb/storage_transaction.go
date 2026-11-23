@@ -2,6 +2,7 @@ package multidb
 
 import (
 	"context"
+	"log"
 	"errors"
 	"fmt"
 
@@ -162,6 +163,7 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 	bytesReady := info.sizeInitialized
 	info.sizeMu.RUnlock()
 	if limits != nil && limits.Storage.MaxBytes > 0 && !bytesReady {
+		log.Printf("CONFLICTDIAG site=multidb-size-not-ready db=%s", t.dbName)
 		return prepared, nil, storage.ErrConflict
 	}
 	if bytesReady && !trackBytes {

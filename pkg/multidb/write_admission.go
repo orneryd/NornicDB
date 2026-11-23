@@ -2,6 +2,9 @@ package multidb
 
 import (
 	"context"
+	"log"
+	"runtime/debug"
+	"strings"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -40,6 +43,7 @@ func (a *writeAdmission) acquire(ctx context.Context, exclusive, tryOnce bool) (
 	// order; prepared-only submission routes can wait normally.
 	if tryOnce {
 		if !a.gate.TryAcquire(weight) {
+			log.Printf("CONFLICTDIAG site=multidb-write-admission-tryonce weight=%d stack=%s", weight, strings.ReplaceAll(string(debug.Stack()), "\n", " | "))
 			return nil, storage.ErrConflict
 		}
 	} else if err := a.gate.Acquire(ctx, weight); err != nil {

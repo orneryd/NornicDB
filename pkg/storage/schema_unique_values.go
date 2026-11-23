@@ -626,6 +626,7 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 		if lock.recoveryPending && !ownWriter && !(request.shared && ownReader) {
 			clearWait()
 			sm.uniqueConstraintCommitLocksMu.Unlock()
+			scratchConflictDiag("unique-commit-lock-recovery", fmt.Sprint(owner))
 			return ErrConflict
 		}
 		if canAcquire {

@@ -202,6 +202,7 @@ func refreshUniqueConstraintValues(ctx context.Context, engine Engine, schema *S
 			return err
 		}
 		if schema.uniqueConstraints[nodePropertyKey{label: uc.Label, property: uc.Property}] != uc {
+			scratchConflictDiag("constraint-cache-publication", uc.Label+"."+uc.Property)
 			return ErrConflict
 		}
 	}

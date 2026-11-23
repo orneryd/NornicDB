@@ -235,6 +235,8 @@ func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeU
 		!request.Before.UpdatedAt.Equal(stored.UpdatedAt) ||
 		!slices.Equal(request.Before.Labels, stored.Labels) ||
 		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
+		g.diagConflict("UpdateNode", string(stored.ID), request.Before.CreatedAt, stored.CreatedAt, request.Before.UpdatedAt, stored.UpdatedAt,
+			!slices.Equal(request.Before.Labels, stored.Labels), request.Before.Properties, visible.Properties)
 		return storage.ErrConflict
 	}
 	properties, err := g.applyPropertyEdit(target, visible.Properties, request.After.Properties, request.PropertyWrites)
@@ -252,8 +254,13 @@ func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeU
 		updated.NamedEmbeddings, updated.ChunkEmbeddings = request.After.NamedEmbeddings, request.After.ChunkEmbeddings
 	}
 
+	executorUpdatedAt := request.After.UpdatedAt
 	request.Before, request.After, request.PropertyWrites = stored, &updated, storage.PropertyWriteIntent{}
-	return g.engine.UpdateNode(ctx, request)
+	if err := g.engine.UpdateNode(ctx, request); err != nil {
+		return err
+	}
+	g.diagRecordWrite(string(stored.ID), updated.UpdatedAt, executorUpdatedAt, updated.Properties)
+	return nil
 }
 
 func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeUpdateRequest) error {
@@ -278,6 +285,8 @@ func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeU
 	if request.Before != nil && (!request.Before.CreatedAt.Equal(stored.CreatedAt) ||
 		!request.Before.UpdatedAt.Equal(stored.UpdatedAt) ||
 		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
+		g.diagConflict("UpdateEdge", string(stored.ID), request.Before.CreatedAt, stored.CreatedAt, request.Before.UpdatedAt, stored.UpdatedAt,
+			false, request.Before.Properties, visible.Properties)
 		return storage.ErrConflict
 	}
 	properties, err := g.applyPropertyEdit(g.edgeResource(stored), visible.Properties, request.After.Properties, request.PropertyWrites)
@@ -286,8 +295,13 @@ func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeU
 	}
 	updated := *stored
 	updated.Properties = properties
+	executorUpdatedAt := request.After.UpdatedAt
 	request.Before, request.After, request.PropertyWrites = stored, &updated, storage.PropertyWriteIntent{}
-	return g.engine.UpdateEdge(ctx, request)
+	if err := g.engine.UpdateEdge(ctx, request); err != nil {
+		return err
+	}
+	g.diagRecordWrite(string(stored.ID), updated.UpdatedAt, executorUpdatedAt, updated.Properties)
+	return nil
 }
 
 func (g *fineGrainedGraph) allowEdgeDelete(ctx context.Context, edge *storage.Edge) error {

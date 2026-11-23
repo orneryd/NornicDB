@@ -45,6 +45,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -58,6 +59,10 @@ var fsEmbedded = false
 // fsTokenGrant also grants CREATE NEW PROPERTY NAME on the database, the grant
 // with which a caller may write a property it cannot read (#1963).
 var fsTokenGrant = false
+
+// fsRelEmbGrant also grants graph.relationship.embedding.read, so managed
+// relationship vectors take part in the restricted user's rankings.
+var fsRelEmbGrant = false
 
 const (
 	fsMarker   = "zqx"
@@ -282,6 +287,23 @@ func (h *fsHTTP) endpoint(path, token string, request map[string]any) (fsOut, ma
 	var errs []string
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		errs = append(errs, fmt.Sprintf("undecodable: %v: %.300s", err, body))
+	}
+	if strings.HasPrefix(path, "/mcp") {
+		// MCP wraps the tool result as JSON text in content[0].text.
+		if envelope, ok := decoded.(map[string]any); ok {
+			parts["mcp.isError"] = envelope["isError"]
+			if content, ok := envelope["content"].([]any); ok && len(content) > 0 {
+				if first, ok := content[0].(map[string]any); ok {
+					text, _ := first["text"].(string)
+					var inner any
+					if json.Unmarshal([]byte(text), &inner) == nil {
+						decoded = inner
+					} else {
+						decoded = map[string]any{"text": text}
+					}
+				}
+			}
+		}
 	}
 	var rows []any
 	var object map[string]any
@@ -610,6 +632,11 @@ func fsCypherQueries() []fsQ {
 		q("vec-text-alpha", "CALL db.index.vector.queryNodes('fs_no_such_index', 10, 'alpha') YIELD node, score RETURN coalesce(node.name, node.title, node.text) AS n, score", nil),
 		q("vec-text-hidden", "CALL db.index.vector.queryNodes('fs_no_such_index', 10, 'zqxkeyword') YIELD node, score RETURN coalesce(node.name, node.title, node.text) AS n, score", nil),
 		q("vec-text-person-index", "CALL db.index.vector.queryNodes('fs_vec', 5, 'alpha') YIELD node, score RETURN node.name AS n, score", nil),
+		q("vec-rel-text-hidden", "CALL db.index.vector.queryRelationships('fs_no_such_index', 10, 'zqxrelsecret') YIELD relationship, score RETURN relationship.note AS n, score", nil),
+		q("vec-rel-text-alpha", "CALL db.index.vector.queryRelationships('fs_no_such_index', 10, 'alpha friend') YIELD relationship, score RETURN relationship.note AS n, score", nil),
+		q("vec-rel-text-rvec-index", "CALL db.index.vector.queryRelationships('fs_rvec', 5, 'zqxrelsecret') YIELD relationship, score RETURN relationship.note AS n, score", nil),
+		q("rerank-supplied", "CALL db.rerank({query: 'alpha', candidates: [{id: 'c1', content: 'alpha bravo', score: 0.5}, {id: 'c2', content: 'delta echo', score: 0.4}, {id: 'c3', content: 'alpha', score: 0.3}]})", nil),
+		q("rerank-after-retrieve", "CALL db.retrieve({query: 'alpha', limit: 10}) YIELD node, score WITH node, score WHERE node IS NOT NULL WITH collect({id: elementId(node), content: coalesce(node.bio, node.title, node.text, ''), score: score}) AS c CALL db.rerank({query: 'alpha', candidates: c}) YIELD id, new_rank, final_score RETURN id, new_rank, final_score", nil),
 		q("vec-cosine-fastpath", "MATCH (p:Person) RETURN p.name AS n, vector.similarity.cosine(p.vec, [1.0, 0.0, 0.0, 0.0]) AS s ORDER BY s DESC, n LIMIT 3", nil),
 		q("vec-cosine-hidden", "MATCH (p:Person) RETURN p.name AS n, vector.similarity.cosine(p.hvec, [0.0, 0.0, 0.0, 1.0]) AS s ORDER BY s DESC LIMIT 2", nil),
 		// Retrieval procedures.
@@ -721,7 +748,21 @@ func fsEndpointQueries(aliceID string) []fsEndpointQ {
 		gql("graphql-similar-doc", `{ similar(nodeId: "fs-doc-0", limit: 5) { similarity node { internalId properties } } }`),
 		s("http-search-vector-hidden-term", map[string]any{"query": "zqxkeyword delta", "limit": 10}),
 	)
+	mcpq := func(name, tool string, arguments map[string]any) fsEndpointQ {
+		return fsEndpointQ{name: name, path: "/mcp/" + fsDB + "/tools/call", request: map[string]any{"name": tool, "arguments": arguments}}
+	}
+	qs = append(qs,
+		mcpq("mcp-discover-alpha", "discover", map[string]any{"query": "alpha", "limit": 10}),
+		mcpq("mcp-discover-hidden", "discover", map[string]any{"query": "zqxkeyword", "limit": 10}),
+		mcpq("mcp-discover-person", "discover", map[string]any{"query": "alpha", "type": []any{"Person"}, "limit": 10}),
+		mcpq("mcp-discover-depth2", "discover", map[string]any{"query": "alpha", "depth": 2, "limit": 10}),
+		mcpq("mcp-discover-doc", "discover", map[string]any{"query": "doc", "limit": 10}),
+		mcpq("mcp-recall-person", "recall", map[string]any{"type": []any{"Person"}, "limit": 20}),
+		mcpq("mcp-recall-all", "recall", map[string]any{"limit": 50}),
+		fsEndpointQ{name: "mcp-other-db", path: "/mcp/" + fsOtherDB + "/tools/call", request: map[string]any{"name": "discover", "arguments": map[string]any{"query": "alpha"}}},
+	)
 	if aliceID != "" {
+		qs = append(qs, mcpq("mcp-recall-alice", "recall", map[string]any{"id": aliceID}))
 		qs = append(qs, fsEndpointQ{name: "http-similar-alice", path: "/nornicdb/similar", request: map[string]any{"database": fsDB, "node_id": aliceID, "limit": 5}})
 		qs = append(qs, gql("graphql-similar-alice", `{ similar(nodeId: "`+aliceID+`", limit: 5) { similarity node { internalId properties } } }`))
 	}
@@ -918,12 +959,20 @@ func (env *fsEnv) grantCatalog() {
 		{ID: "fs_search", Action: "database.search.execute", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: identifier}},
 		{ID: "fs_embedding_read", Action: "graph.node.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, DatabaseID: identifier}},
 		{ID: "fs_graphql", Action: "dbms.api.graphql", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDBMS}},
+		{ID: "fs_mcp", Action: "dbms.api.mcp", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDBMS}},
+		{ID: "fs_mcp_discover", Action: "mcp.invoke.discover", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: identifier}},
+		{ID: "fs_mcp_recall", Action: "mcp.invoke.recall", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase, DatabaseID: identifier}},
+	}
+	assigned := []string{"fs_search", "fs_embedding_read", "fs_graphql", "fs_mcp", "fs_mcp_discover", "fs_mcp_recall"}
+	if fsRelEmbGrant {
+		definitions = append(definitions, auth.FineGrainedEntitlement{ID: "fs_rel_embedding_read", Action: "graph.relationship.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship, DatabaseID: identifier}})
+		assigned = append(assigned, "fs_rel_embedding_read")
 	}
 	document.Catalog.Definitions = append(document.Catalog.Definitions, definitions...)
 	if document.Catalog.Assignments == nil {
 		document.Catalog.Assignments = map[string][]string{}
 	}
-	document.Catalog.Assignments[fsRole] = append(document.Catalog.Assignments[fsRole], "fs_search", "fs_embedding_read", "fs_graphql")
+	document.Catalog.Assignments[fsRole] = append(document.Catalog.Assignments[fsRole], assigned...)
 	code, _, body = env.http.do(http.MethodPut, "/auth/fgac/catalog", env.admin, map[string]any{"catalog": document.Catalog, "revision": document.Revision})
 	if code != http.StatusNoContent {
 		t.Fatalf("catalog put %d: %s", code, body)
@@ -1248,12 +1297,68 @@ func (env *fsEnv) embedAll(state string) {
 		env.t.Logf("EMB [%s] node %s %s: chunks=%d named=%d meta=%s skipped=%v dot(zqxkeyword)=%.4f dot(alpha)=%.4f", state, id, what,
 			len(node.ChunkEmbeddings), len(node.NamedEmbeddings), fsJSON(node.EmbedMeta), node.Properties["embedding_skipped"], h, v)
 	}
+	env.relationshipEmbeddings(state, store)
 	fsEmbedMu.Lock()
 	for i, text := range fsEmbedSample {
 		env.t.Logf("EMB [%s] embedded text %d: %.200q", state, i, text)
 	}
 	fsEmbedSample = nil
 	fsEmbedMu.Unlock()
+}
+
+// relationshipEmbeddings waits until every fixture relationship has a managed
+// vector in the search service, then logs each relationship's similarity to
+// the hidden term and to a visible term (admin view, no principal).
+func (env *fsEnv) relationshipEmbeddings(state string, store storage.Engine) {
+	ctx := context.Background()
+	svc, err := env.server.db.GetOrCreateSearchService(fsDB, store)
+	if err != nil || svc == nil {
+		env.t.Logf("REMB [%s] no search service: %v", state, err)
+		return
+	}
+	want := 0
+	for _, relType := range []string{"KNOWS", "HATES"} {
+		edges, _ := store.GetEdgesByType(ctx, relType)
+		want += len(edges)
+	}
+	svc.WakeRelationshipEmbedding()
+	probe := &fsHashEmbedder{dims: 1024}
+	hidden, _ := probe.Embed(ctx, "zqxrelsecret")
+	visible, _ := probe.Embed(ctx, "alpha friend")
+	got := 0
+	var resp *search.SearchResponse
+	for end := time.Now().Add(60 * time.Second); time.Now().Before(end); time.Sleep(250 * time.Millisecond) {
+		opts := search.DefaultSearchOptions()
+		opts.Limit = 50
+		resp, err = svc.SearchRelationships(ctx, "", hidden, opts)
+		got = 0
+		if err == nil && resp != nil {
+			for _, result := range resp.Results {
+				if result.VectorRank > 0 {
+					got++
+				}
+			}
+		}
+		if got >= want {
+			break
+		}
+	}
+	env.t.Logf("REMB [%s] relationship vectors: %d of %d fixture relationships (err %v)", state, got, want, err)
+	for _, query := range []struct {
+		name   string
+		vector []float32
+	}{{"zqxrelsecret", hidden}, {"alpha friend", visible}} {
+		opts := search.DefaultSearchOptions()
+		opts.Limit = 50
+		resp, err = svc.SearchRelationships(ctx, "", query.vector, opts)
+		if err != nil || resp == nil {
+			env.t.Logf("REMB [%s] admin vector search %q: %v", state, query.name, err)
+			continue
+		}
+		for _, result := range resp.Results {
+			env.t.Logf("REMB [%s] admin vector %q: rel %s props=%v score=%.4f vectorRank=%d", state, query.name, result.ID, result.Properties, result.Score, result.VectorRank)
+		}
+	}
 }
 
 // fsHashEmbedder embeds text deterministically: each lowercased word adds 1
@@ -1321,6 +1426,14 @@ func (e *fsHashEmbedder) ChunkText(text string, maxTokens, overlap int) ([]strin
 func TestFGACSearchEmbedded(t *testing.T) {
 	fsEmbedded, fsDB = true, "nornic"
 	defer func() { fsEmbedded, fsDB = false, "fgs" }()
+	fsScenario(t)
+}
+
+// TestFGACSearchEmbeddedRelGrant repeats the embedded scenario with
+// graph.relationship.embedding.read granted to the restricted role.
+func TestFGACSearchEmbeddedRelGrant(t *testing.T) {
+	fsEmbedded, fsDB, fsRelEmbGrant = true, "nornic", true
+	defer func() { fsEmbedded, fsDB, fsRelEmbGrant = false, "fgs", false }()
 	fsScenario(t)
 }
 
