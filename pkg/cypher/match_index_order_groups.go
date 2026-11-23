@@ -39,6 +39,20 @@ func (h *indexedOrderHeap) Pop() interface{} {
 	return value
 }
 
+// c71DiagnosticKey scopes the scratch instrumentation to the test's query.
+type c71DiagnosticKey struct{}
+
+type c71Diagnostic struct {
+	bypass bool
+	log    func(format string, args ...interface{})
+	reads  int
+}
+
+func c71DiagnosticFrom(ctx context.Context) *c71Diagnostic {
+	diagnostic, _ := ctx.Value(c71DiagnosticKey{}).(*c71Diagnostic)
+	return diagnostic
+}
+
 // collectIndexedOrderWindow applies filtering and all sort keys before
 // truncation. A primary-key group may be much larger than the requested page;
 // only the best limit nodes are retained while every boundary tie is examined.
@@ -68,6 +82,10 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	var visitErr error
 	visited := false
+	diagnostic := c71DiagnosticFrom(ctx)
+	if diagnostic != nil {
+		diagnostic.log("C71 collect_enter label=%q property=%q limit=%d requiredLabels=%v bounds=%+v", label, specs[0].propName, limit, pattern.labels, bounds)
+	}
 	found, err := schema.VisitPropertyIndexGroupsInRange(ctx, label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
 		visited = true
 		remaining := limit - len(nodes)
@@ -79,6 +97,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			if err := ctx.Err(); err != nil {
 				visitErr = err
 				return false
+			}
+			if diagnostic != nil {
+				diagnostic.reads++
 			}
 			node, err := e.getQueryNode(ctx, e.storage, id)
 			if err != nil || node == nil {
@@ -114,6 +135,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		}
 		return true
 	})
+	if diagnostic != nil {
+		diagnostic.log("C71 collect_exit found=%t visited=%t rows=%d reads=%d err=%v visitErr=%v", found, visited, len(nodes), diagnostic.reads, err, visitErr)
+	}
 	if errors.Is(err, storage.ErrPropertyIndexValueOrderUnavailable) {
 		return nil, false, nil
 	}

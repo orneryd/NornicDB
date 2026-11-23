@@ -128,6 +128,9 @@ func (e *StorageExecutor) planPipelineIndexedNodeCandidates(ctx context.Context,
 	// The pattern, WHERE and parameters are the resolved inputs the read
 	// applies; they are read once, here, as the dispatch read them.
 	seed := nodeIndexCandidatePlan{pattern: nodePattern, where: whereClause, params: params}
+	if diagnostic := c71DiagnosticFrom(ctx); diagnostic != nil && nodePattern.variable == "m" {
+		diagnostic.log("C71 ordered_candidate_gate variable=%q labels=%v where=%q limit=%d earlyLimit=%d order=%q eligible=%t", nodePattern.variable, nodePattern.labels, whereClause, hint.limit, hint.earlyLimit, hint.orderExpr, hint.limit > 0 && hint.orderExpr != "")
+	}
 	if hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {

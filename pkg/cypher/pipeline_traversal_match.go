@@ -284,7 +284,14 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		// The hint asks whether the clause's own items are locally planable.
 		// Its SKIP / LIMIT window is the projection's, read below, so the row
 		// plan is read without declining on it.
-		if _, local := compilePipelineRowWith(ctx, clause, true); !local {
+		_, local := compilePipelineRowWith(ctx, clause, true)
+		diagnostic := c71DiagnosticFrom(ctx)
+		if diagnostic != nil {
+			limit, hasLimit := e.parseIntModifier(ctx, clause.text, "LIMIT")
+			skip, hasSkip := e.parseIntModifier(ctx, clause.text, "SKIP")
+			diagnostic.log("C71 with_hint local=%t limit=%d hasLimit=%t skip=%d hasSkip=%t orderIndex=%d", local, limit, hasLimit, skip, hasSkip, topLevelKeywordIndex(ctx, clause.text, "ORDER BY"))
+		}
+		if !local {
 			return hint
 		}
 		limit, hasLimit := e.parseIntModifier(ctx, clause.text, "LIMIT")
@@ -293,6 +300,18 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 			return hint
 		}
 		hint.limit, hint.earlyLimit = skip+limit, skip+limit
+		if diagnostic != nil && diagnostic.bypass {
+			if start := topLevelKeywordIndex(ctx, clause.text, "ORDER BY"); start >= 0 {
+				order := strings.TrimSpace(clause.text[start+len("ORDER BY"):])
+				end := len(order)
+				for _, modifier := range []string{"SKIP", "LIMIT"} {
+					if index := topLevelKeywordIndex(ctx, order, modifier); index >= 0 && index < end {
+						end = index
+					}
+				}
+				hint.orderExpr, hint.earlyLimit = strings.TrimSpace(order[:end]), -1
+			}
+		}
 		return hint
 	}
 	var terminalReturn string

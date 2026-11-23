@@ -1114,6 +1114,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	var whereProp string
 	if mode == indexOrderExplicitNotNull {
 		parsed, ok := e.parseSimpleIndexedIsNotNull(ctx, nodePattern.variable, whereClause)
+		if diagnostic := c71DiagnosticFrom(ctx); diagnostic != nil {
+			diagnostic.log("C71 explicit_not_null where=%q property=%q parsed=%t", whereClause, parsed, ok)
+		}
 		if !ok {
 			return nil, false, nil
 		}
@@ -1158,6 +1161,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	labels, err := e.indexCandidateLabels(ctx, schema, nodePattern.labels, indexProperty)
 	if err != nil {
 		return nil, false, err
+	}
+	if diagnostic := c71DiagnosticFrom(ctx); diagnostic != nil {
+		diagnostic.log("C71 indexed_order mode=%d property=%q descending=%t primaryNonNull=%t bounds=%+v labels=%v candidateLabels=%v eligible=%t", mode, indexProperty, spec.descending, primaryNonNull, bounds, nodePattern.labels, labels, len(labels) == 1)
 	}
 	if len(labels) != 1 {
 		return nil, false, nil

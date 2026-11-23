@@ -72,7 +72,14 @@ func compilePipelineRowWith(ctx context.Context, clause pipelineClause, withoutW
 		if withoutWindow && modifier != "ORDER BY" {
 			continue
 		}
-		if topLevelKeywordIndex(ctx, body, modifier) >= 0 {
+		if index := topLevelKeywordIndex(ctx, body, modifier); index >= 0 {
+			if diagnostic := c71DiagnosticFrom(ctx); diagnostic != nil && withoutWindow {
+				bypass := diagnostic.bypass && modifier == "ORDER BY"
+				diagnostic.log("C71 with_row_gate modifier=%q index=%d withoutWindow=%t rejects_as_is=true bypass=%t clause=%q", modifier, index, withoutWindow, bypass, body)
+				if bypass {
+					continue
+				}
+			}
 			return pipelineRowWith{}, false
 		}
 	}
