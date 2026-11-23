@@ -392,3 +392,41 @@ func TestPDW1613LinkFirstExclusionOutdated(t *testing.T) {
 	err := pdw1613LinkFirstOutdated(t, "plain")
 	require.NoError(t, err, "the exclusion, begun before the link committed, waits for it and commits (Neo4j)")
 }
+
+// ---- Side finding, simplified: a MERGE of a key a peer created after BEGIN ----
+
+const pdw1613OwedMerge = "MERGE (o:PDOwed {id: 'holdings:d'}) ON CREATE SET o.n = 0 SET o.n = o.n + 1 RETURN o.n"
+
+func TestPDW1613MergeOfKeyCreatedAfterBegin(t *testing.T) {
+	variants := []struct{ name, before string }{
+		{"observed-read-first", "MATCH (d:PDDocument {id: 'd'}) RETURN d.id"},
+		{"unobserved", ""},
+	}
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			port, waits := pdw1613Server(t)
+			setup := openBoltTestConn(t, port)
+			runBoltQueryWithParams(t, setup, "CREATE CONSTRAINT pdo IF NOT EXISTS FOR (n:PDOwed) REQUIRE n.id IS UNIQUE", nil)
+			runBoltQueryWithParams(t, setup, "CREATE (:PDGraphNode:PDDocument {id: 'd'})", nil)
+			creator, merger := openBoltTestConn(t, port), openBoltTestConn(t, port)
+			nor213BoltBegin(t, creator)
+			nor213BoltBegin(t, merger)
+			if variant.before != "" {
+				require.Len(t, runBoltQueryWithParams(t, merger, variant.before, nil), 1)
+			}
+			t.Logf("PDW1613 side-simple %s creator rows=%v", variant.name, runBoltQueryWithParams(t, creator, pdw1613OwedMerge, nil))
+			got, creatorCommit, waited := pdw1613WaitThenCommit(t, waits, creator, merger, pdw1613OwedMerge, nil)
+			commit := error(nil)
+			if got.err == nil {
+				commit = nor213BoltCommitResult(t, merger)
+			}
+			final := runBoltQueryWithParams(t, setup, "MATCH (o:PDOwed) RETURN count(o), max(o.n)", nil)
+			t.Logf("PDW1613 side-simple %s creatorCommit=%v merger-waited=%v merger-err=%v merger-rows=%v merger-commit=%v final(count,n)=%v",
+				variant.name, creatorCommit, waited, got.err, got.rows, commit, final)
+			require.NoError(t, creatorCommit)
+			require.NoError(t, got.err, "%s: the MERGE matches the node committed while it waited (Neo4j)", variant.name)
+			require.NoError(t, commit)
+			require.Equal(t, [][]any{{int64(1), int64(2)}}, final)
+		})
+	}
+}
