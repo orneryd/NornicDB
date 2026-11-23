@@ -139,6 +139,9 @@ func TestPDW1613Neo4jReference(t *testing.T) {
 			"SET r.usable = NOT ('d' IN named AND 'thing' IN named) " +
 			"RETURN hop1, ids, statuses, byKey, named, namedByComprehension, r.usable AS usable"
 		cleanup()
+		auto("CREATE CONSTRAINT pdw1613_pdg IF NOT EXISTS FOR (n:PDGraphNode) REQUIRE n.id IS UNIQUE", nil)
+		auto("CREATE CONSTRAINT pdw1613_pdc IF NOT EXISTS FOR (n:PDCorrection) REQUIRE n.id IS UNIQUE", nil)
+		auto("SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties, type RETURN collect([name, labelsOrTypes, properties, type]) AS constraints", nil)
 		auto("CREATE (:PDGraphNode:PDDocument {id: 'd'}), (:PDGraphNode:PDEntity {id: 'thing'})", nil)
 		overlap("obs1 lock="+lockOf("x"), exclusion, nil, link, nil, "")
 		auto("MATCH ()-[r:PD_RELATION {id: 'l'}]->() RETURN r.usable AS usable", nil)
@@ -175,12 +178,15 @@ func TestPDW1613Neo4jReference(t *testing.T) {
 	cleanup()
 	auto("CREATE CONSTRAINT pdw1613_doc IF NOT EXISTS FOR (n:PDDocument) REQUIRE n.id IS UNIQUE", nil)
 	auto("CREATE (:PDDocument {id: 'admission-document'})", nil)
+	auto("SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties, type RETURN collect([name, labelsOrTypes, properties, type]) AS constraints", nil)
 	overlap("obs2",
 		"MATCH (d:PDDocument) SET d.admission_count = coalesce(d.admission_count, 0) + 1", nil,
 		"MERGE (d:PDDocument {id: 'admission-document'}) SET d.registrations = coalesce(d.registrations, 0) + 1 RETURN d.id AS id", nil, "")
 	auto("MATCH (d:PDDocument) RETURN d.admission_count AS admission_count, d.registrations AS registrations", nil)
 	cleanup()
 	auto("DROP CONSTRAINT pdw1613_doc IF EXISTS", nil)
+	auto("DROP CONSTRAINT pdw1613_pdg IF EXISTS", nil)
+	auto("DROP CONSTRAINT pdw1613_pdc IF EXISTS", nil)
 
 	// Side finding: a MERGE (with SET) of a UNIQUE key another transaction
 	// created after this one began and read.
@@ -188,6 +194,7 @@ func TestPDW1613Neo4jReference(t *testing.T) {
 	auto("CREATE CONSTRAINT pdw1613_owed IF NOT EXISTS FOR (n:PDOwed) REQUIRE n.id IS UNIQUE", nil)
 	auto("CREATE (:PDGraphNode:PDDocument {id: 'd'})", nil)
 	owedMerge := "MERGE (o:PDOwed {id: 'holdings:d'}) ON CREATE SET o.n = 0 SET o.n = o.n + 1 RETURN o.n AS n"
+	auto("SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties, type RETURN collect([name, labelsOrTypes, properties, type]) AS constraints", nil)
 	overlap("side-simple observed-read-first", owedMerge, nil, owedMerge, nil, "")
 	auto("MATCH (o:PDOwed) RETURN count(o) AS count, max(o.n) AS n", nil)
 	cleanup()
