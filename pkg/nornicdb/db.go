@@ -215,7 +215,8 @@ type DB struct {
 	lastClusteredEmbedCount int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
-	encryptionEnabled bool
+	encryptionEnabled          bool
+	isolatedStoreEncryptionKey []byte
 
 	// work is the DB's one admission, completion and outcome owner: background
 	// tasks, constructors, provider users and the stop signal are its accepted
@@ -248,6 +249,7 @@ type DB struct {
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
 	databaseStorageResolver func(string) (storage.Engine, error)
+	closeIsolatedStores     func() error
 
 	// Per-database search index master switches + warming triggers. When the
 	// resolver is unset, every database defaults to (true, true, startup,
@@ -747,6 +749,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 				// Derive 32-byte AES-256 key from password using PBKDF2
 				encryptionKey := encryption.DeriveKey([]byte(config.Database.EncryptionPassword), salt, 600000)
 				badgerOpts.EncryptionKey = encryptionKey
+				db.isolatedStoreEncryptionKey = encryptionKey
 				db.encryptionEnabled = true
 				fmt.Println("🔒 Database encryption enabled (AES-256/password)")
 			default:
@@ -756,6 +759,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 					return nil, err
 				}
 				badgerOpts.EncryptionKey = encryptionKey
+				db.isolatedStoreEncryptionKey = encryptionKey
 				db.encryptionEnabled = true
 				fmt.Printf("🔒 Database encryption enabled (AES-256/%s)\n", providerMode)
 			}

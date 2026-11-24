@@ -269,6 +269,21 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 		_ = newStore.Close()
 		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("recovery cannot replace an existing store with incomplete or empty replay: %s", replay.Summary()))
 	}
+	// Root replay does not rebuild independently owned Badger stores.
+	// Preserve their exact catalog locations with the recovered root.
+	isolated := storage.PreparedDatabasesDirectory(backupDir)
+	if _, err := os.Lstat(isolated); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			err = os.Rename(isolated, storage.PreparedDatabasesDirectory(dataDir))
+		}
+		if err == nil {
+			err = errors.Join(storage.SyncDir(backupDir), storage.SyncDir(dataDir))
+		}
+		if err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("preserve isolated database stores: %w", err))
+		}
+	}
 
 	status.Phase = RecoveryPhaseComplete
 	status.CompletedAt = time.Now().UTC()

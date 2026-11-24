@@ -2,10 +2,11 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 // DatabaseOptionsManager is the optional DatabaseManagerInterface extension
@@ -65,6 +66,16 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	}
 	options := make(map[string]string)
 	for key, raw := range fields {
+		if key == multidb.OptionStorageLayout {
+			value, _ := raw.(string)
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value != multidb.StorageIsolated && value != multidb.StorageShared {
+				return "", nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+					localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(raw), "'isolated', 'shared'"))
+			}
+			options[key] = value
+			continue
+		}
 		value, err := databaseOptionValue(key, raw)
 		if err != nil {
 			return "", nil, err

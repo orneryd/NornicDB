@@ -10,6 +10,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 // =============================================================================
@@ -127,17 +128,21 @@ func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, o
 	var status string
 	switch operation {
 	case backupCreate:
-		operationErr = s.db.Backup(r.Context(), req.Path)
+		operationErr = s.dbManager.WithSharedStoreBackup(r.Context(), func() error { return s.db.Backup(r.Context(), req.Path) })
 		if operationErr == nil {
 			status = s.localizedText(w, r, localization.BackupComplete())
 		}
 	case backupRestore:
-		operationErr = s.db.Restore(r.Context(), req.Path)
+		operationErr = s.dbManager.WithSharedStoreBackup(r.Context(), func() error { return s.db.Restore(r.Context(), req.Path) })
 		status = "restore complete"
 	default:
 		operationErr = errors.New("invalid backup operation")
 	}
 	if operationErr != nil {
+		if errors.Is(operationErr, multidb.ErrSharedStoreBackupRequired) {
+			s.writeBoundaryError(w, r, http.StatusNotImplemented, operationErr, operationErr)
+			return
+		}
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, operationErr, ErrInternalError)
 		return
 	}

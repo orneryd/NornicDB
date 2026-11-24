@@ -81,9 +81,42 @@ nornicdb-admin database import full mydb \
   --relationships=WORKS_AT=works-at-header.csv,works-at-part-2.csv
 ```
 
-## Different Database Targets
+## Database Storage Layout
 
-Each database name is isolated inside the same storage directory.
+Persistent standalone servers give new databases their own Badger store and WAL by default. Existing databases keep their storage layout. A populated namespace from a legacy offline import keeps using the shared store when it is first registered. Choose the layout in the **Create database** panel or in Cypher.
+
+```cypher
+CREATE DATABASE analytics OPTIONS {storage: 'isolated'};
+CREATE DATABASE tenant_a OPTIONS {storage: 'shared'};
+```
+
+Storage layout is set at creation. Each isolated store has its own caches and background maintenance. Shared storage pools those resources, which can be useful when hosting many small databases. In-memory and replicated deployments use shared storage.
+
+The single-store `/admin/backup` and `/admin/restore` endpoints and Qdrant full snapshots require a shared-only catalog. A stopped server's entire data directory includes the catalog, dedicated stores, and their WALs. CSV export follows the database's catalog entry and can export a dedicated store while the server is stopped.
+
+## Stage And Publish A Database While The Server Runs
+
+To import into a new database on an unencrypted persistent standalone server, run the CLI on the server's filesystem with the same data directory the server uses. The CLI prints an import ID after the new Badger store is sealed and closed. Other databases can continue serving requests during the build.
+
+```bash
+nornicdb-admin database import full wiki --stage \
+  --from-path=./wiki-csv --data-dir=./data
+```
+
+Publish with a server administrator credential. `wiki` is the name used during staging and must be available in the catalog.
+
+```bash
+curl --fail-with-body -u "$NORNICDB_USER:$NORNICDB_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  --data '{"database":"wiki","import_id":"<import-id>"}' \
+  http://localhost:7474/admin/databases/imports/publish
+```
+
+Publication validates the closed store and records it in the catalog. It leaves the graph in the same files and accepts retries with the same database name and ID. The staged importer loads graph data and applies CSV schema using the same native full-import writer. The server builds search artifacts after publication.
+
+## Offline Imports Into The Shared Store
+
+Without `--stage`, stop the server and open the shared storage directory for import.
 
 ```bash
 nornicdb-admin database import full alpha --nodes=Person=alpha.csv --data-dir=./data
@@ -147,6 +180,7 @@ nornicdb-admin database import full restored --from-path=./neo4j-export --data-d
 - `--schema` - Cypher file applied after the data load.
 - `--report-file` - JSON report written after import.
 - `--build-indexes` - Build search indexes after import.
+- `--stage` - Build a dedicated store and print its import ID for online publication. The server owns search index generation in this mode.
 - `--skip-bad-relationships` - Continue past unresolved relationship rows.
 - `--skip-duplicate-nodes` - Ignore duplicate import IDs.
 

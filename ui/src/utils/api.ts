@@ -1514,10 +1514,13 @@ class NornicDBClient {
     return trimmed;
   }
 
-  async createDatabase(name: string): Promise<void> {
+  async createDatabase(name: string, storage?: "isolated" | "shared"): Promise<void> {
     const dbName = this.validateDatabaseName(name);
+    const options = storage === "isolated" || storage === "shared"
+      ? ` OPTIONS {storage: '${storage}'}`
+      : "";
     const resp = await this.executeSystemCypher(
-      `CREATE DATABASE ${this.quoteCypherIdentifier(dbName)}`,
+      `CREATE DATABASE ${this.quoteCypherIdentifier(dbName)}${options}`,
     );
     if (resp.errors && resp.errors.length > 0) {
       throw new Error(resp.errors.map((e) => e.message).join("; "));

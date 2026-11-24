@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -95,6 +95,7 @@ func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager
 	fullCmd.Flags().String("from-path", "", text(localization.AdminCLIFromPathFlag()))
 	fullCmd.Flags().String("schema", "", text(localization.AdminCLISchemaFlag()))
 	fullCmd.Flags().Bool("build-indexes", true, text(localization.AdminCLIBuildIndexesFlag()))
+	fullCmd.Flags().Bool("stage", false, text(localization.AdminCLIStageImportFlag()))
 	fullCmd.Flags().Bool("skip-bad-relationships", false, text(localization.AdminCLISkipBadRelationshipsFlag()))
 	fullCmd.Flags().Bool("skip-duplicate-nodes", false, text(localization.AdminCLISkipDuplicateNodesFlag()))
 	fullCmd.Flags().Bool("normalize-types", true, text(localization.AdminCLINormalizeTypesFlag()))
@@ -294,13 +295,7 @@ func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
 		rels = append(rels, discoveredRels...)
 	}
 
-	engine, err := storage.OpenBadgerForOfflineImport(dataDir, dbName)
-	if err != nil {
-		return err
-	}
-	defer engine.Close()
-
-	report, err := adminimport.ImportFull(context.Background(), engine, adminimport.Options{
+	opts := adminimport.Options{
 		DatabaseName:         dbName,
 		NodeSources:          nodes,
 		RelSources:           rels,
@@ -321,12 +316,28 @@ func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
 		BuildIndexes:         buildIndexes,
 		ChunkSize:            chunkSize,
 		Verbose:              verbose,
-	})
+	}
+	staged, _ := cmd.Flags().GetBool("stage")
+	if staged {
+		id, _, err := adminimport.StageFull(cmd.Context(), dataDir, opts)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), id)
+		return err
+	}
+	engine, err := storage.OpenBadgerForOfflineImport(dataDir, dbName)
 	if err != nil {
 		return err
 	}
-	_ = report
-	return nil
+	if id, err := multidb.ReadIsolatedStoreID(cmd.Context(), engine, dbName); err != nil || id != "" {
+		if err == nil {
+			err = fmt.Errorf("database %q already has an isolated store", dbName)
+		}
+		return errors.Join(err, engine.Close())
+	}
+	_, err = adminimport.ImportFull(cmd.Context(), engine, opts)
+	return errors.Join(err, engine.Close())
 }
 
 func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error {
@@ -344,6 +355,21 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 		return err
 	}
 	defer engine.Close()
+	id, err := multidb.ReadIsolatedStoreID(cmd.Context(), engine, dbName)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		dir, _, err := storage.ReadPreparedDatabase(dataDir, id, dbName)
+		if err != nil {
+			return err
+		}
+		engine, err = storage.NewBadgerEngine(dir)
+		if err != nil {
+			return err
+		}
+		defer engine.Close()
+	}
 
 	namespaced := storage.NewNamespacedEngine(engine, dbName)
 	return adminimport.ExportNeo4jCSV(namespaced, adminimport.Neo4jCSVExportOptions{

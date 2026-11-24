@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +13,10 @@ import (
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -273,6 +276,22 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	if err := s.allowFullAccess(ctx); err != nil {
 		return nil, err
 	}
+	if collections, ok := s.collections.(*databaseCollectionStore); ok {
+		var response *qpb.CreateSnapshotResponse
+		err := collections.dbManager.WithSharedStoreBackup(ctx, func() error {
+			var err error
+			response, err = s.createFull(ctx)
+			return err
+		})
+		if errors.Is(err, multidb.ErrSharedStoreBackupRequired) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+		return response, err
+	}
+	return s.createFull(ctx)
+}
+
+func (s *SnapshotsService) createFull(ctx context.Context) (*qpb.CreateSnapshotResponse, error) {
 	start := time.Now()
 
 	if s.baseStorage == nil {

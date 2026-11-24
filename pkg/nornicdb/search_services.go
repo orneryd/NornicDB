@@ -269,7 +269,11 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 		if db.baseStorage == nil {
 			return nil, localizedError(localization.NornicDBCoreSearchBaseStorageUnavailable(), nil)
 		}
-		storageEngine = storage.NewNamespacedEngine(db.baseStorage, dbName)
+		var err error
+		storageEngine, err = db.resolveDatabaseStorage(dbName)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Construction settings are not consumed by an existing cached service.

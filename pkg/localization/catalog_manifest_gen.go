@@ -44,6 +44,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "admincli.flag.schema", Constructor: "AdminCLISchemaFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.skip_bad_relationships", Constructor: "AdminCLISkipBadRelationshipsFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.skip_duplicate_nodes", Constructor: "AdminCLISkipDuplicateNodesFlag", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "admincli.flag.stage_import", Constructor: "AdminCLIStageImportFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.to_path", Constructor: "AdminCLIToPathFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.vector_delimiter", Constructor: "AdminCLIVectorDelimiterFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.verbose", Constructor: "AdminCLIVerboseFlag", Fields: []string{}, PluralForms: []string{"other"}},
