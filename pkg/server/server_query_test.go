@@ -2116,6 +2116,7 @@ func TestVoyageRerankTruncationSetting(t *testing.T) {
 		// Another database's search service gets its reranker from the
 		// per-database resolver, with the same setting.
 		truncation = nil
+		require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "rerank_other"}))
 		svc, err := db.GetOrCreateSearchService("rerank_other", nil)
 		require.NoError(t, err)
 		_, err = svc.RerankCandidates(context.Background(), "q", []search.RerankCandidate{{ID: "a", Content: "alpha"}}, nil)

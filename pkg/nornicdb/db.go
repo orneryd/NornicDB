@@ -1255,21 +1255,8 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
 	// (storage.EventSubscriber), and one that does not fails Open.
 	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
-		// The downstream mutation path is debounced, so events are queued
-		// inline; only the ID is queued, the refresh reads the stored state.
-		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
-			NodeCreated: db.indexNodeFromEvent,
-			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
-			// Relationship vectors are indexed whether or not relationship
-			// search (#1065) is on.
-			EdgeCreated:    db.indexRelationshipFromEvent,
-			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
-			NamespaceReset: db.dropSearchForPrefix,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
+		if err := db.subscribeSearchEvents(namespaced.GetInnerEngine()); err != nil {
+			return nil, err
 		}
 	}
 

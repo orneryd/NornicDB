@@ -58,6 +58,11 @@ func storageEncryptionKey(dataDir string, cfg *Config, existingOnly bool) ([]byt
 	if cfg.Database.EncryptionPassword == "" {
 		return nil, localizedError(localization.NornicDBCoreEncryptionPasswordRequired(), nil)
 	}
+	if !existingOnly {
+		if err := os.MkdirAll(dataDir, 0700); err != nil {
+			return nil, localizedError(localization.NornicDBCoreDataDirectoryCreateFailed(err), err)
+		}
+	}
 	path := filepath.Join(dataDir, passwordSaltFile)
 	salt, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) && !existingOnly {
@@ -76,9 +81,6 @@ func createStorageSalt(dir, path string) ([]byte, error) {
 	salt, err := encryption.GenerateSalt()
 	if err != nil {
 		return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
-	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, localizedError(localization.NornicDBCoreDataDirectoryCreateFailed(err), err)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

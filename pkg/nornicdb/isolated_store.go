@@ -146,6 +146,9 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, engine.Close())
 	}
+	if err := db.subscribeSearchEvents(engine); err != nil {
+		return nil, errors.Join(err, engine.Close())
+	}
 	if db.config.Database.WALAutoCompactionEnabled {
 		if err := engine.EnableAutoCompaction(filepath.Join(dir, "snapshots")); err != nil {
 			return nil, errors.Join(err, engine.Close())

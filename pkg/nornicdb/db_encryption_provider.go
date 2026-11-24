@@ -30,6 +30,11 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 }
 
 func providerManagedDBKey(dataDir string, cfg *nornicConfig.Config, providerMode string, existingOnly bool) ([]byte, error) {
+	if !existingOnly {
+		if err := os.MkdirAll(dataDir, 0700); err != nil {
+			return nil, localizedError(localization.NornicDBCoreEncryptionDEKDirectoryCreateFailed(err), err)
+		}
+	}
 	metadataPath := filepath.Join(dataDir, providerKeyFile)
 	raw, readErr := os.ReadFile(metadataPath)
 	if readErr != nil && (existingOnly || !errors.Is(readErr, os.ErrNotExist)) {
@@ -135,10 +140,6 @@ func providerManagedDBKey(dataDir string, cfg *nornicConfig.Config, providerMode
 	if len(dataKey.Plaintext) == 0 {
 		return nil, localizedError(localization.NornicDBCoreEncryptionDEKEmpty(), nil)
 	}
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return nil, localizedError(localization.NornicDBCoreEncryptionDEKDirectoryCreateFailed(err), err)
-	}
-
 	if err := persistProviderDEK(metadataPath, providerMode, dataKey); err != nil {
 		return nil, err
 	}

@@ -177,9 +177,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	registry := s.obsRegistryForHandler()
 	var scope *observability.LegacyReadScope
 	administrator := !s.isRBACEnforced()
-	if !administrator && registry != nil {
+	if registry != nil && s.dbManager != nil {
 		claims := getClaims(r)
-		administrator = claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin)
+		administrator = administrator || (claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin))
 		canRead := s.databaseReadPredicate(claims)
 		nodes, edges, databases, countErr := s.readableDatabaseCounts(r, true, canRead)
 		if r.Context().Err() != nil {
