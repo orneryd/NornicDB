@@ -135,6 +135,9 @@ func (s *embeddingQueueStorage) RefreshPendingEmbeddingsIndex() int {
 }
 
 func (s *embeddingQueueStorage) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if visit == nil {
+		return storage.ErrInvalidData
+	}
 	if name, _, qualified := strings.Cut(opts.Prefix, ":"); qualified && name != "" {
 		engine, err := s.storeForNamespace(name)
 		if err != nil {
@@ -142,38 +145,53 @@ func (s *embeddingQueueStorage) StreamNodesWithOptions(ctx context.Context, opts
 		}
 		return engine.StreamNodesWithOptions(ctx, opts, visit)
 	}
-	stopped := false
 	for _, engine := range s.stores() {
-		err := engine.StreamNodesWithOptions(ctx, opts, func(node *storage.Node) error {
-			err := visit(node)
-			stopped = errors.Is(err, storage.ErrIterationStopped)
+		if err := ctx.Err(); err != nil {
 			return err
+		}
+		var visitErr error
+		err := engine.StreamNodesWithOptions(ctx, opts, func(node *storage.Node) error {
+			visitErr = visit(node)
+			return visitErr
 		})
-		if engine != s.WALEngine && errors.Is(err, storage.ErrStorageClosed) {
+		if errors.Is(visitErr, storage.ErrIterationStopped) {
+			return nil
+		}
+		if visitErr == nil && engine != s.WALEngine && errors.Is(err, storage.ErrStorageClosed) {
 			continue
 		}
-		if err != nil || stopped {
+		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func (s *embeddingQueueStorage) StreamParkedEmbeddingFailures(ctx context.Context, visit func(storage.NodeID, map[string]any) error) (int, error) {
 	count := 0
 	for _, engine := range s.stores() {
+		if err := ctx.Err(); err != nil {
+			return count, err
+		}
 		streamer, ok := engine.(storage.EmbeddingFailureStreamer)
 		if !ok {
 			return count, fmt.Errorf("storage engine %T does not support embedding failure scans", engine)
 		}
-		visited, err := streamer.StreamParkedEmbeddingFailures(ctx, visit)
+		var visitErr error
+		visited, err := streamer.StreamParkedEmbeddingFailures(ctx, func(id storage.NodeID, meta map[string]any) error {
+			visitErr = visit(id, meta)
+			return visitErr
+		})
 		count += visited
-		if engine != s.WALEngine && errors.Is(err, storage.ErrStorageClosed) {
+		if errors.Is(visitErr, storage.ErrIterationStopped) {
+			return count, nil
+		}
+		if visitErr == nil && engine != s.WALEngine && errors.Is(err, storage.ErrStorageClosed) {
 			continue
 		}
 		if err != nil {
 			return count, err
 		}
 	}
-	return count, nil
+	return count, ctx.Err()
 }

@@ -337,7 +337,7 @@
   },
   "pkg/nornicdb/db_encryption_provider.go:providerManagedDBKey": {
     "reason": "Typed encryption key envelope; no graph property payload.",
-    "sha256": "37ad30375aa2f3c32b52a72cba31a583b47bfa9a116a247042d2e7b3d38067e6"
+    "sha256": "ab15d444f9e12b877b45af99bf9b4ca0e13d5d0545d870a7ae5e4c093e625127"
   },
   "pkg/nornicdb/embed_queue.go:WorkerStats.MarshalJSON": {
     "reason": "WorkerStats custom JSON contains booleans and typed integer counters only.",
