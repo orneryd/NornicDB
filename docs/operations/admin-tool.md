@@ -81,9 +81,64 @@ nornicdb-admin database import full mydb \
   --relationships=WORKS_AT=works-at-header.csv,works-at-part-2.csv
 ```
 
-## Different Database Targets
+## Database Storage Layout
 
-Each database name is isolated inside the same storage directory.
+NornicDB 1.5.3 and later support isolated, shared, and mixed layouts. On persistent standalone servers, newly created user databases default to their own Badger store and WAL. The bootstrapped default database and `system` use the shared root. Existing databases keep their storage layout. An existing populated shared namespace stays shared when it is first registered. Choose the layout in the **Create database** panel or in Cypher. See the [storage folder diagrams](../architecture/multi-db-architecture.md#storage-folder-layouts).
+
+```cypher
+CREATE DATABASE analytics OPTIONS {storage: 'isolated'};
+CREATE DATABASE tenant_a OPTIONS {storage: 'shared'};
+```
+
+Storage layout is set at creation. Each isolated store has its own caches and background maintenance. Shared storage pools those resources, which can be useful when hosting many small databases. In-memory and replicated deployments use shared storage.
+
+Each dedicated store writes its WAL under `prepared-databases/<store-id>/wal/`. WAL auto-compaction writes recovery snapshots under `prepared-databases/<store-id>/snapshots/` when enabled. Automatic recovery for a damaged isolated store requires its own usable snapshot and replays later WAL entries. The snapshot covers data written before the available WAL, including imported data and data whose older WAL segments have been compacted. If recovery cannot open a store safely, that database stays offline and the rest of the server starts. A full native backup carries the stored schema and catalog metadata as well as graph data.
+
+`POST /admin/backup` and Qdrant full snapshots include all local databases and the system catalog. The request is the same for either layout. Shared-only installations use the native Badger file format. Installations with dedicated stores write one versioned archive of native Badger backup streams, including the shared root and each dedicated store. The archive contains logical Badger backup records. Raw WAL files and auto-compaction snapshot files live in their own directories for local recovery. Each backup stream is consistent at the time it is captured. Database creation, publication, and deletion wait for the backup's catalog view to finish.
+
+To recover either native backup format, restore into a new data directory and start the server with that directory.
+
+```bash
+nornicdb-admin database restore ./full.backup --data-dir=./restored-data
+```
+
+The restore command reconstructs the catalog and stores in a temporary directory and publishes the new data directory after validation. The destination must be absent before restore. Pass the destination server's `--config` or encryption environment settings to create encrypted Badger files with a fresh salt or provider-wrapped key. Archives from encrypted mixed installations require encryption settings at restore time. Native backups contain portable Badger streams. Protect backup files separately from the database directory. The online `/admin/restore` endpoint supports single-store restores into shared-only installations.
+
+```bash
+nornicdb-admin --config ./nornicdb.yaml database restore ./full.backup --data-dir=./restored-data
+```
+
+When the catalog contains remote database credentials, use the same remote-credential encryption settings on the recovered server. An explicitly configured `NORNICDB_REMOTE_CREDENTIALS_KEY` is independent of the Badger key.
+
+CSV export follows the database's catalog entry and can export a dedicated store while the server is stopped. `database check-ids` checks the root and committed dedicated stores. Supply the server's encryption settings when operating on an encrypted data directory.
+
+## Stage And Publish A Database While The Server Runs
+
+To import into a new database on a persistent standalone server, run the CLI on the server's filesystem with the same data directory the server uses. For an encrypted server, pass its `--config` or matching encryption environment settings so the staged files use the installation key. The CLI prints an import ID after the new Badger store is sealed and closed. Other databases can continue serving requests during the build.
+
+```bash
+nornicdb-admin database import full wiki --stage \
+  --from-path=./wiki-csv --data-dir=./data
+```
+
+Publish with a server administrator credential. Fine-grained authorization uses the `dbms.database.create` permission. `wiki` is the name used during staging and must be available in the catalog.
+
+```bash
+curl --fail-with-body -u "$NORNICDB_USER:$NORNICDB_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  --data '{"database":"wiki","import_id":"<import-id>"}' \
+  http://localhost:7474/admin/databases/imports/publish
+```
+
+Publication validates the closed store and records it in the catalog. It leaves the graph in the same files and accepts retries with the same database name and ID. The staged importer loads graph data and applies CSV schema using the same native full-import writer. The server builds search artifacts after publication.
+
+Interrupting a staged import before it is sealed removes the private store. If a publication request is canceled before catalog acceptance, the import ID remains available to retry. After acceptance, the server settles the catalog receipt even if the client disconnects. Retry with the same name and ID to confirm the outcome.
+
+Canceling a native backup before publication preserves any existing backup at the destination. Canceling an offline restore before publication removes its temporary files and leaves the destination available for retry.
+
+## Offline Imports Into The Shared Store
+
+Without `--stage`, stop the server and open the shared storage directory for import.
 
 ```bash
 nornicdb-admin database import full alpha --nodes=Person=alpha.csv --data-dir=./data
@@ -147,6 +202,7 @@ nornicdb-admin database import full restored --from-path=./neo4j-export --data-d
 - `--schema` - Cypher file applied after the data load.
 - `--report-file` - JSON report written after import.
 - `--build-indexes` - Build search indexes after import.
+- `--stage` - Build a dedicated store and print its import ID for online publication. The server owns search index generation in this mode.
 - `--skip-bad-relationships` - Continue past unresolved relationship rows.
 - `--skip-duplicate-nodes` - Ignore duplicate import IDs.
 

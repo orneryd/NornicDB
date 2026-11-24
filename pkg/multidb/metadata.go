@@ -3,6 +3,7 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/jsontext"
@@ -26,6 +27,51 @@ func readCatalogMetadataNode(ctx context.Context, inner storage.Engine, systemDa
 		systemDatabase = DefaultConfig().SystemDatabase
 	}
 	return storage.GetStoredNode(ctx, storage.NewNamespacedEngine(inner, systemDatabase), storage.NodeID(metadataNodeID))
+}
+
+func decodeCatalogDatabases(node *storage.Node) (map[string]*DatabaseInfo, error) {
+	data, ok := node.Properties["data"].(string)
+	if !ok {
+		return nil, nil
+	}
+	var databases map[string]*DatabaseInfo
+	if err := jsontext.Unmarshal([]byte(data), &databases); err != nil {
+		return nil, localizedError(localization.MultidbMetadataParseFailed(err), err)
+	}
+	return databases, nil
+}
+
+// ReadIsolatedStoreID resolves a database's physical location for offline tools.
+// An empty ID means its data is in the root store.
+func ReadIsolatedStoreID(ctx context.Context, engine storage.Engine, name string) (string, error) {
+	node, err := readCatalogMetadataNode(ctx, engine, "")
+	if errors.Is(err, storage.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	databases, err := decodeCatalogDatabases(node)
+	if info := databases[name]; info != nil {
+		return info.IsolatedStoreID, err
+	}
+	return "", err
+}
+
+// ReadIsolatedStoreIDs returns the committed dedicated stores for offline
+// maintenance. Pending DROP stores are owned by catalog recovery.
+func ReadIsolatedStoreIDs(ctx context.Context, engine storage.Engine) (map[string]string, error) {
+	catalog := DatabaseManager{inner: engine, config: DefaultConfig()}
+	if _, err := catalog.loadMetadata(ctx); err != nil {
+		return nil, err
+	}
+	stores := make(map[string]string)
+	for name, info := range catalog.databases {
+		if info != nil && info.IsolatedStoreID != "" && !catalog.pendingDrops[name] {
+			stores[name] = info.IsolatedStoreID
+		}
+	}
+	return stores, nil
 }
 
 // loadMetadata loads database metadata from storage.
@@ -52,12 +98,11 @@ func (m *DatabaseManager) loadMetadata(ctx context.Context) (bool, error) {
 		m.serverCreatedAt = node.CreatedAt
 	}
 
-	// Parse metadata from properties
-	if data, ok := node.Properties["data"].(string); ok {
-		var databases map[string]*DatabaseInfo
-		if err := jsontext.Unmarshal([]byte(data), &databases); err != nil {
-			return false, localizedError(localization.MultidbMetadataParseFailed(err), err)
-		}
+	databases, err := decodeCatalogDatabases(node)
+	if err != nil {
+		return false, err
+	}
+	if databases != nil {
 		m.databases = databases
 	}
 	if encoded, ok := node.Properties["pending_drops"].(string); ok {

@@ -181,6 +181,10 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
 // snapshot + WAL replay, preserving the original store before rebuilding it.
 func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
+	return recoverBadgerStore(ctx, dataDir, badgerOpts, nil)
+}
+
+func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions, seal *storage.PreparedDatabase) (*storage.BadgerEngine, string, error) {
 	status := RecoveryStatus{
 		Phase:         RecoveryPhaseInspect,
 		StartedAt:     time.Now().UTC(),
@@ -200,11 +204,14 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 		return nil, "", recoveryUnavailable(status, err)
 	}
 	_, priorStoreErr := os.Stat(filepath.Join(dataDir, "MANIFEST"))
-	priorStore := priorStoreErr == nil
+	priorStore := priorStoreErr == nil || seal != nil
 
 	snapshotDir := filepath.Join(dataDir, "snapshots")
 	snapPath, snapErr := latestSnapshotPath(snapshotDir)
 	if snapErr != nil {
+		if seal != nil {
+			return nil, "", recoveryUnavailable(status, fmt.Errorf("isolated store requires a recovery snapshot: %w", snapErr))
+		}
 		// No snapshots yet (e.g., new DB) or snapshot directory missing — attempt WAL-only recovery.
 		// This can fully recover data when WAL still contains the full history (pre-compaction),
 		// and is still better than "delete the data directory" when snapshots haven't been created.
@@ -224,6 +231,9 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 	}
 
 	status.Phase = RecoveryPhasePreserve
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	preservedDir, err := preserveCorruptedDataDir(dataDir, backupDir, os.Rename)
 	if err != nil {
 		return nil, "", recoveryUnavailable(status, fmt.Errorf("failed to preserve corrupted data dir (%s → %s): %w", dataDir, backupDir, err))
@@ -253,7 +263,9 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 	}
 
 	status.Phase = RecoveryPhaseReplay
-	replay, streamStatus, err := storage.RecoverIntoEngine(ctx, newStore, walDir, snapPath)
+	// The old store has moved. Finish recovery under that ownership so request
+	// cancellation cannot leave a partially rebuilt store at the catalog path.
+	replay, streamStatus, err := storage.RecoverIntoEngine(context.WithoutCancel(ctx), newStore, walDir, snapPath)
 	status.SnapshotStreaming = streamStatus.SnapshotStreaming
 	status.SnapshotNodes = streamStatus.SnapshotNodes
 	status.SnapshotEdges = streamStatus.SnapshotEdges
@@ -268,6 +280,31 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 	if replay.Failed > 0 || (priorStore && streamStatus.SnapshotNodes == 0 && streamStatus.SnapshotEdges == 0 && replay.Applied == 0) {
 		_ = newStore.Close()
 		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("recovery cannot replace an existing store with incomplete or empty replay: %s", replay.Summary()))
+	}
+	if seal != nil {
+		if err := newStore.Sync(); err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("sync recovered database: %w", err))
+		}
+		if err := storage.SealPreparedDatabase(dataDir, *seal); err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("seal recovered database: %w", err))
+		}
+	}
+	// Root replay does not rebuild independently owned Badger stores.
+	// Preserve their exact catalog locations with the recovered root.
+	isolated := storage.PreparedDatabasesDirectory(backupDir)
+	if _, err := os.Lstat(isolated); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			err = os.Rename(isolated, storage.PreparedDatabasesDirectory(dataDir))
+		}
+		if err == nil {
+			err = errors.Join(storage.SyncDir(backupDir), storage.SyncDir(dataDir))
+		}
+		if err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("preserve isolated database stores: %w", err))
+		}
 	}
 
 	status.Phase = RecoveryPhaseComplete

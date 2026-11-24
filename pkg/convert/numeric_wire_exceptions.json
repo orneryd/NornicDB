@@ -335,9 +335,9 @@
     "reason": "Typed encryption key envelope persistence; no graph property values.",
     "sha256": "b8254bb5de30b3ba952efabd2a14d197541c19a2ae7e6365fbbc595ce6437795"
   },
-  "pkg/nornicdb/db_encryption_provider.go:resolveProviderManagedDBKey": {
+  "pkg/nornicdb/db_encryption_provider.go:providerManagedDBKey": {
     "reason": "Typed encryption key envelope; no graph property payload.",
-    "sha256": "a31b5b17e59e479ae8c3130e0a317141da27006be5e4940cb9697afc6acd42e5"
+    "sha256": "37ad30375aa2f3c32b52a72cba31a583b47bfa9a116a247042d2e7b3d38067e6"
   },
   "pkg/nornicdb/embed_queue.go:WorkerStats.MarshalJSON": {
     "reason": "WorkerStats custom JSON contains booleans and typed integer counters only.",
@@ -402,6 +402,14 @@
   "pkg/search/stemmer/stemmer.go:ReadManifest": {
     "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
     "sha256": "785a9ce4603567cd9a92ff8cd21f0aa5d1ec2006b60085a0d754feed097bfdca"
+  },
+  "pkg/storage/prepared_database.go:ReadPreparedDatabaseSeal": {
+    "reason": "Reads a typed store seal containing a database name and two int64 counts.",
+    "sha256": "ced3fde0fe5e0bd84f03620e26dde927cf4b3e1808cfc1f9216a58018b0b3179"
+  },
+  "pkg/storage/prepared_database.go:SealPreparedDatabase": {
+    "reason": "Writes a typed store seal containing a database name and two int64 counts.",
+    "sha256": "9787365a57d148cfc62260823c619bc15b8815825d7b0e08c41e6ebe6a3f0957"
   },
   "pkg/storage/receipt.go:computeReceiptHash": {
     "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",

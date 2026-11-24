@@ -46,7 +46,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
-	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -215,7 +214,8 @@ type DB struct {
 	lastClusteredEmbedCount int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
-	encryptionEnabled bool
+	encryptionEnabled          bool
+	isolatedStoreEncryptionKey []byte
 
 	// work is the DB's one admission, completion and outcome owner: background
 	// tasks, constructors, provider users and the stop signal are its accepted
@@ -248,6 +248,7 @@ type DB struct {
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
 	databaseStorageResolver func(string) (storage.Engine, error)
+	closeIsolatedStores     func() error
 
 	// Per-database search index master switches + warming triggers. When the
 	// resolver is unset, every database defaults to (true, true, startup,
@@ -708,57 +709,19 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		}
 		badgerOpts.CatalogUpgradeV4 = catalogUpgrade
 		badgerOpts.MemoryPolicy = db.memoryPolicy
-		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
-		if providerMode == "" {
-			providerMode = "password"
-		}
-
-		// Enable BadgerDB-level encryption at rest if configured
 		if config.Database.EncryptionEnabled {
-			switch providerMode {
-			case "password":
-				// Require password if password-based encryption is enabled
-				if config.Database.EncryptionPassword == "" {
-					return nil, localizedError(localization.NornicDBCoreEncryptionPasswordRequired(), nil)
-				}
-				// Load or generate salt for this database
-				saltFile := dataDir + "/db.salt"
-				var salt []byte
-				if existingSalt, err := os.ReadFile(saltFile); err == nil && len(existingSalt) == 32 {
-					salt = existingSalt
-					fmt.Println("🔐 Loading existing encryption salt")
-				} else {
-					// Generate new salt for new encrypted database
-					var err error
-					salt, err = encryption.GenerateSalt()
-					if err != nil {
-						return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
-					}
-					// Persist salt (required for decryption after restart)
-					if err := os.MkdirAll(dataDir, 0700); err != nil {
-						return nil, localizedError(localization.NornicDBCoreDataDirectoryCreateFailed(err), err)
-					}
-					if err := os.WriteFile(saltFile, salt, 0600); err != nil {
-						return nil, localizedError(localization.NornicDBCoreEncryptionSaltSaveFailed(err), err)
-					}
-					fmt.Println("🔐 Generated new encryption salt")
-				}
-
-				// Derive 32-byte AES-256 key from password using PBKDF2
-				encryptionKey := encryption.DeriveKey([]byte(config.Database.EncryptionPassword), salt, 600000)
-				badgerOpts.EncryptionKey = encryptionKey
-				db.encryptionEnabled = true
-				fmt.Println("🔒 Database encryption enabled (AES-256/password)")
-			default:
-				// Provider-backed key management with persisted encrypted DEK
-				encryptionKey, err := resolveProviderManagedDBKey(dataDir, config, providerMode)
-				if err != nil {
-					return nil, err
-				}
-				badgerOpts.EncryptionKey = encryptionKey
-				db.encryptionEnabled = true
-				fmt.Printf("🔒 Database encryption enabled (AES-256/%s)\n", providerMode)
+			encryptionKey, err := InitializeStorageEncryption(dataDir, config)
+			if err != nil {
+				return nil, err
 			}
+			badgerOpts.EncryptionKey = encryptionKey
+			db.isolatedStoreEncryptionKey = encryptionKey
+			db.encryptionEnabled = true
+			provider := strings.ToLower(strings.TrimSpace(config.Database.EncryptionProvider))
+			if provider == "" {
+				provider = "password"
+			}
+			fmt.Printf("🔒 Database encryption enabled (AES-256/%s)\n", provider)
 		}
 
 		if dataInfo, statErr := os.Stat(dataDir); statErr == nil && dataInfo.IsDir() {
@@ -829,17 +792,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
 			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
-		if config.Database.MVCCLifecycleEnabled {
-			lifecycleConfig := lifecycle.DefaultLifecycleConfig()
-			lifecycleConfig.Enabled = config.Database.MVCCRetentionMaxVersions > 1 || config.Database.MVCCRetentionTTL > 0
-			lifecycleConfig.CycleInterval = config.Database.MVCCLifecycleCycleInterval
-			lifecycleConfig.MaxVersionsPerKey = config.Database.MVCCRetentionMaxVersions
-			lifecycleConfig.TTL = config.Database.MVCCRetentionTTL
-			lifecycleConfig.MaxSnapshotLifetime = config.Database.MVCCLifecycleMaxSnapshotAge
-			lifecycleConfig.MaxChainHardCap = config.Database.MVCCLifecycleMaxChainCap
-			db.lifecycleManager = lifecycle.NewMVCCLifecycleManager(lifecycleConfig, badgerEngine)
-			badgerEngine.SetLifecycleController(db.lifecycleManager)
-		}
+		db.lifecycleManager = attachStorageLifecycle(config, badgerEngine)
 
 		if config.Compliance.RetentionEnabled {
 			rm := retention.NewManager()

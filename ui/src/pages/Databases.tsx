@@ -48,6 +48,7 @@ export function Databases() {
 
   // Create database state
   const [newName, setNewName] = useState("");
+  const [storageLayout, setStorageLayout] = useState<"" | "isolated" | "shared">("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -83,8 +84,13 @@ export function Databases() {
   const [configGridApi, setConfigGridApi] = useState<UiGridApi | null>(null);
   const configSectionRef = useRef<HTMLElement | null>(null);
   const configBaseline=useRef(JSON.stringify({values:{},defaults:{}}));
-  const {allowLeave,warning}=useUnsavedChanges(Boolean(showCreateModal&&newName)||Boolean(configDbName&&!configLoading&&JSON.stringify({values:configFormValues,defaults:configUseDefault})!==configBaseline.current));
-  useEffect(()=>{if(!showCreateModal)setNewName('');},[showCreateModal]);
+  const {allowLeave,warning}=useUnsavedChanges(Boolean(showCreateModal&&(newName||storageLayout))||Boolean(configDbName&&!configLoading&&JSON.stringify({values:configFormValues,defaults:configUseDefault})!==configBaseline.current));
+  useEffect(() => {
+    if (!showCreateModal) {
+      setNewName("");
+      setStorageLayout("");
+    }
+  }, [showCreateModal]);
 
   const formatEta = (etaSeconds?: number): string => {
     if (etaSeconds == null || etaSeconds < 0) return "estimating...";
@@ -153,7 +159,7 @@ export function Databases() {
     setCreating(true);
 
     try {
-      await api.createDatabase(newName);
+      await api.createDatabase(newName, storageLayout || undefined);
       allowLeave();
       setShowCreateModal(false);
       setNewName("");
@@ -788,10 +794,23 @@ export function Databases() {
             required
             disabled={creating}
           />
-          <div className="text-sm text-norse-silver">
-            Creates a new database namespace. Qdrant collections are also mapped
-            to databases.
-          </div>
+          <label className="block text-sm text-norse-silver">
+            Storage layout
+            <select
+              value={storageLayout}
+              onChange={(event) => {
+                const value = event.target.value;
+                setStorageLayout(value === "isolated" || value === "shared" ? value : "");
+              }}
+              className="mt-1 block w-full rounded-lg border border-norse-rune bg-norse-stone px-3 py-2"
+              disabled={creating}
+            >
+              <option value="">Server default</option>
+              <option value="isolated">Isolated storage</option>
+              <option value="shared">Shared storage</option>
+            </select>
+            <span className="mt-1 block">Persistent standalone servers default to a dedicated store for each new database.</span>
+          </label>
           <div className="flex justify-end gap-2 pt-4">
             <Button
               type="button"

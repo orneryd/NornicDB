@@ -42,6 +42,11 @@ run_pkg_with_retry() {
 	local extra_flags=("$@")
 	local attempts=3
 	local attempt_started status
+	local timeout=30m
+	# Match the trusted Cypher test shard's budget for the full package.
+	if [[ "$pkg" == github.com/orneryd/nornicdb/pkg/cypher ]]; then
+		timeout=45m
+	fi
 
 	# Portable "expand-if-set" pattern: ${arr[@]+"${arr[@]}"} so set -u does
 	# not trip on an empty array (notably on macOS bash 3.2, where empty
@@ -49,7 +54,7 @@ run_pkg_with_retry() {
 	for attempt in $(seq 1 "$attempts"); do
 		attempt_started=$SECONDS
 		printf 'coverage test: %s (attempt %s/%s) started (GOMEMLIMIT=%s)\n' "$pkg" "$attempt" "$attempts" "${GOMEMLIMIT:-default}"
-		if go test -p 1 -parallel 4 -timeout 30m -coverprofile="$prof" ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
+		if go test -p 1 -parallel 4 -timeout "$timeout" -coverprofile="$prof" ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
 			printf 'coverage test: %s passed in %ss\n' "$pkg" "$((SECONDS - attempt_started))"
 			return 0
 		else

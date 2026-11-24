@@ -31,7 +31,7 @@ func TestNumericWireSchemaSidecarRoundTrip(t *testing.T) {
 				definition, err := engine.GetSchema().ExportDefinition(ctx)
 				require.NoError(t, err)
 				require.Equal(t, []interface{}{format.want}, definition.Constraints[0].AllowedValues)
-				require.NoError(t, exportNornicSchemaDefinition(path, engine.GetSchema()))
+				require.NoError(t, exportNornicSchemaDefinition(t.Context(), path, engine.GetSchema()))
 			}
 		})
 	}

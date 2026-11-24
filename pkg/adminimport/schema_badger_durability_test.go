@@ -179,7 +179,7 @@ func adminImportReExportSchemaDocument(t *testing.T, schema *storage.SchemaManag
 		"schema manager carries no schema document content (%s): the imported definition is absent",
 		adminImportSchemaSummary(def))
 	path := filepath.Join(t.TempDir(), Neo4jCSVNornicSchemaFileName)
-	require.NoError(t, exportNornicSchemaDefinition(path, schema))
+	require.NoError(t, exportNornicSchemaDefinition(t.Context(), path, schema))
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(raw)
@@ -438,7 +438,7 @@ func TestImportFullSchemaDefinitionSurvivesNativeBadgerReopen(t *testing.T) {
 		require.NoError(t, documentSchema.RegisterTokens(t.Context(), []string{"Person"}, nil))
 		require.NoError(t, documentSchema.AddUniqueConstraint("person_email_unique", "Person", "email"))
 		schemaFile := filepath.Join(t.TempDir(), Neo4jCSVNornicSchemaFileName)
-		require.NoError(t, exportNornicSchemaDefinition(schemaFile, documentSchema))
+		require.NoError(t, exportNornicSchemaDefinition(t.Context(), schemaFile, documentSchema))
 
 		dir := t.TempDir()
 		oldDefinition := adminImportSeedDurableDestination(t, dir, "dest", schemaDefinitionForTest(t, documentSchema))

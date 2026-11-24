@@ -348,6 +348,7 @@ var typeClasses = map[string]string{
 	"pkg/storage.WALManifest":                  "WAL file bookkeeping",
 	"pkg/storage.v4WALControlRewrite":          "WAL upgrade staging offsets",
 	"pkg/storage.RecoveryStreamStatus":         "report",
+	"pkg/storage.PreparedDatabase":             "offline store seal and initial graph counts",
 	"pkg/storage.ReplayResult":                 "report",
 	"pkg/storage.changeCapture":                "configuration",
 	"pkg/storage.changeLog":                    "change capture sequence",

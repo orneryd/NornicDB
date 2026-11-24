@@ -498,6 +498,40 @@ func TestCatalogAcceptedWaitCancellationRetainsPublicationAuthority(t *testing.T
 	}
 }
 
+func TestPreparedPublicationCanceledWaitLeavesStoreWithReceipt(t *testing.T) {
+	manager, backing := newCatalogPublicationProbe(t)
+	t.Cleanup(func() { _ = manager.Close() })
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	manager.config.IsolatedStores = &IsolatedStoreConfig{
+		Open: func(_ context.Context, _ string, _ string, _ map[string]string, _ bool) (storage.Engine, error) {
+			return store, nil
+		},
+	}
+	backing.mode = "accepted-wait"
+	backing.submitted = make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- manager.PublishPreparedDatabase(ctx, "prepared", "staged-id") }()
+	<-backing.submitted
+	cancel()
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, <-result, &accepted)
+	requireCatalogAcceptedDiagnostic(t, accepted, context.Canceled)
+	require.Equal(t, storage.CommitRecoveryPending, accepted.State)
+	require.False(t, manager.Exists("prepared"))
+	require.Empty(t, manager.catalogGate)
+
+	require.NoError(t, storagefault.FinishPreparedReceipt(backing.prepared, backing.receiptOwner, storage.CommitOutcome{State: storage.CommitApplied}))
+	info, err := manager.GetDatabase("prepared")
+	require.NoError(t, err)
+	require.Equal(t, "staged-id", info.IsolatedStoreID)
+	engine, err := manager.GetStorage("prepared")
+	require.NoError(t, err)
+	_, err = engine.NodeCount(t.Context())
+	require.NoError(t, err, "the receipt transferred the open handle after the caller detached")
+}
+
 func TestCatalogAcceptedPublicationAfterManagerClosePreservesClosedCache(t *testing.T) {
 	manager, backing := newCatalogPublicationProbe(t)
 	scope, err := manager.StatementCacheScope("nornic")

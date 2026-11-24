@@ -40,6 +40,15 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 	}, "test"))
 	require.NoError(t, wal.Close())
 
+	storeID, storePath, err := storage.CreatePreparedDatabaseDirectory(dataDir, "dedicated")
+	require.NoError(t, err)
+	dedicated, err := storage.NewBadgerEngine(storePath)
+	require.NoError(t, err)
+	_, err = dedicated.CreateNode(t.Context(), &storage.Node{ID: "dedicated:keep", Labels: []string{"Keep"}})
+	require.NoError(t, err)
+	require.NoError(t, dedicated.Close())
+	require.NoError(t, storage.SealPreparedDatabase(storePath, storage.PreparedDatabase{Database: "dedicated", Nodes: 1}))
+
 	// Invoke recovery. This will rename dataDir → dataDir.corrupted-* and rebuild.
 	badgerOpts := storage.BadgerOptions{DataDir: dataDir}
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, badgerOpts)
@@ -52,6 +61,13 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	require.Equal(t, "value", node.Properties["key"])
+	storePath, _, err = storage.ReadPreparedDatabase(dataDir, storeID, "dedicated")
+	require.NoError(t, err)
+	dedicated, err = storage.NewBadgerEngine(storePath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dedicated.Close() })
+	_, err = dedicated.GetNode(t.Context(), "dedicated:keep")
+	require.NoError(t, err)
 
 	// Sanity: run a small transactional read as well (exercise Badger reads).
 	tx, err := recovered.BeginTransaction(t.Context(), storage.OrdinaryBegin)
@@ -262,6 +278,14 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 		},
 	}, "test"))
 	require.NoError(t, wal.Close())
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	store, preserved, err := recoverBadgerFromSnapshotAndWAL(canceled, dataDir, storage.BadgerOptions{DataDir: dataDir})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, store)
+	require.Empty(t, preserved)
+	require.FileExists(t, snapshotPath, "pre-accept cancellation leaves recovery inputs in place")
 
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.NoError(t, err)

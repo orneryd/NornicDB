@@ -111,7 +111,7 @@
       "proof": {
         "present": true,
         "file": "pkg/nornicdb/search_services.go",
-        "sourceSHA256": "1dc0e332b932a9864034ae5598e7166b54758a64aaa92ea121e9d1f925e77b2b",
+        "sourceSHA256": "9b46aec2457b3641b0223f560ad9fa7f27336eb8371ce84021377fa47212d7dd",
         "directCalls": [
           "db.searchServicesMu.Lock",
           "db.work.Enter",
@@ -136,7 +136,7 @@
           "db.searchServicesMu.RUnlock",
           "localizedError",
           "localization.NornicDBCoreSearchBaseStorageUnavailable",
-          "storage.NewNamespacedEngine",
+          "db.resolveDatabaseStorage",
           "db.dbConfigResolverMu.RLock",
           "db.dbConfigResolverMu.RUnlock",
           "resolver",

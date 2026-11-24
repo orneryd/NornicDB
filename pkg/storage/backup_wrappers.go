@@ -1,5 +1,10 @@
 package storage
 
+import (
+	"context"
+	"io"
+)
+
 // Backup delegates to the wrapped storage engine while preserving the
 // namespace view used by query execution. The native Badger backup contains
 // the complete physical store, including system and user databases.
@@ -27,6 +32,21 @@ func (w *WALEngine) Backup(path string) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 	return backupEngine(w.engine, path)
+}
+
+// BackupTo holds the same mutation barrier for a streamed native backup.
+func (w *WALEngine) BackupTo(ctx context.Context, dst io.Writer) error {
+	if w == nil || w.engine == nil {
+		return ErrStorageClosed
+	}
+	if err := w.mutationMu.RLockContext(ctx); err != nil {
+		return err
+	}
+	defer w.mutationMu.RUnlock()
+	if backup, ok := w.engine.(NativeBackupStreamer); ok {
+		return backup.BackupTo(ctx, dst)
+	}
+	return ErrNotImplemented
 }
 
 // Restore holds the WAL mutation barrier while Badger loads the backup.

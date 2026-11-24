@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,15 @@ type persistedProviderDEK struct {
 }
 
 func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, providerMode string) ([]byte, error) {
+	return providerManagedDBKey(dataDir, cfg, providerMode, false)
+}
+
+func providerManagedDBKey(dataDir string, cfg *nornicConfig.Config, providerMode string, existingOnly bool) ([]byte, error) {
+	metadataPath := filepath.Join(dataDir, providerKeyFile)
+	raw, readErr := os.ReadFile(metadataPath)
+	if readErr != nil && (existingOnly || !errors.Is(readErr, os.ErrNotExist)) {
+		return nil, readErr
+	}
 	archiver, err := newProviderAuditArchiver(dataDir, cfg)
 	if err != nil {
 		return nil, err
@@ -79,8 +89,7 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 	}
 	defer kms.CloseProvider(provider)
 
-	metadataPath := filepath.Join(dataDir, "db.kms_dek.json")
-	if raw, readErr := os.ReadFile(metadataPath); readErr == nil {
+	if readErr == nil {
 		var persisted persistedProviderDEK
 		if err := json.Unmarshal(raw, &persisted); err != nil {
 			return nil, localizedError(localization.NornicDBCoreEncryptionDEKMetadataDecodeFailed(err), err)
@@ -96,7 +105,7 @@ func resolveProviderManagedDBKey(dataDir string, cfg *nornicConfig.Config, provi
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreEncryptionDEKUnwrapFailed(err), err)
 		}
-		if rotationDue(cfg, persisted) {
+		if !existingOnly && rotationDue(cfg, persisted) {
 			rotated, err := provider.RotateDataKey(context.Background(), encDEK, kms.RotateOpts{
 				KeyURI: persisted.KeyURI,
 				Label:  "nornicdb-storage-key-rotation",

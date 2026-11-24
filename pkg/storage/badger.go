@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -958,9 +960,28 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // OpenBadgerForOfflineImport opens the native store for a single offline graph
 // import. The importer owns the handle and is the only producer of graph writes
 // until the bulk creates are complete. An existing store uses ordinary bulk
-// validation, including when the requested namespace is empty.
-func OpenBadgerForOfflineImport(dataDir, namespace string) (*BadgerEngine, error) {
-	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true}, namespace)
+// validation, including when the requested namespace is empty. For encrypted
+// storage, supply the installation's encryption key as the optional third argument.
+func OpenBadgerForOfflineImport(dataDir, namespace string, encryptionKey ...[]byte) (*BadgerEngine, error) {
+	var key []byte
+	switch len(encryptionKey) {
+	case 1:
+		key = encryptionKey[0]
+	case 0:
+	default:
+		return nil, fmt.Errorf("offline import accepts at most one encryption key: %w", ErrInvalidData)
+	}
+	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true, EncryptionKey: key}, namespace)
+}
+
+// VerifyBadgerEncryptionKey checks an existing registry without taking the
+// graph store lock or writing data. The engine remains the registry owner.
+func VerifyBadgerEncryptionKey(dataDir string, key []byte) error {
+	if _, err := os.Stat(filepath.Join(dataDir, badger.KeyRegistryFileName)); err != nil {
+		return err
+	}
+	_, err := badger.OpenKeyRegistry(badger.KeyRegistryOptions{Dir: dataDir, ReadOnly: true, EncryptionKey: key})
+	return err
 }
 
 func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngine, error) {
