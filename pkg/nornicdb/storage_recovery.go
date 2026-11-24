@@ -204,7 +204,7 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 		return nil, "", recoveryUnavailable(status, err)
 	}
 	_, priorStoreErr := os.Stat(filepath.Join(dataDir, "MANIFEST"))
-	priorStore := priorStoreErr == nil
+	priorStore := priorStoreErr == nil || seal != nil
 
 	snapshotDir := filepath.Join(dataDir, "snapshots")
 	snapPath, snapErr := latestSnapshotPath(snapshotDir)
@@ -277,6 +277,10 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("recovery cannot replace an existing store with incomplete or empty replay: %s", replay.Summary()))
 	}
 	if seal != nil {
+		if err := newStore.Sync(); err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("sync recovered database: %w", err))
+		}
 		recoveredSeal := *seal
 		recoveredSeal.RequiresRecoverySnapshot = true
 		if err := storage.SealPreparedDatabase(dataDir, recoveredSeal); err != nil {

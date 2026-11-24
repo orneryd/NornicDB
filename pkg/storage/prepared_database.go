@@ -90,6 +90,19 @@ func SealPreparedDatabase(directory string, graph PreparedDatabase) error {
 // ReadPreparedDatabase looks up a sealed store and checks that it is bound
 // to the requested namespace. Badger may only open a real existing store.
 func ReadPreparedDatabase(root, id, database string) (string, PreparedDatabase, error) {
+	dir, graph, err := ReadPreparedDatabaseSeal(root, id, database)
+	if err != nil {
+		return "", graph, err
+	}
+	if err := VerifyPreparedDatabaseManifest(dir); err != nil {
+		return "", graph, err
+	}
+	return dir, graph, nil
+}
+
+// ReadPreparedDatabaseSeal checks the namespace binding even when the native
+// store is damaged. Only the published-store recovery path may use it alone.
+func ReadPreparedDatabaseSeal(root, id, database string) (string, PreparedDatabase, error) {
 	var graph PreparedDatabase
 	dir, err := PreparedDatabaseDirectory(root, id)
 	if err != nil {
@@ -104,14 +117,8 @@ func ReadPreparedDatabase(root, id, database string) (string, PreparedDatabase, 
 			return "", graph, fmt.Errorf("prepared store path must be a directory: %w", ErrInvalidData)
 		}
 	}
-	for _, name := range []string{preparedDatabaseSeal, "MANIFEST"} {
-		info, err := os.Lstat(filepath.Join(dir, name))
-		if err != nil {
-			return "", graph, err
-		}
-		if !info.Mode().IsRegular() {
-			return "", graph, fmt.Errorf("invalid prepared store file %s: %w", name, ErrInvalidData)
-		}
+	if err := verifyPreparedFile(dir, preparedDatabaseSeal); err != nil {
+		return "", graph, err
 	}
 	encoded, err := os.ReadFile(filepath.Join(dir, preparedDatabaseSeal))
 	if err != nil {
@@ -124,4 +131,21 @@ func ReadPreparedDatabase(root, id, database string) (string, PreparedDatabase, 
 		return "", graph, fmt.Errorf("prepared store seal does not match the database: %w", ErrInvalidData)
 	}
 	return dir, graph, nil
+}
+
+// VerifyPreparedDatabaseManifest verifies that opening the native engine will
+// use its existing manifest instead of silently creating a new one.
+func VerifyPreparedDatabaseManifest(dir string) error {
+	return verifyPreparedFile(dir, "MANIFEST")
+}
+
+func verifyPreparedFile(dir, name string) error {
+	info, err := os.Lstat(filepath.Join(dir, name))
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("invalid prepared store file %s: %w", name, ErrInvalidData)
+	}
+	return nil
 }

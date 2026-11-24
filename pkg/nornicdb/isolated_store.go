@@ -64,7 +64,11 @@ func (db *DB) IsolatedStoreConfig() *multidb.IsolatedStoreConfig {
 			return id, engine, nil
 		},
 		Open: func(ctx context.Context, name, id string, options map[string]string, verify bool) (storage.Engine, error) {
-			dir, graph, err := storage.ReadPreparedDatabase(root, id, name)
+			readStore := storage.ReadPreparedDatabaseSeal
+			if verify {
+				readStore = storage.ReadPreparedDatabase
+			}
+			dir, graph, err := readStore(root, id, name)
 			if err != nil {
 				return nil, err
 			}
@@ -152,8 +156,15 @@ func openPublishedIsolatedStore(ctx context.Context, dir string, opts storage.Ba
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	native, err := storage.NewBadgerEngineWithOptions(opts)
-	if err == nil || !looksLikeCorruption(err) || !autoRecoverOnCorruptionEnabled() || !hasRecoverableArtifacts(dir) {
+	var native *storage.BadgerEngine
+	err = storage.VerifyPreparedDatabaseManifest(dir)
+	missingManifest := errors.Is(err, os.ErrNotExist)
+	if err == nil {
+		native, err = storage.NewBadgerEngineWithOptions(opts)
+	} else if !missingManifest {
+		return nil, err
+	}
+	if err == nil || !(missingManifest || looksLikeCorruption(err)) || !autoRecoverOnCorruptionEnabled() || !hasRecoverableArtifacts(dir) {
 		return native, err
 	}
 	if len(opts.EncryptionKey) != 0 {
