@@ -1541,6 +1541,10 @@ func (tx *BadgerTransaction) visibleNodeLabelsLocked(ctx context.Context, nodeID
 	if node, exists := tx.pendingNodes[nodeID]; exists {
 		return node.Labels, true, nil
 	}
+	if imported := tx.offlineImport; imported != nil {
+		labels, exists := imported.nodes[nodeID]
+		return labels, exists, nil
+	}
 	labels, err := tx.committedNodeLabelsLocked(ctx, nodeID)
 	if errors.Is(err, ErrNotFound) {
 		return nil, false, nil
