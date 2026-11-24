@@ -6,16 +6,24 @@ import (
 	"os"
 
 	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+const publishPreparedDatabaseAction = "dbms.database.create"
 
 func (s *Server) handlePublishPreparedDatabase(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
 	}
-	if !s.authorizeAllDatabaseOperation(w, r) {
+	if request := auth.FineGrainedRequestFromContext(r.Context()); request != nil {
+		if !request.AllowsDBMS(publishPreparedDatabaseAction, "") {
+			s.writeBoundaryError(w, r, http.StatusForbidden, auth.ErrFineGrainedForbidden, auth.ErrFineGrainedForbidden)
+			return
+		}
+	} else if !s.authorizeAllDatabaseOperation(w, r) {
 		return
 	}
 	var req struct {

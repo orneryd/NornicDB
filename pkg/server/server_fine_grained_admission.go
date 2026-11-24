@@ -83,6 +83,8 @@ func fineGrainedServerAction(route string) string {
 		return "dbms.backup.create"
 	case "/admin/restore":
 		return "dbms.backup.restore"
+	case "/admin/databases/imports/publish":
+		return publishPreparedDatabaseAction
 	case "/admin/gpu/status":
 		return "dbms.gpu.status"
 	case "/admin/gpu/enable":

@@ -12,6 +12,11 @@ import (
 // returns its ID only once the graph is durable and the store is closed.
 // Catalog publication is a separate server operation.
 func StageFull(ctx context.Context, root string, opts Options) (id string, report Report, result error) {
+	return StageFullWithKey(ctx, root, opts, nil)
+}
+
+// StageFullWithKey builds a staged store using its target installation's key.
+func StageFullWithKey(ctx context.Context, root string, opts Options, key []byte) (id string, report Report, result error) {
 	id, directory, err := storage.CreatePreparedDatabaseDirectory(root, opts.DatabaseName)
 	if err != nil {
 		return "", Report{}, err
@@ -21,7 +26,7 @@ func StageFull(ctx context.Context, root string, opts Options) (id string, repor
 			result = errors.Join(result, os.RemoveAll(directory))
 		}
 	}()
-	engine, err := storage.OpenBadgerForOfflineImport(directory, opts.DatabaseName)
+	engine, err := storage.OpenBadgerForOfflineImportWithKey(directory, opts.DatabaseName, key)
 	if err != nil {
 		return "", Report{}, err
 	}
@@ -47,7 +52,7 @@ func StageFull(ctx context.Context, root string, opts Options) (id string, repor
 		return "", report, err
 	}
 	if err := storage.SealPreparedDatabase(directory, storage.PreparedDatabase{
-		Database: opts.DatabaseName, Nodes: nodes, Relationships: edges,
+		Database: opts.DatabaseName, Nodes: nodes, Relationships: edges, RequiresRecoverySnapshot: true,
 	}); err != nil {
 		return "", report, err
 	}

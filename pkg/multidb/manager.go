@@ -323,6 +323,9 @@ func (m *DatabaseManager) registerGraphRuntimeOwners() error {
 			return err
 		}
 		owner, err := m.graphStoreLocked(name)
+		if errors.Is(err, ErrDatabaseOffline) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -840,7 +843,7 @@ func (m *DatabaseManager) ListDatabases() []*DatabaseInfo {
 
 	result := make([]*DatabaseInfo, 0, len(m.databases))
 	for _, info := range m.databases {
-		result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible))
+		result = append(result, m.visibleDatabaseInfoLocked(info))
 	}
 	return result
 }
@@ -855,7 +858,15 @@ func (m *DatabaseManager) GetDatabase(name string) (*DatabaseInfo, error) {
 		return nil, ErrDatabaseNotFound
 	}
 
-	return cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible), nil
+	return m.visibleDatabaseInfoLocked(info), nil
+}
+
+func (m *DatabaseManager) visibleDatabaseInfoLocked(info *DatabaseInfo) *DatabaseInfo {
+	visible := cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible)
+	if info.IsolatedStoreID != "" && m.isolatedStores[info.IsolatedStoreID] == nil {
+		visible.Status = "offline"
+	}
+	return visible
 }
 
 // databaseSnapshotPurpose distinguishes complete catalog state from the
@@ -936,15 +947,23 @@ func (m *DatabaseManager) DefaultDatabaseName() string {
 
 // SetDatabaseStatus sets a database online/offline.
 func (m *DatabaseManager) SetDatabaseStatus(ctx context.Context, name, status string) error {
-	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(candidate *DatabaseManager) error {
 
-		info, exists := m.databases[name]
+		info, exists := candidate.databases[name]
 		if !exists {
 			return ErrDatabaseNotFound
 		}
 
 		if status != "online" && status != "offline" {
 			return localizedError(localization.MultidbManagerInvalidStatus(status), nil)
+		}
+		if status == "online" && info.IsolatedStoreID != "" {
+			m.mu.RLock()
+			_, err := m.storeForDatabaseInfoLocked(info)
+			m.mu.RUnlock()
+			if err != nil {
+				return err
+			}
 		}
 
 		info.Status = status

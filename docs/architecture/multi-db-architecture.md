@@ -19,17 +19,41 @@ Plain (non-composite) cross-database queries are **not** supported by design —
 
 ### Key-prefix namespacing
 
-The base storage engine is shared across logical databases. Every key is prefixed with the database name (e.g. `nornic:node-uuid`) and a thin `NamespacedEngine` wrapper translates between the namespaced storage keys and the user-visible IDs.
+Each local graph has a database-name key prefix in its physical Badger store. `NamespacedEngine` translates between those keys and user-visible IDs. The system catalog selects the store before the graph is opened.
 
-This means:
+### Storage folder layouts
 
-- One BadgerDB process, many logical databases.
-- Complete isolation: no cross-database data leakage at the storage layer.
-- A single MVCC keyspace per logical database (so per-database lifecycle works independently).
+NornicDB 1.5.3 and later support three layouts for user databases on a persistent standalone server. The layout is set for each database at creation. The default is `isolated`. Use `OPTIONS {storage: 'shared'}` to select the shared store. Existing databases continue using their current store.
+
+| Layout | Store selected |
+| --- | --- |
+| Isolated | Each user-created database has its own Badger store and WAL. `CREATE DATABASE analytics` and `CREATE DATABASE analytics OPTIONS {storage: 'isolated'}` select the same layout. |
+| Shared | Each user-created database uses a namespace in the root store. `CREATE DATABASE tenant_small OPTIONS {storage: 'shared'}` creates another shared database. |
+| Mixed | Shared databases live in the root store. Isolated databases each have a dedicated store and WAL. Both choices remain available when creating a database. |
+
+```text
+Isolated                           Shared                           Mixed
+data/                              data/                            data/
+├── Badger files                   ├── Badger files                 ├── Badger files
+│   system, nornic                 │   system, nornic, tenant_small │   system, nornic, tenant_small
+├── wal/                           ├── wal/                         ├── wal/
+├── snapshots/                     ├── snapshots/                   ├── snapshots/
+├── search/                        └── search/                      ├── search/
+└── prepared-databases/                                             └── prepared-databases/
+    └── <analytics-store-id>/                                           └── <analytics-store-id>/
+        ├── Badger files                                                    ├── Badger files
+        ├── prepared.json                                                    ├── prepared.json
+        ├── wal/                                                             ├── wal/
+        └── snapshots/                                                       └── snapshots/
+```
+
+Badger files include `MANIFEST`, `*.sst`, and `*.vlog`. `snapshots/` and `search/` appear as their features produce files. The system catalog and bootstrapped default database (`nornic` here) use the root store in all three layouts. Dedicated directories are keyed by store ID. A staged CSV import builds the same directory shape, then publication writes the catalog reference and begins serving it from those files. In-memory and replicated deployments use the shared layout.
+
+With Badger encryption enabled, the installation's salt (`db.salt`) or wrapped key (`db.kms_dek.json`) lives at the data root. The shared and dedicated Badger stores use that installation key, with a Badger key registry in each physical store. See [backup, restore, and staged imports](../operations/admin-tool.md#database-storage-layout) for the operator commands.
 
 ### Database catalog
 
-Database metadata lives in the `system` database under nodes labelled `_Database`, `_DatabaseAlias`, and `_DatabaseLimits`. The catalog is loaded into the `DatabaseManager` on startup and persisted on every mutation, so all server processes see the same view (relevant for HA standby and Raft deployments).
+The `system` database in the shared root stores the catalog record. It holds database metadata, aliases, limits, and the physical store ID for each isolated database. The `DatabaseManager` loads the catalog at startup and persists each catalog mutation in the root store.
 
 ---
 

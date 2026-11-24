@@ -181,6 +181,10 @@ func latestSnapshotPath(snapshotDir string) (string, error) {
 // recoverBadgerFromSnapshotAndWAL rebuilds a new Badger store in-place from the latest
 // snapshot + WAL replay, preserving the original store before rebuilding it.
 func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions) (*storage.BadgerEngine, string, error) {
+	return recoverBadgerStore(ctx, dataDir, badgerOpts, nil)
+}
+
+func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.BadgerOptions, seal *storage.PreparedDatabase) (*storage.BadgerEngine, string, error) {
 	status := RecoveryStatus{
 		Phase:         RecoveryPhaseInspect,
 		StartedAt:     time.Now().UTC(),
@@ -205,6 +209,9 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 	snapshotDir := filepath.Join(dataDir, "snapshots")
 	snapPath, snapErr := latestSnapshotPath(snapshotDir)
 	if snapErr != nil {
+		if seal != nil && (seal.RequiresRecoverySnapshot || seal.Nodes != 0 || seal.Relationships != 0) {
+			return nil, "", recoveryUnavailable(status, fmt.Errorf("seeded store requires a recovery snapshot: %w", snapErr))
+		}
 		// No snapshots yet (e.g., new DB) or snapshot directory missing — attempt WAL-only recovery.
 		// This can fully recover data when WAL still contains the full history (pre-compaction),
 		// and is still better than "delete the data directory" when snapshots haven't been created.
@@ -268,6 +275,14 @@ func recoverBadgerFromSnapshotAndWAL(ctx context.Context, dataDir string, badger
 	if replay.Failed > 0 || (priorStore && streamStatus.SnapshotNodes == 0 && streamStatus.SnapshotEdges == 0 && replay.Applied == 0) {
 		_ = newStore.Close()
 		return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("recovery cannot replace an existing store with incomplete or empty replay: %s", replay.Summary()))
+	}
+	if seal != nil {
+		recoveredSeal := *seal
+		recoveredSeal.RequiresRecoverySnapshot = true
+		if err := storage.SealPreparedDatabase(dataDir, recoveredSeal); err != nil {
+			_ = newStore.Close()
+			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("seal recovered database: %w", err))
+		}
 	}
 	// Root replay does not rebuild independently owned Badger stores.
 	// Preserve their exact catalog locations with the recovered root.

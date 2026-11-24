@@ -18,13 +18,32 @@ import (
 )
 
 func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
+	for _, mode := range []string{"unencrypted", "password", "local"} {
+		t.Run(mode, func(t *testing.T) { checkPreparedImportAndDatabaseStorageLayouts(t, mode) })
+	}
+}
+
+func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode string) {
+	configureEncryption := func(config *nornicdb.Config) {
+		if encryptionMode == "unencrypted" {
+			return
+		}
+		config.Database.EncryptionEnabled = true
+		config.Database.EncryptionProvider = encryptionMode
+		config.Database.EncryptionPassword = "synthetic encryption test password"
+		config.Database.EncryptionMasterKey = "synthetic-key-for-badger-test-32"
+	}
 	root := t.TempDir()
 	inputs := t.TempDir()
 	nodes := filepath.Join(inputs, "nodes.csv")
 	edges := filepath.Join(inputs, "edges.csv")
 	require.NoError(t, os.WriteFile(nodes, []byte(":ID,name:string\na,Ada\nb,Bea\n"), 0600))
 	require.NoError(t, os.WriteFile(edges, []byte(":START_ID,:END_ID\na,b\na,a\n"), 0600))
-	legacy, err := storage.OpenBadgerForOfflineImport(root, "legacy")
+	settings := nornicdb.DefaultConfig()
+	configureEncryption(settings)
+	key, err := nornicdb.InitializeStorageEncryption(root, settings)
+	require.NoError(t, err)
+	legacy, err := storage.OpenBadgerForOfflineImportWithKey(root, "legacy", key)
 	require.NoError(t, err)
 	_, err = adminimport.ImportFull(t.Context(), legacy, adminimport.Options{
 		DatabaseName: "legacy", NodeSources: []string{"Person=" + nodes},
@@ -34,6 +53,9 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 
 	open := func(dataDir string) (*Server, func()) {
 		config := nornicdb.DefaultConfig()
+		configureEncryption(config)
+		config.Database.MVCCLifecycleEnabled = true
+		config.Database.MVCCRetentionMaxVersions = 2
 		config.Auth.Enabled = false
 		config.Database.AsyncWritesEnabled = false
 		config.Memory.DecayEnabled = false
@@ -90,15 +112,26 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	require.Empty(t, storeID("shared"))
 	require.NotEmpty(t, storeID("dedicated"))
 	require.NotEmpty(t, storeID("explicit"))
+	store, err := server.dbManager.GetStorage("dedicated")
+	require.NoError(t, err)
+	native, ok := storage.UnwrapEngine(store).(*storage.BadgerEngine)
+	require.True(t, ok)
+	require.Equal(t, true, native.LifecycleStatus()["enabled"])
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	query("dedicated", "CREATE (:Person {name:'Separate'})")
 	query("shared", "CREATE (:Person {name:'Root'})")
 	require.NotEmpty(t, postStatement(t, server, "system", "ALTER DATABASE dedicated SET OPTION storage 'shared'", "").Errors)
 
-	id, _, err := adminimport.StageFull(t.Context(), root, adminimport.Options{
+	key, err = nornicdb.ReadStorageEncryptionKey(root, settings)
+	require.NoError(t, err)
+	if settings.Database.EncryptionEnabled {
+		_, err := nornicdb.ReadStorageEncryptionKey(root, nornicdb.DefaultConfig())
+		require.Error(t, err)
+	}
+	id, _, err := adminimport.StageFullWithKey(t.Context(), root, adminimport.Options{
 		DatabaseName: "loaded", NodeSources: []string{"Person=" + nodes},
 		RelSources: []string{"KNOWS=" + edges},
-	})
+	}, key)
 	require.NoError(t, err)
 	require.False(t, server.dbManager.Exists("loaded"))
 	count("shared", "MATCH (n:Person) RETURN count(n)", 1)
@@ -132,9 +165,11 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	snapshotPath := filepath.Join(inputs, "full", full.GetSnapshotDescription().GetName())
 	snapshot, err := os.Open(snapshotPath)
 	require.NoError(t, err)
-	members, readErr := storage.ReadDatabaseBackupArchive(snapshot)
+	archive, readErr := storage.ReadDatabaseBackupArchive(snapshot)
 	require.NoError(t, snapshot.Close())
 	require.NoError(t, readErr)
+	require.Equal(t, settings.Database.EncryptionEnabled, archive.RequiresEncryption)
+	members := archive.Stores
 	require.Len(t, members, 4)
 	require.NotNil(t, members[""])
 	require.NotNil(t, members[storeID("explicit")])
@@ -163,7 +198,22 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	count("loaded", "MATCH (n) RETURN count(n)", 0)
 
 	restoredRoot := filepath.Join(t.TempDir(), "restored")
-	require.NoError(t, multidb.RestoreDatabaseBackup(t.Context(), backupPath, restoredRoot))
+	if settings.Database.EncryptionEnabled {
+		require.ErrorContains(t, multidb.RestoreDatabaseBackup(t.Context(), backupPath, restoredRoot), "requires encryption")
+		require.NoDirExists(t, restoredRoot)
+	}
+	require.NoError(t, multidb.RestoreDatabaseBackupWithKey(t.Context(), backupPath, restoredRoot, func(stage string) ([]byte, error) {
+		return nornicdb.InitializeStorageEncryption(stage, settings)
+	}))
+	if settings.Database.EncryptionEnabled {
+		restoredKey, err := nornicdb.ReadStorageEncryptionKey(restoredRoot, settings)
+		require.NoError(t, err)
+		require.NotEqual(t, key, restoredKey)
+		dedicatedDir, err := storage.PreparedDatabaseDirectory(restoredRoot, id)
+		require.NoError(t, err)
+		require.Error(t, storage.VerifyBadgerEncryptionKey(dedicatedDir, nil))
+		require.NoError(t, storage.VerifyBadgerEncryptionKey(dedicatedDir, restoredKey))
+	}
 	server, _ = open(restoredRoot)
 	require.Empty(t, storeID("legacy"))
 	require.Empty(t, storeID("shared"))

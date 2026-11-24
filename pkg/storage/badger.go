@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -960,7 +962,23 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // until the bulk creates are complete. An existing store uses ordinary bulk
 // validation, including when the requested namespace is empty.
 func OpenBadgerForOfflineImport(dataDir, namespace string) (*BadgerEngine, error) {
-	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true}, namespace)
+	return OpenBadgerForOfflineImportWithKey(dataDir, namespace, nil)
+}
+
+// OpenBadgerForOfflineImportWithKey applies the installation's key without
+// changing the offline import profile or its exclusive writer contract.
+func OpenBadgerForOfflineImportWithKey(dataDir, namespace string, key []byte) (*BadgerEngine, error) {
+	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true, EncryptionKey: key}, namespace)
+}
+
+// VerifyBadgerEncryptionKey checks an existing registry without taking the
+// graph store lock or writing data. The engine remains the registry owner.
+func VerifyBadgerEncryptionKey(dataDir string, key []byte) error {
+	if _, err := os.Stat(filepath.Join(dataDir, badger.KeyRegistryFileName)); err != nil {
+		return err
+	}
+	_, err := badger.OpenKeyRegistry(badger.KeyRegistryOptions{Dir: dataDir, ReadOnly: true, EncryptionKey: key})
+	return err
 }
 
 func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngine, error) {

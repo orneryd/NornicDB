@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -104,7 +105,11 @@ func (m *DatabaseManager) loadIsolatedStores(ctx context.Context) error {
 		}
 		engine, err := config.Open(ctx, name, info.IsolatedStoreID, info.Options, false)
 		if err != nil {
-			return fmt.Errorf("opening prepared database %q: %w", name, err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Printf("Isolated database %q is offline: %v", name, err)
+			continue
 		}
 		m.isolatedStores[info.IsolatedStoreID] = engine
 	}

@@ -58,6 +58,22 @@ func ReadIsolatedStoreID(ctx context.Context, engine storage.Engine, name string
 	return "", err
 }
 
+// ReadIsolatedStoreIDs returns the committed dedicated stores for offline
+// maintenance. Pending DROP stores are owned by catalog recovery.
+func ReadIsolatedStoreIDs(ctx context.Context, engine storage.Engine) (map[string]string, error) {
+	catalog := DatabaseManager{inner: engine, config: DefaultConfig()}
+	if _, err := catalog.loadMetadata(ctx); err != nil {
+		return nil, err
+	}
+	stores := make(map[string]string)
+	for name, info := range catalog.databases {
+		if info != nil && info.IsolatedStoreID != "" && !catalog.pendingDrops[name] {
+			stores[name] = info.IsolatedStoreID
+		}
+	}
+	return stores, nil
+}
+
 // loadMetadata loads database metadata from storage.
 func (m *DatabaseManager) loadMetadata(ctx context.Context) (bool, error) {
 	node, err := readCatalogMetadataNode(ctx, m.inner, m.config.SystemDatabase)

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,8 +16,10 @@ import (
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cli"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -79,6 +83,7 @@ func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager
 	}
 
 	dataDir := rootCmd.PersistentFlags().String("data-dir", "./data", text(localization.AdminCLIDataDirectoryFlag()))
+	rootCmd.PersistentFlags().String("config", "", text(localization.NornicDBCLIFlagConfig()))
 
 	databaseCmd := &cobra.Command{Use: "database", Short: text(localization.AdminCLIDatabaseShort())}
 	importCmd := &cobra.Command{Use: "import", Short: text(localization.AdminCLIImportShort())}
@@ -145,7 +150,13 @@ func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager
 		Short: text(localization.AdminCLIRestoreBackupShort()),
 		Args:  localizedExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return multidb.RestoreDatabaseBackup(cmd.Context(), filepath.Clean(args[0]), filepath.Clean(*dataDir))
+			settings, err := adminStorageConfig(cmd)
+			if err != nil {
+				return err
+			}
+			return multidb.RestoreDatabaseBackupWithKey(cmd.Context(), filepath.Clean(args[0]), filepath.Clean(*dataDir), func(stage string) ([]byte, error) {
+				return nornicdb.InitializeStorageEncryption(stage, settings)
+			})
 		},
 	})
 	checkIDsCmd := &cobra.Command{
@@ -327,15 +338,19 @@ func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
 		Verbose:              verbose,
 	}
 	staged, _ := cmd.Flags().GetBool("stage")
+	key, err := adminStorageKey(cmd, dataDir, !staged)
+	if err != nil {
+		return err
+	}
 	if staged {
-		id, _, err := adminimport.StageFull(cmd.Context(), dataDir, opts)
+		id, _, err := adminimport.StageFullWithKey(cmd.Context(), dataDir, opts, key)
 		if err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), id)
 		return err
 	}
-	engine, err := storage.OpenBadgerForOfflineImport(dataDir, dbName)
+	engine, err := storage.OpenBadgerForOfflineImportWithKey(dataDir, dbName, key)
 	if err != nil {
 		return err
 	}
@@ -359,7 +374,11 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 		return newLocalizedCommandError(localization.AdminCLIToPathRequired())
 	}
 
-	engine, err := storage.NewBadgerEngine(dataDir)
+	key, err := adminStorageKey(cmd, dataDir, false)
+	if err != nil {
+		return err
+	}
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir, EncryptionKey: key})
 	if err != nil {
 		return err
 	}
@@ -373,7 +392,7 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 		if err != nil {
 			return err
 		}
-		engine, err = storage.NewBadgerEngine(dir)
+		engine, err = storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key})
 		if err != nil {
 			return err
 		}
@@ -395,11 +414,41 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 // identify (#907, I29).
 func runCheckIDs(dataDir string, cmd *cobra.Command, text func(localization.Message) string) error {
 	repair, _ := cmd.Flags().GetBool("repair")
-	engine, err := storage.NewBadgerEngine(dataDir)
+	key, err := adminStorageKey(cmd, dataDir, false)
+	if err != nil {
+		return err
+	}
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir, EncryptionKey: key})
 	if err != nil {
 		return err
 	}
 	defer engine.Close()
+	stores, err := multidb.ReadIsolatedStoreIDs(cmd.Context(), engine)
+	if err != nil {
+		return err
+	}
+	report := &storage.IDDictionaryReport{}
+	if err := collectIDDictionaryReport(report, engine, repair); err != nil {
+		return err
+	}
+	for _, name := range slices.Sorted(maps.Keys(stores)) {
+		dir, _, err := storage.ReadPreparedDatabase(dataDir, stores[name], name)
+		if err != nil {
+			return err
+		}
+		store, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key})
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(collectIDDictionaryReport(report, store, repair), store.Close()); err != nil {
+			return err
+		}
+	}
+	printIDDictionaryReport(cmd.OutOrStdout(), text, report, repair)
+	return nil
+}
+
+func collectIDDictionaryReport(total *storage.IDDictionaryReport, engine *storage.BadgerEngine, repair bool) error {
 	report, err := engine.CheckIDDictionary()
 	if repair && err == nil {
 		report, err = engine.RepairIDDictionary()
@@ -407,8 +456,39 @@ func runCheckIDs(dataDir string, cmd *cobra.Command, text func(localization.Mess
 	if err != nil {
 		return err
 	}
-	printIDDictionaryReport(cmd.OutOrStdout(), text, report, repair)
+	total.Nodes = append(total.Nodes, report.Nodes...)
+	total.Edges = append(total.Edges, report.Edges...)
+	total.MismatchedNodes = append(total.MismatchedNodes, report.MismatchedNodes...)
+	total.MismatchedEdges = append(total.MismatchedEdges, report.MismatchedEdges...)
+	total.RestoredNodes = append(total.RestoredNodes, report.RestoredNodes...)
+	total.RestoredEdges = append(total.RestoredEdges, report.RestoredEdges...)
+	total.UnresolvedNodes = append(total.UnresolvedNodes, report.UnresolvedNodes...)
+	total.UnresolvedEdges = append(total.UnresolvedEdges, report.UnresolvedEdges...)
 	return nil
+}
+
+func adminStorageConfig(cmd *cobra.Command) (*config.Config, error) {
+	path, _ := cmd.Flags().GetString("config")
+	if path == "" {
+		path = config.FindConfigFile()
+	}
+	if path == "" {
+		return config.LoadFromEnv(), nil
+	}
+	return config.LoadFromFile(path)
+}
+
+func adminStorageKey(cmd *cobra.Command, dataDir string, create bool) ([]byte, error) {
+	settings, err := adminStorageConfig(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if create && settings.Database.EncryptionEnabled {
+		if _, err := os.Stat(filepath.Join(dataDir, "MANIFEST")); errors.Is(err, os.ErrNotExist) {
+			return nornicdb.InitializeStorageEncryption(dataDir, settings)
+		}
+	}
+	return nornicdb.ReadStorageEncryptionKey(dataDir, settings)
 }
 
 // printIDDictionaryReport writes check-ids' report: each entity without an

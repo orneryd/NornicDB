@@ -17,6 +17,7 @@ import (
 const backupArchivePrefix = "nornicdb-backup-v1/"
 const backupSharedMember = backupArchivePrefix + "root.badger"
 const backupArchiveMagic = "NORNICDB-BACKUP\n"
+const backupArchiveEncryptedSource = "encrypted-source"
 
 // ErrOfflineDatabaseRestore identifies a restore that requires a new data directory.
 var ErrOfflineDatabaseRestore = errors.New("restore this backup into a new data directory with nornicdb-admin database restore")
@@ -42,6 +43,11 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 		return errors.Join(err, file.Close())
 	}
 	archive := zip.NewWriter(file)
+	if root, ok := UnwrapEngine(stores[""]).(*BadgerEngine); ok && root.encryptedStorage() {
+		if err := archive.SetComment(backupArchiveEncryptedSource); err != nil {
+			return errors.Join(err, file.Close())
+		}
+	}
 	for id, engine := range stores {
 		if err = ctx.Err(); err != nil {
 			break
@@ -80,9 +86,15 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 	return SyncDir(filepath.Dir(path))
 }
 
-// ReadDatabaseBackupArchive returns archive members keyed by physical store
-// ID. The empty key is the root store; a nil result identifies a legacy file.
-func ReadDatabaseBackupArchive(file *os.File) (map[string]*zip.File, error) {
+// DatabaseBackupArchive holds native streams keyed by physical store ID.
+// The empty ID identifies the root store.
+type DatabaseBackupArchive struct {
+	Stores             map[string]*zip.File
+	RequiresEncryption bool
+}
+
+// ReadDatabaseBackupArchive opens the archive. A nil result identifies a legacy file.
+func ReadDatabaseBackupArchive(file *os.File) (*DatabaseBackupArchive, error) {
 	var header [len(backupArchiveMagic)]byte
 	if _, err := file.ReadAt(header[:], 0); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -117,7 +129,13 @@ func ReadDatabaseBackupArchive(file *os.File) (map[string]*zip.File, error) {
 	if stores[""] == nil {
 		return nil, fmt.Errorf("database backup is missing the root store: %w", ErrInvalidData)
 	}
-	return stores, nil
+	return &DatabaseBackupArchive{Stores: stores, RequiresEncryption: archive.Comment == backupArchiveEncryptedSource}, nil
+}
+
+func (b *BadgerEngine) encryptedStorage() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.db != nil && len(b.db.Opts().EncryptionKey) != 0
 }
 
 func backupMemberName(id string) (string, error) {

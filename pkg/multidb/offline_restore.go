@@ -17,6 +17,12 @@ import (
 // into a new data directory. All stores are verified before the directory is
 // made available. A restore never replaces an existing installation.
 func RestoreDatabaseBackup(ctx context.Context, source, destination string) error {
+	return RestoreDatabaseBackupWithKey(ctx, source, destination, nil)
+}
+
+// RestoreDatabaseBackupWithKey provisions the destination's key inside the
+// temporary data root. Every restored native store opens with that key.
+func RestoreDatabaseBackupWithKey(ctx context.Context, source, destination string, initializeKey func(string) ([]byte, error)) error {
 	destination, err := security.AbsCanonicalFilePath(destination)
 	if err != nil {
 		return err
@@ -29,7 +35,7 @@ func RestoreDatabaseBackup(ctx context.Context, source, destination string) erro
 		return err
 	}
 	defer file.Close()
-	members, err := storage.ReadDatabaseBackupArchive(file.File)
+	archive, err := storage.ReadDatabaseBackupArchive(file.File)
 	if err != nil {
 		return err
 	}
@@ -39,9 +45,21 @@ func RestoreDatabaseBackup(ctx context.Context, source, destination string) erro
 		return err
 	}
 	defer os.RemoveAll(stage)
+	var key []byte
+	if initializeKey != nil {
+		key, err = initializeKey(stage)
+		if err != nil {
+			return err
+		}
+	}
+	if archive != nil && archive.RequiresEncryption && len(key) == 0 {
+		return errors.New("database backup requires encryption settings for the restored data directory")
+	}
 
 	var root io.Reader = file
-	if members != nil {
+	var members map[string]*zip.File
+	if archive != nil {
+		members = archive.Stores
 		member, err := members[""].Open()
 		if err != nil {
 			return err
@@ -50,7 +68,7 @@ func RestoreDatabaseBackup(ctx context.Context, source, destination string) erro
 		root = member
 	}
 	var catalog DatabaseManager
-	if err := restoreNativeStore(ctx, stage, root, func(engine *storage.BadgerEngine) error {
+	if err := restoreNativeStore(ctx, stage, key, root, func(engine *storage.BadgerEngine) error {
 		catalog.inner, catalog.config = engine, DefaultConfig()
 		_, err := catalog.loadMetadata(ctx)
 		catalog.inner = nil
@@ -58,7 +76,7 @@ func RestoreDatabaseBackup(ctx context.Context, source, destination string) erro
 	}); err != nil {
 		return fmt.Errorf("restoring root database store: %w", err)
 	}
-	if err := restoreDedicatedStores(ctx, stage, &catalog, members); err != nil {
+	if err := restoreDedicatedStores(ctx, stage, key, &catalog, members); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -87,7 +105,7 @@ func requireNewDataDirectory(path string) error {
 	return err
 }
 
-func restoreDedicatedStores(ctx context.Context, stage string, catalog *DatabaseManager, members map[string]*zip.File) error {
+func restoreDedicatedStores(ctx context.Context, stage string, key []byte, catalog *DatabaseManager, members map[string]*zip.File) error {
 	delete(members, "")
 	for name, database := range catalog.databases {
 		if database == nil || database.IsolatedStoreID == "" || catalog.pendingDrops[name] {
@@ -98,7 +116,7 @@ func restoreDedicatedStores(ctx context.Context, stage string, catalog *Database
 		if member == nil {
 			return fmt.Errorf("backup is missing the store for database %q: %w", name, storage.ErrInvalidData)
 		}
-		if err := restoreDedicatedStore(ctx, stage, name, id, member); err != nil {
+		if err := restoreDedicatedStore(ctx, stage, name, id, key, member); err != nil {
 			return fmt.Errorf("restoring database %q: %w", name, err)
 		}
 		delete(members, id)
@@ -109,7 +127,7 @@ func restoreDedicatedStores(ctx context.Context, stage string, catalog *Database
 	return nil
 }
 
-func restoreDedicatedStore(ctx context.Context, stage, name, id string, member *zip.File) error {
+func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []byte, member *zip.File) error {
 	dir, err := storage.PreparedDatabaseDirectory(stage, id)
 	if err != nil {
 		return err
@@ -122,8 +140,8 @@ func restoreDedicatedStore(ctx context.Context, stage, name, id string, member *
 		return err
 	}
 	defer src.Close()
-	graph := storage.PreparedDatabase{Database: name}
-	if err := restoreNativeStore(ctx, dir, src, func(engine *storage.BadgerEngine) error {
+	graph := storage.PreparedDatabase{Database: name, RequiresRecoverySnapshot: true}
+	if err := restoreNativeStore(ctx, dir, key, src, func(engine *storage.BadgerEngine) error {
 		view := storage.NewNamespacedEngine(engine, name)
 		nodes, nodeErr := view.NodeCount(ctx)
 		edges, edgeErr := view.EdgeCount(ctx)
@@ -135,8 +153,8 @@ func restoreDedicatedStore(ctx context.Context, stage, name, id string, member *
 	return storage.SealPreparedDatabase(dir, graph)
 }
 
-func restoreNativeStore(ctx context.Context, dir string, src io.Reader, inspect func(*storage.BadgerEngine) error) (err error) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, HighPerformance: true})
+func restoreNativeStore(ctx context.Context, dir string, key []byte, src io.Reader, inspect func(*storage.BadgerEngine) error) (err error) {
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, HighPerformance: true, EncryptionKey: key})
 	if err != nil {
 		return err
 	}
