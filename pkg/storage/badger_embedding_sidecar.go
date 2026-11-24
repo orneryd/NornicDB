@@ -234,6 +234,10 @@ var embeddingSourceCheckedHook atomic.Pointer[func()]
 // feeds) differs from embedded's, the copy the embedding was computed from
 // (#889, #963). The read is conflict-tracked by txn.
 func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badger.Txn, embedded *Node, logicalSource ...*Node) error {
+	attempt := embedded.EmbeddingAttempt()
+	if owner := embedded.runtimeState().embeddingOwner; attempt != nil && owner != nil && owner != b {
+		return ErrEmbeddingSourceChanged
+	}
 	var stored *Node
 	var physical uint64
 	if len(logicalSource) > 0 {
@@ -262,7 +266,6 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badge
 	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
-	attempt := embedded.EmbeddingAttempt()
 	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
 	if attempt != nil && (attempt.RequireExactBody || failed || len(embedded.EmbedMeta) == 0) {
 		var matches bool

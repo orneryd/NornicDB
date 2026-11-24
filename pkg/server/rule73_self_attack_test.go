@@ -206,7 +206,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 						want = 1
 					}
 					if p.name == "admin" {
-						want = float64(metricsReadStorageProbe{badger}.NodeCount())
+						want = float64(metricsReadStorageProbe{badger}.NodeCount() + 1) // isolated named database
 					}
 					require.Equal(t, want, legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 				}

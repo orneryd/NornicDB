@@ -38,8 +38,9 @@ func TestEmbedRegenerateDatabaseScopePermissionAndResponse(t *testing.T) {
 	}, nil)
 	s.db.SetEmbedder(&countingEmbedder{dims: 1024})
 	require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "scope_target"}))
-	engine := seedEmbeddedNode(t, s, s.dbManager.DefaultDatabaseName(), "other-database-sentinel")
-	target := seedEmbeddedNode(t, s, "scope_target", "target-sentinel")
+	const sentinel = "scoped-sentinel"
+	engine := seedEmbeddedNode(t, s, s.dbManager.DefaultDatabaseName(), sentinel)
+	target := seedEmbeddedNode(t, s, "scope_target", sentinel)
 	for _, role := range []string{"viewer", "editor"} {
 		rec := httptest.NewRecorder()
 		s.handleEmbedTrigger(rec, as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true&database=scope_target", nil), role))
@@ -52,11 +53,11 @@ func TestEmbedRegenerateDatabaseScopePermissionAndResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Equal(t, "scope_target", response["database"])
 	require.Eventually(t, func() bool {
-		node, err := target.GetNode(t.Context(), "target-sentinel")
+		node, err := target.GetNode(t.Context(), sentinel)
 		return err == nil && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) == 1024
 	}, 5*time.Second, 20*time.Millisecond, "the accepted regeneration must replace the target's old vector")
-	require.True(t, hasEmbedding(t, engine, "other-database-sentinel"))
-	other, err := engine.GetNode(t.Context(), "other-database-sentinel")
+	require.True(t, hasEmbedding(t, engine, sentinel))
+	other, err := engine.GetNode(t.Context(), sentinel)
 	require.NoError(t, err)
 	require.Len(t, other.ChunkEmbeddings[0], 3, "another database must retain its original vector")
 }

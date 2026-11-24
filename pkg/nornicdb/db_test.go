@@ -283,7 +283,7 @@ func TestOpen(t *testing.T) {
 		)
 	})
 
-	t.Run("replaces malformed existing encryption salt", func(t *testing.T) {
+	t.Run("rejects malformed existing encryption salt without replacing it", func(t *testing.T) {
 		dir := t.TempDir()
 		saltPath := filepath.Join(dir, "db.salt")
 		require.NoError(t, os.WriteFile(saltPath, []byte("short"), 0600))
@@ -292,13 +292,12 @@ func TestOpen(t *testing.T) {
 		cfg.Database.EncryptionEnabled = true
 		cfg.Database.EncryptionPassword = "correct-password"
 		db, err := Open(dir, cfg)
-		require.NoError(t, err)
-		require.NoError(t, db.Close())
+		require.ErrorIs(t, err, storage.ErrInvalidData)
+		require.Nil(t, db)
 
 		salt, err := os.ReadFile(saltPath)
 		require.NoError(t, err)
-		require.Len(t, salt, 32)
-		require.NotEqual(t, []byte("short"), salt)
+		require.Equal(t, []byte("short"), salt)
 	})
 
 	t.Run("returns encryption-required error when encrypted database opened without encryption config", func(t *testing.T) {

@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,7 +46,6 @@ import (
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -206,6 +206,7 @@ type DB struct {
 
 	// Async embedding queue for auto-generating embeddings
 	embedQueue        *EmbedQueue
+	embedStoreCatalog atomic.Pointer[multidb.DatabaseManager]
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
 	embedQueueYieldFn func() bool
 
@@ -1075,10 +1076,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// write amplification on every CreateNode/UpsertNode. Thread the flag
 	// down to the engine once at startup.
 	if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
-		be.SetEmbeddingsEnabled(config.Memory.EmbeddingEnabled)
-		be.SetEmbeddingLabelPolicy("", config.EmbeddingWorker.EligibleLabels, config.EmbeddingWorker.ExcludedLabels)
-		be.SetEmbeddingTextPolicy(embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromFields(
-			config.EmbeddingWorker.PropertiesInclude, config.EmbeddingWorker.PropertiesExclude, config.EmbeddingWorker.IncludeLabels)))
+		configureEmbeddingStore(be, config)
 	}
 
 	// Initialize knowledge-layer decay: wire scorer into BadgerEngine read paths.
@@ -1222,7 +1220,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config.Memory.EmbeddingEnabled && db.baseStorage != nil && db.embedWorkerConfig != nil {
 		workerCfg := *db.embedWorkerConfig
 		workerCfg.DeferWorkerStart = true
-		db.embedQueue = NewEmbedQueue(nil, db.baseStorage, &workerCfg)
+		db.embedQueue = NewEmbedQueue(nil, db.embeddingQueueStorage(), &workerCfg)
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
@@ -1257,21 +1255,8 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
 	// (storage.EventSubscriber), and one that does not fails Open.
 	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
-		// The downstream mutation path is debounced, so events are queued
-		// inline; only the ID is queued, the refresh reads the stored state.
-		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
-			NodeCreated: db.indexNodeFromEvent,
-			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
-			// Relationship vectors are indexed whether or not relationship
-			// search (#1065) is on.
-			EdgeCreated:    db.indexRelationshipFromEvent,
-			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
-			NamespaceReset: db.dropSearchForPrefix,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
+		if err := db.subscribeSearchEvents(namespaced.GetInnerEngine()); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1753,9 +1738,8 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		return true
 	}
 
-	// Create embed queue against the un-namespaced base storage so it can pull work
-	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
-	db.embedQueue = NewEmbedQueue(embedder, db.baseStorage, db.embedWorkerConfig)
+	// The queue processes fully qualified node IDs across the physical stores.
+	db.embedQueue = NewEmbedQueue(embedder, db.embeddingQueueStorage(), db.embedWorkerConfig)
 	db.embedQueue.setEmbeddingAdmission(db.managedEmbeddingAllowed)
 	if db.embedQueueYieldFn != nil {
 		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
@@ -2415,8 +2399,8 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 		return 0, storage.ErrStorageClosed
 	}
 	defer release()
-	// Unwrap storage layers to find the BadgerEngine
-	// The storage chain is: WALEngine -> BadgerEngine
+	// Strip the namespace wrapper. The physical store retains its WAL and
+	// exposes the same prefix-reset operation through its decorators.
 	engine := scopedStorage
 	idPrefix := ""
 
@@ -2429,16 +2413,14 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 	// Storage publishes each accepted reset through the existing per-node
 	// refresh owner. Catch up those reservations before returning, including
 	// completed nodes of a partial reset, without discarding newer vectors.
-	var count int
-	var err error
-	switch native := engine.(type) {
-	case *storage.WALEngine:
-		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
-	case *storage.BadgerEngine:
-		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
-	default:
+	native, ok := engine.(interface{ ClearAllEmbeddingsForPrefix(string) (int, error) })
+	// MemoryEngine embeds Badger's methods. Keep regeneration limited to
+	// the same persistent storage implementations as the public reset API.
+	_, inMemory := engine.(*storage.MemoryEngine)
+	if !ok || inMemory {
 		return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 	}
+	count, err := native.ClearAllEmbeddingsForPrefix(idPrefix)
 	if count > 0 {
 		db.searchServicesMu.RLock()
 		entry := db.searchServices[database]
@@ -2551,7 +2533,7 @@ func unwrapToBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
 
 // SetEmbeddingLabelPolicy configures managed-embedding admission for one database.
 func (db *DB) SetEmbeddingLabelPolicy(dbName string, eligible, excluded []string) {
-	if badger := unwrapToBadgerEngine(db.baseStorage); badger != nil {
+	if badger := db.embeddingPolicyEngine(dbName); badger != nil {
 		badger.SetEmbeddingLabelPolicy(dbName, eligible, excluded)
 	}
 }

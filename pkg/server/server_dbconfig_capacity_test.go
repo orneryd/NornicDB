@@ -112,20 +112,16 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 		_ = after.Stop(context.Background())
 		_ = reopened.Close()
 	})
-	var engine *storage.BadgerEngine
-	for current := reopened.GetBaseStorageForManager(); current != nil; {
-		if badger, ok := current.(*storage.BadgerEngine); ok {
-			engine = badger
-			break
-		}
-		wrapper, ok := current.(interface{ GetInnerEngine() storage.Engine })
-		if !ok {
-			break
-		}
-		current = wrapper.GetInnerEngine()
+	stores := make(map[string]*storage.BadgerEngine)
+	for _, name := range []string{"nornic", "images"} {
+		physical, err := after.dbManager.BackgroundGraphStore(name)
+		require.NoError(t, err)
+		engine, ok := storage.UnwrapEngine(physical).(*storage.BadgerEngine)
+		require.True(t, ok)
+		engine.SetEmbeddingsEnabled(true)
+		stores[name] = engine
 	}
-	require.NotNil(t, engine)
-	engine.SetEmbeddingsEnabled(true)
+	require.NotSame(t, stores["nornic"], stores["images"])
 	for _, testCase := range []struct {
 		database, id string
 		labels       []string
@@ -141,9 +137,11 @@ func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 		_, err = engineForDB.CreateNode(t.Context(), &storage.Node{ID: storage.NodeID(testCase.id), Labels: testCase.labels, Properties: map[string]any{"text": "value"}})
 		require.NoError(t, err)
 	}
-	require.Equal(t, 2, engine.PendingEmbeddingsCount())
-	engine.RefreshPendingEmbeddingsIndex()
-	require.Equal(t, 2, engine.PendingEmbeddingsCount())
+	for name, engine := range stores {
+		require.Equal(t, 1, engine.PendingEmbeddingsCount(), name)
+		engine.RefreshPendingEmbeddingsIndex()
+		require.Equal(t, 1, engine.PendingEmbeddingsCount(), name)
+	}
 }
 
 func TestAdminPutDynamicSearchCacheDoesNotRebuild(t *testing.T) {

@@ -147,6 +147,24 @@ type DatabaseSearchStatus struct {
 	LazyTriggerNeeded bool `json:"lazy_trigger_needed,omitempty"`
 }
 
+func (db *DB) subscribeSearchEvents(engine storage.Engine) error {
+	// The debounced refresh reads from the authoritative store. Each commit
+	// only needs to queue the fully qualified entity ID.
+	if err := storage.SubscribeEvents(engine, storage.EventHandlers{
+		NodeCreated: db.indexNodeFromEvent,
+		NodeUpdated: db.indexNodeFromEvent,
+		NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
+		// Relationship vectors are indexed whether or not relationship search (#1065) is on.
+		EdgeCreated:    db.indexRelationshipFromEvent,
+		EdgeUpdated:    db.indexRelationshipFromEvent,
+		EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
+		NamespaceReset: db.dropSearchForPrefix,
+	}); err != nil {
+		return fmt.Errorf("subscribing search to storage events: %w", err)
+	}
+	return nil
+}
+
 func splitQualifiedID(id string) (dbName string, local string, ok bool) {
 	dbName, local, ok = strings.Cut(id, ":")
 	if !ok || dbName == "" || local == "" {

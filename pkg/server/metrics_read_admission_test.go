@@ -188,8 +188,10 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 					}
 					response := makeRequest(t, s, http.MethodGet, "/metrics", nil, controlToken)
 					require.Equal(t, http.StatusOK, response.Code)
-					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
-					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
+					// The root contains the shared graph and system catalog. The
+					// isolated graph contributes four nodes and one relationship.
+					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()+4), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
+					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()+1), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
 					fullSlow := float64(25)
 					if tenantLabels {
 						fullSlow = 29

@@ -126,6 +126,7 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 		return nil, errors.Join(err, native.Close())
 	}
 	engine := storage.NewWALEngine(native, wal)
+	configureEmbeddingStore(native, db.config)
 	native.SetChangeCapture(name, storage.ParseChangeCaptureMode(options[multidb.OptionTxLogEnrichment]))
 	if _, err := storage.RecoverBufferedCommitsAtOpen(native, wal); err != nil {
 		return nil, errors.Join(err, engine.Close())
@@ -143,6 +144,9 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 	}
 	indexesHealthy := prepareDerivedIndexes(ctx, engine)
 	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, engine.Close())
+	}
+	if err := db.subscribeSearchEvents(engine); err != nil {
 		return nil, errors.Join(err, engine.Close())
 	}
 	if db.config.Database.WALAutoCompactionEnabled {
