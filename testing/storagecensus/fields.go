@@ -125,10 +125,10 @@ var fieldClasses = map[string]fieldRow{
 		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.publishTotalCountChange", "pkg/storage.BadgerEngine.initializeCounts"}, readers: []string{"pkg/storage.BadgerEngine.EdgeCount"}},
 	"pkg/storage.BadgerEngine.namespaceNodeCounts": {class: "entity-count", owners: []string{
 		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceNodeCount", "pkg/storage.BadgerEngine.initializeCounts",
-		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
+		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.openBadgerEngine"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	"pkg/storage.BadgerEngine.namespaceEdgeCounts": {class: "entity-count", owners: []string{
 		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceEdgeCount", "pkg/storage.BadgerEngine.initializeCounts",
-		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
+		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.openBadgerEngine"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	// Counts of acknowledged write-behind commits not yet applied.
 	"pkg/storage.bufferedCardinalityDeltas.nodes":     bufferedCardinalityRow,
 	"pkg/storage.bufferedCardinalityDeltas.edges":     bufferedCardinalityRow,

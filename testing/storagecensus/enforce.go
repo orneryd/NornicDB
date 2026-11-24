@@ -79,7 +79,7 @@ var lockAcquisitions = map[string]lockAcquisition{
 // the engine and no buffered commit exists, so their writes there are
 // ordered. Each row names a function that exists.
 var constructors = map[string]string{
-	"pkg/storage.NewBadgerEngineWithOptions": "opens the store, runs the on-start migrations and count rebuilds, and only then creates the write-behind buffer and returns the engine",
+	"pkg/storage.openBadgerEngine": "opens the store for ordinary or offline import use, runs the on-start migrations and count rebuilds, and only then creates the write-behind buffer and returns the engine",
 }
 
 // bufferStore reports whether st stores the engine's write-behind buffer.
