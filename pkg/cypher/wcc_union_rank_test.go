@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -33,9 +34,8 @@ func TestComputeWCCUnionByRank(t *testing.T) {
 }
 
 func TestWCCStreamsCompleteStoredGraph(t *testing.T) {
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "wcc"))
 	other := NewStorageExecutor(storage.NewNamespacedEngine(engine, "other"))
 	_, err = other.Execute(t.Context(), `CREATE (:V)-[:X]->(:V)`, nil)
