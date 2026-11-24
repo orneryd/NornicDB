@@ -16,7 +16,7 @@ import (
 
 func TestPDW1615StoredStringListSubscript(t *testing.T) {
 	ctx := context.Background()
-	for _, n := range []int{2000, 4000, 8000} {
+	for _, n := range []int{4000, 8000, 16000} {
 		engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()})
 		if err != nil {
 			t.Fatal(err)
@@ -32,16 +32,16 @@ func TestPDW1615StoredStringListSubscript(t *testing.T) {
 		}
 		t.Logf("PDW1615 n=%d stored cs type %T ci type %T", n, nodes[0].Properties["cs"], nodes[0].Properties["ci"])
 		cases := []struct{ name, query string }{
-			{"string-subscript", "MATCH (s:PDW1615 {id: 'one'}) RETURN size([i IN range(0, size(s.cs) - 1) WHERE s.cs[i] <> '' | s.cs[i]]) AS c"},
-			{"string-bound-once", "MATCH (s:PDW1615 {id: 'one'}) WITH s.cs AS cs RETURN size([i IN range(0, size(cs) - 1) WHERE cs[i] <> '' | cs[i]]) AS c"},
-			{"int-subscript", "MATCH (s:PDW1615 {id: 'one'}) RETURN size([i IN range(0, size(s.ci) - 1) WHERE s.ci[i] >= 0 | s.ci[i]]) AS c"},
+			{"string-subscript", "MATCH (s:PDW1615 {id: 'one'}) WHERE $nonce >= 0 RETURN size([i IN range(0, size(s.cs) - 1) WHERE s.cs[i] <> '' | s.cs[i]]) AS c"},
+			{"string-bound-once", "MATCH (s:PDW1615 {id: 'one'}) WHERE $nonce >= 0 WITH s.cs AS cs RETURN size([i IN range(0, size(cs) - 1) WHERE cs[i] <> '' | cs[i]]) AS c"},
+			{"int-subscript", "MATCH (s:PDW1615 {id: 'one'}) WHERE $nonce >= 0 RETURN size([i IN range(0, size(s.ci) - 1) WHERE s.ci[i] >= 0 | s.ci[i]]) AS c"},
 		}
 		for _, c := range cases {
 			var best time.Duration
 			var got any
 			for rep := 0; rep < 3; rep++ {
 				started := time.Now()
-				res, err := exec.Execute(ctx, c.query, nil)
+				res, err := exec.Execute(ctx, c.query, map[string]any{"nonce": int64(n*100 + rep*10 + len(c.name))})
 				took := time.Since(started)
 				if err != nil {
 					t.Fatalf("%s n=%d: %v", c.name, n, err)
@@ -49,6 +49,7 @@ func TestPDW1615StoredStringListSubscript(t *testing.T) {
 				if len(res.Rows) == 1 {
 					got = res.Rows[0][0]
 				}
+				t.Logf("PDW1615 n=%d case=%s rep=%d took=%s", n, c.name, rep, took.Round(time.Microsecond))
 				if rep == 0 || took < best {
 					best = took
 				}
