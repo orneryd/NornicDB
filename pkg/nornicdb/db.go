@@ -2414,7 +2414,10 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 	// refresh owner. Catch up those reservations before returning, including
 	// completed nodes of a partial reset, without discarding newer vectors.
 	native, ok := engine.(interface{ ClearAllEmbeddingsForPrefix(string) (int, error) })
-	if !ok {
+	// MemoryEngine embeds Badger's methods. Keep regeneration limited to
+	// the same persistent storage implementations as the public reset API.
+	_, inMemory := engine.(*storage.MemoryEngine)
+	if !ok || inMemory {
 		return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 	}
 	count, err := native.ClearAllEmbeddingsForPrefix(idPrefix)
