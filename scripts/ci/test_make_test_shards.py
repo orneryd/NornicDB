@@ -36,7 +36,8 @@ class Shards(unittest.TestCase):
         self.assertEqual(lines.count("test"), len(SHARDS))
         self.assertEqual(lines.count("-p"), len(SHARDS))
         self.assertEqual(lines.count("-parallel"), len(SHARDS))
-        self.assertEqual(lines.count("30m"), len(SHARDS))
+        self.assertEqual(lines.count("30m"), len(SHARDS) - 1)
+        self.assertEqual(lines.count("45m"), 1)
 
     def test_failed_package_discovery_fails(self):
         self.assertNotEqual(self.run_shard("other", FAIL_LIST="1").returncode, 0)

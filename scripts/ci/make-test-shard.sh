@@ -28,4 +28,10 @@ if (( ${#packages[@]} == 0 )); then
 fi
 printf 'Shard %s packages:\n' "$shard"
 printf '  %s\n' "${packages[@]}"
-go test -p 1 -parallel 4 -timeout 30m "${packages[@]}"
+# The Cypher package's full test process can exceed 30 minutes on trusted
+# runners even when the currently running test passes in isolation.
+timeout=30m
+if [[ "$shard" == cypher ]]; then
+  timeout=45m
+fi
+go test -p 1 -parallel 4 -timeout "$timeout" "${packages[@]}"

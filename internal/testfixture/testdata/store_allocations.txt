@@ -16,7 +16,7 @@ github.com/orneryd/nornicdb/cmd/nornicdb-admin.runCheckIDs -> github.com/orneryd
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runExportNeo4jCSV -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull
-github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/cmd/nornicdb-admin.runImportFull -> github.com/orneryd/nornicdb/pkg/storage.OpenBadgerForOfflineImport calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction
 github.com/orneryd/nornicdb/cmd/nornicdb.*DBQueryExecutor.BeginTransaction -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open calls=1
 github.com/orneryd/nornicdb/cmd/nornicdb.*httpAdapter.Start
@@ -117,14 +117,15 @@ github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngine -> github.com/orneryd/no
 github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory
 github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
-github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction calls=1
-github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
+github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithMVCCHistory -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions
 github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngineWithOptions -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions calls=1
+github.com/orneryd/nornicdb/pkg/storage.OpenBadgerForOfflineImport
+github.com/orneryd/nornicdb/pkg/storage.OpenBadgerForOfflineImport -> github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL -> github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger
@@ -135,6 +136,9 @@ github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions
 github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
 github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore
 github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine
+github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine -> github.com/orneryd/nornicdb/pkg/storage.*BadgerEngine.reopenForPostMigrationCompaction calls=1
+github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
 github.com/orneryd/nornicdb/pkg/storage.openManagedBadger
 github.com/orneryd/nornicdb/pkg/storage.openManagedBadger -> github.com/dgraph-io/badger/v4.OpenManaged calls=1
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open
