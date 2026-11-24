@@ -412,8 +412,8 @@
     },
     {
       "path": "development/contributing.md",
-      "sha256": "0fda3a5ecf59fa316a523e875c26a9d74f458cca5198c2a5ae2838868b7d1d7a",
-      "bytes": 16695
+      "sha256": "840abf3c1f699a86ad3e4be8ce368d235b72a125f47f39c93e76bcc46c0f687f",
+      "bytes": 16930
     },
     {
       "path": "development/count-store-visibility.md",
