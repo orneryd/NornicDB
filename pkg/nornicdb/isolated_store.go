@@ -50,6 +50,9 @@ func (db *DB) IsolatedStoreConfig() *multidb.IsolatedStoreConfig {
 	root := db.config.Database.DataDir
 	return &multidb.IsolatedStoreConfig{
 		Create: func(ctx context.Context, name string, options map[string]string) (string, storage.Engine, error) {
+			if err := ctx.Err(); err != nil {
+				return "", nil, err
+			}
 			id, dir, err := storage.CreatePreparedDatabaseDirectory(root, name)
 			if err != nil {
 				return "", nil, err
@@ -64,6 +67,9 @@ func (db *DB) IsolatedStoreConfig() *multidb.IsolatedStoreConfig {
 			return id, engine, nil
 		},
 		Open: func(ctx context.Context, name, id string, options map[string]string, verify bool) (storage.Engine, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			readStore := storage.ReadPreparedDatabaseSeal
 			if verify {
 				readStore = storage.ReadPreparedDatabase
@@ -136,6 +142,9 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 		}
 	}
 	indexesHealthy := prepareDerivedIndexes(ctx, engine)
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, engine.Close())
+	}
 	if db.config.Database.WALAutoCompactionEnabled {
 		if err := engine.EnableAutoCompaction(filepath.Join(dir, "snapshots")); err != nil {
 			return nil, errors.Join(err, engine.Close())

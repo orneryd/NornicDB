@@ -231,6 +231,9 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 	}
 
 	status.Phase = RecoveryPhasePreserve
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	preservedDir, err := preserveCorruptedDataDir(dataDir, backupDir, os.Rename)
 	if err != nil {
 		return nil, "", recoveryUnavailable(status, fmt.Errorf("failed to preserve corrupted data dir (%s → %s): %w", dataDir, backupDir, err))
@@ -260,7 +263,9 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 	}
 
 	status.Phase = RecoveryPhaseReplay
-	replay, streamStatus, err := storage.RecoverIntoEngine(ctx, newStore, walDir, snapPath)
+	// The old store has moved. Finish recovery under that ownership so request
+	// cancellation cannot leave a partially rebuilt store at the catalog path.
+	replay, streamStatus, err := storage.RecoverIntoEngine(context.WithoutCancel(ctx), newStore, walDir, snapPath)
 	status.SnapshotStreaming = streamStatus.SnapshotStreaming
 	status.SnapshotNodes = streamStatus.SnapshotNodes
 	status.SnapshotEdges = streamStatus.SnapshotEdges

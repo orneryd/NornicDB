@@ -39,11 +39,11 @@ func (w *WALEngine) BackupTo(ctx context.Context, dst io.Writer) error {
 	if w == nil || w.engine == nil {
 		return ErrStorageClosed
 	}
-	w.mutationMu.RLock()
+	if err := w.mutationMu.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer w.mutationMu.RUnlock()
-	if backup, ok := w.engine.(interface {
-		BackupTo(context.Context, io.Writer) error
-	}); ok {
+	if backup, ok := w.engine.(NativeBackupStreamer); ok {
 		return backup.BackupTo(ctx, dst)
 	}
 	return ErrNotImplemented

@@ -21,13 +21,14 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
-	return b.withBackupSnapshot(context.Background(), func(db *managedBadgerDB) error {
+	ctx := context.Background()
+	return b.withBackupSnapshot(ctx, func(db *managedBadgerDB) error {
 		f, err := security.CreateRootedFile(path, 0o600)
 		if err != nil {
 			return localizedError(localization.StorageClientBackupFileCreateFailed(path, err), err)
 		}
 		defer f.Close()
-		if err := writeBadgerBackup(db, f); err != nil {
+		if err := writeBadgerBackup(ctx, db, f); err != nil {
 			return err
 		}
 		if err := f.Sync(); err != nil {
@@ -40,7 +41,7 @@ func (b *BadgerEngine) Backup(path string) error {
 // BackupTo emits the same native snapshot as Backup to a caller-owned stream.
 func (b *BadgerEngine) BackupTo(ctx context.Context, dst io.Writer) error {
 	return b.withBackupSnapshot(ctx, func(db *managedBadgerDB) error {
-		return writeBadgerBackup(db, dst)
+		return writeBadgerBackup(ctx, db, dst)
 	})
 }
 
@@ -55,14 +56,20 @@ func (b *BadgerEngine) withBackupSnapshot(ctx context.Context, write func(*manag
 	if b.ensureOpenLocked(false) != nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	return write(b.db)
 }
 
-func writeBadgerBackup(db *managedBadgerDB, dst io.Writer) error {
+func writeBadgerBackup(ctx context.Context, db *managedBadgerDB, dst io.Writer) error {
 	buf := bufio.NewWriterSize(dst, 16*1024*1024)
-	if _, err := db.Backup(buf, 0); err != nil {
+	if _, err := db.Backup(backupStreamWriter{ctx: ctx, dst: buf}, 0); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Flush buffer
@@ -70,7 +77,21 @@ func writeBadgerBackup(db *managedBadgerDB, dst io.Writer) error {
 		return localizedError(localization.StorageClientBackupFlushFailed(err), err)
 	}
 
-	return nil
+	return ctx.Err()
+}
+
+// Badger ends its stream when the writer returns an error. Check the request
+// before each serialized write, including writes still held by the buffer.
+type backupStreamWriter struct {
+	ctx context.Context
+	dst io.Writer
+}
+
+func (w backupStreamWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.dst.Write(data)
 }
 
 // restoreReadDrainTimeout bounds how long Restore waits for the reads and
@@ -114,7 +135,7 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 	}
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
-	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
+	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills(context.WithoutCancel(ctx))) }()
 
 	lifecycle, err := b.beginLifecycleWrite(ctx, "")
 	if err != nil {
@@ -199,8 +220,10 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 // restartIndexBackfills starts the index backfills the store needs, as open
 // does. It holds the write barrier so Close, which stops the backfills before
 // taking it, can't run in between; a closed engine has nothing to backfill.
-func (b *BadgerEngine) restartIndexBackfills() error {
-	b.writeBarrier.RLock()
+func (b *BadgerEngine) restartIndexBackfills(ctx context.Context) error {
+	if err := b.writeBarrier.RLockContext(ctx); err != nil {
+		return err
+	}
 	defer b.writeBarrier.RUnlock()
 	if b.ensureOpen(false) != nil {
 		return nil

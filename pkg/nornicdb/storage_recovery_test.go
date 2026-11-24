@@ -279,6 +279,14 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	}, "test"))
 	require.NoError(t, wal.Close())
 
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	store, preserved, err := recoverBadgerFromSnapshotAndWAL(canceled, dataDir, storage.BadgerOptions{DataDir: dataDir})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, store)
+	require.Empty(t, preserved)
+	require.FileExists(t, snapshotPath, "pre-accept cancellation leaves recovery inputs in place")
+
 	recovered, backupDir, err := recoverBadgerFromSnapshotAndWAL(t.Context(), dataDir, storage.BadgerOptions{DataDir: dataDir})
 	require.NoError(t, err)
 	require.NotNil(t, recovered)

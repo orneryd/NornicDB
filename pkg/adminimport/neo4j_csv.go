@@ -98,6 +98,15 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 // any package file is created or truncated. For example, label "Part;Archive"
 // requires an ArrayDelimiter other than ';' for both export and import.
 func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
+	return ExportNeo4jCSVWithContext(context.Background(), engine, opts)
+}
+
+// ExportNeo4jCSVWithContext lets callers cancel the graph scan before the CSV
+// package is written. Once output starts, finish writing the package files.
+func ExportNeo4jCSVWithContext(ctx context.Context, engine storage.Engine, opts Neo4jCSVExportOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if opts.OutputDir == "" {
 		return unsupported(localization.AdminExportOutputDirectoryRequired())
 	}
@@ -122,12 +131,15 @@ func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 
 	// An export holds every stored entity, those the visibility layer hides
 	// from reads included.
-	nodes, err := storage.CollectStoredNodes(context.Background(), engine)
+	nodes, err := storage.CollectStoredNodes(ctx, engine)
 	if err != nil {
 		return err
 	}
-	edges, err := storage.CollectStoredEdges(context.Background(), engine)
+	edges, err := storage.CollectStoredEdges(ctx, engine)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -139,7 +151,7 @@ func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 			return err
 		}
 	}
-	if err := exportNornicSchemaDefinition(filepath.Join(opts.OutputDir, Neo4jCSVNornicSchemaFileName), engine.GetSchema()); err != nil {
+	if err := exportNornicSchemaDefinition(context.WithoutCancel(ctx), filepath.Join(opts.OutputDir, Neo4jCSVNornicSchemaFileName), engine.GetSchema()); err != nil {
 		return err
 	}
 	if err := exportSchemaCypher(filepath.Join(opts.OutputDir, Neo4jCSVSchemaFileName), engine.GetSchema()); err != nil {
@@ -754,13 +766,11 @@ func (w *csvExportWriter) encodeField(text string) error {
 	return nil
 }
 
-func exportNornicSchemaDefinition(path string, schema *storage.SchemaManager) error {
+func exportNornicSchemaDefinition(ctx context.Context, path string, schema *storage.SchemaManager) error {
 	if schema == nil {
 		return nil
 	}
-	// Admin export is an offline operation that owns its own lifetime, so the
-	// definition snapshot runs under it rather than a caller request.
-	def, err := schema.ExportDefinition(context.Background())
+	def, err := schema.ExportDefinition(ctx)
 	if err != nil {
 		return err
 	}

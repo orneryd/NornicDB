@@ -29,6 +29,27 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 	if stores[""] == nil {
 		return fmt.Errorf("database backup has no root store: %w", ErrInvalidData)
 	}
+	return writeDatabaseBackupFile(ctx, path, func(file io.Writer) error {
+		return writeDatabaseBackupMembers(ctx, file, stores)
+	})
+}
+
+// NativeBackupStreamer writes a complete native storage snapshot.
+type NativeBackupStreamer interface {
+	BackupTo(context.Context, io.Writer) error
+}
+
+// WriteNativeDatabaseBackup publishes one native stream in the single-store format.
+func WriteNativeDatabaseBackup(ctx context.Context, path string, store NativeBackupStreamer) error {
+	return writeDatabaseBackupFile(ctx, path, func(file io.Writer) error {
+		return store.BackupTo(ctx, file)
+	})
+}
+
+func writeDatabaseBackupFile(ctx context.Context, path string, write func(io.Writer) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	path, err := security.AbsCanonicalFilePath(path)
 	if err != nil {
 		return err
@@ -39,13 +60,30 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 		return err
 	}
 	defer security.RemoveRootedPath(temporary)
-	if _, err := file.WriteString(backupArchiveMagic); err != nil {
+	if err := write(file); err != nil {
 		return errors.Join(err, file.Close())
 	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := errors.Join(file.Sync(), file.Close(), ctx.Err()); err != nil {
+		return err
+	}
+	if err := security.RenameRootedFile(temporary, path); err != nil {
+		return err
+	}
+	return SyncDir(filepath.Dir(path))
+}
+
+func writeDatabaseBackupMembers(ctx context.Context, file io.Writer, stores map[string]Engine) error {
+	if _, err := io.WriteString(file, backupArchiveMagic); err != nil {
+		return err
+	}
 	archive := zip.NewWriter(file)
+	var err error
 	if root, ok := UnwrapEngine(stores[""]).(*BadgerEngine); ok && root.encryptedStorage() {
 		if err := archive.SetComment(backupArchiveEncryptedSource); err != nil {
-			return errors.Join(err, file.Close())
+			return errors.Join(err, archive.Close())
 		}
 	}
 	for id, engine := range stores {
@@ -62,9 +100,7 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 			err = createErr
 			break
 		}
-		backup, ok := engine.(interface {
-			BackupTo(context.Context, io.Writer) error
-		})
+		backup, ok := engine.(NativeBackupStreamer)
 		if !ok {
 			err = fmt.Errorf("backing up %s: %w", name, ErrNotImplemented)
 			break
@@ -74,16 +110,7 @@ func WriteDatabaseBackupArchive(ctx context.Context, path string, stores map[str
 			break
 		}
 	}
-	if err := errors.Join(err, archive.Close()); err != nil {
-		return errors.Join(err, file.Close())
-	}
-	if err := errors.Join(ctx.Err(), file.Sync(), file.Close()); err != nil {
-		return err
-	}
-	if err := security.RenameRootedFile(temporary, path); err != nil {
-		return err
-	}
-	return SyncDir(filepath.Dir(path))
+	return errors.Join(err, archive.Close())
 }
 
 // DatabaseBackupArchive holds native streams keyed by physical store ID.

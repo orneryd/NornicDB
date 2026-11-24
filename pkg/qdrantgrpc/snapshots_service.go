@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -284,6 +285,9 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 }
 
 func (s *SnapshotsService) createFull(ctx context.Context, catalog multidb.BackupCatalog) (*qpb.CreateSnapshotResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.allowFullAccess(ctx); err != nil {
 		return nil, err
 	}
@@ -305,8 +309,11 @@ func (s *SnapshotsService) createFull(ctx context.Context, catalog multidb.Backu
 	snapshotPath := filepath.Join(fullSnapshotDir, snapshotName)
 
 	// Try to use BadgerEngine.Backup if available.
-	if catalog.HasDedicatedStores() {
+	if catalog.CanStream() {
 		if err := catalog.Write(ctx, snapshotPath, nil); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
 		}
 	} else if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {

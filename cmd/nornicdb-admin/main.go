@@ -2,14 +2,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +36,10 @@ func main() {
 	registerAdminCommands(rootCmd, localizer)
 	localizeCobraHelp(rootCmd, localizer)
 	rootCmd.SilenceErrors = true
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err = rootCmd.ExecuteContext(ctx)
+	stop()
+	if err != nil {
 		fmt.Fprintln(rootCmd.ErrOrStderr(), cli.Render(localizer, localization.AdminCLIErrorPrefix()), renderCommandError(localizer, err))
 		os.Exit(exitCodeForError(err))
 	}
@@ -400,7 +406,7 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 	}
 
 	namespaced := storage.NewNamespacedEngine(engine, dbName)
-	return adminimport.ExportNeo4jCSV(namespaced, adminimport.Neo4jCSVExportOptions{
+	return adminimport.ExportNeo4jCSVWithContext(cmd.Context(), namespaced, adminimport.Neo4jCSVExportOptions{
 		OutputDir:       toPath,
 		Delimiter:       firstRune(delimiter, ','),
 		ArrayDelimiter:  firstRune(arrayDelimiter, ';'),

@@ -18,19 +18,34 @@ func (b BackupCatalog) HasDedicatedStores() bool {
 	return len(b.stores) > 1
 }
 
+// CanStream reports whether the catalog can provide a native full backup.
+func (b BackupCatalog) CanStream() bool {
+	_, ok := b.stores[""].(storage.NativeBackupStreamer)
+	return b.HasDedicatedStores() || ok
+}
+
 // Write preserves the native single-store format or writes all stores together
 // in one archive. The shared writer preserves each caller's legacy fallback.
 func (b BackupCatalog) Write(ctx context.Context, path string, shared func() error) error {
-	if !b.HasDedicatedStores() {
-		return shared()
+	if b.HasDedicatedStores() {
+		return storage.WriteDatabaseBackupArchive(ctx, path, b.stores)
 	}
-	return storage.WriteDatabaseBackupArchive(ctx, path, b.stores)
+	if store, ok := b.stores[""].(storage.NativeBackupStreamer); ok {
+		return storage.WriteNativeDatabaseBackup(ctx, path, store)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return shared()
 }
 
 // WithBackupCatalog holds the catalog stable while the caller authorizes and
 // captures a backup. It also waits for DROP's physical cleanup, which can run
 // outside the catalog gate. Ordinary graph transactions keep serving.
 func (m *DatabaseManager) WithBackupCatalog(ctx context.Context, operation func(BackupCatalog) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if m == nil || m.catalogGate == nil {
 		return operation(BackupCatalog{})
 	}
@@ -45,6 +60,9 @@ func (m *DatabaseManager) WithBackupCatalog(ctx context.Context, operation func(
 	case <-m.catalogGate:
 	}
 	defer func() { m.catalogGate <- struct{}{} }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.RLock()
 	stores := map[string]storage.Engine{"": m.inner}
 	for name, info := range m.databases {

@@ -132,6 +132,10 @@ curl --fail-with-body -u "$NORNICDB_USER:$NORNICDB_PASSWORD" \
 
 Publication validates the closed store and records it in the catalog. It leaves the graph in the same files and accepts retries with the same database name and ID. The staged importer loads graph data and applies CSV schema using the same native full-import writer. The server builds search artifacts after publication.
 
+Interrupting a staged import before it is sealed removes the private store. If a publication request is canceled before catalog acceptance, the import ID remains available to retry. After acceptance, the server settles the catalog receipt even if the client disconnects. Retry with the same name and ID to confirm the outcome.
+
+Canceling a native backup before publication preserves any existing backup at the destination. Canceling an offline restore before publication removes its temporary files and leaves the destination available for retry.
+
 ## Offline Imports Into The Shared Store
 
 Without `--stage`, stop the server and open the shared storage directory for import.

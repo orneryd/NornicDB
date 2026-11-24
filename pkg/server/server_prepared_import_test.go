@@ -134,6 +134,10 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	}, key)
 	require.NoError(t, err)
 	require.False(t, server.dbManager.Exists("loaded"))
+	canceled, cancelPublish := context.WithCancel(t.Context())
+	cancelPublish()
+	require.ErrorIs(t, server.dbManager.PublishPreparedDatabase(canceled, "loaded", id), context.Canceled)
+	require.False(t, server.dbManager.Exists("loaded"))
 	count("shared", "MATCH (n:Person) RETURN count(n)", 1)
 	publish := func(database string, expected int) {
 		response := makeRequest(t, server, http.MethodPost, "/admin/databases/imports/publish", map[string]string{
@@ -198,6 +202,17 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	count("loaded", "MATCH (n) RETURN count(n)", 0)
 
 	restoredRoot := filepath.Join(t.TempDir(), "restored")
+	canceledRestore, cancelRestore := context.WithCancel(t.Context())
+	defer cancelRestore()
+	require.ErrorIs(t, multidb.RestoreDatabaseBackupWithKey(canceledRestore, backupPath, restoredRoot, func(stage string) ([]byte, error) {
+		key, err := nornicdb.InitializeStorageEncryption(stage, settings)
+		cancelRestore()
+		return key, err
+	}), context.Canceled)
+	require.NoDirExists(t, restoredRoot)
+	leftovers, err := os.ReadDir(filepath.Dir(restoredRoot))
+	require.NoError(t, err)
+	require.Empty(t, leftovers, "temporary restore stores were removed")
 	if settings.Database.EncryptionEnabled {
 		require.ErrorContains(t, multidb.RestoreDatabaseBackup(t.Context(), backupPath, restoredRoot), "requires encryption")
 		require.NoDirExists(t, restoredRoot)

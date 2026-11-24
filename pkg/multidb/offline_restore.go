@@ -22,7 +22,10 @@ func RestoreDatabaseBackup(ctx context.Context, source, destination string) erro
 
 // RestoreDatabaseBackupWithKey provisions the destination's key inside the
 // temporary data root. Every restored native store opens with that key.
-func RestoreDatabaseBackupWithKey(ctx context.Context, source, destination string, initializeKey func(string) ([]byte, error)) error {
+func RestoreDatabaseBackupWithKey(ctx context.Context, source, destination string, initializeKey func(string) ([]byte, error)) (result error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	destination, err := security.AbsCanonicalFilePath(destination)
 	if err != nil {
 		return err
@@ -44,7 +47,7 @@ func RestoreDatabaseBackupWithKey(ctx context.Context, source, destination strin
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(stage)
+	defer func() { result = errors.Join(result, os.RemoveAll(stage)) }()
 	var key []byte
 	if initializeKey != nil {
 		key, err = initializeKey(stage)
@@ -86,6 +89,9 @@ func RestoreDatabaseBackupWithKey(ctx context.Context, source, destination strin
 		return err
 	}
 	if err := requireNewDataDirectory(destination); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := security.RenameRootedFile(stage, destination); err != nil {
@@ -154,16 +160,32 @@ func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []by
 }
 
 func restoreNativeStore(ctx context.Context, dir string, key []byte, src io.Reader, inspect func(*storage.BadgerEngine) error) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, HighPerformance: true, EncryptionKey: key})
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, engine.Close()) }()
-	if err := engine.RestoreFrom(ctx, src); err != nil {
+	if err := engine.RestoreFrom(ctx, offlineRestoreReader{ctx: ctx, source: src}); err != nil {
 		return err
 	}
 	if err := inspect(engine); err != nil {
 		return err
 	}
 	return engine.Sync()
+}
+
+// The temporary store can be discarded if its load stops partway through.
+type offlineRestoreReader struct {
+	ctx    context.Context
+	source io.Reader
+}
+
+func (r offlineRestoreReader) Read(data []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.source.Read(data)
 }

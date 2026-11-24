@@ -17,6 +17,9 @@ func StageFull(ctx context.Context, root string, opts Options) (id string, repor
 
 // StageFullWithKey builds a staged store using its target installation's key.
 func StageFullWithKey(ctx context.Context, root string, opts Options, key []byte) (id string, report Report, result error) {
+	if err := ctx.Err(); err != nil {
+		return "", Report{}, err
+	}
 	id, directory, err := storage.CreatePreparedDatabaseDirectory(root, opts.DatabaseName)
 	if err != nil {
 		return "", Report{}, err
@@ -49,6 +52,9 @@ func StageFullWithKey(ctx context.Context, root string, opts Options, key []byte
 		err = engine.Sync()
 	}
 	if err := errors.Join(err, engine.Close()); err != nil {
+		return "", report, err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", report, err
 	}
 	if err := storage.SealPreparedDatabase(directory, storage.PreparedDatabase{
