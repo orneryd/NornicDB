@@ -123,19 +123,23 @@ func ImportFull(ctx context.Context, engine storage.Engine, opts Options) (Repor
 		return report, err
 	}
 
+	bulkCtx := ctx
+	if native, ok := engine.(*storage.BadgerEngine); ok {
+		bulkCtx = native.OfflineImportBulkContext(ctx)
+	}
 	state := &importState{
 		idMap:           make(map[string]storage.NodeID),
 		relationshipIDs: make(map[storage.EdgeID]struct{}),
 	}
 	for _, sourceSpec := range opts.NodeSources {
-		if err := importNodeSource(ctx, target, opts, sourceSpec, state, &report); err != nil {
+		if err := importNodeSource(bulkCtx, target, opts, sourceSpec, state, &report); err != nil {
 			report.Errors = append(report.Errors, err.Error())
 			_ = writeReport(opts.ReportFile, report)
 			return report, err
 		}
 	}
 	for _, sourceSpec := range opts.RelSources {
-		if err := importRelationshipSource(ctx, target, opts, sourceSpec, state, &report); err != nil {
+		if err := importRelationshipSource(bulkCtx, target, opts, sourceSpec, state, &report); err != nil {
 			report.Errors = append(report.Errors, err.Error())
 			_ = writeReport(opts.ReportFile, report)
 			return report, err

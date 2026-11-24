@@ -76,8 +76,13 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts(ctx context.Cont
 					return err
 				}
 			}
-			if err := tx.checkEdgeEndpointConflicts(ctx, op.Edge); err != nil {
-				return err
+			// The offline importer is the only graph writer. The endpoint
+			// labels were resolved from its successfully committed chunks
+			// before this create was staged.
+			if tx.offlineImport == nil {
+				if err := tx.checkEdgeEndpointConflicts(ctx, op.Edge); err != nil {
+					return err
+				}
 			}
 		case OpUpdateEdge:
 			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {

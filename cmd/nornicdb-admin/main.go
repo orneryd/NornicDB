@@ -294,7 +294,7 @@ func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
 		rels = append(rels, discoveredRels...)
 	}
 
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir, HighPerformance: true})
+	engine, err := storage.OpenBadgerForOfflineImport(dataDir, dbName)
 	if err != nil {
 		return err
 	}
