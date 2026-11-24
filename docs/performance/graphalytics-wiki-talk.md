@@ -1,33 +1,28 @@
 # LDBC Graphalytics on wiki-Talk
 
-NornicDB matched the official reference outputs on all five workloads. Neo4j Community 2026.10.2 with Graph Data Science 2026.10.2 matched two using the tested configurations. Both ran natively on the same Windows x64 machine with an Intel Core i9-9900KF and 32 GiB of RAM. The directed graph has 2,394,385 vertices and 5,021,410 edges. [Official Graphalytics dataset](https://ldbcouncil.org/benchmarks/graphalytics/datasets/)
+NornicDB and Neo4j Community 2026.10.2 ran in native ARM64 Docker containers on Louise, an Apple M2 Max host. Each database ran separately with six CPUs, a 6 GiB memory limit, and Docker-managed storage. The [official directed wiki-Talk dataset](https://ldbcouncil.org/benchmarks/graphalytics/datasets/) has 2,394,385 vertices and 5,021,410 relationships.
 
-| Workload | NornicDB | Neo4j GDS |
+## Bulk import
+
+| Load path | NornicDB | Neo4j |
 | --- | ---: | ---: |
-| Breadth-first search distances | 0.120 s | 67.045 s |
-| Weakly connected components | 52.352 s | 61.768 s |
-| Community detection via label propagation | 2.400 s | Reference mismatch |
-| Local clustering coefficient | 39.942 s | Reference mismatch |
-| PageRank | 119.659 s | Reference mismatch |
+| Offline CLI, including process shutdown | 403.79 s | 10.34 s |
+| Offline CLI plus shared CSV preparation | 405.46 s | 12.01 s |
+| Online bulk transactions over Bolt | 752.83 s | 170.29 s |
 
-The timings exclude graph import, projection, and reference validation. NornicDB formats results in process. Neo4j streams results over local Bolt and writes them to a scratch file. Its breadth-first distances come from unweighted Delta-Stepping. The table measures these execution paths on this graph. A separate Neo4j WCC stats run on the projected graph reported 0.331 s of engine compute time.
+The offline commands used identical CSV inputs. CSV preparation took 1.67 s. NornicDB used `nornicdb-admin database import full` with search-index construction disabled. Neo4j used `neo4j-admin database import full` with six threads. Both loaders reported the full graph counts.
 
-## Connected-components follow-up
+The online runs used the same Python Bolt client, an index on the source vertex ID, and sequential Cypher `UNWIND` batches of 1,000 rows. The timer includes client parsing, index creation and readiness, and completion of all node and relationship transactions. Server startup and the final graph-count checks are outside the timer. Both databases returned the expected stored counts.
 
-NornicDB originally took 183.999 s. The patch streams relationships once for a complete stored graph. The three follow-up runs took 52.535 s, 51.824 s, and 52.352 s. Every run matched the official partition for all 2,394,385 vertices. [WCC patch and verification](https://github.com/orneryd/NornicDB/pull/1969)
+NornicDB’s offline load was about 1.9 times as fast as its online load, including CSV preparation. Bulk-import tuning is in progress.
 
-## Import and projection
+## Weakly connected components over Bolt
 
-NornicDB used transactional batch import and took 426.09 s in the baseline run, followed by 7.92 s to build its benchmark projection. Neo4j used its offline bulk loader and took 18.63 s, plus 5.52 s for CSV preparation and 2.57 s for the directed GDS projection. The undirected GDS projection took a further 0.77 s.
+| Database | Result |
+| --- | --- |
+| NornicDB | Client timeout after 600 s |
+| Neo4j GDS | 24.99 s with the official partition validated |
 
-The 426.09 s result measures the Graphalytics adapter's transactional import. NornicDB's `nornicdb-admin database import full` also accepts CSV offline and writes through the same transactional storage APIs. A diagnostic with 168,285 vertices and 240,000 relationships from `wiki-Talk`, with search-index construction disabled, spent most of the importer CPU time in storage transactions. Increasing the chunk size from 1,000 to 8,192 rows made the sample slower, from 16.35 s to 20.91 s. A separate comparison found no improvement from the existing high-performance storage profile or write-behind. Batching the endpoint-label reads yielded 17.03–17.45 s against a 17.17–18.31 s baseline in the same experiment. The prototype was not adopted. These sample times do not replace the full-graph result above.
+Both runs used the same Bolt client and consumed the full output into a scratch file when the query completed. Neo4j’s directed GDS projection took 2.01 s separately. NornicDB’s [earlier embedded WCC optimization](https://github.com/orneryd/NornicDB/pull/1969) measures the in-process path.
 
-## Reference validation
-
-Both runs used the same validator and a byte-identical copy of the official archive. The validator checks exact traversal distances and labels, partition equivalence for connected components, and a relative tolerance of 0.0001 for numeric scores.
-
-- Neo4j label propagation used the original vertex IDs as seeds and returned different labels.
-- Neo4j's clustering procedure requires an undirected projection. Its values differed from the reference for the directed graph. [GDS clustering documentation](https://neo4j.com/docs/graph-data-science/current/algorithms/local-clustering-coefficient/)
-- Neo4j PageRank used the archive's damping and iteration settings with L1 normalization. Its scores missed the reference tolerance.
-
-The baseline used NornicDB v1.5.2 with a local validation adapter and a PageRank patch. The WCC follow-up used the hotfix commit in PR #1969. The NornicDB adapter used native APOC procedures for WCC and PageRank and an adjacency projection from storage for the other listed workloads.
+NornicDB was built from release hotfix commit `2a98121eba3278395b7747478069311a53c3a756`. The Neo4j container and its Graph Data Science plugin were used for the Bolt run.
