@@ -1561,51 +1561,51 @@
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:583",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:583",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:583"
+      "origin": "pkg/storage/badger_nodes.go:587",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:587",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:587"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:602",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:602",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:602"
+      "origin": "pkg/storage/badger_nodes.go:606",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:606",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:606"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:658",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:658",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:658"
+      "origin": "pkg/storage/badger_nodes.go:662",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:662",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:662"
     },
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "origin": "pkg/storage/badger_nodes.go:676",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:676",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:676"
+      "origin": "pkg/storage/badger_nodes.go:680",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:680",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:680"
     },
     {
       "space": "prefixLabelIndex",
       "class": "entity-index",
-      "origin": "pkg/storage/badger_nodes.go:707",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:707",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:707"
+      "origin": "pkg/storage/badger_nodes.go:711",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:711",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:711"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:731",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:731",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:731"
+      "origin": "pkg/storage/badger_nodes.go:735",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:735",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:735"
     },
     {
       "space": "prefixPendingEmbed",
       "class": "embedding-queue",
-      "origin": "pkg/storage/badger_nodes.go:737",
-      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:737",
-      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:737"
+      "origin": "pkg/storage/badger_nodes.go:741",
+      "func": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:741",
+      "where": "pkg/storage.BadgerEngine.UpdateNode$5 pkg/storage/badger_nodes.go:741"
     },
     {
       "space": "prefixPendingEmbed",
@@ -4824,7 +4824,7 @@
       "field": "pkg/storage.temporalValidationRead.readCut",
       "class": "read cache physical source cut",
       "func": "pkg/storage.temporalValidationRead.get",
-      "pos": "pkg/storage/badger_transaction_validation.go:1333"
+      "pos": "pkg/storage/badger_transaction_validation.go:1348"
     },
     {
       "field": "pkg/storage.uniqueConstraintSeenTable.keys",
