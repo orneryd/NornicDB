@@ -308,9 +308,17 @@ func (s *SnapshotsService) createFull(ctx context.Context, catalog multidb.Backu
 	snapshotName := fmt.Sprintf("full-%d.snapshot", timestamp.UnixNano())
 	snapshotPath := filepath.Join(fullSnapshotDir, snapshotName)
 
-	// Try to use BadgerEngine.Backup if available.
-	if catalog.CanStream() {
-		if err := catalog.Write(ctx, snapshotPath, nil); err != nil {
+	// Mixed snapshots use the catalog inventory. For a single store, use the
+	// storage supplied to this service, including any caller-owned decorators.
+	native, canStream := s.baseStorage.(storage.NativeBackupStreamer)
+	if dedicated := catalog.HasDedicatedStores(); dedicated || canStream {
+		var err error
+		if dedicated {
+			err = catalog.Write(ctx, snapshotPath, nil)
+		} else {
+			err = storage.WriteNativeDatabaseBackup(ctx, snapshotPath, native)
+		}
+		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}

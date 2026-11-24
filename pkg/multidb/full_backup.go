@@ -18,12 +18,6 @@ func (b BackupCatalog) HasDedicatedStores() bool {
 	return len(b.stores) > 1
 }
 
-// CanStream reports whether the catalog can provide a native full backup.
-func (b BackupCatalog) CanStream() bool {
-	_, ok := b.stores[""].(storage.NativeBackupStreamer)
-	return b.HasDedicatedStores() || ok
-}
-
 // Write preserves the native single-store format or writes all stores together
 // in one archive. The shared writer preserves each caller's legacy fallback.
 func (b BackupCatalog) Write(ctx context.Context, path string, shared func() error) error {
