@@ -26,8 +26,6 @@ type PreparedDatabase struct {
 	Database      string `json:"database"`
 	Nodes         int64  `json:"nodes"`
 	Relationships int64  `json:"relationships"`
-	// A seeded store can have data that predates its first WAL entry.
-	RequiresRecoverySnapshot bool `json:"requires_recovery_snapshot,omitempty"`
 }
 
 func validPreparedDatabaseName(name string) bool {

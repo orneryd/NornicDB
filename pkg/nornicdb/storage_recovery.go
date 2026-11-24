@@ -209,8 +209,8 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 	snapshotDir := filepath.Join(dataDir, "snapshots")
 	snapPath, snapErr := latestSnapshotPath(snapshotDir)
 	if snapErr != nil {
-		if seal != nil && (seal.RequiresRecoverySnapshot || seal.Nodes != 0 || seal.Relationships != 0) {
-			return nil, "", recoveryUnavailable(status, fmt.Errorf("seeded store requires a recovery snapshot: %w", snapErr))
+		if seal != nil {
+			return nil, "", recoveryUnavailable(status, fmt.Errorf("isolated store requires a recovery snapshot: %w", snapErr))
 		}
 		// No snapshots yet (e.g., new DB) or snapshot directory missing — attempt WAL-only recovery.
 		// This can fully recover data when WAL still contains the full history (pre-compaction),
@@ -281,9 +281,7 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 			_ = newStore.Close()
 			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("sync recovered database: %w", err))
 		}
-		recoveredSeal := *seal
-		recoveredSeal.RequiresRecoverySnapshot = true
-		if err := storage.SealPreparedDatabase(dataDir, recoveredSeal); err != nil {
+		if err := storage.SealPreparedDatabase(dataDir, *seal); err != nil {
 			_ = newStore.Close()
 			return nil, backupDir, finishRecoveryFailure(status, backupDir, fmt.Errorf("seal recovered database: %w", err))
 		}

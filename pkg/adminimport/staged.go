@@ -52,7 +52,7 @@ func StageFullWithKey(ctx context.Context, root string, opts Options, key []byte
 		return "", report, err
 	}
 	if err := storage.SealPreparedDatabase(directory, storage.PreparedDatabase{
-		Database: opts.DatabaseName, Nodes: nodes, Relationships: edges, RequiresRecoverySnapshot: true,
+		Database: opts.DatabaseName, Nodes: nodes, Relationships: edges,
 	}); err != nil {
 		return "", report, err
 	}

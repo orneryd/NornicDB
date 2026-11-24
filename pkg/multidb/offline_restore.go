@@ -140,7 +140,7 @@ func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []by
 		return err
 	}
 	defer src.Close()
-	graph := storage.PreparedDatabase{Database: name, RequiresRecoverySnapshot: true}
+	graph := storage.PreparedDatabase{Database: name}
 	if err := restoreNativeStore(ctx, dir, key, src, func(engine *storage.BadgerEngine) error {
 		view := storage.NewNamespacedEngine(engine, name)
 		nodes, nodeErr := view.NodeCount(ctx)
