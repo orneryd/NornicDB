@@ -823,7 +823,15 @@ func (s *Server) getExecutorAndGetNode(ctx context.Context) (exec *cypher.Storag
 				if err != nil {
 					return nil, err
 				}
-				node, err := principal.Graph(engine, dbName).GetNode(ctx, storage.NodeID(normalizeNodeElementIDForDatabase(dbName, id)))
+				identity := storage.EntityIdentity{LocalID: strings.TrimSpace(id)}
+				if kind, source, local, ok := storage.ParseElementID(identity.LocalID); ok && kind == "4" {
+					identity = storage.EntityIdentity{Database: source, LocalID: local}
+				}
+				lookupID, ok := identity.NodeLookupID(engine)
+				if !ok || lookupID == "" {
+					return nil, storage.ErrNotFound
+				}
+				node, err := principal.Graph(engine, dbName).GetNode(ctx, lookupID)
 				if err != nil {
 					return nil, err
 				}
@@ -2165,9 +2173,8 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 }
 
 // mcpRelatedAcceptor is the MCP consumer boundary of the canonical walk: it
-// loads each discovered node, projects its visible properties and always
-// publishes a record. MCP keeps its own policy for missing nodes (a placeholder
-// record that is still expanded) and its own title -> name fallback.
+// loads each discovered node and projects its visible properties. Unscoped
+// callers retain the placeholder for missing nodes.
 type mcpRelatedAcceptor struct {
 	server  *Server
 	engine  storage.Engine
@@ -2183,6 +2190,8 @@ func (a mcpRelatedAcceptor) Discover(ctx context.Context, n *relatedwalk.Neighbo
 		if title == "" {
 			title = getStringProp(props, "name")
 		}
+	} else if auth.FineGrainedRequestFromContext(ctx) != nil {
+		return RelatedNode{}, false, false
 	}
 	return RelatedNode{
 		ID:           a.server.nodeElementID(ctx, n.ID),
@@ -2217,6 +2226,17 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
+
+	if principal := auth.FineGrainedRequestFromContext(ctx); principal != nil {
+		database := DatabaseFromContext(ctx)
+		if database == "" {
+			database = s.DefaultDatabaseName()
+		}
+		if !principal.CanAccessDatabase(database) {
+			return nil
+		}
+		engine = principal.Graph(engine, database)
+	}
 
 	const maxRelated = 50
 

@@ -469,8 +469,6 @@ services:
         tmpfs:
           size: 1G
       - nornicdb-data:/data
-    environment:
-      - NORNICDB_TMP_DIR=/tmp
 ```
 
 ## Updates and Maintenance

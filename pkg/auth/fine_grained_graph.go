@@ -48,6 +48,9 @@ type fineGrainedRequestKey struct{}
 
 // WithFineGrainedRequest associates an admitted principal with ctx.
 func WithFineGrainedRequest(ctx context.Context, request *FineGrainedRequest) context.Context {
+	if request != nil {
+		ctx = storage.WithRestrictedConstraintDiagnostics(ctx)
+	}
 	return context.WithValue(ctx, fineGrainedRequestKey{}, request)
 }
 
@@ -173,6 +176,8 @@ func (g *fineGrainedGraph) projectNode(node *storage.Node) *storage.Node {
 	projected.Properties = g.readProperties("graph.node.property.read", target)
 	if !g.request.Access.Allows("graph.node.embedding.read", target) {
 		projected.NamedEmbeddings, projected.ChunkEmbeddings, projected.EmbedMeta = nil, nil, nil
+	} else if !g.request.Access.allowsAllEntityProperties("graph.node.property.read", target) {
+		projected.ChunkEmbeddings, projected.EmbedMeta = nil, nil
 	}
 	return &projected
 }
@@ -238,7 +243,7 @@ func (g *fineGrainedGraph) GetEdge(ctx context.Context, id storage.EdgeID) (*sto
 }
 
 // ReadRelationshipSearchHit returns the graph-visible relationship and
-// whether its independently permissioned managed embedding may be scored.
+// whether its managed embedding may be scored under the caller's source access.
 func ReadRelationshipSearchHit(ctx context.Context, engine storage.Engine, id storage.EdgeID) (*storage.Edge, bool, error) {
 	graph, scoped := engine.(*fineGrainedGraph)
 	if !scoped {
@@ -256,7 +261,10 @@ func ReadRelationshipSearchHit(ctx context.Context, engine storage.Engine, id st
 	if projected == nil {
 		return nil, false, storage.ErrNotFound
 	}
-	return projected, graph.request.Access.Allows("graph.relationship.embedding.read", graph.edgeResource(edge)), nil
+	target := graph.edgeResource(edge)
+	eligible := graph.request.Access.Allows("graph.relationship.embedding.read", target) &&
+		graph.request.Access.allowsAllEntityProperties("graph.relationship.property.read", target)
+	return projected, eligible, nil
 }
 
 func (g *fineGrainedGraph) visibleNodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {

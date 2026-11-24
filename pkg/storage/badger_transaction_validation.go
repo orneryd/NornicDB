@@ -634,7 +634,7 @@ func (tx *BadgerTransaction) checkUniqueConstraint(ctx context.Context, node *No
 		return err
 	} else if constrained && cacheComplete {
 		if found && existingNode != node.ID && !tx.committedNodeSupersededLocked(existingNode) {
-			return uniqueConstraintViolation(c.Label, prop, value, existingNode)
+			return uniqueConstraintViolation(ctx, c.Label, prop, value, existingNode)
 		}
 		return nil
 	}
@@ -645,7 +645,23 @@ func (tx *BadgerTransaction) checkUniqueConstraint(ctx context.Context, node *No
 	return tx.scanForUniqueViolation(ctx, tx.namespace, c.Label, prop, value, node.ID)
 }
 
-func uniqueConstraintViolation(label, property string, value interface{}, nodeID NodeID) *ConstraintViolationError {
+type restrictedConstraintDiagnosticsKey struct{}
+
+// WithRestrictedConstraintDiagnostics suppresses holder identities in
+// uniqueness diagnostics for a request with graph access filtering.
+func WithRestrictedConstraintDiagnostics(ctx context.Context) context.Context {
+	return context.WithValue(ctx, restrictedConstraintDiagnosticsKey{}, true)
+}
+
+func uniqueConstraintViolation(ctx context.Context, label, property string, value interface{}, nodeID NodeID) *ConstraintViolationError {
+	if restricted, _ := ctx.Value(restrictedConstraintDiagnosticsKey{}).(bool); restricted {
+		return &ConstraintViolationError{
+			Type:       ConstraintUnique,
+			Label:      label,
+			Properties: []string{property},
+			Message:    "Node with the requested unique property value already exists",
+		}
+	}
 	message := localization.StorageValidationNodeUniqueExisting(property, value, string(nodeID))
 	return newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
 }
@@ -771,8 +787,7 @@ func (tx *BadgerTransaction) scanForUniqueViolation(ctx context.Context, namespa
 			continue
 		}
 		if existingValue, ok := existingNode.Properties[property]; ok && compareValues(existingValue, value) {
-			message := localization.StorageValidationNodeUniqueExisting(property, value, string(existingNode.ID))
-			return newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
+			return uniqueConstraintViolation(ctx, label, property, value, existingNode.ID)
 		}
 	}
 

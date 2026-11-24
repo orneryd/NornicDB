@@ -51,8 +51,6 @@ RETURN apoc.create.uuid()                       // "550e8400-e29b-41d4-..."
 # Directory containing .so plugin files (default: /app/plugins in Docker)
 NORNICDB_PLUGINS_DIR=/app/plugins
 
-# Enable/disable plugin system
-NORNICDB_PLUGINS_ENABLED=true
 ```
 
 ### Docker Compose

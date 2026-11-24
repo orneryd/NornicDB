@@ -247,6 +247,60 @@ func (a FineGrainedAccess) AllowsAllDatabases(actionID string) bool {
 	return allowed
 }
 
+// AllowsEntireGraphAction reports whether a grant covers every entity and
+// property in a database for this action, with no applicable denials.
+func (a FineGrainedAccess) AllowsEntireGraphAction(actionID, databaseID, homeDatabaseID string) bool {
+	action, known := a.actions[actionID]
+	if !known || !action.ResourceKind.entity() || databaseID == "" {
+		return false
+	}
+	if a.boostedDatabase == databaseID && boostedGraphAction(actionID, action) {
+		return true
+	}
+	allowed := false
+	for _, definition := range a.grants[actionID] {
+		s := definition.Scope
+		if (s.DatabaseID != "" && s.DatabaseID != databaseID) ||
+			(s.HomeDatabase && (homeDatabaseID == "" || homeDatabaseID != databaseID)) {
+			continue
+		}
+		if definition.Deny {
+			return false
+		}
+		if len(s.Types)+len(s.EntityIDs)+len(s.Properties)+len(s.PropertyPatterns) == 0 && s.Predicate == nil {
+			allowed = true
+		}
+	}
+	return allowed
+}
+
+// allowsAllEntityProperties proves access to any property of this entity.
+// Managed vectors may outlive a source field, so checking the set of keys
+// currently stored on the entity is insufficient.
+func (a FineGrainedAccess) allowsAllEntityProperties(actionID string, target FineGrainedResource) bool {
+	action, known := a.actions[actionID]
+	if !known || !action.Property || action.ResourceKind != target.Kind || target.DatabaseID == "" {
+		return false
+	}
+	if a.boostedDatabase == target.DatabaseID && boostedGraphAction(actionID, action) {
+		return true
+	}
+	allowed := false
+	for _, definition := range a.grants[actionID] {
+		scope := definition.Scope
+		allProperties := len(scope.Properties) == 0 && len(scope.PropertyPatterns) == 0
+		scope.Properties, scope.PropertyPatterns = nil, nil
+		if !scope.matches(target, a.nativeABAC, a.nativeTags) {
+			continue
+		}
+		if definition.Deny {
+			return false
+		}
+		allowed = allowed || allProperties
+	}
+	return allowed
+}
+
 func (k FineGrainedResourceKind) entity() bool {
 	return k == FineGrainedNode || k == FineGrainedRelationship
 }

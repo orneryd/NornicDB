@@ -1140,8 +1140,11 @@ func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, 
 	if node == nil {
 		return nil, nil
 	}
-	if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
-		return nil, nil
+	if opts.ApplyDecayFilter {
+		hidden, err := b.filterProjectedNodeByDecay(txn, visibleRead, node, projected != nil && opts.Projection != nil, nowNanos)
+		if hidden || err != nil {
+			return nil, err
+		}
 	}
 	if opts.StripEmbeddings {
 		node = copyNodeWithoutEmbeddings(node)

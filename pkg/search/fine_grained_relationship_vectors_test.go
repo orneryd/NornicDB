@@ -10,6 +10,10 @@ import (
 
 func TestFineGrainedManagedRelationshipIndex(t *testing.T) {
 	engine := relationshipTestEngine(t)
+	edge, err := engine.GetEdge(t.Context(), "r1")
+	require.NoError(t, err)
+	edge.Properties["editorial"] = "staff notes"
+	require.NoError(t, engine.UpdateEdge(t.Context(), storage.EdgeUpdateRequest{After: edge}))
 	embed := &countingEmbed{}
 	service := startRelationshipService(t, engine, embed.embed, nil)
 	waitRelationshipVectors(t, service, 2)
@@ -25,10 +29,12 @@ func TestFineGrainedManagedRelationshipIndex(t *testing.T) {
 				Kind: auth.FineGrainedRelationship, Properties: []string{"reason"},
 			}},
 			{ID: "vectors", Action: "graph.relationship.embedding.read", Scope: edges},
+			{ID: "all-source", Action: "graph.relationship.property.read", Scope: edges},
 		},
 		Assignments: map[string][]string{
 			"reader":        {"db", "nodes", "edges", "properties"},
 			"vector-reader": {"db", "nodes", "edges", "properties", "vectors"},
+			"source-reader": {"db", "nodes", "edges", "all-source", "vectors"},
 		},
 	})
 	require.NoError(t, err)
@@ -37,15 +43,23 @@ func TestFineGrainedManagedRelationshipIndex(t *testing.T) {
 	options := &SearchOptions{Limit: 10, MinSimilarity: &minimum}
 	query := wordVector("span")
 	calls := embed.calls.Load()
-	for _, role := range []string{"reader", "vector-reader"} {
+	for _, role := range []string{"reader", "vector-reader", "source-reader"} {
 		t.Run(role, func(t *testing.T) {
 			scope := &auth.FineGrainedRequest{
 				Access: policy.ForRoles([]string{role}), DatabaseID: func(string) string { return "test-id" },
 			}
 			ctx := auth.WithFineGrainedRequest(t.Context(), scope)
+			keyword, err := service.SearchRelationships(ctx, "zephyrine", nil, options)
+			require.NoError(t, err)
+			require.Len(t, keyword.Results, 1)
+			require.Equal(t, "r1", keyword.Results[0].ID)
+			require.Equal(t, "zephyrine bridge over the river", keyword.Results[0].Properties["reason"])
+			if role != "source-reader" {
+				require.NotContains(t, keyword.Results[0].Properties, "editorial")
+			}
 			got, err := service.SearchRelationships(ctx, "", query, options)
 			require.NoError(t, err)
-			if role == "reader" {
+			if role != "source-reader" {
 				require.Empty(t, got.Results)
 				return
 			}

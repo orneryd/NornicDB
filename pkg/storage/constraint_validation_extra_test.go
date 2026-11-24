@@ -8,6 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRestrictedUniqueConstraintDiagnosticPreservesClassification(t *testing.T) {
+	const holder = NodeID("internal-holder")
+	ctx := t.Context()
+	ordinary := uniqueConstraintViolation(ctx, "Item", "key", "duplicate", holder)
+	restricted := uniqueConstraintViolation(WithRestrictedConstraintDiagnostics(ctx), "Item", "key", "duplicate", holder)
+	require.Equal(t, ordinary.Type, restricted.Type)
+	require.Equal(t, ordinary.Label, restricted.Label)
+	require.Equal(t, ordinary.Properties, restricted.Properties)
+	require.ErrorContains(t, ordinary, string(holder))
+	require.ErrorContains(t, restricted, "already exists")
+	require.NotContains(t, restricted.Error(), string(holder))
+}
+
 func TestRefreshUniqueConstraintValuesForEngine_NilArgs(t *testing.T) {
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, nil))
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, NewSchemaManager()))

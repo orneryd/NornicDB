@@ -5225,6 +5225,17 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		}
 	}
 
+	if scope != nil && strings.TrimSpace(query) != "" &&
+		(len(embedding) != 0 || opts.fallbackEnabled()) && scope.keywordRestricted(false) {
+		view, viewErr := scope.nodeBM25(ctx, s.fulltext())
+		if viewErr != nil {
+			return nil, viewErr
+		}
+		if view != nil {
+			ctx = context.WithValue(ctx, visibleNodeBM25Key{}, view)
+		}
+	}
+
 	// If no embedding provided, fall back to full-text only unless fallback is disabled.
 	if len(embedding) == 0 {
 		if !opts.fallbackEnabled() {
@@ -5953,8 +5964,16 @@ func (s *Service) adaptiveBM25Search(
 		return nil, vectorOverfetchStats{exhausted: true}, nil
 	}
 	observation := queryprofile.Access(ctx, profileKindNodeFulltextCandidates, "")
-	search := index.Search
 	scope := s.indexedScope(ctx)
+	scopedScoring := scope != nil && scope.keywordRestricted(false)
+	if scopedScoring {
+		view, ok := ctx.Value(visibleNodeBM25Key{}).(bm25Index)
+		if !ok {
+			return nil, vectorOverfetchStats{exhausted: true}, nil
+		}
+		index = view
+	}
+	search := index.Search
 	var allowed func(string) bool
 	if scope == nil && opts != nil && len(opts.Types) > 0 {
 		allowed = s.indexedTypeAdmitter(opts.Types)
@@ -5966,7 +5985,7 @@ func (s *Service) adaptiveBM25Search(
 		}
 	}
 	var documents map[string]string
-	if scope != nil {
+	if scope != nil && !scopedScoring {
 		observation = nil
 		reader, ok := index.(interface {
 			searchDocuments(string, int, func(string) bool, map[string]string) []indexResult
@@ -5983,7 +6002,7 @@ func (s *Service) adaptiveBM25Search(
 		}
 	}
 	filter := func(results []indexResult) ([]indexResult, error) {
-		if scope != nil {
+		if scope != nil && !scopedScoring {
 			admitted := results[:0]
 			for _, hit := range results {
 				document, found := documents[hit.ID]

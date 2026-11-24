@@ -110,7 +110,11 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 	var fulltextProperties []string
 	if query.text != "" {
 		fulltextProperties = s.FulltextProperties()
-		terms = matchQueryTerms(analyzer, query.text, s.fulltext())
+		index := s.fulltext()
+		if scope := s.indexedScope(ctx); scope != nil && scope.keywordRestricted(false) {
+			index, _ = ctx.Value(visibleNodeBM25Key{}).(bm25Index)
+		}
+		terms = matchQueryTerms(analyzer, query.text, index)
 	}
 	for index := range results {
 		if nodes[index] == nil {

@@ -85,6 +85,10 @@ type projectedNodeRead struct {
 // read. The visibility resolution (MVCC head) is identical; only the body
 // decode and embedding hydration are skipped.
 func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, projection projectedNodeRead) (*Node, error) {
+	if projection.visibility == visibleRead && b.decayEnabled && b.visibilityFiltered() {
+		node, err := b.getNodeAtInTxn(txn, id, version, mvccEntityRead{visibility: visibleRead})
+		return projectCachedNodeForRead(node, projection.properties, true), err
+	}
 	include := propertyProjectionSet(projection.properties)
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
@@ -343,8 +347,12 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
+			if node == nil || !hasLabel(node.Labels, label) {
 				return nil
+			}
+			hidden, err := b.filterProjectedNodeByDecay(txn, v, node, properties != nil && !queryNodes, nowNanos)
+			if hidden || err != nil {
+				return err
 			}
 			return visit(node)
 		}

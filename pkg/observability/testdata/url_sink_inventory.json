@@ -280,8 +280,6 @@
   "pkg/graphql/resolvers/mutation_impl.go:*mutationResolver.mutationRebuildSearchIndex 9e12d23ff079c37d706656bd600f96eabb01098fe99b17ebbf60c4775d228ad4": "return false, fmt.Errorf(\"failed to rebuild search index: %w\", err)",
   "pkg/graphql/resolvers/mutation_impl.go:*mutationResolver.mutationRebuildSearchIndex b00e52cde989142052cc9763acb09d2391260e78d1c11150b6279e76fff5d226": "fmt.Errorf(\"failed to rebuild search index: %w\", err)",
   "pkg/graphql/resolvers/mutation_impl.go:*mutationResolver.mutationRebuildSearchIndex dfddb91a9f1ae98673cf4d06af233c5d4865855773c27ecf7f9d57f657d979ec": "return false, err",
-  "pkg/graphql/resolvers/node_impl.go:*nodeResolver.nodeSimilar 79d49f15b98d9de67f12df855ef848c7d08109e686595ec5119d150d0cd0e42e": "return nil, err",
-  "pkg/graphql/resolvers/node_impl.go:*nodeResolver.nodeSimilar fa482fb700aba434597a16041d31e7c81638e5ef5a4d87266828e134d861acd0": "return similar, nil",
   "pkg/graphql/resolvers/query_impl.go:*queryResolver.queryNodeCount 0e3606aab0df92f70fdacbca10de5829d7bd1d8b70e1d8fb277c600b7d1462e4": "return util.ClampInt64ToInt(stats.NodeCount), nil",
   "pkg/graphql/resolvers/query_impl.go:*queryResolver.queryNodeCount 428c6ba8819aeee0d9a9380592ac92e9d4342cf53fd39a0b3ba8d0ede88b81cf": "return 0, err",
   "pkg/graphql/resolvers/query_impl.go:*queryResolver.queryRelationshipCount 428c6ba8819aeee0d9a9380592ac92e9d4342cf53fd39a0b3ba8d0ede88b81cf": "return 0, err",

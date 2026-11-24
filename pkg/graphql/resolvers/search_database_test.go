@@ -50,6 +50,28 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, similar)
 
+	actions := append(auth.GraphFineGrainedActions(), auth.FineGrainedAction{ID: "database.search.execute", ResourceKind: auth.FineGrainedDatabase})
+	policy, err := auth.CompileFineGrainedPolicy(actions, auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "database", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "search", Action: "database.search.execute", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "nodes", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "properties", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "embeddings", Action: "graph.node.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+		},
+		Assignments: map[string][]string{"reader": {"database", "search", "nodes", "properties", "embeddings"}},
+	})
+	require.NoError(t, err)
+	scoped := auth.WithFineGrainedRequest(ctx, &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"reader"}), DatabaseID: func(name string) string { return name },
+	})
+	querySimilar, err := qr.Similar(scoped, string(defaultID), &limit, nil)
+	require.NoError(t, err)
+	require.Equal(t, similar, querySimilar)
+	nodeSimilar, err := nr.Similar(scoped, &models.Node{ID: string(defaultID)}, &limit, nil)
+	require.NoError(t, err)
+	require.Equal(t, querySimilar, nodeSimilar)
+
 	// A request whose only database is another one reads that database.
 	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "other"}))
 	otherCtx := auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope("", map[string]string{"other": "other"}))

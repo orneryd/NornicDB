@@ -202,13 +202,7 @@ curl http://localhost:7474/status | jq .gpu
 
 ### Out of Memory
 
-```bash
-# Reduce batch size
-export NORNICDB_GPU_BATCH_SIZE=500
-
-# Limit GPU memory
-export NORNICDB_GPU_MAX_MEMORY_MB=1024
-```
+Use a smaller embedding model or reduce concurrent GPU workloads to lower GPU memory use.
 
 ### CUDA Errors
 

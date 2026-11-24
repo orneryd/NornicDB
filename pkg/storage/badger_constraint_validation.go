@@ -124,7 +124,7 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 				return err
 			} else if constrained && cacheComplete {
 				if found && existingNode != v.exclude {
-					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
+					return uniqueConstraintViolation(v.ctx, c.Label, prop, value, existingNode)
 				}
 				continue
 			}
@@ -247,14 +247,7 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(ctx context.Context, txn *bad
 	return b.visitDirectConstraintNodes(ctx, txn, namespace, label, []string{property}, excludeNodeID, func(existingNode *Node) error {
 		if existingValue, ok := existingNode.Properties[property]; ok {
 			if compareValues(existingValue, value) {
-				return &ConstraintViolationError{
-					Type:       ConstraintUnique,
-					Label:      label,
-					Properties: []string{property},
-					// Wire contract: "Node with ... already exists" is matched by downstream
-					// Bolt classifiers. See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-					Message: fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", property, value, existingNode.ID),
-				}
+				return uniqueConstraintViolation(ctx, label, property, value, existingNode.ID)
 			}
 		}
 
