@@ -1779,6 +1779,15 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			continue
 		}
 		candidateHint := hint
+		if pathVariable != "" {
+			// The path can expose the node through nodes(path), beyond demand
+			// on the node variable. Keep its complete image when the path is
+			// read as a value; unrelated named paths retain projected scans.
+			_, pathDemandComplete := pipelineTailDemand(pathVariable, hint.readTail)
+			if !pathDemandComplete || referencesVariable(whereClause, pathVariable) {
+				candidateHint.readTail = nil
+			}
+		}
 		for name := range row {
 			if name != nodePattern.variable && referencesVariable(whereClause, name) {
 				cacheKey = ""
