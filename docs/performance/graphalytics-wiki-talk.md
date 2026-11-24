@@ -20,6 +20,8 @@ NornicDB originally took 183.999 s. The patch streams relationships once for a c
 
 NornicDB used transactional batch import and took 426.09 s in the baseline run, followed by 7.92 s to build its benchmark projection. Neo4j used its offline bulk loader and took 18.63 s, plus 5.52 s for CSV preparation and 2.57 s for the directed GDS projection. The undirected GDS projection took a further 0.77 s.
 
+The 426.09 s result measures the Graphalytics adapter's transactional import. NornicDB's `nornicdb-admin database import full` also accepts CSV offline and writes through the same transactional storage APIs. A diagnostic with 168,285 vertices and 240,000 relationships from `wiki-Talk`, with search-index construction disabled, spent most of the importer CPU time in storage transactions. Increasing the chunk size from 1,000 to 8,192 rows made the sample slower, from 16.35 s to 20.91 s. A separate comparison found no improvement from the existing high-performance storage profile or write-behind. Batching the endpoint-label reads yielded 17.03–17.45 s against a 17.17–18.31 s baseline in the same experiment. The prototype was not adopted. These sample times do not replace the full-graph result above.
+
 ## Reference validation
 
 Both runs used the same validator and a byte-identical copy of the official archive. The validator checks exact traversal distances and labels, partition equivalence for connected components, and a relative tolerance of 0.0001 for numeric scores.
