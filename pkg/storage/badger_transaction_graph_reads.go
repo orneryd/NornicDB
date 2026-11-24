@@ -47,6 +47,10 @@ func (tx *BadgerTransaction) GetQueryNode(ctx context.Context, nodeID NodeID) (*
 // writes, deletes, connected deletes and the MVCC snapshot all apply exactly
 // as in GetNode.
 func (tx *BadgerTransaction) GetNodeProjected(ctx context.Context, nodeID NodeID, properties []string) (*Node, error) {
+	if properties != nil && tx.engine.decayEnabled && tx.engine.visibilityFiltered() {
+		node, err := tx.GetQueryNode(ctx, nodeID)
+		return projectCachedNodeForRead(node, properties, true), err
+	}
 	return readTransactionEntity(ctx, tx, nodeID, (*BadgerTransaction).nodeReadState, cloneTransactionNode, loadTransactionNode, transactionNodeRead{mvccEntityRead: mvccEntityRead{visibility: visibleRead}, properties: properties, projected: true})
 }
 
@@ -477,6 +481,13 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(ctx context.Context, la
 func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, label string, properties []string, v readVisibility, visit func(*Node) error, readOptions ...StreamNodesOptions) error {
 	opts := nodeScanOptions(readOptions)
 	queryNodes := opts.QueryNodes && !opts.WithEmbeddings
+	// Visibility policies may promote a node using a property outside the
+	// requested projection. Keep the complete scoring image through delivery.
+	fullVisibilityImage := properties != nil && v == visibleRead && tx.engine.decayEnabled && tx.engine.visibilityFiltered()
+	scanProperties, scanQueryNodes := properties, queryNodes
+	if fullVisibilityImage {
+		scanProperties, scanQueryNodes = nil, true
+	}
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -538,6 +549,9 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 	forCaller := func(node *Node) *Node {
 		if properties == nil {
 			return copyNode(node)
+		}
+		if fullVisibilityImage {
+			return projectCachedNodeForRead(node, properties, true)
 		}
 		return node
 	}
@@ -639,14 +653,14 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(ctx context.Context, la
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, properties, afterNodeID, storedRead, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(ctx, scope, label, tx.withSnapshotViewLocked, scanProperties, afterNodeID, storedRead, streamVisit, scanQueryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, properties, storedRead, streamVisit, StreamNodesOptions{QueryNodes: queryNodes})
+		err = tx.engine.streamNodesByLabelProjectedInScope(ctx, scope, label, scanProperties, storedRead, streamVisit, StreamNodesOptions{QueryNodes: scanQueryNodes})
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			ctx,
 			scope,
-			label, tx.readTS, tx.withSnapshotViewLocked, properties, storedRead, streamVisit, queryNodes,
+			label, tx.readTS, tx.withSnapshotViewLocked, scanProperties, storedRead, streamVisit, scanQueryNodes,
 		)
 	}
 	if err != nil {

@@ -386,11 +386,10 @@ func (h *historicalReadEngine) historicalNodeAtInTxn(ctx context.Context, txn *b
 	}
 	if h.buffered != nil {
 		if node, found := h.buffered.nodes.images[id].resolve(head.Version, h.version); found {
-			projected := projectCachedNodeForRead(node, projection, true)
-			if projected == nil || h.engine.filterEntityByDecay(visibleRead, projected, DecayScoringTime()) {
+			if node == nil || h.engine.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
-			return projected, nil
+			return projectCachedNodeForRead(node, projection, true), nil
 		}
 	}
 	if err != nil || head.Tombstoned {

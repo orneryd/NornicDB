@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -327,6 +328,42 @@ func runMCPDiscoverDepth(t *testing.T, db *nornicdb.DB, query string, depth int)
 	discover, ok := result.(DiscoverResult)
 	require.True(t, ok, "handleDiscover must return a DiscoverResult")
 	return discover
+}
+
+func TestMCPDiscoverProjectsRelatedResultsForAdmittedPrincipal(t *testing.T) {
+	db, ids := seedMCPDiscoverGraph(t, []mcpDiscoverNodeSeed{
+		{label: "Document", props: map[string]any{"title": "Quokka research", "content": "quokka reference"}},
+		{label: "Document", props: map[string]any{"title": "Bibliography"}},
+	}, []mcpDiscoverEdgeSeed{{from: 0, to: 1, relType: "CITES"}})
+	server := NewServer(db, nil)
+	database := server.DefaultDatabaseName()
+	dbScope := auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}
+	actions := append(auth.FineGrainedCoreActions(), auth.FineGrainedAction{ID: "mcp.invoke.discover", ResourceKind: auth.FineGrainedDatabase})
+	policy, err := auth.CompileFineGrainedPolicy(actions, auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: dbScope},
+			{ID: "discover", Action: "mcp.invoke.discover", Scope: dbScope},
+			{ID: "nodes", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "properties", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "edges", Action: "graph.relationship.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship, Types: []string{"CITES"}}},
+		},
+		Assignments: map[string][]string{"researcher": {"access", "discover", "nodes", "properties", "edges"}},
+	})
+	require.NoError(t, err)
+	ctx := auth.WithFineGrainedRequest(ContextWithDatabase(t.Context(), database), &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"researcher"}), DatabaseID: func(name string) string { return name },
+	})
+	result, err := server.CallTool(ctx, ToolDiscover, map[string]any{"query": "quokka", "depth": 2})
+	require.NoError(t, err)
+	discover := result.(DiscoverResult)
+	require.Len(t, discover.Results, 1)
+	require.Equal(t, ids[0], discover.Results[0].ID)
+	require.Len(t, discover.Results[0].Related, 1)
+	related := discover.Results[0].Related[0]
+	require.Equal(t, ids[1], related.ID)
+	require.Equal(t, "Bibliography", related.Title)
+	require.Equal(t, "CITES", related.Relationship)
+	require.Equal(t, ids, related.Path)
 }
 
 // TestHandleDiscoverRelatedNodesDepthAndIdentity drives the public discover tool

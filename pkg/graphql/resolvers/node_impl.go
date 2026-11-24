@@ -164,34 +164,5 @@ func (r *nodeResolver) nodeNeighbors(ctx context.Context, obj *models.Node, dire
 
 // NodeSimilar finds similar nodes
 func (r *nodeResolver) nodeSimilar(ctx context.Context, obj *models.Node, limit *int, threshold *float64) ([]models.SimilarNode, error) {
-	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
-		return nil, err
-	}
-
-	lim := 10
-	if limit != nil {
-		lim = *limit
-	}
-	// threshold is ignored - FindSimilar doesn't support it
-
-	_, engine, err := r.readDatabase(ctx)
-	if err != nil {
-		return nil, err
-	}
-	results, err := r.DB.FindSimilarInDatabase(ctx, engine, obj.ID, lim)
-	if err != nil {
-		return nil, err
-	}
-
-	similar := make([]models.SimilarNode, 0, len(results))
-	for _, res := range results {
-		if res.Node == nil {
-			continue
-		}
-		similar = append(similar, models.SimilarNode{
-			Node:       dbNodeToModel(res.Node),
-			Similarity: res.Score,
-		})
-	}
-	return similar, nil
+	return r.Query().Similar(ctx, obj.ID, limit, threshold)
 }

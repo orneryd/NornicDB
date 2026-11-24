@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
@@ -105,6 +106,22 @@ type decayPropertyRead struct {
 	property         string
 	created, updated int64
 	isEdge           bool
+}
+
+// filterProjectedNodeByDecay keeps the scoring input in the same snapshot
+// as the returned row, even if the row contains only selected properties.
+func (b *BadgerEngine) filterProjectedNodeByDecay(txn *badger.Txn, v readVisibility, node *Node, projected bool, now int64) (bool, error) {
+	if projected && v == visibleRead && b.decayEnabled && b.visibilityFiltered() {
+		item, err := txn.Get(nodeKey(node.ID))
+		if err != nil {
+			return false, err
+		}
+		node, err = b.readNodeItemInTxn(txn, item, node.ID, nodeItemBodyOnly, nodeBodyCacheNoAdmit, false, nil)
+		if err != nil {
+			return false, err
+		}
+	}
+	return b.filterEntityByDecay(v, node, now), nil
 }
 
 // filterEntityByDecay owns entity and property visibility for every native read.

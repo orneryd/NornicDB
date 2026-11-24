@@ -25,7 +25,6 @@ Function plugins register their functions with the Cypher executor through the A
 | Variable | Purpose |
 |---|---|
 | `NORNICDB_PLUGINS_DIR` | Directory scanned for function plugins. Default: `apoc/built-plugins`. |
-| `NORNICDB_PLUGINS_ENABLED` | Master switch for the loader. |
 | `NORNICDB_HEIMDALL_PLUGINS_DIR` | Directory scanned for Heimdall plugins. |
 | `NORNICDB_HEIMDALL_ENABLED` | Heimdall plugins only start when this is `true` (the loader skips them otherwise to avoid background goroutines). |
 

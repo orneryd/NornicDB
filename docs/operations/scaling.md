@@ -152,7 +152,7 @@ spec:
           env:
             - name: NORNICDB_CLUSTER_MODE
               value: "raft"
-            - name: NORNICDB_NODE_ID
+            - name: NORNICDB_CLUSTER_NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
