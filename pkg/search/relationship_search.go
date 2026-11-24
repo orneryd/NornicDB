@@ -705,12 +705,22 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	fulltext := rs.fulltext
 	scopedScoring := scope != nil && scope.keywordRestricted(true)
 	if scopedScoring && query != "" {
-		fulltext, err = visibleBM25(ctx, fulltext, func(readCtx context.Context, id string) (string, error) {
-			edge, readErr := readEngine.GetEdge(readCtx, storage.EdgeID(id))
-			if readErr != nil {
-				return "", readErr
+		fulltext, err = visibleBM25(ctx, fulltext, func(readCtx context.Context, ids []string) ([]FulltextBatchEntry, error) {
+			entries := make([]FulltextBatchEntry, 0, len(ids))
+			for _, id := range ids {
+				if id == "" {
+					continue
+				}
+				edge, readErr := readEngine.GetEdge(readCtx, storage.EdgeID(id))
+				if errors.Is(readErr, storage.ErrNotFound) {
+					continue
+				}
+				if readErr != nil {
+					return nil, readErr
+				}
+				entries = append(entries, FulltextBatchEntry{ID: id, Text: s.relationshipSearchableText(edge)})
 			}
-			return s.relationshipSearchableText(edge), nil
+			return entries, nil
 		})
 		if err != nil {
 			return nil, err

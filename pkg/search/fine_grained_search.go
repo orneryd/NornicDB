@@ -88,7 +88,7 @@ func (scope *indexedSearchScope) keywordRestricted(relationships bool) bool {
 
 // visibleBM25 projects the shared index population into request-local scoring
 // state. No postings, vocabulary, or statistics from unreadable text enter it.
-func visibleBM25(ctx context.Context, index bm25Index, text func(context.Context, string) (string, error)) (bm25Index, error) {
+func visibleBM25(ctx context.Context, index bm25Index, read func(context.Context, []string) ([]FulltextBatchEntry, error)) (bm25Index, error) {
 	shared, ok := index.(*FulltextIndexV2)
 	if !ok {
 		if _, disabled := index.(disabledBM25Index); disabled || index == nil {
@@ -103,22 +103,22 @@ func visibleBM25(ctx context.Context, index bm25Index, text func(context.Context
 	view := NewFulltextIndexV2WithAnalyzer(analyzer)
 	view.maxPrefixExpansions, view.minPrefixLength = maxExpansions, minPrefix
 	batch := make([]FulltextBatchEntry, 0, min(len(ids), fulltextBuildBatchSize))
-	for _, id := range ids {
+	// Bound authorized storage reads while sharing each batch's read capture.
+	const readBatchSize = 256
+	for start := 0; start < len(ids); start += readBatchSize {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if id == "" {
-			continue
-		}
-		document, err := text(ctx, id)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
+		end := min(start+readBatchSize, len(ids))
+		entries, err := read(ctx, ids[start:end])
 		if err != nil {
 			return nil, err
 		}
-		if document != "" {
-			batch = append(batch, FulltextBatchEntry{ID: id, Text: document})
+		for _, entry := range entries {
+			if entry.ID == "" || entry.Text == "" {
+				continue
+			}
+			batch = append(batch, entry)
 			if len(batch) == cap(batch) {
 				view.IndexBatch(batch)
 				clear(batch)
@@ -131,12 +131,24 @@ func visibleBM25(ctx context.Context, index bm25Index, text func(context.Context
 }
 
 func (scope *indexedSearchScope) nodeBM25(ctx context.Context, index bm25Index) (bm25Index, error) {
-	return visibleBM25(ctx, index, func(readCtx context.Context, id string) (string, error) {
-		node, err := scope.engine.GetNode(readCtx, storage.NodeID(id))
-		if err != nil {
-			return "", err
+	return visibleBM25(ctx, index, func(readCtx context.Context, ids []string) ([]FulltextBatchEntry, error) {
+		nodeIDs := make([]storage.NodeID, 0, len(ids))
+		for _, id := range ids {
+			if id != "" {
+				nodeIDs = append(nodeIDs, storage.NodeID(id))
+			}
 		}
-		return scope.service.extractSearchableText(node), nil
+		nodes, err := scope.engine.BatchGetNodes(readCtx, nodeIDs)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]FulltextBatchEntry, 0, len(nodes))
+		for _, id := range ids {
+			if node := nodes[storage.NodeID(id)]; node != nil {
+				entries = append(entries, FulltextBatchEntry{ID: id, Text: scope.service.extractSearchableText(node)})
+			}
+		}
+		return entries, nil
 	})
 }
 

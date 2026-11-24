@@ -71,6 +71,9 @@ func TestProjectedNodeKeepsPolicyPromotedRow(t *testing.T) {
 	id, err := engine.CreateNode(ctx, &Node{ID: "test:article", Labels: []string{"Article"},
 		Properties: map[string]any{"pinned": true, "title": "Article"}, CreatedAt: stale, UpdatedAt: stale})
 	require.NoError(t, err)
+	_, err = engine.CreateNode(ctx, &Node{ID: "test:faded-article", Labels: []string{"Article"},
+		Properties: map[string]any{"title": "Faded"}, CreatedAt: stale, UpdatedAt: stale})
+	require.NoError(t, err)
 	full, err := engine.GetNode(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, true, full.Properties["pinned"])
@@ -96,6 +99,14 @@ func TestProjectedNodeKeepsPolicyPromotedRow(t *testing.T) {
 	projected, err = tx.GetNodeProjected(ctx, id, wanted)
 	require.NoError(t, err)
 	require.NoError(t, check(projected))
+	for range 2 {
+		scanned = 0
+		require.NoError(t, tx.StreamNodesByLabelProjected(ctx, "Article", wanted, func(node *Node) error {
+			scanned++
+			return check(node)
+		}))
+		require.Equal(t, 1, scanned, "transaction scan and cached replay must retain the promoted row")
+	}
 }
 
 // newHeaderVisibilityContractEngine builds the policy fixture and the graph the
