@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -116,7 +117,9 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	// Capture the first node, then append a durable WAL record after that snapshot.
 	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
-	native, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key})
+	native, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(
+		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key}),
+	)
 	require.NoError(t, err)
 	snapshots := filepath.Join(dir, "snapshots")
 	require.NoError(t, os.MkdirAll(snapshots, 0700))

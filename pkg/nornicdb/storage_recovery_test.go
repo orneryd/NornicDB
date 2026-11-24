@@ -42,7 +42,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 
 	storeID, storePath, err := storage.CreatePreparedDatabaseDirectory(dataDir, "dedicated")
 	require.NoError(t, err)
-	dedicated, err := storage.NewBadgerEngine(storePath)
+	dedicated, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(storePath))
 	require.NoError(t, err)
 	_, err = dedicated.CreateNode(t.Context(), &storage.Node{ID: "dedicated:keep", Labels: []string{"Keep"}})
 	require.NoError(t, err)
@@ -63,10 +63,9 @@ func TestRecoverBadgerFromSnapshotAndWAL_AllowsWALOnlyWhenNoSnapshots(t *testing
 	require.Equal(t, "value", node.Properties["key"])
 	storePath, _, err = storage.ReadPreparedDatabase(dataDir, storeID, "dedicated")
 	require.NoError(t, err)
-	dedicated, err = storage.NewBadgerEngine(storePath)
+	reopened, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(storePath))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = dedicated.Close() })
-	_, err = dedicated.GetNode(t.Context(), "dedicated:keep")
+	_, err = reopened.GetNode(t.Context(), "dedicated:keep")
 	require.NoError(t, err)
 
 	// Sanity: run a small transactional read as well (exercise Badger reads).

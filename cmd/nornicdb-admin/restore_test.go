@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -15,9 +16,8 @@ import (
 
 func TestRestoreNativeBackupCommand(t *testing.T) {
 	root := t.TempDir()
-	source, err := storage.NewBadgerEngine(filepath.Join(root, "source"))
+	source, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(root, "source")))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = source.Close() })
 	_, err = source.CreateNode(t.Context(), &storage.Node{ID: "shared:retained", Labels: []string{"Retained"}})
 	require.NoError(t, err)
 	backup := filepath.Join(root, "shared.backup")
@@ -33,9 +33,8 @@ func TestRestoreNativeBackupCommand(t *testing.T) {
 	}
 	require.NoError(t, execute())
 	require.ErrorIs(t, execute(), os.ErrExist)
-	restored, err := storage.NewBadgerEngine(destination)
+	restored, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(destination))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = restored.Close() })
 	node, err := restored.GetNode(t.Context(), "shared:retained")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Retained"}, node.Labels)
@@ -50,9 +49,10 @@ func TestEncryptedAdminStorageCommands(t *testing.T) {
 	require.NoError(t, err)
 	key, err := nornicdb.InitializeStorageEncryption(data, settings)
 	require.NoError(t, err)
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: data, EncryptionKey: key})
+	engine, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(
+		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: data, EncryptionKey: key}),
+	)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
 	_, err = engine.CreateNode(t.Context(), &storage.Node{ID: "shared:kept", Labels: []string{"Kept"}})
 	require.NoError(t, err)
 	backup := filepath.Join(dir, "encrypted-source.backup")
@@ -85,9 +85,10 @@ func TestEncryptedAdminStorageCommands(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, key, restoredKey)
 	require.Error(t, storage.VerifyBadgerEncryptionKey(restored, nil))
-	result, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: restored, EncryptionKey: restoredKey})
+	result, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(
+		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: restored, EncryptionKey: restoredKey}),
+	)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = result.Close() })
 	_, err = result.GetNode(t.Context(), "shared:kept")
 	require.NoError(t, err)
 }
