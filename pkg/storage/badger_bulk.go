@@ -239,6 +239,7 @@ func createBulkEntities[T any](ctx context.Context, b *BadgerEngine, entities []
 	}
 	return b.inBulkTransaction(ctx, namespace, func(tx *BadgerTransaction) error {
 		tx.offlineImport = offline
+		tx.badgerTx.EnableOrderedWrites()
 		if err := tx.SetValidationSetting(SkipCreateCommitHeadReload, true); err != nil {
 			return err
 		}
