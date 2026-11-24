@@ -5,9 +5,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
+
+// offlineImportState records the endpoint labels of successfully committed
+// chunks. Only the single offline importer writes graph data in a fresh store.
+type offlineImportState struct {
+	engine *BadgerEngine
+	nodes  map[NodeID][]string
+}
+
+type offlineImportKey struct{}
+
+// OfflineImportBulkContext scopes the fresh-store proof to one import's node
+// and relationship creates. The importer uses its original context for schema
+// and search indexing, which may perform independent writes.
+func (b *BadgerEngine) OfflineImportBulkContext(ctx context.Context) context.Context {
+	if b.offlineImportNamespace == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, offlineImportKey{}, &offlineImportState{
+		engine: b,
+		nodes:  make(map[NodeID][]string),
+	})
+}
 
 // Bulk Operations
 // ============================================================================
@@ -18,7 +41,9 @@ import (
 // ErrAlreadyExists and nothing is written. Nodes of one call share a
 // namespace.
 func (b *BadgerEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error {
-	return createBulkEntities(ctx, b, nodes, func(node *Node) string { return string(node.ID) }, func() error { return b.validateBulkNodeConstraints(ctx, nodes) }, func(tx *BadgerTransaction) error {
+	var imported *offlineImportState
+	err := createBulkEntities(ctx, b, nodes, func(node *Node) string { return string(node.ID) }, func() error { return b.validateBulkNodeConstraints(ctx, nodes) }, func(tx *BadgerTransaction) error {
+		imported = tx.offlineImport
 		for _, node := range nodes {
 			if _, err := tx.CreateNode(ctx, node); err != nil {
 				return err
@@ -26,6 +51,12 @@ func (b *BadgerEngine) BulkCreateNodes(ctx context.Context, nodes []*Node) error
 		}
 		return nil
 	}, nil)
+	if err == nil && imported != nil {
+		for _, node := range nodes {
+			imported.nodes[node.ID] = slices.Clone(node.Labels)
+		}
+	}
+	return err
 }
 
 // inBulkTransaction runs a bulk operation on namespace as one transaction,
@@ -202,7 +233,17 @@ func createBulkEntities[T any](ctx context.Context, b *BadgerEngine, entities []
 		}
 	}
 	namespace, _, _ := ParseDatabasePrefix(firstID)
-	return b.inBulkTransaction(ctx, namespace, apply)
+	offline, _ := ctx.Value(offlineImportKey{}).(*offlineImportState)
+	if offline == nil || offline.engine != b || namespace != b.offlineImportNamespace {
+		return b.inBulkTransaction(ctx, namespace, apply)
+	}
+	return b.inBulkTransaction(ctx, namespace, func(tx *BadgerTransaction) error {
+		tx.offlineImport = offline
+		if err := tx.SetValidationSetting(SkipCreateCommitHeadReload, true); err != nil {
+			return err
+		}
+		return apply(tx)
+	})
 }
 
 // deleteBulkEntities owns bulk deletion routing, filtering and NotFound

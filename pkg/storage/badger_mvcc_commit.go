@@ -148,10 +148,8 @@ func (b *BadgerEngine) materializeMVCCCommit(ctx context.Context, request mvccCo
 				continue
 			}
 			err = w.write(ctx, func(txn *badger.Txn) error {
-				// FreshID is set only when the ID was asserted new at
-				// CreateNode time (UUID-shape). For explicit user-supplied
-				// IDs we fall back to the load-existing-floor path to keep
-				// snapshot reads correct across tombstone → recreate cycles.
+				// FreshID proves there is no head whose floor must
+				// carry through a tombstone and recreate.
 				if op.FreshID {
 					return b.writeNodeMVCCHeadForFreshCreateInTxn(txn, op.Node.ID, version)
 				}

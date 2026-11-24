@@ -235,6 +235,8 @@ type BadgerEngine struct {
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
 	writeBehind *WriteBehindBuffer
+
+	offlineImportNamespace string
 	// memoryPolicy is the database-owned soft admission budget for retained
 	// write-behind generations. Nil preserves the legacy unbounded path.
 	memoryPolicy *memory.Policy
@@ -950,6 +952,18 @@ func NewBadgerEngine(dataDir string) (*BadgerEngine, error) {
 //
 //	Safe for concurrent use from multiple goroutines.
 func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
+	return openBadgerEngine(opts, "")
+}
+
+// OpenBadgerForOfflineImport opens the native store for a single offline graph
+// import. The importer owns the handle and is the only producer of graph writes
+// until the bulk creates are complete. An existing store uses ordinary bulk
+// validation, including when the requested namespace is empty.
+func OpenBadgerForOfflineImport(dataDir, namespace string) (*BadgerEngine, error) {
+	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true}, namespace)
+}
+
+func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngine, error) {
 	inMemoryDefaultProfile := opts.InMemory && !opts.HighPerformance && !opts.LowMemory
 	retentionPolicy := normalizeRetentionPolicy(opts.EngineOptions.RetentionPolicy)
 	// Precommit validation cannot see a peer that publishes afterward. Native
@@ -1077,6 +1091,12 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		labelFirstCacheMax:    opts.LabelFirstNodeCacheMaxEntries,
 
 		log: storageLog,
+	}
+
+	// Check the physical store under Badger's directory lock, before the
+	// engine writes its own startup metadata.
+	if offlineNamespace != "" && db.MaxVersion() == 0 {
+		engine.offlineImportNamespace = offlineNamespace
 	}
 
 	if opts.CatalogUpgradeV4 != nil {
