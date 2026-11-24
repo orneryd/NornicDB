@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +27,7 @@ func TestAdminImportFullPreservesGraphAfterReopen(t *testing.T) {
 			ctx := t.Context()
 			var previousHead storage.MVCCHead
 			if existing {
-				base, err := storage.NewBadgerEngine(path)
+				base, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 				require.NoError(t, err)
 				_, err = base.CreateNode(ctx, &storage.Node{ID: "other:sentinel", Labels: []string{"Sentinel"}})
 				require.NoError(t, err)
@@ -40,9 +41,8 @@ func TestAdminImportFullPreservesGraphAfterReopen(t *testing.T) {
 
 			require.NoError(t, runCapacityAdminCommand(t, path, "database", "import", "full", "target",
 				"--nodes", nodes, "--relationships", edges, "--chunk-size", "1", "--build-indexes=false"))
-			base, err := storage.NewBadgerEngine(path)
+			base, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			graph := storage.NewNamespacedEngine(base, "target")
 			if existing {
 				_, err = base.GetNode(ctx, "other:sentinel")
@@ -114,9 +114,8 @@ func TestAdminImportFullRejectsCollidingQualifiedIDs(t *testing.T) {
 			path := filepath.Join(dir, "store")
 			require.ErrorIs(t, runCapacityAdminCommand(t, path, args...), storage.ErrAlreadyExists)
 
-			base, err := storage.NewBadgerEngine(path)
+			base, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			graph := storage.NewNamespacedEngine(base, "target")
 			nodesImported, err := graph.NodeCount(t.Context())
 			require.NoError(t, err)
