@@ -16,6 +16,7 @@ import (
 
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -383,7 +384,8 @@ func TestParseScalar_AcceptsAllNumericAndRejectsUnsupported(t *testing.T) {
 		{"localtime opaque", "12:00:00", "localtime", "12:00:00", false},
 		{"time opaque", "12:00:00Z", "time", "12:00:00Z", false},
 		{"localdatetime opaque", "2024-01-01T00:00:00", "localdatetime", "2024-01-01T00:00:00", false},
-		{"datetime opaque", "2024-01-01T00:00:00Z", "datetime", "2024-01-01T00:00:00Z", false},
+		{"datetime parses to the stored datetime value", "2024-01-01T00:00:00Z", "datetime", cypher.CypherDateTime{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.FixedZone("", 0))}, false},
+		{"datetime rejects text the parser cannot read", "not-a-datetime", "datetime", nil, true},
 		{"duration opaque", "PT1H", "duration", "PT1H", false},
 		{"int parses", "42", "int", int64(42), false},
 		{"long parses", "42", "long", int64(42), false},
@@ -1463,16 +1465,16 @@ func TestMergeColumn_DemotesOnConflictAndAscendsDims(t *testing.T) {
 }
 
 // ============================================================================
-// inferNodeColumns — id-collision elision and named-embedding capture.
+// inferNodeColumns — id property and named-embedding capture.
 // ============================================================================
 
-func TestInferNodeColumns_DropsRedundantIDAndCapturesEmbedding(t *testing.T) {
+func TestInferNodeColumns_KeepsIDPropertyAndCapturesEmbedding(t *testing.T) {
 	cols := inferNodeColumns([]*storage.Node{
 		{
 			ID:     "u1",
 			Labels: []string{"Person"},
 			Properties: map[string]any{
-				"id":   "u1", // matches node ID, should be dropped
+				"id":   "u1", // an id column is a stored property, not only the identity
 				"name": "Alice",
 			},
 			NamedEmbeddings: map[string][]float32{
@@ -1489,9 +1491,9 @@ func TestInferNodeColumns_DropsRedundantIDAndCapturesEmbedding(t *testing.T) {
 	require.Contains(t, headers, "name:string")
 	require.Contains(t, headers, ":EMBEDDING(default)")
 	require.Contains(t, headers, ":EMBEDDING(summary)")
-	require.NotContains(t, headers, "id:string", "redundant id column should be elided")
+	require.Contains(t, headers, "id:string", "an id property must be exported so re-import keeps it")
 
-	// An 'id' value that does NOT match the node ID is kept.
+	// An 'id' value that does NOT match the node ID is kept too.
 	colsKept := inferNodeColumns([]*storage.Node{
 		{
 			ID:         "u1",

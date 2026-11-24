@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -143,11 +144,20 @@ func ExportNeo4jCSVWithContext(ctx context.Context, engine storage.Engine, opts 
 		return err
 	}
 
-	if err := exportNodesCSV(filepath.Join(opts.OutputDir, "nodes.csv"), nodes, opts); err != nil {
+	nodeColumns := inferNodeColumns(nodes)
+	edgeColumns := inferEdgeColumns(edges)
+	if err := validateExportArrayColumns(nodeColumns, nodes, func(node *storage.Node) map[string]any { return node.Properties }, opts); err != nil {
+		return err
+	}
+	if err := validateExportArrayColumns(edgeColumns, edges, func(edge *storage.Edge) map[string]any { return edge.Properties }, opts); err != nil {
+		return err
+	}
+
+	if err := exportNodesCSV(filepath.Join(opts.OutputDir, "nodes.csv"), nodes, nodeColumns, opts); err != nil {
 		return err
 	}
 	if len(edges) > 0 {
-		if err := exportRelationshipsCSV(filepath.Join(opts.OutputDir, "relationships.csv"), edges, opts); err != nil {
+		if err := exportRelationshipsCSV(filepath.Join(opts.OutputDir, "relationships.csv"), edges, edgeColumns, opts); err != nil {
 			return err
 		}
 	}
@@ -192,7 +202,7 @@ func classifyNeo4jCSVFile(path string, opts Options) (string, error) {
 	return "", unsupported(localization.AdminImportUnsupportedCSVHeader(path))
 }
 
-func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptions) error {
+func exportNodesCSV(path string, nodes []*storage.Node, columns []inferredColumn, opts Neo4jCSVExportOptions) error {
 	// Validate the complete label population before the shared writer opens the
 	// destination. The :LABEL field splits on the array delimiter and cannot
 	// escape an embedded delimiter under the Neo4j CSV contract, while this
@@ -205,21 +215,60 @@ func exportNodesCSV(path string, nodes []*storage.Node, opts Neo4jCSVExportOptio
 			}
 		}
 	}
-	return writeEntityCSV(path, []string{":ID", ":LABEL"}, inferNodeColumns(nodes), nodes, opts,
+	return writeEntityCSV(path, []string{":ID", ":LABEL"}, columns, nodes, opts,
 		func(node *storage.Node, lead []csvExportCell) {
 			lead[0].Text = string(node.ID)
 			lead[1].Text = strings.Join(node.Labels, string(opts.ArrayDelimiter))
 		}, nodePropertyCell)
 }
 
-func exportRelationshipsCSV(path string, edges []*storage.Edge, opts Neo4jCSVExportOptions) error {
-	return writeEntityCSV(path, []string{":ID", ":START_ID", ":END_ID", ":TYPE"}, inferEdgeColumns(edges), edges, opts,
+func exportRelationshipsCSV(path string, edges []*storage.Edge, columns []inferredColumn, opts Neo4jCSVExportOptions) error {
+	return writeEntityCSV(path, []string{":ID", ":START_ID", ":END_ID", ":TYPE"}, columns, edges, opts,
 		func(edge *storage.Edge, lead []csvExportCell) {
 			lead[0].Text, lead[1].Text = string(edge.ID), string(edge.StartNode)
 			lead[2].Text, lead[3].Text = string(edge.EndNode), edge.Type
 		}, func(edge *storage.Edge, col inferredColumn, opts Neo4jCSVExportOptions) csvExportCell {
 			return propertyCell(edge.Properties[col.Property], col, opts)
 		})
+}
+
+// validateExportArrayColumns rejects, before any package file is replaced,
+// every array cell the reader cannot decode back to the same list. The array
+// field joins elements with the array delimiter and quotes no element, while
+// the reader splits on that delimiter, trims each element and drops empty
+// elements; an element that contains the delimiter, adds no text, has
+// surrounding whitespace or contains a CRLF line break would therefore be
+// altered. A quoted empty cell stays the representation of an empty list, so an
+// empty list is unambiguous once such an element is rejected.
+func validateExportArrayColumns[T any](columns []inferredColumn, entities []T, properties func(T) map[string]any, opts Neo4jCSVExportOptions) error {
+	for _, entity := range entities {
+		props := properties(entity)
+		for _, col := range columns {
+			if col.Kind != "array" {
+				continue
+			}
+			elements, ok := exportedArrayElements(props[col.Property], col.ScalarType)
+			if !ok {
+				continue
+			}
+			for _, element := range elements {
+				if exportArrayElementPreserved(element, opts.ArrayDelimiter) {
+					continue
+				}
+				return unsupported(localization.AdminExportArrayElementUnsupported(col.Property, element, opts.ArrayDelimiter))
+			}
+		}
+	}
+	return nil
+}
+
+// exportArrayElementPreserved reports whether the reader decodes element back to
+// the same text.
+func exportArrayElementPreserved(element string, delimiter rune) bool {
+	return element != "" &&
+		strings.TrimSpace(element) == element &&
+		!strings.ContainsRune(element, delimiter) &&
+		!strings.Contains(element, "\r\n")
 }
 
 // writeEntityCSV owns column ordering and row construction for both entity
@@ -246,11 +295,6 @@ func inferNodeColumns(nodes []*storage.Node) []inferredColumn {
 	props := make(map[string]inferredColumn)
 	for _, node := range nodes {
 		for key, value := range node.Properties {
-			if key == "id" {
-				if s, ok := value.(string); ok && s == string(node.ID) {
-					continue
-				}
-			}
 			props[key] = mergeColumn(props[key], key, value)
 		}
 		for key, vector := range node.NamedEmbeddings {
@@ -338,6 +382,8 @@ func inferValueShape(value any) (kind string, scalarType string, dims int) {
 		return "property", "long", 0
 	case float32, float64:
 		return "property", "double", 0
+	case cypher.CypherDateTime:
+		return "property", "datetime", 0
 	case time.Time:
 		return "property", "datetime", 0
 	default:
@@ -417,53 +463,40 @@ func formatPropertyValue(value any, col inferredColumn, opts Neo4jCSVExportOptio
 			return fmt.Sprint(value)
 		}
 	case "array":
-		switch v := value.(type) {
-		case []any:
-			parts := make([]string, 0, len(v))
-			for _, item := range v {
-				parts = append(parts, formatScalar(item, col.ScalarType))
-			}
-			return strings.Join(parts, string(opts.ArrayDelimiter))
-		case []string:
-			return strings.Join(v, string(opts.ArrayDelimiter))
-		case []float64:
-			parts := make([]string, 0, len(v))
-			for _, item := range v {
-				parts = append(parts, formatScalar(item, col.ScalarType))
-			}
-			return strings.Join(parts, string(opts.ArrayDelimiter))
-		case []bool:
-			parts := make([]string, 0, len(v))
-			for _, item := range v {
-				parts = append(parts, formatScalar(item, col.ScalarType))
-			}
-			return strings.Join(parts, string(opts.ArrayDelimiter))
-		case []int:
-			parts := make([]string, 0, len(v))
-			for _, item := range v {
-				parts = append(parts, formatScalar(item, col.ScalarType))
-			}
-			return strings.Join(parts, string(opts.ArrayDelimiter))
-		case []int64:
-			parts := make([]string, 0, len(v))
-			for _, item := range v {
-				parts = append(parts, formatScalar(item, col.ScalarType))
-			}
-			return strings.Join(parts, string(opts.ArrayDelimiter))
-		default:
-			rv := reflect.ValueOf(value)
-			if rv.IsValid() && rv.Kind() == reflect.Slice {
-				parts := make([]string, 0, rv.Len())
-				for i := 0; i < rv.Len(); i++ {
-					parts = append(parts, formatScalar(rv.Index(i).Interface(), col.ScalarType))
-				}
-				return strings.Join(parts, string(opts.ArrayDelimiter))
-			}
+		elements, ok := exportedArrayElements(value, col.ScalarType)
+		if !ok {
 			return fmt.Sprint(value)
 		}
+		return strings.Join(elements, string(opts.ArrayDelimiter))
 	default:
 		return formatScalar(value, col.ScalarType)
 	}
+}
+
+// exportedArrayElements renders every stored list element with the column's
+// scalar type, in stored order. It is the one array renderer the exporter and
+// its representability guard share, so the guard inspects exactly the element
+// text the importer will read.
+func exportedArrayElements(value any, scalarType string) ([]string, bool) {
+	switch v := value.(type) {
+	case []any:
+		elements := make([]string, 0, len(v))
+		for _, item := range v {
+			elements = append(elements, formatScalar(item, scalarType))
+		}
+		return elements, true
+	case []string:
+		return v, true
+	}
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || rv.Kind() != reflect.Slice {
+		return nil, false
+	}
+	elements := make([]string, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		elements = append(elements, formatScalar(rv.Index(i).Interface(), scalarType))
+	}
+	return elements, true
 }
 
 func formatScalar(value any, scalarType string) string {
@@ -499,6 +532,8 @@ func formatScalar(value any, scalarType string) string {
 		return strconv.FormatFloat(float64(v), 'f', -1, 64)
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
+	case cypher.CypherDateTime:
+		return v.String()
 	case time.Time:
 		if scalarType == "datetime" {
 			return v.UTC().Format(time.RFC3339Nano)

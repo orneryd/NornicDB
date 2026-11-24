@@ -438,6 +438,13 @@ func nodeFromRecord(record csvRecord, filePath string, cols []columnSpec, idCols
 				continue
 			}
 			if value == "" {
+				// The quoted empty cell of an array column is the present empty list:
+				// the bare empty cell of an absent property was handled above, and
+				// export rejects an empty element, so the two never collide.
+				if isArrayColumn(col) {
+					props[col.Name] = []any{}
+					continue
+				}
 				if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
 					continue
 				}
@@ -549,6 +556,13 @@ func edgeFromRecord(record csvRecord, filePath string, cols []columnSpec, startC
 			continue
 		}
 		if value == "" {
+			// The quoted empty cell of an array column is the present empty list:
+			// the bare empty cell of an absent property was handled above, and
+			// export rejects an empty element, so the two never collide.
+			if isArrayColumn(col) {
+				props[col.Name] = []any{}
+				continue
+			}
 			if opts.IgnoreEmptyStrings || !preserveEmptyStringProperty(col) {
 				continue
 			}
@@ -700,8 +714,14 @@ func parseKeyword(raw string) (string, string, map[string]string) {
 	return base, arg, options
 }
 
+// isArrayColumn reports whether the column declares a list property, the only
+// property shape the array delimiter encoding applies to.
+func isArrayColumn(col columnSpec) bool {
+	return strings.HasSuffix(col.Type, "[]")
+}
+
 func parsePropertyValue(value string, col columnSpec, opts Options) (any, error) {
-	if strings.HasSuffix(col.Type, "[]") {
+	if isArrayColumn(col) {
 		base := strings.TrimSuffix(col.Type, "[]")
 		parts := splitList(value, opts.ArrayDelimiter)
 		out := make([]any, 0, len(parts))
@@ -722,8 +742,10 @@ func parsePropertyValue(value string, col columnSpec, opts Options) (any, error)
 
 func parseScalar(value, typ string, opts Options) (any, error) {
 	switch strings.ToLower(defaultString(typ, "string")) {
-	case "string", "char", "point", "date", "localtime", "time", "localdatetime", "datetime", "duration":
+	case "string", "char", "point", "date", "localtime", "time", "localdatetime", "duration":
 		return value, nil
+	case "datetime":
+		return parseDateTimeProperty(value)
 	case "byte", "short", "int", "long":
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
@@ -748,6 +770,21 @@ func parseScalar(value, typ string, opts Options) (any, error) {
 	default:
 		return nil, unsupported(localization.AdminImportUnsupportedPropertyType(typ))
 	}
+}
+
+// parseDateTimeProperty returns the Cypher datetime value a datetime column
+// denotes, so the stored property keeps the type the column declares instead of
+// becoming its text. The exported datetime text is that value's canonical text,
+// which this parser reads back with its instant, offset and named zone.
+func parseDateTimeProperty(text string) (any, error) {
+	value, ok, err := cypher.ParseTemporalText("datetime", text)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("invalid datetime: %s", text)
+	}
+	return value, nil
 }
 
 func parseVector(value string, delim rune, dims int) ([]float32, error) {
@@ -1244,7 +1281,7 @@ func splitList(value string, delim rune) []string {
 }
 
 func preserveEmptyStringProperty(col columnSpec) bool {
-	if strings.HasSuffix(col.Type, "[]") || strings.EqualFold(col.Type, "vector") {
+	if isArrayColumn(col) || strings.EqualFold(col.Type, "vector") {
 		return false
 	}
 	switch strings.ToLower(defaultString(col.Type, "string")) {
