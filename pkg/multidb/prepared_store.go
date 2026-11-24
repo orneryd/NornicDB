@@ -17,7 +17,6 @@ type IsolatedStoreConfig struct {
 }
 
 var ErrPreparedImportDisabled = errors.New("publishing prepared databases is disabled")
-var ErrSharedStoreBackupRequired = errors.New("full backup and restore require a shared-only database catalog")
 var errPreparedAlreadyPublished = errors.New("prepared database already published")
 
 type isolatedStorePublication struct {
@@ -167,31 +166,4 @@ func (m *DatabaseManager) CloseIsolatedStores() error {
 		result = errors.Join(result, store.Close())
 	}
 	return result
-}
-
-// WithSharedStoreBackup serializes shared-store backup and restore with
-// catalog publication, which can add a separately backed database.
-func (m *DatabaseManager) WithSharedStoreBackup(ctx context.Context, operation func() error) error {
-	if m == nil || m.catalogGate == nil {
-		return operation()
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.catalogGate:
-	}
-	defer func() { m.catalogGate <- struct{}{} }()
-	m.mu.RLock()
-	mounted := false
-	for _, info := range m.databases {
-		if info != nil && info.IsolatedStoreID != "" {
-			mounted = true
-			break
-		}
-	}
-	m.mu.RUnlock()
-	if mounted {
-		return ErrSharedStoreBackupRequired
-	}
-	return operation()
 }

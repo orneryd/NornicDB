@@ -92,7 +92,17 @@ CREATE DATABASE tenant_a OPTIONS {storage: 'shared'};
 
 Storage layout is set at creation. Each isolated store has its own caches and background maintenance. Shared storage pools those resources, which can be useful when hosting many small databases. In-memory and replicated deployments use shared storage.
 
-The single-store `/admin/backup` and `/admin/restore` endpoints and Qdrant full snapshots require a shared-only catalog. A stopped server's entire data directory includes the catalog, dedicated stores, and their WALs. CSV export follows the database's catalog entry and can export a dedicated store while the server is stopped.
+`POST /admin/backup` and Qdrant full snapshots include all local databases and the system catalog. The request is the same for either layout. Shared-only installations keep the native Badger file format. Installations with dedicated stores write a versioned archive containing the root snapshot and a snapshot of each dedicated store. Each physical store snapshot is consistent at the time it is captured. Database creation, publication, and deletion wait for the backup's catalog view to finish.
+
+To recover either native backup format, restore into a new data directory and start the server with that directory.
+
+```bash
+nornicdb-admin database restore ./full.backup --data-dir=./restored-data
+```
+
+The restore command reconstructs the catalog and stores in a temporary directory and publishes the new data directory after validation. The destination must be absent before restore. The command writes unencrypted data files. The online `/admin/restore` endpoint continues to support single-store restores into shared-only installations.
+
+CSV export follows the database's catalog entry and can export a dedicated store while the server is stopped.
 
 ## Stage And Publish A Database While The Server Runs
 

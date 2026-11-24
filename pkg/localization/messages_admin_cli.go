@@ -24,6 +24,7 @@ const (
 	MessageAdminCLISchemaFlag                  MessageID = "admincli.flag.schema"
 	MessageAdminCLIBuildIndexesFlag            MessageID = "admincli.flag.build_indexes"
 	MessageAdminCLIStageImportFlag             MessageID = "admincli.flag.stage_import"
+	MessageAdminCLIRestoreBackupShort          MessageID = "admincli.restore_backup_short"
 	MessageAdminCLISkipBadRelationshipsFlag    MessageID = "admincli.flag.skip_bad_relationships"
 	MessageAdminCLISkipDuplicateNodesFlag      MessageID = "admincli.flag.skip_duplicate_nodes"
 	MessageAdminCLINormalizeTypesFlag          MessageID = "admincli.flag.normalize_types"
@@ -123,6 +124,10 @@ func AdminCLIBuildIndexesFlag() Message {
 
 func AdminCLIStageImportFlag() Message {
 	return Message{ID: MessageAdminCLIStageImportFlag, Fallback: "Build an isolated store for publication on a running server"}
+}
+
+func AdminCLIRestoreBackupShort() Message {
+	return Message{ID: MessageAdminCLIRestoreBackupShort, Fallback: "Restore a native database backup into a new data directory"}
 }
 func AdminCLISkipBadRelationshipsFlag() Message {
 	return Message{ID: MessageAdminCLISkipBadRelationshipsFlag, Fallback: "Skip relationships that reference missing nodes"}

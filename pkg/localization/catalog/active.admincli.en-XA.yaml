@@ -34,6 +34,8 @@
   other: "[!! Build search indexes after import !!]"
 - id: admincli.flag.stage_import
   other: "[!! Build an isolated store for publication on a running server !!]"
+- id: admincli.restore_backup_short
+  other: "[!! Restore a native database backup into a new data directory !!]"
 - id: admincli.flag.skip_bad_relationships
   other: "[!! Skip relationships that reference missing nodes !!]"
 - id: admincli.flag.skip_duplicate_nodes

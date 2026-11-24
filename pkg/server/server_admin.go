@@ -11,6 +11,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // =============================================================================
@@ -124,23 +125,34 @@ func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, o
 		s.writeBoundaryError(w, r, http.StatusBadRequest, errors.New("backup path is required"), ErrBadRequest)
 		return
 	}
-	var operationErr error
 	var status string
-	switch operation {
-	case backupCreate:
-		operationErr = s.dbManager.WithSharedStoreBackup(r.Context(), func() error { return s.db.Backup(r.Context(), req.Path) })
-		if operationErr == nil {
-			status = s.localizedText(w, r, localization.BackupComplete())
+	denied := false
+	ctx := r.Context()
+	operationErr := s.dbManager.WithBackupCatalog(ctx, func(catalog multidb.BackupCatalog) error {
+		if auth.FineGrainedRequestFromContext(ctx) == nil && !s.authorizeAllDatabaseOperation(w, r) {
+			denied = true
+			return nil
 		}
-	case backupRestore:
-		operationErr = s.dbManager.WithSharedStoreBackup(r.Context(), func() error { return s.db.Restore(r.Context(), req.Path) })
-		status = "restore complete"
-	default:
-		operationErr = errors.New("invalid backup operation")
+		switch operation {
+		case backupCreate:
+			status = s.localizedText(w, r, localization.BackupComplete())
+			return catalog.Write(ctx, req.Path, func() error { return s.db.Backup(ctx, req.Path) })
+		case backupRestore:
+			if catalog.HasDedicatedStores() {
+				return storage.ErrOfflineDatabaseRestore
+			}
+			status = "restore complete"
+			return s.db.Restore(ctx, req.Path)
+		default:
+			return errors.New("invalid backup operation")
+		}
+	})
+	if denied {
+		return
 	}
 	if operationErr != nil {
-		if errors.Is(operationErr, multidb.ErrSharedStoreBackupRequired) {
-			s.writeBoundaryError(w, r, http.StatusNotImplemented, operationErr, operationErr)
+		if errors.Is(operationErr, storage.ErrOfflineDatabaseRestore) {
+			s.writeBoundaryError(w, r, http.StatusConflict, operationErr, storage.ErrOfflineDatabaseRestore)
 			return
 		}
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, operationErr, ErrInternalError)

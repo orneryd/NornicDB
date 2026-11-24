@@ -2,7 +2,6 @@ package qdrantgrpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +15,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -273,25 +271,22 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 // CreateFull creates a full storage snapshot (all collections).
 // Maps to: BadgerEngine.Backup or WAL.CreateSnapshot for all data
 func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
+	if collections, ok := s.collections.(*databaseCollectionStore); ok {
+		var response *qpb.CreateSnapshotResponse
+		err := collections.dbManager.WithBackupCatalog(ctx, func(catalog multidb.BackupCatalog) error {
+			var err error
+			response, err = s.createFull(ctx, catalog)
+			return err
+		})
+		return response, err
+	}
+	return s.createFull(ctx, multidb.BackupCatalog{})
+}
+
+func (s *SnapshotsService) createFull(ctx context.Context, catalog multidb.BackupCatalog) (*qpb.CreateSnapshotResponse, error) {
 	if err := s.allowFullAccess(ctx); err != nil {
 		return nil, err
 	}
-	if collections, ok := s.collections.(*databaseCollectionStore); ok {
-		var response *qpb.CreateSnapshotResponse
-		err := collections.dbManager.WithSharedStoreBackup(ctx, func() error {
-			var err error
-			response, err = s.createFull(ctx)
-			return err
-		})
-		if errors.Is(err, multidb.ErrSharedStoreBackupRequired) {
-			return nil, status.Error(codes.FailedPrecondition, err.Error())
-		}
-		return response, err
-	}
-	return s.createFull(ctx)
-}
-
-func (s *SnapshotsService) createFull(ctx context.Context) (*qpb.CreateSnapshotResponse, error) {
 	start := time.Now()
 
 	if s.baseStorage == nil {
@@ -310,7 +305,11 @@ func (s *SnapshotsService) createFull(ctx context.Context) (*qpb.CreateSnapshotR
 	snapshotPath := filepath.Join(fullSnapshotDir, snapshotName)
 
 	// Try to use BadgerEngine.Backup if available.
-	if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
+	if catalog.HasDedicatedStores() {
+		if err := catalog.Write(ctx, snapshotPath, nil); err != nil {
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
+		}
+	} else if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
 		if err := badger.Backup(snapshotPath); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
 		}

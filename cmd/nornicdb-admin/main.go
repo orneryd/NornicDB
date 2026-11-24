@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -139,6 +140,14 @@ func registerAdminCommands(rootCmd *cobra.Command, manager *localization.Manager
 	exportCmd.AddCommand(exportNeo4jCSVCmd)
 	databaseCmd.AddCommand(importCmd)
 	databaseCmd.AddCommand(exportCmd)
+	databaseCmd.AddCommand(&cobra.Command{
+		Use:   "restore <backup-path>",
+		Short: text(localization.AdminCLIRestoreBackupShort()),
+		Args:  localizedExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return multidb.RestoreDatabaseBackup(cmd.Context(), filepath.Clean(args[0]), filepath.Clean(*dataDir))
+		},
+	})
 	checkIDsCmd := &cobra.Command{
 		Use:   "check-ids",
 		Short: text(localization.AdminCLICheckIDsShort()),

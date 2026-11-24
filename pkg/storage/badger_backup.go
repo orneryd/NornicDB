@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -20,9 +21,32 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
-	// Every write acknowledged before the backup is in it. A backup owns no
-	// request context, so it hands the explicit detached completion lifetime.
-	if err := b.FlushWriteBehind(context.Background()); err != nil {
+	return b.withBackupSnapshot(context.Background(), func(db *managedBadgerDB) error {
+		f, err := security.CreateRootedFile(path, 0o600)
+		if err != nil {
+			return localizedError(localization.StorageClientBackupFileCreateFailed(path, err), err)
+		}
+		defer f.Close()
+		if err := writeBadgerBackup(db, f); err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			return localizedError(localization.StorageClientBackupSyncFailed(err), err)
+		}
+		return nil
+	})
+}
+
+// BackupTo emits the same native snapshot as Backup to a caller-owned stream.
+func (b *BadgerEngine) BackupTo(ctx context.Context, dst io.Writer) error {
+	return b.withBackupSnapshot(ctx, func(db *managedBadgerDB) error {
+		return writeBadgerBackup(db, dst)
+	})
+}
+
+func (b *BadgerEngine) withBackupSnapshot(ctx context.Context, write func(*managedBadgerDB) error) error {
+	// Flush acknowledged buffered writes before selecting the snapshot.
+	if err := b.FlushWriteBehind(ctx); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.mu.RLock()
@@ -32,30 +56,18 @@ func (b *BadgerEngine) Backup(path string) error {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
-	// Create backup file
-	f, err := security.CreateRootedFile(path, 0o600)
-	if err != nil {
-		return localizedError(localization.StorageClientBackupFileCreateFailed(path, err), err)
-	}
-	defer f.Close()
+	return write(b.db)
+}
 
-	// Use BufferedWriter for better performance
-	buf := bufio.NewWriterSize(f, 16*1024*1024) // 16MB buffer
-
-	// Stream backup (since=0 means full backup)
-	_, err = b.db.Backup(buf, 0)
-	if err != nil {
+func writeBadgerBackup(db *managedBadgerDB, dst io.Writer) error {
+	buf := bufio.NewWriterSize(dst, 16*1024*1024)
+	if _, err := db.Backup(buf, 0); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 
 	// Flush buffer
 	if err := buf.Flush(); err != nil {
 		return localizedError(localization.StorageClientBackupFlushFailed(err), err)
-	}
-
-	// Sync to disk
-	if err := f.Sync(); err != nil {
-		return localizedError(localization.StorageClientBackupSyncFailed(err), err)
 	}
 
 	return nil
@@ -79,12 +91,31 @@ var restoreReadDrainTimeout = 30 * time.Second
 // floors and sequence, schemas, caches, counts) is rebuilt from the restored
 // store before reads resume. The backfills then start again if the restored
 // store needs them.
-func (b *BadgerEngine) Restore(path string) (restoreErr error) {
+func (b *BadgerEngine) Restore(path string) error {
+	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	defer file.Close()
+	archive, err := ReadDatabaseBackupArchive(file.File)
+	if err != nil {
+		return err
+	}
+	if archive != nil {
+		return ErrOfflineDatabaseRestore
+	}
+	return b.RestoreFrom(context.Background(), file)
+}
+
+// RestoreFrom loads the same native stream as Restore. The caller owns src.
+func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
 
-	ctx := context.Background()
 	lifecycle, err := b.beginLifecycleWrite(ctx, "")
 	if err != nil {
 		if errors.Is(err, ErrStorageClosed) {
@@ -101,12 +132,6 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
-	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return localizedError(localization.StorageClientBackupFailed(err), err)
-	}
-	defer file.Close()
-
 	if !db.oracle.holdReads(restoreReadDrainTimeout) {
 		return localizedError(localization.StorageClientRestoreBusy(restoreReadDrainTimeout.String()), nil)
 	}
@@ -117,11 +142,11 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	defer b.graphMutationVersions.changedPrefix("")
 
 	b.rememberIndexReadiness(startupLabelIndex, false)
-	if err := db.DropAll(context.Background()); err != nil {
+	if err := db.DropAll(ctx); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.InvalidatePendingEmbeddingsIndex()
-	if err := db.Load(context.Background(), bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+	if err := db.Load(ctx, bufio.NewReaderSize(src, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	// The restored derived-count deltas are folded, as open folds them:

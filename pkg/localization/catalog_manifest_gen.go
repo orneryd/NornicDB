@@ -66,6 +66,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "admincli.incremental_not_implemented", Constructor: "AdminCLIIncrementalNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.neo4j_csv_export_short", Constructor: "AdminCLINeo4jCSVExportShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.repair_ids_summary", Constructor: "AdminCLIRepairIDsSummary", Fields: []string{"RestoredNodes", "RestoredRelationships", "UnresolvedNodes", "UnresolvedRelationships"}, PluralForms: []string{"other"}},
+	{ID: "admincli.restore_backup_short", Constructor: "AdminCLIRestoreBackupShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.root_short", Constructor: "AdminCLIRootShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.server_short", Constructor: "AdminCLIServerShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.server_status_not_implemented", Constructor: "AdminCLIServerStatusNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},

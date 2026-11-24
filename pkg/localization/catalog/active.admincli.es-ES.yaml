@@ -34,6 +34,8 @@
   other: Crear índices de búsqueda después de la importación
 - id: admincli.flag.stage_import
   other: Crear un almacén aislado para publicarlo en un servidor en ejecución
+- id: admincli.restore_backup_short
+  other: Restaurar una copia de seguridad nativa en un nuevo directorio de datos
 - id: admincli.flag.skip_bad_relationships
   other: Omitir relaciones que hagan referencia a nodos ausentes
 - id: admincli.flag.skip_duplicate_nodes

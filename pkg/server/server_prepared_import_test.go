@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,14 +32,14 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
-	open := func() (*Server, func()) {
+	open := func(dataDir string) (*Server, func()) {
 		config := nornicdb.DefaultConfig()
 		config.Auth.Enabled = false
 		config.Database.AsyncWritesEnabled = false
 		config.Memory.DecayEnabled = false
 		config.Memory.AutoLinksEnabled = false
 		config.Memory.EmbeddingEnabled = false
-		db, err := nornicdb.Open(root, config)
+		db, err := nornicdb.Open(dataDir, config)
 		require.NoError(t, err)
 		serverConfig := DefaultConfig()
 		serverConfig.ProcessConfig = config
@@ -61,7 +64,7 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 		t.Cleanup(closeServer)
 		return server, closeServer
 	}
-	server, closeServer := open()
+	server, closeServer := open(root)
 	query := func(database, statement string) TransactionResponse {
 		result := postStatement(t, server, database, statement, "")
 		require.Empty(t, result.Errors)
@@ -87,9 +90,6 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	require.Empty(t, storeID("shared"))
 	require.NotEmpty(t, storeID("dedicated"))
 	require.NotEmpty(t, storeID("explicit"))
-	backup := makeRequest(t, server, http.MethodPost, "/admin/backup", map[string]string{"path": filepath.Join(inputs, "incomplete.backup")}, "")
-	require.Equal(t, http.StatusNotImplemented, backup.Code, backup.Body.String())
-	require.NoFileExists(t, filepath.Join(inputs, "incomplete.backup"))
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	query("dedicated", "CREATE (:Person {name:'Separate'})")
 	query("shared", "CREATE (:Person {name:'Root'})")
@@ -116,9 +116,39 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	count("loaded", "MATCH (:Person)-[r:KNOWS]->(:Person) RETURN count(r)", 2)
 	count("loaded", "MATCH (:Person {name:'Ada'})-[:KNOWS]->(n:Person {name:'Bea'}) RETURN count(n)", 1)
 	query("loaded", "CREATE (:Person {name:'Carol'})")
+	query("system", "CREATE ALIAS archive_alias FOR DATABASE loaded")
+	resolved, err := server.dbManager.ResolveDatabase("archive_alias")
+	require.NoError(t, err)
+	require.Equal(t, "loaded", resolved)
+	backupPath := filepath.Join(inputs, "mixed.backup")
+	backup := makeRequest(t, server, http.MethodPost, "/admin/backup", map[string]string{"path": backupPath}, "")
+	require.Equal(t, http.StatusOK, backup.Code, backup.Body.String())
+	require.FileExists(t, backupPath)
+	collections, err := qdrantgrpc.NewDatabaseCollectionStore(server.dbManager, nil)
+	require.NoError(t, err)
+	snapshots := qdrantgrpc.NewSnapshotsService(qdrantgrpc.DefaultConfig(), collections, server.db.GetBaseStorageForManager(), inputs, nil)
+	full, err := snapshots.CreateFull(t.Context(), &qpb.CreateFullSnapshotRequest{})
+	require.NoError(t, err)
+	snapshotPath := filepath.Join(inputs, "full", full.GetSnapshotDescription().GetName())
+	snapshot, err := os.Open(snapshotPath)
+	require.NoError(t, err)
+	members, readErr := storage.ReadDatabaseBackupArchive(snapshot)
+	require.NoError(t, snapshot.Close())
+	require.NoError(t, readErr)
+	require.Len(t, members, 4)
+	require.NotNil(t, members[""])
+	require.NotNil(t, members[storeID("explicit")])
+	require.NotNil(t, members[storeID("dedicated")])
+	require.NotNil(t, members[id])
+
+	partialBackup := filepath.Join(inputs, "root-only.backup")
+	require.NoError(t, server.db.Backup(t.Context(), partialBackup))
+	partialDestination := filepath.Join(t.TempDir(), "incomplete")
+	require.ErrorIs(t, multidb.RestoreDatabaseBackup(t.Context(), partialBackup, partialDestination), storage.ErrInvalidData)
+	require.NoDirExists(t, partialDestination)
 
 	closeServer()
-	server, _ = open()
+	server, _ = open(root)
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	count("shared", "MATCH (n:Person) RETURN count(n)", 1)
 	count("dedicated", "MATCH (n:Person) RETURN count(n)", 1)
@@ -131,4 +161,27 @@ func TestPreparedImportAndDatabaseStorageLayouts(t *testing.T) {
 	query("system", "CREATE DATABASE loaded")
 	require.NotEqual(t, id, storeID("loaded"))
 	count("loaded", "MATCH (n) RETURN count(n)", 0)
+
+	restoredRoot := filepath.Join(t.TempDir(), "restored")
+	require.NoError(t, multidb.RestoreDatabaseBackup(t.Context(), backupPath, restoredRoot))
+	server, _ = open(restoredRoot)
+	require.Empty(t, storeID("legacy"))
+	require.Empty(t, storeID("shared"))
+	require.Equal(t, id, storeID("loaded"))
+	require.NotEmpty(t, storeID("dedicated"))
+	count("explicit", "MATCH (n) RETURN count(n)", 0)
+	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
+	count("shared", "MATCH (n:Person {name:'Root'}) RETURN count(n)", 1)
+	count("dedicated", "MATCH (n:Person {name:'Separate'}) RETURN count(n)", 1)
+	count("loaded", "MATCH (n:Person) RETURN count(n)", 3)
+	resolved, err = server.dbManager.ResolveDatabase("archive_alias")
+	require.NoError(t, err)
+	require.Equal(t, "loaded", resolved)
+	count(resolved, "MATCH (:Person {name:'Ada'})-[:KNOWS]->(:Person {name:'Bea'}) RETURN count(*)", 1)
+
+	server, _ = open(t.TempDir())
+	query("nornic", "CREATE (:RestoreSentinel)")
+	restore := makeRequest(t, server, http.MethodPost, "/admin/restore", map[string]string{"path": backupPath}, "")
+	require.Equal(t, http.StatusConflict, restore.Code, restore.Body.String())
+	count("nornic", "MATCH (n:RestoreSentinel) RETURN count(n)", 1)
 }
