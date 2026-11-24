@@ -46,8 +46,13 @@ func (e *embeddingSubmissionRecorder) EmbedBatch(ctx context.Context, texts []st
 // outcome uses, so the parked failure is the production record.
 func parkEmbeddingFailure(t *testing.T, server *Server, database, id string) storage.NodeID {
 	t.Helper()
-	engine := storage.NewNamespacedEngine(server.db.GetBaseStorageForManager(), database)
-	_, err := engine.CreateNode(t.Context(), &storage.Node{
+	engine, err := server.dbManager.GetStorage(database)
+	require.NoError(t, err)
+	wrapper, ok := engine.(storage.EngineUnwrapper)
+	require.True(t, ok, "the catalog view must expose its scoped storage")
+	namespace, ok := wrapper.GetInnerEngine().(*storage.NamespacedEngine)
+	require.True(t, ok, "the catalog view must retain its database scope")
+	_, err = engine.CreateNode(t.Context(), &storage.Node{
 		ID: storage.NodeID(id), Labels: []string{"Doc"},
 		Properties: map[string]any{"content": "parked " + id},
 	})
@@ -60,12 +65,9 @@ func parkEmbeddingFailure(t *testing.T, server *Server, database, id string) sto
 		"embedding_error":     "provider failed",
 		"embedding_failed_at": "2026-01-01T00:00:00Z",
 	}
-	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(t.Context(), node))
-	// The worker scans the qualified identifiers of its base storage; report that
-	// form so a retry request names the same entity the failures endpoint lists.
-	databaseID, _ := server.dbManager.DatabaseIdentity(database)
-	require.NotEmpty(t, databaseID)
-	return storage.NodeID(database + ":" + id)
+	require.NoError(t, namespace.UpdateNodeEmbeddingSidecar(t.Context(), node))
+	// The retry request uses the physical ID returned by the failure scan.
+	return namespace.PrefixNodeID(node.ID)
 }
 
 // editFineGrainedCatalog stages one catalog edit through the authorized HTTP
@@ -160,13 +162,13 @@ func TestFineGrainedEmbeddingRetryAuthorizesNamedTargets(t *testing.T) {
 	reader := getAuthToken(t, users, "reader")
 	defaultDatabase := server.dbManager.DefaultDatabaseName()
 	response := makeRequest(t, server, http.MethodPost, "/db/system/tx/commit", map[string]any{
-		"statements": []map[string]any{{"statement": "CREATE DATABASE tenant_b"}},
+		"statements": []map[string]any{{"statement": "CREATE DATABASE tenant_b OPTIONS {storage: 'isolated'}"}},
 	}, "Bearer "+admin)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.True(t, server.dbManager.ExistsOrIsConstituent("tenant_b"))
 
-	homeTarget := parkEmbeddingFailure(t, server, defaultDatabase, "doc-home")
-	tenantTarget := parkEmbeddingFailure(t, server, "tenant_b", "doc-tenant")
+	homeTarget := parkEmbeddingFailure(t, server, defaultDatabase, "doc")
+	tenantTarget := parkEmbeddingFailure(t, server, "tenant_b", "doc")
 	require.ElementsMatch(t, []storage.NodeID{homeTarget, tenantTarget}, embeddingFailureNodeIDs(t, server))
 
 	grantFineGrainedEmbeddingRetry(t, server, admin, string(auth.RoleViewer), defaultDatabase)
