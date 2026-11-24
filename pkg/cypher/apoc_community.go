@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/internal/queryprofile"
 	"github.com/orneryd/nornicdb/pkg/louvain"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -269,10 +270,9 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 }
 
 // computeWCC groups the given nodes into weakly connected components. The
-// caller's context is observed per adjacency read, per component assignment and
-// every pipelineMaterializedCancelCheck units of a sweep (an initialized set or
-// an incident entry), so a canceled read retires the remaining pass and
-// numbering instead of finishing them.
+// complete stored graph can use one edge scan. An induced subgraph can use
+// adjacency to avoid scanning unrelated edges. Both honor the caller's context
+// during the edge pass and component numbering.
 func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node) (map[storage.NodeID]int, error) {
 
 	if len(nodes) == 0 {
@@ -282,8 +282,8 @@ func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node)
 	work := algorithmWorkFor(ctx)
 
 	// Union-Find structure
-	parent := make(map[storage.NodeID]storage.NodeID)
-	rank := make(map[storage.NodeID]int)
+	parent := make(map[storage.NodeID]storage.NodeID, len(nodes))
+	rank := make(map[storage.NodeID]int, len(nodes))
 
 	for _, node := range nodes {
 		if err := work.charge(); err != nil {
@@ -318,22 +318,37 @@ func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node)
 		}
 	}
 
-	// Process all edges
-	for _, node := range nodes {
-		if err := ctx.Err(); err != nil {
+	view, stream, err := e.wccEdgeStream(ctx, len(nodes))
+	if err != nil {
+		return nil, err
+	}
+	join := func(edge *storage.Edge) error {
+		if err := work.charge(); err != nil {
+			return err
+		}
+		_, hasStart := parent[edge.StartNode]
+		_, hasEnd := parent[edge.EndNode]
+		if hasStart && hasEnd {
+			union(edge.StartNode, edge.EndNode)
+		}
+		return nil
+	}
+	if stream != nil {
+		visit := queryprofile.EntityVisitor(ctx, profileKindAllRelationshipsScan, "", func(edge *storage.Edge) error {
+			return join(view.edge(edge))
+		})
+		if err := stream.StreamEdgesByType(ctx, "", visit); err != nil {
 			return nil, err
 		}
-		edges := e.getNodeEdges(ctx, node.ID)
-		for _, edge := range edges {
-			if err := work.charge(); err != nil {
+	} else {
+		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			neighbor := edge.EndNode
-			if edge.StartNode != node.ID {
-				neighbor = edge.StartNode
-			}
-			if _, exists := parent[neighbor]; exists {
-				union(node.ID, neighbor)
+			for _, edge := range e.getNodeEdges(ctx, node.ID) {
+				if err := join(edge); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -341,7 +356,7 @@ func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node)
 	// Assign component IDs
 	componentMap := make(map[storage.NodeID]int)
 	nextID := 0
-	result := make(map[storage.NodeID]int)
+	result := make(map[storage.NodeID]int, len(nodes))
 
 	for _, node := range nodes {
 		if err := ctx.Err(); err != nil {
@@ -358,4 +373,32 @@ func (e *StorageExecutor) computeWCC(ctx context.Context, nodes []*storage.Node)
 	}
 
 	return result, nil
+}
+
+// wccEdgeStream uses the count and edge stream of the same storage view. The
+// existing adjacency route handles relationship-filtered and transaction-local
+// views and storage engines without a native scoped stream.
+func (e *StorageExecutor) wccEdgeStream(ctx context.Context, selected int) (*graphIdentityStorage, storage.EdgeTypeStreamer, error) {
+	view, ok := e.storage.(*graphIdentityStorage)
+	if !ok {
+		return nil, nil, nil
+	}
+	underlying := view.Engine
+	if scoped, ok := underlying.(*storage.NamespacedEngine); ok {
+		underlying = scoped.GetInnerEngine()
+	}
+	switch underlying.(type) {
+	case *storage.BadgerEngine, *storage.WALEngine:
+	default:
+		return nil, nil, nil
+	}
+	stream, ok := view.Engine.(storage.EdgeTypeStreamer)
+	if !ok {
+		return nil, nil, nil
+	}
+	count, err := view.Engine.NodeCount(ctx)
+	if err != nil || int64(selected) != count {
+		return nil, nil, err
+	}
+	return view, stream, nil
 }
