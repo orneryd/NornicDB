@@ -23,6 +23,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -40,7 +41,7 @@ func main() {
 	err = rootCmd.ExecuteContext(ctx)
 	stop()
 	if err != nil {
-		fmt.Fprintln(rootCmd.ErrOrStderr(), cli.Render(localizer, localization.AdminCLIErrorPrefix()), renderCommandError(localizer, err))
+		fmt.Fprintln(rootCmd.ErrOrStderr(), cli.Render(localizer, localization.AdminCLIErrorPrefix()), observability.RedactText(renderCommandError(localizer, err)))
 		os.Exit(exitCodeForError(err))
 	}
 }

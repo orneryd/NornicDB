@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -108,7 +109,7 @@ func (m *DatabaseManager) loadIsolatedStores(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Printf("Isolated database %q is offline: %v", name, err)
+			log.Printf("Isolated database %q is offline: %v", observability.RedactText(name), observability.RedactError(err))
 			continue
 		}
 		m.isolatedStores[info.IsolatedStoreID] = engine
