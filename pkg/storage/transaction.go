@@ -99,13 +99,9 @@ type Operation struct {
 	// meaning instead of publishing them as a second physical relationship.
 	ReplacesExisting bool `json:"replaces_existing,omitempty"`
 
-	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
-	// the ID is newly minted and cannot collide with any prior tombstoned
-	// MVCC head (the same contract that lets CreateNode skip its existence
-	// read). When true, the commit loop writes the MVCC head without the
-	// load-existing-floor round-trip. Safe default is false — the commit
-	// loop falls back to the read-before-write path, preserving snapshot
-	// semantics for recreated user-supplied IDs.
+	// FreshID records proof that a prior MVCC head cannot exist for
+	// this create. The commit can use the new version as its floor.
+	// Recreated IDs retain the persisted floor.
 	FreshID bool `json:"fresh_id,omitempty"`
 
 	// Runtime fields never enter WAL or persisted data. Pack their small flags

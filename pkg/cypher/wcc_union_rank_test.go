@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -29,5 +30,40 @@ func TestComputeWCCUnionByRank(t *testing.T) {
 			ids[id]++
 		}
 		require.Len(t, ids, 2)
+	}
+}
+
+func TestWCCStreamsCompleteStoredGraph(t *testing.T) {
+	engine, err := testfixture.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	require.NoError(t, err)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "wcc"))
+	other := NewStorageExecutor(storage.NewNamespacedEngine(engine, "other"))
+	_, err = other.Execute(t.Context(), `CREATE (:V)-[:X]->(:V)`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(t.Context(), `CREATE
+		(a:V:Subset {n: 'a'}), (b:V:Subset {n: 'b'}), (c:V {n: 'c'}), (d:V:Subset {n: 'd'}),
+		(b)-[:X]->(a), (a)-[:X]->(b), (c)-[:Y]->(b)`, nil)
+	require.NoError(t, err)
+	query := `CALL apoc.algo.wcc('V') YIELD node, componentId RETURN node.n, componentId ORDER BY node.n`
+	rows, reads := profileReaderAccesses(t, exec, query)
+	require.Len(t, rows, 4)
+	require.Equal(t, rows[0][1], rows[1][1])
+	require.Equal(t, rows[0][1], rows[2][1])
+	require.NotEqual(t, rows[0][1], rows[3][1])
+	require.Equal(t, []gdsAccess{{kind: profileKindAllRelationshipsScan, rows: 3, hits: 3}},
+		profileGDSAccessesOfKinds(reads, profileKindAllRelationshipsScan, profileKindExpand))
+	profile, err := exec.Execute(t.Context(), "PROFILE "+query, nil)
+	require.NoError(t, err)
+	require.Equal(t, rows, profile.Rows)
+	scans := profilePlanOperators(executionPlanFromResult(t, profile).Root, profileKindAllRelationshipsScan, "")
+	require.Len(t, scans, 1)
+	require.EqualValues(t, 3, scans[0].DBHits)
+	for _, selector := range []string{"'V', ['X']", "'Subset'"} {
+		result, err := exec.Execute(t.Context(), `CALL apoc.algo.wcc(`+selector+`) YIELD node, componentId RETURN node.n, componentId ORDER BY node.n`, nil)
+		require.NoError(t, err)
+		require.Equal(t, result.Rows[0][1], result.Rows[1][1])
+		for _, row := range result.Rows[2:] {
+			require.NotEqual(t, result.Rows[0][1], row[1])
+		}
 	}
 }

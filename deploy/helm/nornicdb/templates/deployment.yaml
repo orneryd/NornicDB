@@ -51,13 +51,11 @@ spec:
               value: {{ .Values.config.logLevel | quote }}
             - name: NORNICDB_LOG_FORMAT
               value: {{ .Values.config.logFormat | quote }}
-            - name: NORNICDB_METRICS_ENABLED
-              value: {{ .Values.config.metrics.enabled | quote }}
             {{- if .Values.config.nodeId }}
-            - name: NORNICDB_NODE_ID
+            - name: NORNICDB_CLUSTER_NODE_ID
               value: {{ .Values.config.nodeId | quote }}
             {{- else }}
-            - name: NORNICDB_NODE_ID
+            - name: NORNICDB_CLUSTER_NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name

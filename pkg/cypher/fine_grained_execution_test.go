@@ -82,6 +82,63 @@ func TestFineGrainedCypherVisibilityAndWrites(t *testing.T) {
 	require.Equal(t, "new", stored.Properties["title"])
 }
 
+func TestFineGrainedCypherRepeatedWritesKeepStatementImage(t *testing.T) {
+	ctx := t.Context()
+	store := newTestBadgerNamespacedStore(t)
+	executor := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 50})
+	for _, id := range []storage.NodeID{"a", "b"} {
+		_, err := store.CreateNode(ctx, &storage.Node{ID: id, Labels: []string{"Article"}, Properties: map[string]any{"key": string(id), "title": "original"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(ctx, &storage.Edge{ID: "link", Type: "CITES", StartNode: "a", EndNode: "b", Properties: map[string]any{"title": "original"}}))
+	policy, err := auth.CompileFineGrainedPolicy(auth.GraphFineGrainedActions(), auth.FineGrainedCatalog{
+		Definitions: []auth.FineGrainedEntitlement{
+			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
+			{ID: "nodes", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "node-read", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "node-set", Action: "graph.node.property.set", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode}},
+			{ID: "edges", Action: "graph.relationship.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+			{ID: "edge-read", Action: "graph.relationship.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+			{ID: "edge-set", Action: "graph.relationship.property.set", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedRelationship}},
+		},
+		Assignments: map[string][]string{"writer": {"access", "nodes", "node-read", "node-set", "edges", "edge-read", "edge-set"}},
+	})
+	require.NoError(t, err)
+	scoped := auth.WithFineGrainedRequest(ctx, &auth.FineGrainedRequest{
+		Access: policy.ForRoles([]string{"writer"}), DatabaseID: func(string) string { return "work-id" },
+	})
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		read  func() (string, error)
+	}{
+		{name: "node", query: "MATCH (n:Article {key:'a'}) SET n.title='first' WITH n SET n.title='second' RETURN n.title", read: func() (string, error) {
+			node, err := store.GetNode(ctx, "a")
+			if err != nil {
+				return "", err
+			}
+			return node.Properties["title"].(string), nil
+		}},
+		{name: "relationship", query: "MATCH ()-[r:CITES]->() SET r.title='first' WITH r SET r.title='second' RETURN r.title", read: func() (string, error) {
+			edge, err := store.GetEdge(ctx, "link")
+			if err != nil {
+				return "", err
+			}
+			return edge.Properties["title"].(string), nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := executor.Execute(scoped, tc.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]any{{"second"}}, result.Rows)
+			stored, err := tc.read()
+			require.NoError(t, err)
+			require.Equal(t, "second", stored)
+		})
+	}
+}
+
 func TestFineGrainedCypherExactPropertyDenial(t *testing.T) {
 	ctx := t.Context()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "work")

@@ -267,12 +267,6 @@ database:
   # Env: NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS
   wal_ledger_retention_defaults: false
 
-  # Primary storage serializer for main records
-  # Env: NORNICDB_STORAGE_SERIALIZER
-  # Recommended: msgpack
-  # Note: MVCC version records and MVCC head metadata use msgpack on the hot path
-  storage_serializer: "msgpack"
-
   # MVCC historical retention defaults for prune maintenance
   # Env: NORNICDB_MVCC_RETENTION_MAX_VERSIONS
   # Keeps at most this many closed historical versions per logical key.

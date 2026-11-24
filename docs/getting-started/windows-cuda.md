@@ -139,7 +139,7 @@ You should see:
 Compare with CPU-only mode:
 ```powershell
 # Temporarily disable GPU
-$env:NORNICDB_NO_CUDA = "1"
+$env:NORNICDB_GPU_BACKEND = "cpu"
 
 # Run benchmark again
 .\nornicdb.exe benchmark --embeddings --count 1000
@@ -151,7 +151,7 @@ $env:NORNICDB_NO_CUDA = "1"
 # GPU Utilization: 0%
 
 # Re-enable GPU
-$env:NORNICDB_NO_CUDA = ""
+Remove-Item Env:NORNICDB_GPU_BACKEND
 ```
 
 **Expected Speedup**: 10-50x faster with GPU vs CPU (depends on model and hardware)

@@ -215,79 +215,133 @@ func (g *fineGrainedGraph) allowLabelChanges(target FineGrainedResource, labels 
 	return true
 }
 
-func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
-	if request.After == nil {
+type graphPropertyImage struct {
+	createdAt, updatedAt *time.Time
+	properties           *map[string]any
+}
+
+func graphPropertyFields[T storage.Node | storage.Edge](entity *T) graphPropertyImage {
+	switch typed := any(entity).(type) {
+	case *storage.Node:
+		return graphPropertyImage{&typed.CreatedAt, &typed.UpdatedAt, &typed.Properties}
+	case *storage.Edge:
+		return graphPropertyImage{&typed.CreatedAt, &typed.UpdatedAt, &typed.Properties}
+	}
+	panic("unknown graph property image")
+}
+
+type graphUpdateOperations[T storage.Node | storage.Edge] struct {
+	load      func(context.Context, *T) (*T, error)
+	authorize func(context.Context, *T, *T, *T) (*T, FineGrainedResource, error)
+	complete  func(*T, *T, *T, FineGrainedResource) error
+	persist   func(context.Context, *T, *T) error
+}
+
+// updateAuthorizedGraphEntity admits the write, checks the observed image,
+// and carries the statement timestamp into the authorized copy before saving.
+func updateAuthorizedGraphEntity[T storage.Node | storage.Edge](ctx context.Context, g *fineGrainedGraph,
+	before, submitted *T, writes storage.PropertyWriteIntent, operations graphUpdateOperations[T],
+) error {
+	if submitted == nil {
 		return storage.ErrInvalidData
 	}
-	stored, err := g.engine.GetNode(ctx, request.After.ID)
+	stored, err := operations.load(ctx, submitted)
 	if err != nil {
 		return err
 	}
+	visible, target, err := operations.authorize(ctx, before, stored, submitted)
+	if err != nil {
+		return err
+	}
+	updated := *stored
+	current, readable := graphPropertyFields(&updated), graphPropertyFields(visible)
+	if before != nil {
+		observed := graphPropertyFields(before)
+		if !observed.createdAt.Equal(*current.createdAt) || !observed.updatedAt.Equal(*current.updatedAt) ||
+			!reflect.DeepEqual(*observed.properties, *readable.properties) {
+			return storage.ErrConflict
+		}
+	}
+	after := graphPropertyFields(submitted)
+	merged, err := g.applyPropertyEdit(target, *readable.properties, *after.properties, writes)
+	if err != nil {
+		return err
+	}
+	*current.properties, *current.updatedAt = merged, *after.updatedAt
+	if operations.complete != nil {
+		if err := operations.complete(&updated, visible, submitted, target); err != nil {
+			return err
+		}
+	}
+	return operations.persist(ctx, stored, &updated)
+}
+
+func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
+	return updateAuthorizedGraphEntity(ctx, g, request.Before, request.After, request.PropertyWrites, graphUpdateOperations[storage.Node]{
+		load: func(ctx context.Context, submitted *storage.Node) (*storage.Node, error) {
+			return g.engine.GetNode(ctx, submitted.ID)
+		},
+		authorize: g.authorizeNodeUpdate,
+		complete: func(updated, visible, submitted *storage.Node, target FineGrainedResource) error {
+			updated.Labels = submitted.Labels
+			if !reflect.DeepEqual(visible.NamedEmbeddings, submitted.NamedEmbeddings) ||
+				!reflect.DeepEqual(visible.ChunkEmbeddings, submitted.ChunkEmbeddings) {
+				if !g.request.Access.Allows("graph.node.embedding.set", target) ||
+					!g.request.Access.Allows("graph.node.embedding.read", target) {
+					return ErrFineGrainedForbidden
+				}
+				updated.NamedEmbeddings, updated.ChunkEmbeddings = submitted.NamedEmbeddings, submitted.ChunkEmbeddings
+			}
+			return nil
+		},
+		persist: func(ctx context.Context, stored, updated *storage.Node) error {
+			request.Before, request.After, request.PropertyWrites = stored, updated, storage.PropertyWriteIntent{}
+			return g.engine.UpdateNode(ctx, request)
+		},
+	})
+}
+
+func (g *fineGrainedGraph) authorizeNodeUpdate(_ context.Context, before, stored, submitted *storage.Node) (*storage.Node, FineGrainedResource, error) {
 	target := g.nodeResource(stored)
 	visible := g.projectNode(stored)
 	if newlyCreated(&g.createdNodes, stored.ID, stored.CreatedAt) {
 		visible = stored
 	}
-	if visible == nil || !g.allowLabelChanges(target, request.After.Labels) {
-		return ErrFineGrainedForbidden
+	if visible == nil || !g.allowLabelChanges(target, submitted.Labels) {
+		return nil, target, ErrFineGrainedForbidden
 	}
-	if request.Before != nil && (!request.Before.CreatedAt.Equal(stored.CreatedAt) ||
-		!request.Before.UpdatedAt.Equal(stored.UpdatedAt) ||
-		!slices.Equal(request.Before.Labels, stored.Labels) ||
-		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
-		return storage.ErrConflict
+	if before != nil && !slices.Equal(before.Labels, stored.Labels) {
+		return nil, target, storage.ErrConflict
 	}
-	properties, err := g.applyPropertyEdit(target, visible.Properties, request.After.Properties, request.PropertyWrites)
-	if err != nil {
-		return err
-	}
-	updated := *stored
-	updated.Labels, updated.Properties = request.After.Labels, properties
-	if !reflect.DeepEqual(visible.NamedEmbeddings, request.After.NamedEmbeddings) ||
-		!reflect.DeepEqual(visible.ChunkEmbeddings, request.After.ChunkEmbeddings) {
-		if !g.request.Access.Allows("graph.node.embedding.set", target) ||
-			!g.request.Access.Allows("graph.node.embedding.read", target) {
-			return ErrFineGrainedForbidden
-		}
-		updated.NamedEmbeddings, updated.ChunkEmbeddings = request.After.NamedEmbeddings, request.After.ChunkEmbeddings
-	}
-
-	request.Before, request.After, request.PropertyWrites = stored, &updated, storage.PropertyWriteIntent{}
-	return g.engine.UpdateNode(ctx, request)
+	return visible, target, nil
 }
 
 func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeUpdateRequest) error {
-	if request.After == nil {
-		return storage.ErrInvalidData
-	}
-	stored, err := g.engine.GetEdge(ctx, request.After.ID)
-	if err != nil {
-		return err
-	}
+	return updateAuthorizedGraphEntity(ctx, g, request.Before, request.After, request.PropertyWrites, graphUpdateOperations[storage.Edge]{
+		load: func(ctx context.Context, submitted *storage.Edge) (*storage.Edge, error) {
+			return g.engine.GetEdge(ctx, submitted.ID)
+		},
+		authorize: g.authorizeEdgeUpdate,
+		persist: func(ctx context.Context, stored, updated *storage.Edge) error {
+			request.Before, request.After, request.PropertyWrites = stored, updated, storage.PropertyWriteIntent{}
+			return g.engine.UpdateEdge(ctx, request)
+		},
+	})
+}
+
+func (g *fineGrainedGraph) authorizeEdgeUpdate(ctx context.Context, _, stored, submitted *storage.Edge) (*storage.Edge, FineGrainedResource, error) {
 	visible, err := g.projectEdge(ctx, stored)
 	if err != nil {
-		return err
+		return nil, FineGrainedResource{}, err
 	}
 	if newlyCreated(&g.createdEdges, stored.ID, stored.CreatedAt) {
 		visible = stored
 	}
-	if visible == nil || request.After.Type != stored.Type ||
-		request.After.StartNode != stored.StartNode || request.After.EndNode != stored.EndNode {
-		return ErrFineGrainedForbidden
+	if visible == nil || submitted.Type != stored.Type ||
+		submitted.StartNode != stored.StartNode || submitted.EndNode != stored.EndNode {
+		return nil, FineGrainedResource{}, ErrFineGrainedForbidden
 	}
-	if request.Before != nil && (!request.Before.CreatedAt.Equal(stored.CreatedAt) ||
-		!request.Before.UpdatedAt.Equal(stored.UpdatedAt) ||
-		!reflect.DeepEqual(request.Before.Properties, visible.Properties)) {
-		return storage.ErrConflict
-	}
-	properties, err := g.applyPropertyEdit(g.edgeResource(stored), visible.Properties, request.After.Properties, request.PropertyWrites)
-	if err != nil {
-		return err
-	}
-	updated := *stored
-	updated.Properties = properties
-	request.Before, request.After, request.PropertyWrites = stored, &updated, storage.PropertyWriteIntent{}
-	return g.engine.UpdateEdge(ctx, request)
+	return visible, g.edgeResource(stored), nil
 }
 
 func (g *fineGrainedGraph) allowEdgeDelete(ctx context.Context, edge *storage.Edge) error {

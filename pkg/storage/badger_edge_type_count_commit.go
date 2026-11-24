@@ -188,6 +188,10 @@ func (tx *BadgerTransaction) derivePositionalCountDeltasLocked(ctx context.Conte
 	}
 	stored := make(map[NodeID]storedLabels, len(labelChanges))
 	storedLabelsOf := func(id NodeID) (storedLabels, error) {
+		if imported := tx.offlineImport; imported != nil {
+			labels, exists := imported.nodes[id]
+			return storedLabels{labels: labels, exists: exists}, nil
+		}
 		if known, ok := stored[id]; ok {
 			return known, nil
 		}

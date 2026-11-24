@@ -157,7 +157,6 @@ observability:
 
 Environment overrides commonly used in operations:
 
-- `NORNICDB_METRICS_ENABLED`
 - `NORNICDB_TELEMETRY_PORT`
 - `NORNICDB_PPROF_ENABLED`
 - `NORNICDB_PPROF_LISTEN`

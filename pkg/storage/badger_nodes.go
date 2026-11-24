@@ -454,6 +454,10 @@ func (b *BadgerEngine) getNodeProjected(ctx context.Context, id NodeID, properti
 	if properties == nil {
 		return b.getNode(ctx, id, v)
 	}
+	if v == visibleRead && b.decayEnabled && b.visibilityFiltered() {
+		node, err := b.readNodeMetadata(ctx, id, v, nodeItemQueryMetadata)
+		return projectCachedNodeForRead(node, properties, true), err
+	}
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(ctx, id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include, nodeBodyDetached)

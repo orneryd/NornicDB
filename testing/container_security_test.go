@@ -7,9 +7,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+func TestAuthenticatedContainerQuickStartPassesStartupPolicy(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "docs", "start.md"))
+	require.NoError(t, err)
+	image, err := os.ReadFile(filepath.Join("..", "docker", "Dockerfile.amd64-cpu"))
+	require.NoError(t, err)
+	require.Contains(t, string(image), "NORNICDB_ADDRESS=0.0.0.0")
+	t.Setenv("NORNICDB_ADDRESS", "0.0.0.0")
+	t.Setenv("NORNICDB_HTTP_ADDRESS", "")
+	t.Setenv("NORNICDB_BOLT_ADDRESS", "")
+	hostValues := map[string]string{
+		"NORNICDB_AUTH":            "admin:fixture-password",
+		"NORNICDB_AUTH_JWT_SECRET": "fixture-secret-for-config-validation",
+	}
+	for _, line := range strings.Split(string(document), "\n") {
+		setting, ok := strings.CutPrefix(strings.TrimSpace(line), "-e ")
+		if !ok {
+			continue
+		}
+		name, value, ok := strings.Cut(setting, "=")
+		require.True(t, ok, setting)
+		if expanded, exists := hostValues[name]; exists {
+			value = expanded
+		} else {
+			value = strings.TrimSpace(strings.TrimSuffix(value, "\\"))
+		}
+		t.Setenv(name, value)
+	}
+	require.Equal(t, "false", os.Getenv("NORNICDB_NO_AUTH"))
+	cfg := config.LoadFromEnv()
+	require.True(t, cfg.Auth.Enabled)
+	require.Equal(t, "fixture-password", cfg.Auth.InitialPassword)
+	require.True(t, cfg.Server.HTTPSEnabled)
+	require.True(t, cfg.Server.BoltTLSRequire)
+	require.NoError(t, config.ValidateSecurityConfiguration(cfg))
+}
 
 func TestContainerNoAuthDefaultsEmitWarning(t *testing.T) {
 	root := filepath.Clean("..")

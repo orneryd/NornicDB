@@ -25,11 +25,19 @@ func TestFineGrainedSearchFiltersSharedCorpusAndInvalidatesPages(t *testing.T) {
 	require.Empty(t, masked.Results)
 	visible, err := service.Search(scoped, "albatross", nil, nil)
 	require.NoError(t, err)
-	require.Len(t, visible.Results, 2)
+	require.Len(t, visible.Results, 3)
 	require.Nil(t, visible.Metrics)
+	reference := NewFulltextIndexV2WithAnalyzer(service.bm25Analyzer)
+	readable := map[string]any{"content": "albatross"}
+	for _, id := range []string{"one", "two", "three"} {
+		reference.Index(id, service.extractSearchableText(&storage.Node{Labels: []string{"Article"}, Properties: readable}), nil, nil, false)
+	}
+	expected := reference.Search("albatross", 3)
+	require.Len(t, expected, 3)
 	for _, result := range visible.Results {
 		require.Equal(t, "albatross", result.Properties["content"])
 		require.NotContains(t, result.Properties, "draft")
+		require.Equal(t, expected[0].Score, result.Score)
 	}
 
 	initial, err := service.SearchTextContinuation(scoped, "albatross",
@@ -79,7 +87,7 @@ func TestFineGrainedRankedThenIDContinuationDeliversProjectedPages(t *testing.T)
 	require.Len(t, next.Results, 1)
 	require.False(t, next.HasMore)
 	remaining := next.Results[0]
-	require.Equal(t, storage.NodeID("one"), remaining.NodeID)
+	require.NotEqual(t, storage.NodeID("hidden"), remaining.NodeID)
 	_, repeated := delivered[remaining.NodeID]
 	require.False(t, repeated, "next page repeats a projected result")
 	require.Equal(t, SearchContinuationCatalogPhase, remaining.Phase)
@@ -182,8 +190,12 @@ func TestFineGrainedHNSWUsesOnlyVisibleVectors(t *testing.T) {
 			{ID: "access", Action: "database.access", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedDatabase}},
 			{ID: "article", Action: "graph.node.traverse", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"Article"}}},
 			{ID: "vectors", Action: "graph.node.embedding.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"PublicVector"}}},
+			{ID: "vector-source", Action: "graph.node.property.read", Scope: auth.FineGrainedScope{Kind: auth.FineGrainedNode, Types: []string{"PublicVector"}}},
 		},
-		Assignments: map[string][]string{"reader": {"access", "article", "vectors"}},
+		Assignments: map[string][]string{
+			"reader":        {"access", "article", "vectors", "vector-source"},
+			"source-scoped": {"access", "article", "vectors"},
+		},
 	})
 	require.NoError(t, err)
 	request := &auth.FineGrainedRequest{
@@ -196,6 +208,11 @@ func TestFineGrainedHNSWUsesOnlyVisibleVectors(t *testing.T) {
 
 	spec := VectorQuerySpec{Limit: 1}
 	vector := []float32{1, 0}
+	sourceScoped := *request
+	sourceScoped.Access = policy.ForRoles([]string{"source-scoped"})
+	sourceHits, err := service.VectorQueryNodesWithOptions(auth.WithFineGrainedRequest(ctx, &sourceScoped), vector, spec, &SearchOptions{HNSWEf: 8})
+	require.NoError(t, err)
+	require.Empty(t, sourceHits)
 	for _, tc := range []struct {
 		ctx context.Context
 		id  storage.NodeID

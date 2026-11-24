@@ -264,6 +264,7 @@ type BadgerTransaction struct {
 	// mint (CreateMintedNode). When true, UUID-shaped fresh creates may still
 	// skip the commit-time MVCC head reload once the ID is known absent.
 	skipCreateExistenceCheck bool
+	offlineImport            *offlineImportState
 	// implicit marks transactions that were auto-opened by the executor for a
 	// single Cypher statement outside an explicit BEGIN/COMMIT. The Bolt
 	// session coalesces durability at the end of the session via the
@@ -971,7 +972,14 @@ func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted 
 	// CREATE identity is physical, not visibility-based. A suppressed node
 	// still occupies its ID and must reject every CREATE route, including the
 	// write-behind bulk/implicit paths, unless the ID was minted for it.
-	if _, deleted := tx.deletedNodes[node.ID]; !deleted && !minted {
+	fresh := minted
+	if imported := tx.offlineImport; imported != nil {
+		if _, exists := imported.nodes[node.ID]; exists {
+			return "", ErrAlreadyExists
+		}
+		fresh = true
+	}
+	if _, deleted := tx.deletedNodes[node.ID]; !deleted && !fresh {
 		_, err := tx.getCommittedNodeLocked(ctx, node.ID)
 		if err == nil {
 			return "", ErrAlreadyExists
@@ -1020,11 +1028,9 @@ func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted 
 		Timestamp: time.Now(),
 		NodeID:    node.ID,
 		Node:      nodeCopy,
-		// FreshID lets the commit loop skip the head reload for an ID this
-		// transaction minted (CreateMintedNode): no stored or concurrent
-		// write can hold it. A caller-supplied ID keeps the head check
-		// whatever its shape; a stable import may well be UUID-shaped.
-		FreshID: tx.skipCreateExistenceCheck && minted,
+		// FreshID lets the commit skip the head reload once absence of
+		// a prior head is established by minting or fresh-store import.
+		FreshID: tx.skipCreateExistenceCheck && fresh,
 	})
 
 	return node.ID, nil
@@ -1810,7 +1816,15 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(ctx context.Context, edge *Ed
 	if _, exists := batch[edge.ID]; exists {
 		return false, ErrAlreadyExists
 	}
-	if _, deleted := tx.deletedEdges[edge.ID]; deleted || minted {
+	if tx.offlineImport != nil {
+		// Each successful edge create allocates its numeric ID in the
+		// adjacency key builder. With no prior store or competing writers,
+		// the dictionary covers every earlier chunk.
+		if _, exists := tx.engine.idDict.lookupEdgeNumID(edge.ID); exists {
+			return false, ErrAlreadyExists
+		}
+	}
+	if _, deleted := tx.deletedEdges[edge.ID]; deleted || minted || tx.offlineImport != nil {
 		_, visible, err := endpoint(ctx, edge.StartNode)
 		if err != nil {
 			return false, err
@@ -1945,9 +1959,9 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, minted bool) error 
 		Timestamp: time.Now(),
 		EdgeID:    edge.ID,
 		Edge:      edgeCopy,
-		// As for nodes, only an ID this transaction minted skips the commit
-		// head reload; a caller-supplied ID keeps it whatever its shape.
-		FreshID: tx.skipCreateExistenceCheck && minted,
+		// Minting and the exclusive fresh-store import both establish
+		// that a prior head cannot exist.
+		FreshID: tx.skipCreateExistenceCheck && (minted || tx.offlineImport != nil),
 	})
 	return nil
 }

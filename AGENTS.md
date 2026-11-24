@@ -498,7 +498,10 @@ release ownership, milestones, and verification. Read it before choosing a branc
 
 - **Product work:** branch from `develop` into `feature/<topic>` or `fix/<topic>` and integrate into `develop`.
   Maintainers can push or merge into `develop` for rapid iteration; do not force-push or delete it.
-- **Releases:** integrate into `release/vX.Y.Z` only through PRs on milestone `vX.Y.Z`; run `make test` locally for each PR head before pushing. Direct release branch updates are blocked. Maintainers own release
+- **Releases:** integrate into `release/vX.Y.Z` through PRs on the release milestone. When full local release
+  verification is requested, run `make verify ALL=1 BASE=<release-base>` on the candidate and report its results
+  and skips. A passing full verifier satisfies that local gate. Use `make test` separately for a specific package
+  investigation or when the maintainer requests it. Direct release branch updates are blocked. Maintainers own
   branch creation, merges, tags, and the final fast-forward of `main`. Use the documented `make release-*` helpers.
 - **Maintainer maintenance:** scoped documentation, agent/contributor instructions, repository administration,
   and CI/CD or operational changes may use a short-lived branch from `main` and a PR targeting `main`.
@@ -562,7 +565,8 @@ go test ./... -race
 
 Run `make verify BASE=origin/<pr-base>` for the actual target branch; `make verify` defaults to `origin/main`.
 Use `make verify-help` for options and report any skips. Documentation-only changes need the applicable docs
-checks; runtime tests, coverage, and benchmarks below apply when the change affects code or performance.
+checks. Use the individual commands below when investigating a specific check or collecting evidence beyond
+what the selected verifier reports.
 
 ```bash
 # Format code
@@ -571,7 +575,7 @@ go fmt ./...
 # Run linter
 golangci-lint run
 
-# Run all tests
+# Run the standalone package suite when needed
 go test ./... -v
 
 # Check coverage (must be ≥90%)
@@ -864,7 +868,7 @@ See [.agents/bug-fix-workflow.md](.agents/bug-fix-workflow.md) for detailed work
 
 Before submitting any code:
 
-- [ ] All tests pass: `go test ./... -v`
+- [ ] The applicable local verification passes and any skips are recorded
 - [ ] Coverage ≥90%: `go tool cover -func=coverage.out`
 - [ ] No race conditions: `go test ./... -race`
 - [ ] Code formatted: `go fmt ./...`

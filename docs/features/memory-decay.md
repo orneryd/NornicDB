@@ -97,7 +97,7 @@ memory:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NORNICDB_MEMORY_DECAY_ENABLED` | `false` | Enable the scoring system |
-| `NORNICDB_VISIBILITY_THRESHOLD` | `0.05` | Default visibility threshold |
+| `NORNICDB_MEMORY_VISIBILITY_THRESHOLD` | `0.05` | Default visibility threshold |
 | `NORNICDB_DEFAULT_NODE_LABEL` | `Memory` | Default label for MCP store operations |
 
 ## Cypher DDL Examples

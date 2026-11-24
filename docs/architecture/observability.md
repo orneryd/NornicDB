@@ -549,7 +549,7 @@ environment so containers stay declarative:
 ```yaml
 observability:
   metrics:
-    enabled: true # NORNICDB_METRICS_ENABLED
+    enabled: true
     port: 9090 # NORNICDB_TELEMETRY_PORT (number, no colon)
     # The legacy `:7474/metrics` data-plane endpoint stays enabled in M1 — no
     # config flag. It carries Deprecation/Sunset headers and is removed
