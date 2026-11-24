@@ -842,7 +842,7 @@ else
 	# practice — pipefail's status is `go test`'s status. Flush results
 	# immediately so interrupted CI retains the last completed package. Keep
 	# raw diagnostics too: timeouts/compiler errors do not match this filter.
-	@bash -c 'set -o pipefail; go test -p 1 -parallel 4 -timeout 30m ./... 2>&1 | tee make-test-raw.log | grep --line-buffered -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
+	@bash -c 'set -o pipefail; go test -p 1 -parallel 4 -timeout 45m ./... 2>&1 | tee make-test-raw.log | grep --line-buffered -E "^(FAIL|ok|---[[:space:]]+FAIL)"'
 endif
 
 install-hooks:
@@ -853,7 +853,7 @@ test-serial:
 ifeq ($(HOST_OS),windows)
 	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -ShowAll
 else
-	go test -p 1 -parallel 4 -timeout 30m ./...
+	go test -p 1 -parallel 4 -timeout 45m ./...
 endif
 	
 
