@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/collection"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -838,14 +839,13 @@ func (m *DatabaseManager) GetDefaultStorage() (storage.Engine, error) {
 
 // ListDatabases returns all database info.
 func (m *DatabaseManager) ListDatabases() []*DatabaseInfo {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]*DatabaseInfo, 0, len(m.databases))
-	for _, info := range m.databases {
-		result = append(result, m.visibleDatabaseInfoLocked(info))
-	}
-	return result
+	return collection.ReadSnapshot(&m.mu, func() []*DatabaseInfo {
+		result := make([]*DatabaseInfo, 0, len(m.databases))
+		for _, info := range m.databases {
+			result = append(result, m.visibleDatabaseInfoLocked(info))
+		}
+		return result
+	})
 }
 
 // GetDatabase returns info for a specific database.
@@ -853,12 +853,20 @@ func (m *DatabaseManager) GetDatabase(name string) (*DatabaseInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	info, err := m.databaseInfoLocked(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return m.visibleDatabaseInfoLocked(info), nil
+}
+
+func (m *DatabaseManager) databaseInfoLocked(name string) (*DatabaseInfo, error) {
 	info, exists := m.databases[name]
 	if !exists {
 		return nil, ErrDatabaseNotFound
 	}
-
-	return m.visibleDatabaseInfoLocked(info), nil
+	return info, nil
 }
 
 func (m *DatabaseManager) visibleDatabaseInfoLocked(info *DatabaseInfo) *DatabaseInfo {
@@ -1149,9 +1157,9 @@ func (m *DatabaseManager) GetDatabaseLimits(databaseName string) (*Limits, error
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	info, exists := m.databases[databaseName]
-	if !exists {
-		return nil, ErrDatabaseNotFound
+	info, err := m.databaseInfoLocked(databaseName)
+	if err != nil {
+		return nil, err
 	}
 
 	return info.limitsSnapshot(), nil

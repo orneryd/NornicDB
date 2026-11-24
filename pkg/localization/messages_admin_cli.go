@@ -123,11 +123,11 @@ func AdminCLIBuildIndexesFlag() Message {
 }
 
 func AdminCLIStageImportFlag() Message {
-	return Message{ID: MessageAdminCLIStageImportFlag, Fallback: "Build an isolated store for publication on a running server"}
+	return nornicDBCLIText(MessageAdminCLIStageImportFlag, "Build an isolated store for publication on a running server")
 }
 
 func AdminCLIRestoreBackupShort() Message {
-	return Message{ID: MessageAdminCLIRestoreBackupShort, Fallback: "Restore a native database backup into a new data directory"}
+	return nornicDBCLIText(MessageAdminCLIRestoreBackupShort, "Restore a native database backup into a new data directory")
 }
 func AdminCLISkipBadRelationshipsFlag() Message {
 	return Message{ID: MessageAdminCLISkipBadRelationshipsFlag, Fallback: "Skip relationships that reference missing nodes"}

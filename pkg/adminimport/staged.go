@@ -26,7 +26,7 @@ func StageFullWithKey(ctx context.Context, root string, opts Options, key []byte
 			result = errors.Join(result, os.RemoveAll(directory))
 		}
 	}()
-	engine, err := storage.OpenBadgerForOfflineImportWithKey(directory, opts.DatabaseName, key)
+	engine, err := storage.OpenBadgerForOfflineImport(directory, opts.DatabaseName, key)
 	if err != nil {
 		return "", Report{}, err
 	}

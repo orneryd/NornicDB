@@ -43,7 +43,7 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	configureEncryption(settings)
 	key, err := nornicdb.InitializeStorageEncryption(root, settings)
 	require.NoError(t, err)
-	legacy, err := storage.OpenBadgerForOfflineImportWithKey(root, "legacy", key)
+	legacy, err := storage.OpenBadgerForOfflineImport(root, "legacy", key)
 	require.NoError(t, err)
 	_, err = adminimport.ImportFull(t.Context(), legacy, adminimport.Options{
 		DatabaseName: "legacy", NodeSources: []string{"Person=" + nodes},

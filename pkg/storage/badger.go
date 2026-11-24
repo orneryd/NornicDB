@@ -960,14 +960,17 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // OpenBadgerForOfflineImport opens the native store for a single offline graph
 // import. The importer owns the handle and is the only producer of graph writes
 // until the bulk creates are complete. An existing store uses ordinary bulk
-// validation, including when the requested namespace is empty.
-func OpenBadgerForOfflineImport(dataDir, namespace string) (*BadgerEngine, error) {
-	return OpenBadgerForOfflineImportWithKey(dataDir, namespace, nil)
-}
-
-// OpenBadgerForOfflineImportWithKey applies the installation's key without
-// changing the offline import profile or its exclusive writer contract.
-func OpenBadgerForOfflineImportWithKey(dataDir, namespace string, key []byte) (*BadgerEngine, error) {
+// validation, including when the requested namespace is empty. For encrypted
+// storage, supply the installation's encryption key as the optional third argument.
+func OpenBadgerForOfflineImport(dataDir, namespace string, encryptionKey ...[]byte) (*BadgerEngine, error) {
+	var key []byte
+	switch len(encryptionKey) {
+	case 1:
+		key = encryptionKey[0]
+	case 0:
+	default:
+		return nil, fmt.Errorf("offline import accepts at most one encryption key: %w", ErrInvalidData)
+	}
 	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true, EncryptionKey: key}, namespace)
 }
 

@@ -350,7 +350,7 @@ func runImportFull(dbName string, dataDir string, cmd *cobra.Command) error {
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), id)
 		return err
 	}
-	engine, err := storage.OpenBadgerForOfflineImportWithKey(dataDir, dbName, key)
+	engine, err := storage.OpenBadgerForOfflineImport(dataDir, dbName, key)
 	if err != nil {
 		return err
 	}
