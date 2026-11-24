@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+// ParseTemporalText parses the ISO forms the Cypher temporal constructors
+// accept and returns the value the matching constructor builds: a CypherDate,
+// CypherLocalTime, CypherTime, CypherLocalDateTime, CypherDateTime or
+// *CypherDuration. It is the canonical reader for a temporal value supplied as
+// text, so a reader outside a query stores the same type and representation the
+// constructor stores.
+func ParseTemporalText(kind, text string) (value interface{}, ok bool, err error) {
+	return parseTemporalTextWithError(kind, text)
+}
+
 // parseTemporalText parses the ISO forms accepted by Cypher temporal
 // constructors. It scans slices of the input directly so the common numeric
 // forms do not require regular-expression or token allocations.

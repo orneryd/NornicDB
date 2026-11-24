@@ -23,6 +23,7 @@ const (
 	MessageAdminExportOutputDirectoryRequired  MessageID = "adminimport.export_output_directory_required"
 	MessageAdminExportCustomQuoteUnsupported   MessageID = "adminimport.export_custom_quote_unsupported"
 	MessageAdminExportLabelUnsupported         MessageID = "adminimport.export_label_unsupported"
+	MessageAdminExportArrayElementUnsupported  MessageID = "adminimport.export_array_element_unsupported"
 	MessageAdminImportUnsupportedCSVHeader     MessageID = "adminimport.unsupported_csv_header"
 	MessageAdminImportSchemaApplicationFailed  MessageID = "adminimport.schema_application_failed"
 	MessageAdminImportDuplicateNodeID          MessageID = "adminimport.duplicate_node_id"
@@ -110,6 +111,18 @@ func AdminExportCustomQuoteUnsupported() Message {
 func AdminExportLabelUnsupported(label string, delimiter rune) Message {
 	quotedLabel, quotedDelimiter := strconv.Quote(label), strconv.QuoteRune(delimiter)
 	return Message{ID: MessageAdminExportLabelUnsupported, Fallback: "label " + quotedLabel + " cannot be written to Neo4j CSV with array delimiter " + quotedDelimiter + ": labels must be nonempty, must not have leading or trailing whitespace, must not contain the array delimiter, and must not contain CRLF line breaks; choose a suitable --array-delimiter for a delimiter conflict, or use a nonempty label without surrounding whitespace or CRLF line breaks, or another export format, for a normalization conflict", Data: map[string]any{"Label": quotedLabel, "Delimiter": quotedDelimiter}}
+}
+
+// AdminExportArrayElementUnsupported identifies one list element the Neo4j CSV
+// array field cannot preserve. The array field joins elements with the array
+// delimiter and quotes no element, while the reader splits on that delimiter,
+// trims each element and drops empty elements, so an element that contains the
+// delimiter, is empty, has surrounding whitespace or contains a CRLF line break
+// cannot be read back as the same element. Property, Element and Delimiter are
+// quoted literal values.
+func AdminExportArrayElementUnsupported(property, element string, delimiter rune) Message {
+	quotedProperty, quotedElement, quotedDelimiter := strconv.Quote(property), strconv.Quote(element), strconv.QuoteRune(delimiter)
+	return Message{ID: MessageAdminExportArrayElementUnsupported, Fallback: "property " + quotedProperty + " list element " + quotedElement + " cannot be written to Neo4j CSV with array delimiter " + quotedDelimiter + ": list elements must be nonempty, must not have leading or trailing whitespace, must not contain the array delimiter, and must not contain CRLF line breaks; choose a suitable --array-delimiter for a delimiter conflict, or use elements without surrounding whitespace or CRLF line breaks, or another export format, for a normalization conflict", Data: map[string]any{"Property": quotedProperty, "Element": quotedElement, "Delimiter": quotedDelimiter}}
 }
 
 func AdminImportUnsupportedCSVHeader(path string) Message {
