@@ -2,9 +2,29 @@ package nornicdb
 
 import (
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+func configureEmbeddingStore(engine *storage.BadgerEngine, config *Config) {
+	options := config.EmbeddingWorker
+	engine.SetEmbeddingsEnabled(config.Memory.EmbeddingEnabled)
+	engine.SetEmbeddingLabelPolicy("", options.EligibleLabels, options.ExcludedLabels)
+	engine.SetEmbeddingTextPolicy(embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromFields(
+		options.PropertiesInclude, options.PropertiesExclude, options.IncludeLabels)))
+}
+
+func (db *DB) embeddingPolicyEngine(database string) *storage.BadgerEngine {
+	if catalog := db.embedStoreCatalog.Load(); catalog != nil {
+		engine, err := catalog.BackgroundGraphStore(database)
+		if err != nil {
+			return nil
+		}
+		return unwrapToBadgerEngine(engine)
+	}
+	return unwrapToBadgerEngine(db.baseStorage)
+}
 
 // SetDefaultEmbedConfig binds the default provider configuration for per-database
 // embedder selection and failure diagnostics. It may be set before or after the
@@ -116,7 +136,7 @@ func (db *DB) refreshEmbedFailureRedactor() {
 // Enabling requests a background pending-index refresh so records written while
 // disabled become eligible without blocking the admin request on a full scan.
 func (db *DB) SetDatabaseEmbeddingsEnabled(database string, enabled bool) {
-	engine := unwrapToBadgerEngine(db.baseStorage)
+	engine := db.embeddingPolicyEngine(database)
 	if engine == nil {
 		return
 	}
@@ -137,7 +157,7 @@ func (db *DB) managedEmbeddingAllowed(id storage.NodeID) bool {
 	if !ok {
 		return false
 	}
-	engine := unwrapToBadgerEngine(db.baseStorage)
+	engine := db.embeddingPolicyEngine(database)
 	return engine == nil || engine.IsDatabaseEmbeddingsEnabled(database)
 }
 

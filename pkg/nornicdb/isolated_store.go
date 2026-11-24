@@ -126,6 +126,7 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 		return nil, errors.Join(err, native.Close())
 	}
 	engine := storage.NewWALEngine(native, wal)
+	configureEmbeddingStore(native, db.config)
 	native.SetChangeCapture(name, storage.ParseChangeCaptureMode(options[multidb.OptionTxLogEnrichment]))
 	if _, err := storage.RecoverBufferedCommitsAtOpen(native, wal); err != nil {
 		return nil, errors.Join(err, engine.Close())

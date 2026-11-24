@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -121,6 +122,48 @@ func (m *DatabaseManager) loadIsolatedStores(ctx context.Context) error {
 // store must never resolve to the shared engine.
 func (m *DatabaseManager) graphStoreLocked(name string) (storage.Engine, error) {
 	return m.storeForDatabaseInfoLocked(m.databases[name])
+}
+
+// BackgroundGraphStore returns the physical owner of an already-qualified
+// node. An unavailable dedicated database cannot fall back to the shared root.
+func (m *DatabaseManager) BackgroundGraphStore(name string) (storage.Engine, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	info := m.databases[name]
+	if info != nil && info.IsolatedStoreID != "" {
+		if m.pendingDrops[name] || info.Status != "online" {
+			return nil, storage.ErrNotFound
+		}
+		if engine, err := m.storeForDatabaseInfoLocked(info); err == nil {
+			return engine, nil
+		}
+		return nil, storage.ErrNotFound
+	}
+	return m.inner, nil
+}
+
+// ActiveDedicatedGraphStores snapshots online dedicated owners without keeping
+// the catalog locked during storage reads or provider calls.
+func (m *DatabaseManager) ActiveDedicatedGraphStores() []storage.Engine {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.isolatedStores) == 0 {
+		return nil
+	}
+	var names []string
+	for name, info := range m.databases {
+		if info != nil && info.IsolatedStoreID != "" && info.Status == "online" && !m.pendingDrops[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	stores := make([]storage.Engine, 0, len(names))
+	for _, name := range names {
+		if engine, err := m.graphStoreLocked(name); err == nil {
+			stores = append(stores, engine)
+		}
+	}
+	return stores
 }
 
 func (m *DatabaseManager) storeForDatabaseInfoLocked(info *DatabaseInfo) (storage.Engine, error) {
