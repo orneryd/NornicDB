@@ -33,6 +33,13 @@ func TestProcedureYieldWhereSearchEligibility(t *testing.T) {
 		}
 		for _, statement := range issue.Statements {
 			t.Run(statement.ID, func(t *testing.T) {
+				if statement.ID == "i85-search-await-populated" {
+					// The server starts its search build during startup. This
+					// in-memory differential harness owns that step itself.
+					service := exec.search()
+					require.NotNil(t, service)
+					require.NoError(t, service.BuildIndexes(t.Context()))
+				}
 				result, err := exec.Execute(context.Background(), statement.Query, nil)
 				require.NoError(t, err, statement.Query)
 				if statement.ExpectedRows == nil {
