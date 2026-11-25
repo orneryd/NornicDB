@@ -98,3 +98,22 @@ func TestPDW161Relationships(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingBetweenPublicMerge(t *testing.T) {
+	f := newPDW161Fixture(t)
+	f.run("CREATE (:PDGraphNode {id:'left'}) CREATE (:PDGraphNode {id:'right'})", nil)
+	forward := "MATCH (a:PDGraphNode {id:'left'}) MATCH (b:PDGraphNode {id:'right'}) MERGE (a)-[:STAGED {id:'one'}]->(b)"
+	reverse := "MATCH (a:PDGraphNode {id:'right'}) MATCH (b:PDGraphNode {id:'left'}) MERGE (a)-[:STAGED {id:'one'}]->(b)"
+	f.run("BEGIN", nil)
+	require.Equal(t, 1, f.run(forward, nil).Stats.RelationshipsCreated)
+	require.Zero(t, f.run(forward, nil).Stats.RelationshipsCreated, "the second MERGE must see the staged first edge")
+	require.Equal(t, 1, f.run(reverse, nil).Stats.RelationshipsCreated, "direction is part of the pair key")
+	f.run("COMMIT", nil)
+	require.Equal(t, [][]any{{int64(2)}}, f.run("MATCH ()-[r:STAGED]->() RETURN count(r)", nil).Rows)
+
+	f.run("BEGIN", nil)
+	f.run("MATCH (a:PDGraphNode {id:'left'})-[r:STAGED {id:'one'}]->(b:PDGraphNode {id:'right'}) DELETE r", nil)
+	require.Equal(t, 1, f.run(forward, nil).Stats.RelationshipsCreated, "delete must remove the staged pair before MERGE")
+	f.run("COMMIT", nil)
+	require.Equal(t, [][]any{{int64(2)}}, f.run("MATCH ()-[r:STAGED]->() RETURN count(r)", nil).Rows)
+}
