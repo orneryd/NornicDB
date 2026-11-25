@@ -139,18 +139,27 @@ func TestExplicitTransactionNestedReduceMatcherCost(t *testing.T) {
 		sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 		return times[len(times)/2]
 	}
-	reused := NewStorageExecutor(store)
+	// This test bounds the cost of an uncached nested validation walk. Keep
+	// bound semantic validation uncached on both sides of the subtraction;
+	// otherwise a warmed executor's new success cache makes the delta include
+	// that cache's savings instead of only nested-scope validation work.
+	uncached := func() *StorageExecutor {
+		exec := NewStorageExecutor(store)
+		exec.boundSemanticValidationCache = nil
+		return exec
+	}
+	reused := uncached()
 	read(reused)
-	read(NewStorageExecutor(store)) // statement-text caches shared by every executor
+	read(uncached()) // statement-text caches shared by every executor
 	warm := median(func() *StorageExecutor { return reused })
-	fresh := median(func() *StorageExecutor { return NewStorageExecutor(store) })
+	fresh := median(uncached)
 	t.Logf("explicit transaction read: reused executor %v, new executor %v", warm, fresh)
 
 	allocations := func(next func() *StorageExecutor) float64 {
 		return testing.AllocsPerRun(3, func() { read(next()) })
 	}
 	reusedAllocations := allocations(func() *StorageExecutor { return reused })
-	newAllocations := allocations(func() *StorageExecutor { return NewStorageExecutor(store) })
+	newAllocations := allocations(uncached)
 	validation := (newAllocations - reusedAllocations) / float64(len(query))
 	t.Logf("allocations per read: reused executor %.0f, new executor %.0f; a new executor's validation %.2f per statement byte",
 		reusedAllocations, newAllocations, validation)

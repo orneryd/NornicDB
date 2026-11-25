@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Keep change-feed bounds and resumed event reads fast after retention by recording snapshot-visible first and last event positions.
+- Reuse successful parameterized semantic validation for repeated statements with the same bound type classes, while rechecking new types and request-local values.
 
 ## [1.5.2-hotfix]
 

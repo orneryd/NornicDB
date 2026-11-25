@@ -6,6 +6,8 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -75,6 +77,72 @@ func semanticCacheKey(cypher string, cypher25 bool) string {
 		return "cypher25:" + cypher
 	}
 	return cypher
+}
+
+// boundSemanticCacheKey records exactly the parameter type facts consumed by
+// the semantic walk. Direct value checks still run on every execution before
+// this cache is consulted. Unknown parameter kinds keep the uncached path.
+func boundSemanticCacheKey(cypher string, cypher25 bool, params map[string]interface{}) (string, bool) {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	key := append([]byte(semanticCacheKey(cypher, cypher25)), 0)
+	for _, name := range names {
+		value := params[name]
+		operand := staticParameterOperand(value)
+		if operand.display == "" && value != nil && !isRuntimeNumber(value) {
+			return "", false
+		}
+		key = strconv.AppendQuote(key, name)
+		key = append(key, '=')
+		key = strconv.AppendQuote(key, operand.display)
+		key = append(key, ';')
+	}
+	return string(key), true
+}
+
+// validateBoundMatchSemanticScopes reuses only successful proofs for the same
+// statement, language version, procedure registry and parameter type classes.
+// A different type gets a fresh walk, so later invalid bindings still fail.
+func (e *StorageExecutor) validateBoundMatchSemanticScopes(ctx context.Context, cypher string, cypher25 bool, params map[string]interface{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cacheable := !hasConditionalFrames(ctx) && e.boundSemanticValidationCache != nil && len(e.fabricRecordBindings) == 0 && len(valueBindingsFromContext(ctx)) == 0 && e.inputBindingRole == boundOrdinaryBody
+	var key string
+	if cacheable {
+		key, cacheable = boundSemanticCacheKey(cypher, cypher25, params)
+	}
+	parent, _ := ctx.Value(nativeFunctionInputsKey{}).(*nativeFunctionInputs)
+	generation := globalProcedureRegistry.generation.Load()
+	if cacheable {
+		if inputs, found := e.boundSemanticValidationCache.get(key); found && inputs.generation == generation {
+			if parent != nil {
+				parent.merge(inputs)
+			}
+			return nil
+		}
+	}
+	inputs := nativeFunctionInputs{generation: generation}
+	walkCtx := context.WithValue(ctx, nativeFunctionInputsKey{}, &inputs)
+	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
+		return e.validateMatchSemanticScopesUncached(walkCtx, text, cypher25, params)
+	}); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	inputs.uncertain = generation != globalProcedureRegistry.generation.Load()
+	if cacheable && !inputs.uncertain {
+		e.boundSemanticValidationCache.put(key, inputs)
+	}
+	if parent != nil {
+		parent.merge(inputs)
+	}
+	return nil
 }
 
 func (e *StorageExecutor) validateMatchSemanticScopesUncached(ctx context.Context, cypher string, cypher25 bool, params map[string]interface{}) error {
