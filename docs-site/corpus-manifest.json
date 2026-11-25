@@ -167,8 +167,8 @@
     },
     {
       "path": "architecture/multi-db-architecture.md",
-      "sha256": "c6d0e4d5a5be88fed958e1631c332381b1f3add95e6d6b2bf90f53707237f6db",
-      "bytes": 11722
+      "sha256": "a0ab8af775b320d8153212349977e2832b747d0ca61795c70b022e51a01f7ef8",
+      "bytes": 14454
     },
     {
       "path": "architecture/multi-db-implementation-spec.md",
@@ -682,8 +682,8 @@
     },
     {
       "path": "features/cross-encoder-reranking.md",
-      "sha256": "4ec41061b810f63fd0c7b3a92c208e4e9dd2fa8cb15af6dd9df4f17af7c0bc47",
-      "bytes": 18162
+      "sha256": "224ace46e28c7b7d25b6f3ef2b18dd8149f2f85e3f71f5264480ff02e72756c8",
+      "bytes": 18424
     },
     {
       "path": "features/feature-flags.md",
@@ -727,13 +727,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "208720a1394e879230ce765b35422df2c12e275ce0e5e855e6c29efcdeae2d84",
-      "bytes": 220994
+      "sha256": "d2c79eed7435bc05c744d0096df17d5a699149848a27e639d08043143e8449dc",
+      "bytes": 220925
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "fbd5082d70001da4814bab054fac840565a9327a2fa9c341a6ef6596120513d8",
-      "bytes": 161328
+      "sha256": "8f0df49591486aac7c77a2984285430ba52f6dab0b87aee4e7d426fd2440eb24",
+      "bytes": 161259
     },
     {
       "path": "getting-started/README.md",
@@ -822,8 +822,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "46bf016a026825323a5ed4aa7eb0270de14078da782cbb42fc9a6b243d951191",
-      "bytes": 7962
+      "sha256": "8b506f7436750a6a130161914ce28a06a85eae39d2df41d0230aa22d2bb0725d",
+      "bytes": 13692
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -1361,6 +1361,11 @@
       "bytes": 4050
     },
     {
+      "path": "performance/graphalytics-wiki-talk.md",
+      "sha256": "d5c626f80bd13731bf13dd91fe75874417e6dbbce36bf54762569a8d2afec78d",
+      "bytes": 2107
+    },
+    {
       "path": "performance/hnsw-recall-100k.svg",
       "sha256": "f18cef9917517174cd524f8c76128543a79ef4f1b45012740afc366b161d8b7f",
       "bytes": 4201
@@ -1842,8 +1847,8 @@
     },
     {
       "path": "user-guides/search-continuation.md",
-      "sha256": "b4a133e0cca0ff96c03bd4165fc2353beafe843aec85f87d75af6b87a8e67959",
-      "bytes": 17646
+      "sha256": "e11f2edaaead19d6ebfe1bfa2f7f4a601b782f5b0c9aff5b771195b611d60f3f",
+      "bytes": 17810
     },
     {
       "path": "user-guides/transactions.md",
