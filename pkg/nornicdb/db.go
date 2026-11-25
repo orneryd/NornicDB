@@ -908,7 +908,11 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 
 		// Replay accepted semantic transactions and buffered ACKs before traffic.
 		// Semantic records can precede physical publication in either mode.
-		if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {
+		restoreWALFloor, err := nativeRestoreWALFloor(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		if recovered, recErr := storage.RecoverBufferedCommitsAtOpenAfter(badgerEngine, wal, restoreWALFloor); recErr != nil {
 			return nil, fmt.Errorf("failed to replay accepted commits from WAL: %w", recErr)
 		} else if recovered > 0 {
 			fmt.Printf("♻️  Recovered %d accepted commits from the WAL\n", recovered)

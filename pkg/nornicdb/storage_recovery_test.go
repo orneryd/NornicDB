@@ -183,6 +183,30 @@ func TestRecoverableArtifactsRequirePostRestoreSnapshot(t *testing.T) {
 	require.True(t, hasRecoverableArtifacts(dataDir))
 }
 
+func TestNativeRestoreWALFloor(t *testing.T) {
+	dataDir := t.TempDir()
+	marker := filepath.Join(dataDir, nativeRestoreMarker)
+	floor, err := nativeRestoreWALFloor(dataDir)
+	require.NoError(t, err)
+	require.Zero(t, floor)
+
+	require.NoError(t, os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600))
+	floor, err = nativeRestoreWALFloor(dataDir)
+	require.NoError(t, err)
+	require.Zero(t, floor)
+
+	data, err := json.Marshal(nativeRestoreBoundary{RestoredAt: time.Now().UTC(), WALSequence: 42})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(marker, data, 0o600))
+	floor, err = nativeRestoreWALFloor(dataDir)
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), floor)
+
+	require.NoError(t, os.WriteFile(marker, []byte(`{"restored_at":"2026-11-24T00:00:00Z"}`), 0o600))
+	_, err = nativeRestoreWALFloor(dataDir)
+	require.ErrorContains(t, err, "no WAL sequence")
+}
+
 func TestRecoverBadgerFromSnapshotAndWAL_HandlesEmptyRecoveryInputs(t *testing.T) {
 	dataDir := t.TempDir()
 	opts := storage.BadgerOptions{DataDir: dataDir}
