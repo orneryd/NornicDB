@@ -1469,6 +1469,15 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
+	// Narrow the type-index endpoints with mandatory relationship-local
+	// equalities before loading nodes and traversing their adjacency. The
+	// complete WHERE is still evaluated for every resulting path.
+	whereValues := e.relationshipWhereEqualityValues(ctx, relationship.Variable, match.pruneWhere)
+	if viewport, active := TemporalViewportFromContext(ctx); active && viewport.Enabled() {
+		// The type index may hold current properties while the traversal reads
+		// a historical relationship version.
+		whereValues = nil
+	}
 	seen := make(map[storage.NodeID]bool)
 	add := func(id storage.NodeID) {
 		if seen[id] {
@@ -1485,7 +1494,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return nil, true, err
 		}
 		for _, edge := range edges {
-			if edge == nil {
+			if edge == nil || (len(whereValues) > 0 && !e.edgeMatchesProps(edge, whereValues)) {
 				continue
 			}
 			switch relationship.Direction {
