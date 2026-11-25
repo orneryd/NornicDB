@@ -333,7 +333,13 @@ func (tx *BadgerTransaction) MatchEdgesBetween(ctx context.Context, startID, end
 		return nil, err
 	}
 	now := DecayScoringTime()
-	for _, edge := range pendingEdges {
+	// MERGE asks for an exact directed pair and type. The staged pair index
+	// avoids revisiting every pending relationship for each new lookup.
+	adjacent, err := tx.pendingBetweenLocked(ctx, startID, endID, edgeType, pendingEdges)
+	if err != nil {
+		return nil, err
+	}
+	for _, edge := range adjacent {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
