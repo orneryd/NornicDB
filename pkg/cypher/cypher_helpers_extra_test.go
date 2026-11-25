@@ -2115,6 +2115,13 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 	}
 	for _, q := range expectSuccess {
 		t.Run("success_"+q, func(t *testing.T) {
+			if q == "CALL db.awaitIndexes()" {
+				// The earlier createNodeIndex case left a search service with a
+				// POPULATING index. Await now requires the advertised ONLINE state.
+				if service := exec.search(); service != nil {
+					require.NoError(t, service.BuildIndexes(ctx))
+				}
+			}
 			res, err := exec.executeCall(ctx, q)
 			require.NoError(t, err, q)
 			require.NotNil(t, res, q)
