@@ -21,6 +21,53 @@ func TestRestrictedUniqueConstraintDiagnosticPreservesClassification(t *testing.
 	require.NotContains(t, restricted.Error(), string(holder))
 }
 
+func TestRestrictedRelationshipConstraintDiagnosticPreservesClassification(t *testing.T) {
+	for _, kind := range []ConstraintType{ConstraintUnique, ConstraintRelationshipKey} {
+		t.Run(string(kind), func(t *testing.T) {
+			engine := relatedSynchronousKeyEngine(t, Constraint{
+				Name: "link_secret_key", Type: kind, EntityType: ConstraintEntityRelationship,
+				Label: "LINK", Properties: []string{"key"},
+			})
+			relatedEndpointNodes(t, engine)
+			require.NoError(t, engine.CreateEdge(t.Context(), &Edge{
+				ID: "test:holder-edge", Type: "LINK", StartNode: "test:a", EndNode: "test:b",
+				Properties: map[string]any{"key": "held-rel-key"},
+			}))
+			duplicate := &Edge{
+				ID: "test:probe-edge", Type: "LINK", StartNode: "test:a", EndNode: "test:b",
+				Properties: map[string]any{"key": "held-rel-key"},
+			}
+			plain := engine.CreateEdge(t.Context(), duplicate)
+			require.ErrorContains(t, plain, "held-rel-key")
+			require.ErrorContains(t, plain, "holder-edge")
+			restricted := engine.CreateEdge(WithRestrictedConstraintDiagnostics(t.Context()), duplicate)
+			var violation *ConstraintViolationError
+			require.ErrorAs(t, restricted, &violation)
+			require.Equal(t, kind, violation.Type)
+			require.Equal(t, "LINK", violation.Label)
+			require.Equal(t, []string{"key"}, violation.Properties)
+			require.ErrorContains(t, restricted, "already exists")
+			require.NotContains(t, restricted.Error(), "held-rel-key")
+			require.NotContains(t, restricted.Error(), "holder-edge")
+
+			ctx := WithRestrictedConstraintDiagnostics(t.Context())
+			tx, err := engine.BeginTransaction(ctx, OrdinaryBegin)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			require.NoError(t, tx.SetNamespace("test"))
+			staged := *duplicate
+			staged.ID = "test:transaction-probe"
+			err = tx.CreateEdge(ctx, &staged)
+			if err == nil {
+				err = tx.CommitContext(ctx)
+			}
+			require.ErrorAs(t, err, &violation)
+			require.NotContains(t, err.Error(), "held-rel-key")
+			require.NotContains(t, err.Error(), "holder-edge")
+		})
+	}
+}
+
 func TestRefreshUniqueConstraintValuesForEngine_NilArgs(t *testing.T) {
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, nil))
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(context.Background(), nil, NewSchemaManager()))

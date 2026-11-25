@@ -86,6 +86,9 @@ func (v nodeConstraintValidation) validate(node *Node) error {
 		if c.EffectiveEntityType() != ConstraintEntityNode {
 			continue
 		}
+		if err := validateConstraintAdmission(v.ctx, c, node.Properties); err != nil {
+			return err
+		}
 		switch c.Type {
 		case ConstraintUnique:
 			if v.transaction != nil {
@@ -269,6 +272,9 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(ctx context.Context, txn *ba
 			}
 		}
 		if match {
+			if violation := restrictedNodeConstraintViolation(ctx, ConstraintNodeKey, label, properties); violation != nil {
+				return violation
+			}
 			return &ConstraintViolationError{
 				Type:       ConstraintNodeKey,
 				Label:      label,
@@ -410,6 +416,9 @@ func (b *BadgerEngine) validateEdgeConstraintsInTxn(ctx context.Context, txn *ba
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
 		}
+		if err := validateConstraintAdmission(ctx, c, edge.Properties); err != nil {
+			return err
+		}
 		switch c.Type {
 		case ConstraintUnique:
 			if err := b.checkEdgeUniquenessInTxn(ctx, txn, edge, c, namespace, excludeEdgeID); err != nil {
@@ -511,6 +520,9 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(ctx context.Context, txn *badger
 			}
 			existVal := existingEdge.Properties[prop]
 			if existVal != nil && compareValues(existVal, newVal) {
+				if violation := restrictedRelationshipConstraintViolation(ctx, c.Type, edge.Type, c.Properties); violation != nil {
+					return violation
+				}
 				return &ConstraintViolationError{
 					Type:       c.Type,
 					Label:      edge.Type,
@@ -540,6 +552,9 @@ func (b *BadgerEngine) checkEdgeUniquenessInTxn(ctx context.Context, txn *badger
 				return nil // NULL in composite key doesn't violate uniqueness
 			}
 			if allMatch {
+				if violation := restrictedRelationshipConstraintViolation(ctx, c.Type, edge.Type, c.Properties); violation != nil {
+					return violation
+				}
 				return &ConstraintViolationError{
 					Type:       c.Type,
 					Label:      edge.Type,

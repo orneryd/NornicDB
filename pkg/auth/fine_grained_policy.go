@@ -274,6 +274,42 @@ func (a FineGrainedAccess) AllowsEntireGraphAction(actionID, databaseID, homeDat
 	return allowed
 }
 
+// allowsConstraintPopulation proves that an action covers every possible
+// holder of a constrained value. Checking only the proposed write target can
+// turn a uniqueness failure into an existence oracle for hidden entities.
+func (a FineGrainedAccess) allowsConstraintPopulation(actionID string, target FineGrainedResource, label, property string) bool {
+	action, known := a.actions[actionID]
+	if !known || !action.ResourceKind.entity() || action.ResourceKind != target.Kind || target.DatabaseID == "" ||
+		(action.Property != (property != "")) {
+		return false
+	}
+	if a.boostedDatabase == target.DatabaseID && boostedGraphAction(actionID, action) {
+		return true
+	}
+	granted := false
+	for _, definition := range a.grants[actionID] {
+		s := definition.Scope
+		if (s.DatabaseID != "" && s.DatabaseID != target.DatabaseID) ||
+			(s.HomeDatabase && target.HomeDatabaseID != target.DatabaseID) ||
+			(len(s.Properties) != 0 && !slices.Contains(s.Properties, property)) {
+			continue
+		}
+		if definition.Deny {
+			// Nodes can carry more than one label. A denial on another label
+			// may still hide a holder of this constraint.
+			if target.Kind == FineGrainedNode || len(s.Types) == 0 || slices.Contains(s.Types, label) {
+				return false
+			}
+			continue
+		}
+		if len(s.EntityIDs) == 0 && s.Predicate == nil &&
+			(len(s.Types) == 0 || slices.Contains(s.Types, label)) && len(s.PropertyPatterns) == 0 {
+			granted = true
+		}
+	}
+	return granted
+}
+
 // allowsAllEntityProperties proves access to any property of this entity.
 // Managed vectors may outlive a source field, so checking the set of keys
 // currently stored on the entity is insufficient.

@@ -38,6 +38,39 @@ func TestFineGrainedEntireGraphActionDistinguishesRestrictedReaders(t *testing.T
 	require.False(t, restricted.AllowsEntireGraphAction(fgacTestReadProperty, "home", "home"))
 }
 
+func TestConstraintPopulationRequiresUnconditionalCoverage(t *testing.T) {
+	const traverse = "graph.node.traverse"
+	target := FineGrainedResource{Kind: FineGrainedNode, DatabaseID: "db", Types: []string{"Person"}, CreatingEntity: true}
+	person := FineGrainedScope{Kind: FineGrainedNode, DatabaseID: "db", Types: []string{"Person"}}
+	key := person
+	key.Properties = []string{"ssn"}
+	access := FineGrainedAccess{
+		actions: map[string]FineGrainedAction{
+			traverse:             {ID: traverse, ResourceKind: FineGrainedNode},
+			fgacTestReadProperty: {ID: fgacTestReadProperty, ResourceKind: FineGrainedNode, Property: true},
+		},
+		grants: map[string][]FineGrainedEntitlement{
+			traverse:             {{Action: traverse, Scope: person}},
+			fgacTestReadProperty: {{Action: fgacTestReadProperty, Scope: key}},
+		},
+	}
+	require.True(t, access.allowsConstraintPopulation(traverse, target, "Person", ""))
+	require.True(t, access.allowsConstraintPopulation(fgacTestReadProperty, target, "Person", "ssn"))
+	require.False(t, access.allowsConstraintPopulation(fgacTestReadProperty, target, "Person", "salary"))
+
+	// A holder may also carry another label. A deny on that label can hide it.
+	otherLabel := FineGrainedScope{Kind: FineGrainedNode, DatabaseID: "db", Types: []string{"Private"}}
+	access.grants[traverse] = append(access.grants[traverse], FineGrainedEntitlement{Action: traverse, Deny: true, Scope: otherLabel})
+	require.False(t, access.allowsConstraintPopulation(traverse, target, "Person", ""))
+	access.grants[traverse] = access.grants[traverse][:1]
+
+	// A grant tied to one entity cannot prove access to the whole index.
+	perEntity := key
+	perEntity.EntityIDs = []string{"one"}
+	access.grants[fgacTestReadProperty] = []FineGrainedEntitlement{{Action: fgacTestReadProperty, Scope: perEntity}}
+	require.False(t, access.allowsConstraintPopulation(fgacTestReadProperty, target, "Person", "ssn"))
+}
+
 func TestFineGrainedActionAndResourceScope(t *testing.T) {
 	catalog := FineGrainedCatalog{
 		Definitions: []FineGrainedEntitlement{
