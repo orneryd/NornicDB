@@ -504,9 +504,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// prune each path prefix as soon as they can be decided on it.
 	matches.pruneWhere = whereClause
 
-	// Only unbound, single-segment traversals choose their orientation here.
-	// Index availability alone says nothing about adjacency expansion cost.
-	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && !matches.IsChained && matches.pinnedRelationship == nil {
+	// Unbound single segments compare both orientations here. A fixed chain
+	// can also start at a single-candidate indexed inline end; the chooser limits that
+	// case to at most one candidate before any reverse traversal starts.
+	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && matches.pinnedRelationship == nil &&
+		(!matches.IsChained || matches.canSeedEnd() && len(matches.EndNode.properties) > 0) {
 		endNodes, selected, err := e.chooseTraversalEndSeeds(ctx, matches, optimizedStartNodes, startDecided, whereClause, hint.statistics)
 		if err != nil {
 			return nil, err

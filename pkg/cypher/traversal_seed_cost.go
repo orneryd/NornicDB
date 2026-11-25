@@ -82,6 +82,21 @@ func (e *StorageExecutor) chooseTraversalEndSeeds(ctx context.Context, match *Tr
 	if startDecided && len(startNodes) == 0 {
 		return nil, false, nil
 	}
+	if match.IsChained {
+		// Fixed chains can walk backwards, but their first-hop degree is not
+		// the cost of the whole chain. Seed only when the existing indexed
+		// node access plan names zero or one end candidate. A wider posting
+		// keeps the prior start-side traversal and is never hydrated here.
+		endPlan, indexed, err := e.planPipelineIndexedNodeCandidates(ctx, end, where, pipelineMatchPhysicalHint{})
+		if err != nil || !indexed {
+			return nil, false, err
+		}
+		if endPlan.candidateCount() > 1 {
+			return nil, false, nil
+		}
+		nodes, _, _, err := e.readNodeIndexCandidatePlan(ctx, endPlan)
+		return nodes, true, err
+	}
 	store := e.getStorage(ctx)
 	startCost, startKnown, err := traversalSeedPopulation(ctx, store, match.StartNode, len(startNodes), startDecided, statistics)
 	if err != nil {
