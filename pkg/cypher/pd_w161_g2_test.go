@@ -117,3 +117,97 @@ func TestPendingBetweenPublicMerge(t *testing.T) {
 	f.run("COMMIT", nil)
 	require.Equal(t, [][]any{{int64(2)}}, f.run("MATCH ()-[r:STAGED]->() RETURN count(r)", nil).Rows)
 }
+
+// C70: the indexed label may appear second in a multi-label MERGE.
+// This is the recorded production shape and its MATCH/label-order controls.
+func TestPDW161LabelOrder(t *testing.T) {
+	for _, fixture := range [][2]int{{10000, 300}, {150000, 3000}} {
+		size, parties := fixture[0], fixture[1]
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			f := newPDW161Fixture(t)
+			f.fill(size, "CREATE (:PDGraphNode:PDEntity {id: 'bg' + toString(i), kind: 'probe'})", nil)
+			f.fill(parties, "CREATE (:PDGraphNode:PDIdentity {id: 'p' + toString(i), kind: 'person', status: 'confirmed', collection_id: 'c', name_key: 'k' + toString(i % 7), survivor: 'p' + toString(i - i % 3)})", nil)
+			ids := make([]any, 22)
+			expected := make([][]any, len(ids))
+			for i := range ids {
+				ids[i] = "p" + strconv.Itoa(i*3)
+				expected[i] = []any{ids[i]}
+			}
+			params := map[string]any{"ids": ids}
+			for _, verb := range []string{"MATCH", "MERGE"} {
+				for _, labels := range []string{"PDGraphNode:PDIdentity", "PDIdentity:PDGraphNode"} {
+					query := "UNWIND $ids AS id " + verb + " (p:" + labels + " {id: id}) RETURN p.id AS id"
+					res := f.timed(6, size, verb+"_"+labels, query, params)
+					require.ElementsMatch(t, expected, res.Rows)
+					require.Zero(t, res.Stats.NodesCreated)
+				}
+			}
+		})
+	}
+}
+
+func TestC70MergeSecondLabelUsesIndex(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		f := newPDW161Fixture(t)
+		f.fill(1_000, "CREATE (:PDGraphNode:PDEntity {id: 'bg' + toString(i)})", nil)
+		f.fill(30, "CREATE (:PDGraphNode:PDIdentity {id: 'p' + toString(i)})", nil)
+		ids := []any{"p0", "p3", "p6", "p9"}
+		want := [][]any{{"p0"}, {"p3"}, {"p6"}, {"p9"}}
+		for _, labels := range []string{"PDGraphNode:PDIdentity", "PDIdentity:PDGraphNode"} {
+			for _, shape := range []struct {
+				name, query string
+				params      map[string]any
+				want        [][]any
+			}{
+				{"unwind", "UNWIND $ids AS id MERGE (p:" + labels + " {id: id}) RETURN p.id AS id", map[string]any{"ids": ids}, want},
+				{"standalone", "MERGE (p:" + labels + " {id: 'p0'}) RETURN p.id AS id", nil, [][]any{{"p0"}}},
+			} {
+				t.Run(shape.name+"/"+labels, func(t *testing.T) {
+					exec := NewStorageExecutor(f.exec.storage)
+					result, err := exec.Execute(t.Context(), shape.query, shape.params)
+					require.NoError(t, err)
+					require.Equal(t, shape.want, result.Rows)
+					require.Zero(t, result.Stats.NodesCreated)
+					trace := exec.LastHotPathTrace()
+					require.True(t, trace.MergeSchemaLookupUsed, "indexed label %s must be considered: %+v", labels, trace)
+					require.False(t, trace.MergeScanFallbackUsed, "indexed label %s must avoid a full label scan: %+v", labels, trace)
+				})
+			}
+		}
+	})
+}
+
+func BenchmarkC70MergeIndexedSecondLabel(b *testing.B) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "c70_bench")
+	setup := NewStorageExecutor(store)
+	ctx := b.Context()
+	for _, statement := range []string{
+		"CREATE CONSTRAINT c70_identity_id FOR (n:C70Identity) REQUIRE n.id IS UNIQUE",
+		"UNWIND range(0, 9999) AS i CREATE (:C70Base:C70Other {id: 'bg' + toString(i)})",
+		"UNWIND range(0, 299) AS i CREATE (:C70Base:C70Identity {id: 'p' + toString(i)})",
+	} {
+		if _, err := setup.Execute(ctx, statement, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+	ids := make([]any, 22)
+	for i := range ids {
+		ids[i] = "p" + strconv.Itoa(i*3)
+	}
+	query := "UNWIND $ids AS id MERGE (n:C70Base:C70Identity {id: id}) RETURN n.id"
+	params := map[string]any{"ids": ids}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// A fresh executor prevents its per-statement node cache from masking
+		// the schema lookup or fallback scan under measurement.
+		exec := NewStorageExecutor(store)
+		result, err := exec.Execute(ctx, query, params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(result.Rows) != len(ids) || result.Stats.NodesCreated != 0 {
+			b.Fatalf("unexpected MERGE result: rows=%d created=%d", len(result.Rows), result.Stats.NodesCreated)
+		}
+	}
+}

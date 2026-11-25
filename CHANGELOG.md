@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use complete unique-constraint lookups from every pattern label in multi-label MERGE, so label order does not force scans of large node populations.
 - Seed fixed Cypher relationship chains from a single-candidate indexed inline right endpoint, avoiding a full left-side scan for selective two-hop matches.
 - Keep change-feed bounds and resumed event reads fast after retention by recording snapshot-visible first and last event positions.
 - Reuse successful parameterized semantic validation for repeated statements with the same bound type classes, while rechecking new types and request-local values.
