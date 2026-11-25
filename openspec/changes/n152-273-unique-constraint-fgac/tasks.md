@@ -7,4 +7,4 @@
 - [x] Cover CREATE, SET, MERGE, relationship writes, label additions, direct and transactional storage paths, and both parsers with focused tests.
 - [x] Cover hidden relationship endpoints and concurrent schema additions through direct, bulk, staged, and deferred-commit writes.
 - [x] Run full affected package checks and review the final integrated source for security and duplicate owners.
-- [ ] Open a release/v1.5.3 PR with exact head/base verification and update Plane.
+- [x] Open a release/v1.5.3 PR with exact head/base verification and update Plane.
