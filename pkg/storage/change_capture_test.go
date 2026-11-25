@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
+	"github.com/dgraph-io/badger/v4"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
@@ -45,6 +47,41 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	require.Equal(t, uint64(2), events[0].CommitSeq)
+	earliest, last, err = engine.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{2, 2}, [2]uint64{earliest, last})
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(changeEventFloorKey("cdc"))
+		if err != nil {
+			return err
+		}
+		position, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		require.Equal(t, changeEventKey("cdc", 2, 0)[len(changeEventPrefix("cdc")):], position)
+		return nil
+	}))
+	// An upgraded store with old prune tombstones has no floor yet. Its next
+	// retention pass records the live first key even if there is nothing left
+	// to delete in that pass.
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		if err := txn.Delete(changeEventFloorKey("cdc")); err != nil {
+			return err
+		}
+		return txn.Delete(changeEventLastKey("cdc"))
+	}))
+	pruned, err := engine.PruneChangeEvents(t.Context(), "cdc", time.Now().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, pruned)
+	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(changeEventFloorKey("cdc"))
+		if err != nil {
+			return err
+		}
+		_, err = txn.Get(changeEventLastKey("cdc"))
+		return err
+	}))
 	limited, err := engine.ChangeEvents("cdc", 0, 0, 1)
 	require.NoError(t, err)
 	require.Len(t, limited, 1)
@@ -54,6 +91,14 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 	_, last, err = engine.ChangeBounds("cdc")
 	require.NoError(t, err)
 	require.Zero(t, last)
+	require.ErrorIs(t, engine.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(changeEventFloorKey("cdc"))
+		return err
+	}), badger.ErrKeyNotFound)
+	require.ErrorIs(t, engine.db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(changeEventLastKey("cdc"))
+		return err
+	}), badger.ErrKeyNotFound)
 
 	require.NoError(t, engine.Close())
 	require.Nil(t, engine.changes.job)
@@ -61,6 +106,119 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 	require.Equal(t, ChangeCaptureOff, engine.ChangeCapture("cdc"))
 	require.Equal(t, ChangeCaptureOff, ParseChangeCaptureMode("off"))
 	require.Equal(t, "OFF", ChangeCaptureOff.String())
+}
+
+func TestChangeEventFloorPreservesTransactionSnapshot(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+	engine.SetChangeCapture("cdc", ChangeCaptureFull)
+	for _, id := range []NodeID{"cdc:a", "cdc:b"} {
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
+		require.NoError(t, err)
+	}
+	tx, err := engine.BeginTransaction(t.Context(), OrdinaryBegin)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	oldFirst, oldLast, err := tx.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{1, 2}, [2]uint64{oldFirst, oldLast})
+	_, err = engine.CreateNode(t.Context(), &Node{ID: "cdc:c"})
+	require.NoError(t, err)
+	pruned, err := engine.PruneChangeEvents(t.Context(), "cdc", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, pruned)
+	first, last, err := engine.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{3, 3}, [2]uint64{first, last})
+	oldFirst, oldLast, err = tx.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{1, 2}, [2]uint64{oldFirst, oldLast})
+}
+
+func TestChangeEventBoundsSurviveReopen(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	engine.SetChangeCapture("cdc", ChangeCaptureFull)
+	for _, id := range []NodeID{"cdc:a", "cdc:b", "cdc:c"} {
+		_, err := engine.CreateNode(t.Context(), &Node{ID: id})
+		require.NoError(t, err)
+	}
+	pruned, err := engine.PruneChangeEvents(t.Context(), "cdc", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, pruned)
+	require.NoError(t, engine.Close())
+
+	reopened, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	first, last, err := reopened.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{3, 3}, [2]uint64{first, last})
+	reopened.SetChangeCapture("cdc", ChangeCaptureFull)
+	_, err = reopened.CreateNode(t.Context(), &Node{ID: "cdc:d"})
+	require.NoError(t, err)
+	first, last, err = reopened.ChangeBounds("cdc")
+	require.NoError(t, err)
+	require.Equal(t, [2]uint64{3, 4}, [2]uint64{first, last})
+}
+
+// BenchmarkChangeBoundsAfterPrune compares the retained cursor with the
+// legacy prefix seek on the same tombstone-heavy store.
+func BenchmarkChangeBoundsAfterPrune(b *testing.B) {
+	engine, err := NewBadgerEngineInMemory()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = engine.Close() })
+	const events = 20000
+	for start := 1; start <= events; start += 500 {
+		end := min(start+500, events+1)
+		if err := engine.db.Update(func(txn *badger.Txn) error {
+			for seq := start; seq < end; seq++ {
+				value, err := encodeValue(&ChangeEvent{CommitSeq: uint64(seq), CommitTime: 1})
+				if err != nil {
+					return err
+				}
+				if err := txn.Set(changeEventKey("cdc", uint64(seq), 0), value); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	var lastPosition [8]byte
+	binary.BigEndian.PutUint64(lastPosition[:], events)
+	if err := engine.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(changeEventLastKey("cdc"), lastPosition[:])
+	}); err != nil {
+		b.Fatal(err)
+	}
+	if pruned, err := engine.PruneChangeEvents(context.Background(), "cdc", time.Unix(2, 0)); err != nil || pruned != events-1 {
+		b.Fatalf("pruned %d of %d: %v", pruned, events, err)
+	}
+	run := func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			first, last, err := engine.ChangeBounds("cdc")
+			if err != nil || first != events || last != events {
+				b.Fatalf("bounds %d,%d: %v", first, last, err)
+			}
+		}
+	}
+	b.Run("retained-cursor", run)
+	if err := engine.db.Update(func(txn *badger.Txn) error {
+		if err := txn.Delete(changeEventFloorKey("cdc")); err != nil {
+			return err
+		}
+		return txn.Delete(changeEventLastKey("cdc"))
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("legacy-prefix-seek", run)
 }
 
 // A capturing database's direct writes run as transactions: the bulk and

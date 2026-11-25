@@ -30,6 +30,7 @@ var badgerKeyFamilies = []struct {
 	{prefixMVCCOutgoingAdj, "mvcc"}, {prefixMVCCIncomingAdj, "mvcc"},
 	{prefixMVCCPruneFloor, "mvcc"},
 	{prefixChangeEvent, "metadata"},
+	{prefixChangeBounds, "metadata"},
 }
 
 func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) bool {
@@ -61,6 +62,8 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 	case prefixChangeEvent:
 		// "db:" then binary positions: only a whole database owns them.
 		return wholeNamespace && bytes.HasPrefix(key[1:], prefix)
+	case prefixChangeBounds:
+		return wholeNamespace && (bytes.Equal(key, changeEventFloorKey(namespace)) || bytes.Equal(key, changeEventLastKey(namespace)))
 	case prefixIDDictNodeForward, prefixIDDictEdgeForward:
 		return bytes.HasPrefix(key[1:], prefix)
 	case prefixIDDictNodeReverse, prefixMVCCNode, prefixMVCCNodeHead,
