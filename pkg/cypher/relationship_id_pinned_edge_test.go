@@ -128,15 +128,22 @@ func TestRelationshipIDPinnedEdgeWalksOnlyThatRelationship(t *testing.T) {
 		want    [][]interface{}
 	}{
 		{"outgoing parameter", "(a)-[r]->(b)", "elementId(r) = $e", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
+		{"outgoing reversed parameter", "(a)-[r]->(b)", "$e = elementId(r)", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"outgoing literal", "(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%s'", fixture.spokeID), "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
+		{"outgoing reversed literal", "(a)-[r]->(b)", fmt.Sprintf("'%s' = elementId(r)", fixture.spokeID), "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"native id", "(a)-[r]->(b)", "id(r) = $id", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
+		{"native id reversed", "(a)-[r]->(b)", "$id = id(r)", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"incoming parameter", "(b)<-[r]-(a)", "elementId(r) = $e", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
+		{"incoming reversed parameter", "(b)<-[r]-(a)", "$e = elementId(r)", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"undirected parameter", "(a)-[r]-(b)", "elementId(r) = $e", "RETURN labels(a)[0], labels(b)[0] ORDER BY labels(a)[0]", [][]interface{}{{"X", "Z"}, {"Z", "X"}}},
+		{"undirected reversed parameter", "(a)-[r]-(b)", "$e = elementId(r)", "RETURN labels(a)[0], labels(b)[0] ORDER BY labels(a)[0]", [][]interface{}{{"X", "Z"}, {"Z", "X"}}},
 		{"typed parameter", "(a)-[r:SPOKE]->(b)", "elementId(r) = $e", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
+		{"typed reversed parameter", "(a)-[r:SPOKE]->(b)", "$e = elementId(r)", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"labelled endpoints", "(a:X)-[r]->(b:Z)", "elementId(r) = $e", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"inline node properties", "(a:X {id: 2})-[r]->(b:Z {id: 7})", "elementId(r) = $e", "RETURN a.id, b.id", [][]interface{}{{int64(2), int64(7)}}},
 		{"path variable", "p = (a)-[r]->(b)", "elementId(r) = $e", "RETURN length(p), a.id, b.id", [][]interface{}{{int64(1), int64(2), int64(7)}}},
 		{"relationship properties", "(a)-[r]->(b)", "elementId(r) = $e", "RETURN r.i", [][]interface{}{{int64(7)}}},
+		{"relationship properties reversed", "(a)-[r]->(b)", "$e = elementId(r)", "RETURN r.i", [][]interface{}{{int64(7)}}},
 	} {
 		pinned := fmt.Sprintf("MATCH %s WHERE %s %s", shape.pattern, shape.clause, shape.tail)
 		fixture.spy.reset()
@@ -150,6 +157,40 @@ func TestRelationshipIDPinnedEdgeWalksOnlyThatRelationship(t *testing.T) {
 		general := fmt.Sprintf("MATCH %s WHERE %s AND true %s", shape.pattern, shape.clause, shape.tail)
 		require.Equal(t, rowsOf(t, fixture.exec, general, params), result.Rows,
 			"%s: the general path answers the same rows", shape.name)
+	}
+}
+
+// The production C26 shape has many relationships between the same bound
+// endpoints. Reversed equality must still pin one edge before adjacency work.
+func TestRelationshipIDPinnedEdgeReversedWideAdjacency(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "wide_rel_id")
+	for _, node := range []*storage.Node{
+		{ID: "a", Labels: []string{"Held"}, Properties: map[string]interface{}{"id": "a"}},
+		{ID: "b", Labels: []string{"Held"}, Properties: map[string]interface{}{"id": "b"}},
+	} {
+		_, err := store.CreateNode(t.Context(), node)
+		require.NoError(t, err)
+	}
+	for i := range 10000 {
+		require.NoError(t, store.CreateEdge(t.Context(), &storage.Edge{
+			ID: storage.EdgeID(fmt.Sprintf("r%d", i)), StartNode: "a", EndNode: "b",
+			Type: "R", Properties: map[string]interface{}{"v": i},
+		}))
+	}
+	writer := NewStorageExecutor(store)
+	id := rowsOf(t, writer, "MATCH ()-[r:R {v: 0}]->() RETURN elementId(r)", nil)[0][0]
+	spy := &adjacencyReadSpy{Engine: store}
+	exec := NewStorageExecutor(spy)
+	for _, predicate := range []string{"elementId(r) = $id", "$id = elementId(r)"} {
+		t.Run(predicate, func(t *testing.T) {
+			spy.reset()
+			rows := rowsOf(t, exec,
+				"MATCH (a:Held {id: 'a'}), (b:Held {id: 'b'}) WITH a, b OPTIONAL MATCH (a)-[r:R]->(b) WHERE "+predicate+" RETURN r.v",
+				map[string]interface{}{"id": id})
+			require.Equal(t, [][]interface{}{{int64(0)}}, rows)
+			require.Zero(t, spy.entries, "exact relationship lookup read adjacency")
+			require.Zero(t, spy.streams, "exact relationship lookup streamed the type")
+		})
 	}
 }
 
@@ -189,6 +230,12 @@ func TestRelationshipIDPinnedEdgeUnresolvedMatchesNothing(t *testing.T) {
 		require.Zero(t, fixture.spy.calls, "%s: adjacency listings", test.name)
 		require.Zero(t, fixture.spy.entries, "%s: adjacency entries", test.name)
 		require.Equal(t, [][]interface{}{{int64(0)}}, pinned, test.name)
+		fixture.spy.reset()
+		reversed := rowsOf(t, fixture.exec,
+			"MATCH (a)-[r]->(b) WHERE $e = elementId(r) RETURN count(r)", params)
+		require.Equal(t, general, reversed, "%s: reversed equality", test.name)
+		require.Zero(t, fixture.spy.calls, "%s: reversed adjacency listings", test.name)
+		require.Zero(t, fixture.spy.entries, "%s: reversed adjacency entries", test.name)
 	}
 }
 
