@@ -290,6 +290,10 @@ func directSemanticReference(expression string) (semanticReference, bool) {
 // property separately, preserving dots inside quoted identities. at is the
 // variable's source offset. Returning false stops the walk; true means complete.
 func forEachSemanticExpressionReference(expression string, visit func(variable, property string, hasProperty bool, at int) bool) bool {
+	// enclosing holds the delimiters open at the current offset. A name before
+	// ':' is a map key only inside a map literal's braces; inside a node
+	// pattern's parentheses that name is the variable and a label follows it.
+	var enclosing []byte
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -297,6 +301,18 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 		}
 		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
+			continue
+		}
+		switch expression[index] {
+		case '(', '[', '{':
+			enclosing = append(enclosing, expression[index])
+			index++
+			continue
+		case ')', ']', '}':
+			if len(enclosing) > 0 {
+				enclosing = enclosing[:len(enclosing)-1]
+			}
+			index++
 			continue
 		}
 		if expression[index] == '$' {
@@ -330,7 +346,7 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 		if cursor < len(expression) && expression[cursor] == '(' {
 			continue
 		}
-		if cursor < len(expression) && expression[cursor] == ':' {
+		if cursor < len(expression) && expression[cursor] == ':' && insideMapLiteral(enclosing) {
 			continue
 		}
 		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
@@ -342,8 +358,12 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 		normalized := normalizeProjectionColumnName(name)
 		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
 		// A keyword-named variable (where.id, #894) is still a variable when
-		// a property access follows it; a keyword is never followed by '.'.
-		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
+		// a property access follows it; a keyword is never followed by '.'. A
+		// keyword-shaped word standing where only an operand can (a call's
+		// argument, a list element, a whole projection item) is that variable
+		// too: the statement binds the name, so reading it reads the value.
+		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) &&
+			(isLiteralKeyword(normalized) || !semanticOperandName(expression, start, next)) {
 			continue
 		}
 		propertyName, hasProperty := "", false
@@ -359,6 +379,48 @@ func forEachSemanticExpressionReference(expression string, visit func(variable, 
 		}
 	}
 	return true
+}
+
+// insideMapLiteral reports whether the innermost open delimiter is a map
+// literal's brace: the name before a ':' there is that map's key, while a node
+// pattern's parentheses hold a variable and the label that follows it.
+func insideMapLiteral(enclosing []byte) bool {
+	return len(enclosing) > 0 && enclosing[len(enclosing)-1] == '{'
+}
+
+// semanticOperandName reports whether the name at [start, end) stands where
+// only an operand can: after a value-position delimiter, after THEN or ELSE,
+// or at the text's start, and before one or its end. A keyword-shaped word there is the
+// variable the statement binds (properties(end), [end], RETURN end), never the
+// keyword of the same spelling.
+func semanticOperandName(expression string, start, end int) bool {
+	caseArm := false
+	if before := lastLiveByte(expression, start); before >= 0 {
+		switch expression[before] {
+		case '(', '[', '{', ',', '|', ':':
+		default:
+			// CASE result arms introduce values even though the preceding
+			// byte belongs to a keyword rather than a delimiter.
+			caseArm = prevWordEqualsIgnoreCase(expression, start, "THEN") ||
+				prevWordEqualsIgnoreCase(expression, start, "ELSE")
+			if !caseArm {
+				return false
+			}
+		}
+	}
+	next := queryGapEnd(expression, end)
+	if next >= len(expression) {
+		return true
+	}
+	switch expression[next] {
+	case ')', ']', '}', ',', '|':
+		return true
+	}
+	// A CASE arm can end directly before the next arm or its END keyword.
+	if caseArm && (matchKeywordAt(expression, next, "ELSE") || matchKeywordAt(expression, next, "END") || matchKeywordAt(expression, next, "WHEN")) {
+		return true
+	}
+	return false
 }
 
 // qualifiedFunctionNameEnd reports whether the name before at continues as
