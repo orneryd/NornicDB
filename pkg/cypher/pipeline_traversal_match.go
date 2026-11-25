@@ -77,6 +77,11 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		if prepareErr != nil {
 			return nil, true, prepareErr
 		}
+		// A required MATCH cannot rebind a pattern variable that this row
+		// already bound to null. Reject it before ordered or seeded traversal.
+		if pipelineNullPatternBinding(row, variables) {
+			continue
+		}
 		materializedWhere := whereClause
 		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
@@ -100,8 +105,8 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		if !handled {
 			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
 			if seedRejected {
-				// The bound node fails the pattern's own labels or inline
-				// properties on that endpoint, so this row matches nothing.
+				// A bound endpoint that fails its labels or inline properties
+				// makes this row match nothing.
 				continue
 			}
 			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
@@ -201,6 +206,15 @@ func pipelineTraversalPredicates(ctx context.Context, whereClause string, row pi
 		}
 	}
 	return strings.Join(pushable, " AND "), strings.Join(residual, " AND ")
+}
+
+func pipelineNullPatternBinding(row pipelineRow, variables []string) bool {
+	for _, variable := range variables {
+		if value, bound := row[variable]; bound && value == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
