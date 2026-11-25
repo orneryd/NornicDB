@@ -623,6 +623,16 @@ func withQueryParams(ctx context.Context, params map[string]interface{}) context
 	return &queryParamsContext{Context: ctx, params: params}
 }
 
+// withPreparedParams attaches a row-local parameter map whose values have
+// already been converted for row evaluation. Computed pattern bindings reuse
+// the statement's converted parameter values instead of walking large nested
+// parameters again for every input row. The caller owns the new rows map.
+func withPreparedParams(ctx context.Context, params, rows map[string]interface{}) context.Context {
+	cache := &queryParamsContext{Context: ctx, params: params, rows: rows}
+	cache.once.Do(func() {})
+	return cache
+}
+
 // parameterRowValues returns the context's parameters as row values,
 // keyed "$name" (parameterRowValue of each), with a Cypher 25 statement's
 // mark (cypher25RowKey): every row that gets the parameters gets the
