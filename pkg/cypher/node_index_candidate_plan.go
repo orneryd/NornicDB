@@ -119,6 +119,28 @@ func (p nodeIndexCandidatePlan) candidateCount() int {
 // route's own empty answer, not an estimate: the caller still reads the plan to
 // report it, and that read reads no node.
 func (e *StorageExecutor) planPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
+	wrapper, transactional := e.storage.(*transactionStorageWrapper)
+	if transactional && wrapper.owner != nil {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil || !current {
+			return nodeIndexCandidatePlan{}, false, err
+		}
+	}
+	plan, used, err := e.planPipelineIndexedNodeCandidatesCurrent(ctx, nodePattern, whereClause, hint)
+	if err != nil || !used || !transactional || wrapper.owner == nil {
+		return plan, used, err
+	}
+	current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+	if err != nil || !current {
+		return nodeIndexCandidatePlan{}, false, err
+	}
+	return plan, used, nil
+}
+
+// planPipelineIndexedNodeCandidatesCurrent prepares routes from the current
+// postings. Its caller certifies that an explicit transaction still reads
+// those postings' version before and after this preparation.
+func (e *StorageExecutor) planPipelineIndexedNodeCandidatesCurrent(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
 	if e.fineGrainedGraph != nil {
 		// Stored property postings cannot answer a predicate over a projected
 		// property image. Use the regular row filter for this request.

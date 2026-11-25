@@ -1102,6 +1102,32 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	limit int,
 	mode indexOrderMode,
 ) ([]*storage.Node, bool, error) {
+	wrapper, transactional := e.storage.(*transactionStorageWrapper)
+	if transactional && wrapper.owner != nil {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil || !current {
+			return nil, false, err
+		}
+	}
+	nodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimitCurrent(ctx, nodePattern, whereClause, orderExpr, limit, mode)
+	if err != nil || !used || !transactional || wrapper.owner == nil {
+		return nodes, used, err
+	}
+	current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+	if err != nil || !current {
+		return nil, false, err
+	}
+	return nodes, true, nil
+}
+
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimitCurrent(
+	ctx context.Context,
+	nodePattern nodePatternInfo,
+	whereClause string,
+	orderExpr string,
+	limit int,
+	mode indexOrderMode,
+) ([]*storage.Node, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}

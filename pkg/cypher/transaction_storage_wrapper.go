@@ -53,22 +53,39 @@ func profileRelationshipBetweenRead(ctx context.Context, edges []*storage.Edge, 
 	queryprofile.EntityPopulation(ctx, profileKindRelationshipBetweenSeek, "", edges)
 }
 
-// propertyIndexLookup is the one lookup of label's property = value in a
-// property index, as engine sees it. The index describes committed state, so
-// inside a transaction the transaction's own node writes are merged in
-// (storage.BadgerTransaction.MergePendingPropertyMatches): nodes it created
-// or changed are listed by their current values, nodes it changed or deleted
-// lose their committed entries (#809). The lookup stays an index lookup: a
-// transaction that reads by an indexed property doesn't scan the label.
+// propertyIndexLookup is the one lookup of label's property = value. It uses
+// current postings while they still describe the transaction's read view,
+// merging the transaction's own writes. An older explicit transaction scans
+// its pinned nodes after a peer commit retires a posting from that view.
 func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	wrapper, transactional := engine.(*transactionStorageWrapper)
+	pinnedSnapshot := transactional && wrapper.owner != nil
+	if pinnedSnapshot {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			return pinnedSnapshotPropertyMatches(ctx, wrapper, label, []string{property}, []interface{}{value})
+		}
+	}
 	ids, err := schema.PropertyIndexLookup(ctx, label, property, value)
 	if err != nil {
 		return nil, err
 	}
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if transactional {
 		ids, err = wrapper.tx.MergePendingPropertyMatches(ctx, ids, label, property, value)
 		if err != nil {
 			return nil, err
+		}
+	}
+	if pinnedSnapshot {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			return pinnedSnapshotPropertyMatches(ctx, wrapper, label, []string{property}, []interface{}{value})
 		}
 	}
 	// A PROFILE statement counts the entries this lookup returned and the one
@@ -87,20 +104,67 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
 func compositeIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+	wrapper, transactional := engine.(*transactionStorageWrapper)
+	pinnedSnapshot := transactional && wrapper.owner != nil && idx != nil && len(values) > 0 && len(values) <= len(idx.Properties) && (!full || len(values) == len(idx.Properties))
+	if pinnedSnapshot {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			return pinnedSnapshotPropertyMatches(ctx, wrapper, idx.Label, idx.Properties[:len(values)], values)
+		}
+	}
 	ids, err := schema.CompositeIndexLookup(ctx, idx, values, full)
 	if err != nil {
 		return nil, err
 	}
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if transactional {
 		ids, err = wrapper.tx.MergePendingCompositeMatches(ctx, ids, idx.Label, idx.Properties, values)
 		if err != nil {
 			return nil, err
+		}
+	}
+	if pinnedSnapshot {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			return pinnedSnapshotPropertyMatches(ctx, wrapper, idx.Label, idx.Properties[:len(values)], values)
 		}
 	}
 	// The composite counterpart of propertyIndexLookup's count: the entries the
 	// index returned and the one lookup, named by the index that answered it.
 	if profileRuntimeFromContext(ctx) != nil {
 		queryprofile.Access(ctx, profileKindNodeIndexSeek, idx.Label+"("+strings.Join(idx.Properties, ",")+")").Add(int64(len(ids)), 1+int64(len(ids)))
+	}
+	return ids, nil
+}
+
+// pinnedSnapshotPropertyMatches is the explicit transaction's index-key read.
+// Its labelled rows include both the BEGIN snapshot and this transaction's
+// staged writes, so peer commits cannot silently remove a matching candidate.
+func pinnedSnapshotPropertyMatches(ctx context.Context, wrapper *transactionStorageWrapper, label string, properties []string, values []interface{}) ([]storage.NodeID, error) {
+	nodes, err := wrapper.GetNodesByLabel(ctx, label)
+	if err != nil {
+		return nil, err
+	}
+	var ids []storage.NodeID
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		match := true
+		for i, property := range properties {
+			if !compareValues(node.Properties[property], values[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			ids = append(ids, node.ID)
+		}
 	}
 	return ids, nil
 }
