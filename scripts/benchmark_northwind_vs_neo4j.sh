@@ -507,6 +507,9 @@ run_nornic() {
     # for the default seed size) via per-entity AccessMeta reads + scoring.
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
   fi
+  if (( NORNIC_LAYOUT_COUNT > 0 )); then
+    nornic_extra_flags+=(--query-cache-size=0)
+  fi
   # Query normalization (comment stripping + whitespace collapsing) is on by
   # default in the server. The benchmark's statements have no comments and no
   # unusual spacing, so the pass is skipped unless the caller exports
