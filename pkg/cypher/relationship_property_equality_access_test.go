@@ -17,12 +17,10 @@ import (
 // relationship is selected by a constrained equality property.
 const relationshipEqualityAccessQuery = "MATCH (a)-[r:PD_RELATION {id: $id}]->(b) RETURN r.id, a.id, b.id"
 
-// relationshipEqualityPinnedAuthorityQuery is the same predicate over the
-// relationship type index instead of the constrained inline property. It lists
-// the type at the reader's cut and filters the value there, so it is the
-// authority for what a pinned transaction must see, while the constraint index's
-// postings only describe the current state.
-const relationshipEqualityPinnedAuthorityQuery = "MATCH (a)-[r:PD_RELATION]->(b) WHERE r.id=$id RETURN r.id,a.id,b.id"
+// relationshipEqualityPinnedAuthorityQuery keeps the relationship type scan
+// as the transaction visibility control. The disjunction is equivalent to
+// r.id=$id but is deliberately outside the simple equality seed contract.
+const relationshipEqualityPinnedAuthorityQuery = "MATCH (a)-[r:PD_RELATION]->(b) WHERE r.id=$id OR false RETURN r.id,a.id,b.id"
 
 // relationshipEqualityParsers are the two statement parsers the public Execute
 // path selects between. Both reach the same relationship seed owner, so every
