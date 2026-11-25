@@ -14,21 +14,23 @@ import (
 type windowRecordingReranker struct {
 	reverse bool
 
-	mu    sync.Mutex
-	calls [][]string
+	mu      sync.Mutex
+	calls   [][]string
+	queries []string
 }
 
 func (r *windowRecordingReranker) Name() string                     { return "window_recording_reranker" }
 func (r *windowRecordingReranker) Enabled() bool                    { return true }
 func (r *windowRecordingReranker) IsAvailable(context.Context) bool { return true }
 
-func (r *windowRecordingReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+func (r *windowRecordingReranker) Rerank(_ context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	submitted := make([]string, len(candidates))
 	for index := range candidates {
 		submitted[index] = candidates[index].ID
 	}
 	r.mu.Lock()
 	r.calls = append(r.calls, submitted)
+	r.queries = append(r.queries, query)
 	r.mu.Unlock()
 
 	results := make([]RerankResult, len(candidates))
@@ -48,6 +50,12 @@ func (r *windowRecordingReranker) Rerank(_ context.Context, _ string, candidates
 		}
 	}
 	return results, nil
+}
+
+func (r *windowRecordingReranker) recordedQueries() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.queries...)
 }
 
 // recorded returns every provider input in call order.

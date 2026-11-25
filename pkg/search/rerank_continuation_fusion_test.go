@@ -208,6 +208,30 @@ func TestSearchTextContinuationRerankWindowsFollowOuterChunkFusion(t *testing.T)
 	}
 }
 
+func TestSearchTextContinuationMultiChunkKeepsProviderTextAcrossPulls(t *testing.T) {
+	service := multiChunkRerankService(t)
+	reranker := &windowRecordingReranker{reverse: true}
+	service.SetReranker(reranker)
+
+	options := DefaultSearchOptions()
+	options.Limit = 2
+	options.RerankEnabled = true
+	options.RerankTopK = 2
+	options.MinRRFScore = 0
+	fullOptions := *options
+	fullOptions.Limit = 10
+	fused := multiChunkFusedIDs(t, service, &fullOptions)
+	require.Len(t, fused, 3)
+
+	ids, page := collectContinuationIDs(t, service, options,
+		SearchContinuationRequest{Owner: "bounded-provider-query", Database: "nornic", Mode: SearchContinuationRanked, N: 1},
+		multiChunkSplit, multiChunkEmbed, "alpha beta")
+	require.Equal(t, []string{fused[1], fused[0], fused[2]}, ids)
+	require.Equal(t, [][]string{{fused[0], fused[1]}, {fused[2]}}, reranker.recorded())
+	require.Equal(t, []string{"alpha", "alpha"}, reranker.recordedQueries())
+	require.False(t, page.FallbackTriggered)
+}
+
 // A window is the batch its candidates were first admitted in. A deeper pull
 // adds new windows for the newly retrieved rows instead of re-forming an
 // accepted one over a longer prefix, so an admitted window keeps both its

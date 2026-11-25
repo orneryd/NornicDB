@@ -55,6 +55,10 @@ type rerankOutcome struct {
 
 type rerankRunOptions struct {
 	providerLimit int
+	// providerQuery is the text sent to the provider when a continuation has
+	// already split a long query. The original query remains the memo key.
+	// Empty preserves the ordinary one-shot query.
+	providerQuery string
 	resultLimit   int
 	minScore      float64
 	memo          *rerankMemo
@@ -185,7 +189,11 @@ func (s *Service) runRerank(ctx context.Context, reranker Reranker, query string
 		// reports. A missing, disabled, memo-decided or ineligible batch never
 		// reaches it and reports nothing.
 		queryprofile.Callback(ctx, "rerank provider", "")
-		providerResults, err := reranker.Rerank(ctx, query, pending)
+		providerQuery := query
+		if options.providerQuery != "" {
+			providerQuery = options.providerQuery
+		}
+		providerResults, err := reranker.Rerank(ctx, providerQuery, pending)
 		if err == nil {
 			err = validateRerankResults(providerResults, pending)
 		}

@@ -79,7 +79,9 @@ type continuationRankedRow struct {
 // The continuation producer calls this after the step's retrieval, so the
 // candidate list is the step's fused order - the chunked owner's outer RRF of
 // every chunk's list, or a one-chunk query's own fused list - and the memo key
-// is the original query, never a chunk's text. TopK bounds one provider window,
+// is the original query, never a chunk's text. For a multi-chunk query the
+// provider text is its first chunk, separate from that memo key. TopK bounds
+// one provider window,
 // not the step: the memo records the batch its candidates were first admitted
 // in, and each accepted batch's canonical runRerank outcome (validation, subset
 // completion, filtering, fallback and retained decisions) is appended in
@@ -99,7 +101,7 @@ type continuationRankedRow struct {
 // its complete eligible population (resultLimit 0) and the page applies Limit.
 // maxResults, rankedLimit and MaxCandidateLimit still decide admission and
 // completion in continuationExecution.
-func (s *Service) applyContinuationRerank(ctx context.Context, query string, response *SearchResponse, opts *SearchOptions, reranker Reranker) error {
+func (s *Service) applyContinuationRerank(ctx context.Context, query, providerQuery string, response *SearchResponse, opts *SearchOptions, reranker Reranker) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -179,6 +181,7 @@ func (s *Service) applyContinuationRerank(ctx context.Context, query string, res
 		windows++
 		collect(s.runRerank(ctx, reranker, query, candidates, rerankRunOptions{
 			providerLimit:      len(candidates),
+			providerQuery:      providerQuery,
 			minScore:           opts.RerankMinScore,
 			memo:               memo,
 			continuationWindow: true,
@@ -219,6 +222,7 @@ func (s *Service) applyContinuationRerank(ctx context.Context, query string, res
 		windows++
 		collect(s.runRerank(ctx, reranker, query, candidates, rerankRunOptions{
 			providerLimit:      len(candidates),
+			providerQuery:      providerQuery,
 			minScore:           opts.RerankMinScore,
 			memo:               memo,
 			continuationWindow: true,
@@ -257,8 +261,8 @@ func (s *Service) applyContinuationRerank(ctx context.Context, query string, res
 		response.FallbackReason = reason
 	}
 	if newCandidates > 0 && reranker != nil && reranker.Enabled() {
-		s.logPrintf("🔄 Reranking %d new candidates in %d windows (query_len=%d reranker=%s)...",
-			newCandidates, windows, len(query), reranker.Name())
+		s.logPrintf("🔄 Reranking %d new candidates in %d windows (query_len=%d provider_query_len=%d reranker=%s)...",
+			newCandidates, windows, len(query), len(providerQuery), reranker.Name())
 	}
 	if applied {
 		s.logPrintf("✅ Reranking complete: %d results in %v (%s)", len(rows), time.Since(started), reranker.Name())

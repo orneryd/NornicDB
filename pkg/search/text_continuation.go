@@ -262,7 +262,15 @@ func (s *Service) startTextContinuation(
 			s.mu.RLock()
 			reranker := s.reranker
 			s.mu.RUnlock()
-			if err := s.applyContinuationRerank(withRerankMemo(stepCtx, rerankMemo), query, response, &stepOptions, reranker); err != nil {
+			providerQuery := query
+			if len(preparation.chunks) > 1 {
+				// Retrieval already split this query. The fused continuation
+				// reranks once per window, using the first searched chunk so the
+				// provider never receives the original long query. Keep the full
+				// query as the memo identity across deeper pulls.
+				providerQuery = preparation.chunks[0]
+			}
+			if err := s.applyContinuationRerank(withRerankMemo(stepCtx, rerankMemo), query, providerQuery, response, &stepOptions, reranker); err != nil {
 				return nil, step, execution.observe(stepCtx, step, nil, 0, err)
 			}
 		}

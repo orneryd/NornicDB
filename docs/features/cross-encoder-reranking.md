@@ -67,8 +67,11 @@ ranked continuation reranks after its chunk fusion instead: the continuation
 producer reranks the fused order it retrieved - the chunked owner's outer RRF
 for a multi-chunk query, that query's own fused list for a single chunk - in
 `rerankTopK`-sized windows, and the chunk searches themselves don't rerank. One
-stream keys its retained scores by the original query, not by a chunk's text,
-and keeps the provider's order inside each window.
+stream keys its retained scores by the original query and keeps the provider's
+order inside each window. For a multi-chunk query, the provider receives the
+first searched query chunk for each window; retrieval still searches all kept
+chunks before fusion. This keeps provider requests within the same query-chunk
+size as one-shot search, but the rerank score reflects only that first chunk.
 
 A window is the batch its candidates were first admitted in, so a deeper pull
 adds windows for the newly retrieved rows instead of re-forming an earlier one
