@@ -627,8 +627,8 @@
     },
     {
       "path": "development/projected-reads.md",
-      "sha256": "ffd9c8ea2e17ad56d2b786dd8927b4d7229b09e930bae5c394ee68827c28212e",
-      "bytes": 4699
+      "sha256": "19abac0de5a1b2983a4999f752d7da3928f1c1e9c0b4fc200632fda0ffa42bbd",
+      "bytes": 4922
     },
     {
       "path": "encryption/cmek-setup.md",

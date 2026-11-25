@@ -51,10 +51,10 @@ bytes may themselves include a compressed property frame.
 ```text
 Standard block before the ordinary Badger codec
 
-entry 0: [entry header | key | metadata | T7: a0 a1 | T9: x0 x1]
-entry 1: [entry header | key | metadata | T7: b0 b1 | T9: y0 y1]
-entry 2: [entry header | key | metadata | T7: c0 c1 | T9: z0 z1]
-entry 3: [entry header | key | metadata | T7: d0 d1 | T9: w0 w1]
+entry 0: [header | key suffix | value prefix | T7: a0 a1 | T9: x0 x1 | node metadata]
+entry 1: [header | key suffix | value prefix | T7: b0 b1 | T9: y0 y1 | node metadata]
+entry 2: [header | key suffix | value prefix | T7: c0 c1 | T9: z0 z1 | node metadata]
+entry 3: [header | key suffix | value prefix | T7: d0 d1 | T9: w0 w1 | node metadata]
 footer:  [entry offsets | entry count | checksum | checksum length]
 
 Experimental block when the column transform wins
@@ -68,7 +68,7 @@ Experimental block when the column transform wins
 ]
 ```
 
-The sketch highlights property spans. NornicDB can also annotate node
+The value prefix includes Badger value metadata and expiry, followed by the node format byte, property payload length, and property count. The sketch highlights property spans. NornicDB can also annotate node
 metadata by field position and compact relationship or adjacency fields such
 as endpoints, timestamps, and type. Badger groups spans by record kind and
 column ID. It aligns bytes from similar-length values and keeps skewed groups
