@@ -5,4 +5,4 @@
 - [x] Reuse the canonical end-seed chooser for uniquely indexed fixed chains.
 - [x] Check right and left keys, absent keys, wide postings, one-hop traversal, explicit transaction, and both parser modes.
 - [x] Run the affected Cypher package and inspect the integrated change.
-- [ ] Publish a v1.5.3 fix PR with exact-head verification evidence.
+- [x] Publish a v1.5.3 fix PR with exact-head verification evidence.
