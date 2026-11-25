@@ -281,7 +281,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if startsWithKeywordFold(parameterQuery, "RETURN") && returnProjectionPlanFor(ctx, parameterQuery).parameterPassthrough {
 		return nil
 	}
-	return checkedWithoutUnaryPlus(parameterQuery, cypher25, func(text string) error {
-		return e.validateMatchSemanticScopesUncached(ctx, text, cypher25, params)
-	})
+	return e.validateBoundMatchSemanticScopes(ctx, parameterQuery, cypher25, params)
 }

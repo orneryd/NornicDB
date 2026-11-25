@@ -346,6 +346,7 @@ type StorageExecutor struct {
 	planCache                    *QueryPlanCache // Parsed query plan cache
 	semanticValidationCache      *semanticValidationCache
 	matchSemanticValidationCache *boundedCache[string, nativeFunctionInputs]
+	boundSemanticValidationCache *boundedCache[string, nativeFunctionInputs]
 	mergeSemanticValidationCache *semanticValidationCache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
@@ -584,6 +585,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine, scope ...sto
 			planCache:                    e.planCache,
 			semanticValidationCache:      e.semanticValidationCache,
 			matchSemanticValidationCache: e.matchSemanticValidationCache,
+			boundSemanticValidationCache: e.boundSemanticValidationCache,
 			mergeSemanticValidationCache: e.mergeSemanticValidationCache,
 			analyzer:                     e.analyzer,
 			nodeLookupCache:              lookupCache,
@@ -805,6 +807,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		planCache:                    NewQueryPlanCache(500), // Cache 500 parsed query plans
 		semanticValidationCache:      newSemanticValidationCache(500),
 		matchSemanticValidationCache: newBoundedCache[string, nativeFunctionInputs](500, boundedCacheStringShardIndex),
+		boundSemanticValidationCache: newBoundedCache[string, nativeFunctionInputs](500, boundedCacheStringShardIndex),
 		mergeSemanticValidationCache: newSemanticValidationCache(500),
 		fabricPlanCache:              fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                     NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
