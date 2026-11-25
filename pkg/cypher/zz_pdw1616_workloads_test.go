@@ -137,16 +137,29 @@ func (p *pdw1616Probe) evaluate(f *pdw1614Fixture) {
 	half["links"] = f.seeds[:1356]
 	check("evaluate/quiet/half", p.executor(), half, 1356)
 	res := check("evaluate/quiet/full", p.executor(), bind, 2712)
+	// Same list order and value, built in one flatten instead of growing
+	// the left operand on every iteration.
+	flattened := strings.Replace(q, "reduce(effl_all = effl_gone_documents, effl_x IN effl_rows\n                                            | effl_all + effl_x.documents)", "effl_gone_documents + apoc.coll.flatten([effl_x IN effl_rows | effl_x.documents])", 1)
+	require.NotEqual(p.t, q, flattened)
+	control, err := p.profile("evaluate/quiet/full-flatten", p.executor(), flattened, bind, 2)
+	require.NoError(p.t, err)
+	require.Equal(p.t, res.Rows, control.Rows)
+
 	p.withWriters(f, "eval-changed", 2, func() {
-		check("evaluate/writers/full", p.executor(), bind, 2712)
+		check("evaluate/writers/full-auto", p.executor(), bind, 2712)
+		other := p.executor()
+		pdw1616Command(p.t, other, "BEGIN", nil)
+		check("evaluate/writers/full-explicit", other, bind, 2712)
+		pdw1616Command(p.t, other, "ROLLBACK", nil)
 	})
 	applied := make([]any, 0, 2712)
 	for _, row := range res.Rows[0][0].([]any) {
 		m := row.(map[string]any)
-		applied = append(applied, map[string]any{"from": m["from"], "link": m["link"], "inputs": m["inputs"]})
+		applied = append(applied, map[string]any{"from": m["from"], "link": m["link"], "inputs": m["inputs"], "base": m["base"], "disputed": m["disputed"], "reason": m["reason"]})
 	}
 	pdw1614Batches(p.t, p.store, "UNWIND $rows AS row MATCH (s:PDGraphNode {id: row.from})-[r:PD_RELATION]->() WHERE r.id = row.link "+
-		"SET r.eff_applied = row.inputs RETURN count(r) AS applied", "rows", applied, 500)
+		"SET r.eff_base = row.base, r.eff_disputed = row.disputed, r.eff_usable = row.base AND NOT row.disputed, r.eff_reason = row.reason, "+
+		"r.eff_applied = apoc.convert.toJson([row.inputs, row.base, row.disputed, row.base AND NOT row.disputed, row.reason]) RETURN count(r) AS applied", "rows", applied, 500)
 	check("evaluate/quiet/settled-auto", p.executor(), bind, 0)
 	fresh := p.executor()
 	pdw1616Command(p.t, fresh, "BEGIN", nil)
