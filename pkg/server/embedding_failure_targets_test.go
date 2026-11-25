@@ -147,6 +147,36 @@ func embeddingFailureNodeIDs(t *testing.T, server *Server) []storage.NodeID {
 	return ids
 }
 
+// The HTTP contract keeps the exact parked count when only a bounded page is
+// returned. This exercises the server, worker, global queue, and sidecar index.
+func TestEmbeddingFailureListUsesParkedIndexWithLimit(t *testing.T) {
+	server, users := setupTestServer(t)
+	require.True(t, server.db.SetEmbedder(fixedSearchEmbedder{}))
+	server.db.SetEmbedQueueShouldYield(func() bool { return true })
+	admin := getAuthToken(t, users, "admin")
+	database := server.dbManager.DefaultDatabaseName()
+	wantIDs := []storage.NodeID{
+		parkEmbeddingFailure(t, server, database, "failure-a"),
+		parkEmbeddingFailure(t, server, database, "failure-b"),
+	}
+	response := makeRequest(t, server, http.MethodGet, "/nornicdb/embed/failures?limit=1", nil, "Bearer "+admin)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var result struct {
+		Failures []struct {
+			NodeID storage.NodeID `json:"node_id"`
+			Error  string         `json:"error"`
+		} `json:"failures"`
+		Count    int `json:"count"`
+		Returned int `json:"returned"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	require.Equal(t, 2, result.Count)
+	require.Equal(t, 1, result.Returned)
+	require.Len(t, result.Failures, 1)
+	require.Contains(t, wantIDs, result.Failures[0].NodeID)
+	require.Equal(t, "provider failed", result.Failures[0].Error)
+}
+
 // TestFineGrainedEmbeddingRetryAuthorizesNamedTargets is the product proof for
 // manual retry ownership: a caller grant on one database admits a retry of that
 // database's parked failures, refuses a retry of another database's failure
