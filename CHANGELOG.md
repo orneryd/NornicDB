@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep change-feed bounds and resumed event reads fast after retention by recording snapshot-visible first and last event positions.
+
 ## [1.5.2-hotfix]
 
 - Apply caller graph authorization to MCP related results and resolve scoped recall IDs in the selected database.

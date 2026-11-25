@@ -113,7 +113,7 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 			p.unknown = true
 			return
 		}
-	case prefixSchema, prefixMVCCMeta, prefixBufferedFlush, prefixChangeEvent,
+	case prefixSchema, prefixMVCCMeta, prefixBufferedFlush, prefixChangeEvent, prefixChangeBounds,
 		prefixIDDictNodeForward, prefixIDDictEdgeForward, prefixIDDictCounter,
 		prefixIDDictNodeReverse, prefixIDDictEdgeReverse, prefixIDFreelist,
 		prefixPropKeyForward, prefixPropKeyReverse, prefixPropKeyCounter,
