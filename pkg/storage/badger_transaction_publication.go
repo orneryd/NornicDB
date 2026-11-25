@@ -648,6 +648,11 @@ func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 	if tx.acceptedApplication {
 		return nil
 	}
+	if err := tx.validateRecordedConstraintAdmissions(ctx); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+	ctx = tx.constraintAdmissionContext(ctx)
 	if err := tx.resolveConnectedDeletesLocked(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
@@ -660,6 +665,10 @@ func (tx *BadgerTransaction) validateCommitLocked(ctx context.Context) error {
 
 	if err := tx.validateAllConstraints(ctx); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
+		var admission *constraintAdmissionError
+		if errors.As(err, &admission) {
+			return err
+		}
 		// Wire contract: prefix "constraint violation:" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
 		return localizedError(localization.StorageTransactionConstraintViolation(err), err)

@@ -108,6 +108,9 @@ func (b *BadgerEngine) validateBulkNodeConstraints(ctx context.Context, nodes []
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
+			if err := validateConstraintAdmission(ctx, c, node.Properties); err != nil {
+				return err
+			}
 			var values []interface{}
 			switch c.Type {
 			case ConstraintUnique:
@@ -172,6 +175,9 @@ func (b *BadgerEngine) validateBulkNodeConstraints(ctx context.Context, nodes []
 				return err
 			}
 			if duplicate {
+				if violation := restrictedNodeConstraintViolation(ctx, c.Type, c.Label, c.Properties); violation != nil {
+					return violation
+				}
 				message := fmt.Sprintf("Node with key %v=%v already exists in batch", c.Properties, values)
 				properties := c.Properties
 				if c.Type == ConstraintUnique {

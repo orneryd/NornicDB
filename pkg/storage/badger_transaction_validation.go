@@ -295,6 +295,9 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 		if !has {
 			continue
 		}
+		if err := validateConstraintAdmission(ctx, c, pending.Properties); err != nil {
+			return err
+		}
 		same, err := sameNodeUniqueClaim(ctx, before, pending, c.Label, prop)
 		if err != nil {
 			return err
@@ -317,8 +320,12 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(ctx context
 		// recorded their (label, prop, value) → nodeID mapping, and
 		// our pending update targets that same nodeID. This is the
 		// commit-time UNIQUE race the contract documents.
-		message := localization.StorageValidationNodeUniqueConcurrent(prop, val)
 		cause := localizedError(localization.StorageTransactionConcurrentModification(), ErrConflict)
+		if violation := restrictedNodeConstraintViolation(ctx, ConstraintUnique, c.Label, []string{prop}); violation != nil {
+			violation.Cause = cause
+			return violation
+		}
+		message := localization.StorageValidationNodeUniqueConcurrent(prop, val)
 		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, cause)
 	}
 	return nil
@@ -628,6 +635,9 @@ func (tx *BadgerTransaction) checkUniqueConstraint(ctx context.Context, node *No
 	}
 
 	if err := tx.forEachPendingCandidateLocked(ctx, node.ID, c.Label, prop, value, func(*Node) error {
+		if violation := restrictedNodeConstraintViolation(ctx, ConstraintUnique, c.Label, []string{prop}); violation != nil {
+			return violation
+		}
 		message := localization.StorageValidationNodeUniqueInTransaction(prop, value)
 		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, nil)
 	}); err != nil {
@@ -659,16 +669,38 @@ func WithRestrictedConstraintDiagnostics(ctx context.Context) context.Context {
 }
 
 func uniqueConstraintViolation(ctx context.Context, label, property string, value interface{}, nodeID NodeID) *ConstraintViolationError {
-	if restricted, _ := ctx.Value(restrictedConstraintDiagnosticsKey{}).(bool); restricted {
-		return &ConstraintViolationError{
-			Type:       ConstraintUnique,
-			Label:      label,
-			Properties: []string{property},
-			Message:    "Node with the requested unique property value already exists",
-		}
+	if violation := restrictedNodeConstraintViolation(ctx, ConstraintUnique, label, []string{property}); violation != nil {
+		return violation
 	}
 	message := localization.StorageValidationNodeUniqueExisting(property, value, string(nodeID))
 	return newLocalizedConstraintViolation(ConstraintUnique, label, []string{property}, message, nil)
+}
+
+// restrictedNodeConstraintViolation keeps unreadable key values and holder
+// identities out of every node uniqueness diagnostic, including composite and
+// pending-write checks. The public conflict class remains unchanged.
+func restrictedNodeConstraintViolation(ctx context.Context, kind ConstraintType, label string, properties []string) *ConstraintViolationError {
+	if restricted, _ := ctx.Value(restrictedConstraintDiagnosticsKey{}).(bool); !restricted {
+		return nil
+	}
+	return &ConstraintViolationError{
+		Type:       kind,
+		Label:      label,
+		Properties: properties,
+		Message:    "Node with the requested unique property value already exists",
+	}
+}
+
+func restrictedRelationshipConstraintViolation(ctx context.Context, kind ConstraintType, relationshipType string, properties []string) *ConstraintViolationError {
+	if restricted, _ := ctx.Value(restrictedConstraintDiagnosticsKey{}).(bool); !restricted {
+		return nil
+	}
+	return &ConstraintViolationError{
+		Type:       kind,
+		Label:      relationshipType,
+		Properties: properties,
+		Message:    "Relationship with the requested unique property value already exists",
+	}
 }
 
 func setUniqueConstraintScanHook(hook func()) func() {
@@ -825,6 +857,9 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(ctx context.Context, node *N
 				return nil
 			}
 		}
+		if violation := restrictedNodeConstraintViolation(ctx, c.Type, c.Label, c.Properties); violation != nil {
+			return violation
+		}
 		message := localization.StorageValidationNodeKeyInTransaction(c.Properties, values)
 		return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 	}); err != nil {
@@ -848,6 +883,9 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(ctx context.Context, node *N
 		for _, existing := range candidates {
 			if existing.ID == node.ID || tx.committedNodeSupersededLocked(existing.ID) || !nodeHoldsKey(existing, tx.namespace, c.Label, c.Properties, node.Properties) {
 				continue
+			}
+			if violation := restrictedNodeConstraintViolation(ctx, c.Type, c.Label, c.Properties); violation != nil {
+				return violation
 			}
 			message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
 			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
@@ -936,6 +974,9 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(ctx context.Context, namesp
 		}
 
 		if match {
+			if violation := restrictedNodeConstraintViolation(ctx, ConstraintNodeKey, label, properties); violation != nil {
+				return violation
+			}
 			message := localization.StorageValidationNodeCompositeKeyExisting(properties, values, string(existingNode.ID))
 			return newLocalizedConstraintViolation(ConstraintNodeKey, label, properties, message, nil)
 		}
@@ -1122,6 +1163,9 @@ func (tx *BadgerTransaction) validateEdgeConstraints(ctx context.Context, edge *
 		if c.EffectiveEntityType() != ConstraintEntityRelationship {
 			continue
 		}
+		if err := validateConstraintAdmission(ctx, c, edge.Properties); err != nil {
+			return err
+		}
 		switch c.Type {
 		case ConstraintUnique:
 			if err := tx.validateEdgeUniqueness(ctx, edge, c, tx.namespace, &reads.unique); err != nil {
@@ -1202,6 +1246,9 @@ func (tx *BadgerTransaction) validateEdgeUniqueness(ctx context.Context, edge *E
 			if otherVal == nil || !compareValues(otherVal, values[i]) {
 				return nil
 			}
+		}
+		if violation := restrictedRelationshipConstraintViolation(ctx, c.Type, edge.Type, c.Properties); violation != nil {
+			return violation
 		}
 		if len(c.Properties) == 1 {
 			message := localization.StorageValidationRelationshipUniqueExisting(c.Properties[0], values[0], string(other.ID))
