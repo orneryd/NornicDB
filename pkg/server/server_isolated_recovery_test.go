@@ -50,6 +50,37 @@ func TestIsolatedStoreCorruptionRecovery(t *testing.T) {
 	t.Run("encrypted store", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, true) })
 }
 
+func TestCreateDatabaseExperimentalLayout(t *testing.T) {
+	server, users := setupTestServerWithDatabaseConfig(t, nil, nil)
+	token := "Bearer " + getAuthToken(t, users, "admin")
+	for _, statement := range []string{
+		"CREATE DATABASE trial OPTIONS {layout: 'experimental'}",
+		"CREATE DATABASE ordinary OPTIONS {layout: 'standard', storage: 'shared'}",
+		"CREATE DATABASE implicit",
+	} {
+		require.Empty(t, postStatement(t, server, "system", statement, token).Errors)
+	}
+	options, err := server.dbManager.DatabaseOptions("trial")
+	require.NoError(t, err)
+	require.Equal(t, multidb.LayoutExperimental, options[multidb.OptionPhysicalLayout])
+	require.Equal(t, multidb.StorageIsolated, options[multidb.OptionStorageLayout])
+	options, err = server.dbManager.DatabaseOptions("ordinary")
+	require.NoError(t, err)
+	require.Equal(t, multidb.LayoutStandard, options[multidb.OptionPhysicalLayout])
+	options, err = server.dbManager.DatabaseOptions("implicit")
+	require.NoError(t, err)
+	require.Equal(t, multidb.StorageIsolated, options[multidb.OptionStorageLayout])
+	for _, statement := range []string{
+		"CREATE DATABASE badlayout OPTIONS {layout: 'unknown'}",
+		"CREATE DATABASE badlayout OPTIONS {layout: 'experimental', storage: 'shared'}",
+		"ALTER DATABASE trial SET OPTION layout 'standard'",
+		"ALTER DATABASE trial REMOVE OPTION layout",
+	} {
+		require.NotEmpty(t, postStatement(t, server, "system", statement, token).Errors)
+	}
+	require.False(t, server.dbManager.Exists("badlayout"))
+}
+
 func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	t.Setenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION", "true")
 	root := t.TempDir()

@@ -32,23 +32,21 @@ entries already held still widen.
 
 ## Dependency and format boundary
 
-The dependency is pinned to `orneryd/nornic-badger` branch
-`release/projected-reads-v4.9.6`. That branch starts at upstream v4.9.6 and changes
-only its integration note, not Badger runtime code. No fork-side performance gain
-or new physical projection primitive is claimed by this integration.
-
-Experimental property compression, integer columns, columnar SST blocks and the
-offline conversion command remain on the separate storage-layout branch. They
-are not included here. The format-free branch contains none of their encoders
-or readers, so projected reads require neither converted files nor
-experimental-format data.
+The module replacement in `go.mod` pins an exact commit from
+`orneryd/nornic-badger` branch `feature/database-layout-v1.5.3`. The fork
+combines experimental property codecs and columnar SST blocks with ordered
+transaction writes. NornicDB selects the experimental encodings only for a
+new isolated database created with `OPTIONS {layout: 'experimental'}`.
+Ordinary databases use the standard format and receive projected reads
+automatically. See the [admin guide](../operations/admin-tool.md#database-storage-layout)
+for creation and import limits.
 
 ## Qualification
 
-This integration is a draft for focused review. Storage tests exercise ordinary
+Storage tests exercise ordinary
 persisted data, unchanged primary bytes, ordinary table compression, reopening,
 cache widening, ownership, snapshot visibility and
 scan admission. Query tests cover indexed plans, residual predicates, whole-node
-fallback and forwarding through a managed database. Full-suite and performance
-qualification remain separate; results from the storage-layout experiment do
-not establish performance of this format-free branch.
+fallback and forwarding through a managed database. Historical benchmark
+receipts describe the revisions and workloads they measured. Performance
+qualification for the combined branch requires a new comparison.

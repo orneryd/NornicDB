@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	badgeroptions "github.com/dgraph-io/badger/v4/options"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -179,6 +180,7 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
+	experimentalLayout          bool
 	cleanShutdownMu             sync.Mutex // serializes marker consumption and publication
 	startupCleanShutdown        bool
 	startupCleanShutdownChecked bool
@@ -719,6 +721,8 @@ func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
 
 // BadgerOptions configures the BadgerDB engine.
 type BadgerOptions struct {
+	// ExperimentalLayout selects experimental property and SST encodings for this store.
+	ExperimentalLayout bool
 	// CatalogUpgradeV4 is the optional exact catalog migration plan. It is
 	// captured at open; startup integration decides when V4 is authorized.
 	CatalogUpgradeV4 *CatalogUpgradeV4
@@ -1085,6 +1089,10 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 			WithIndexCacheSize(32 << 20)  // 32MB index cache
 	}
 
+	if opts.ExperimentalLayout {
+		badgerOpts = badgerOpts.WithCompression(badgeroptions.NornicColumnar).
+			WithColumnarValueLayout(experimentalColumnLayout)
+	}
 	db, err := openManagedBadger(badgerOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
@@ -1103,12 +1111,13 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 	}
 
 	engine := &BadgerEngine{
-		db:              db,
-		inMemory:        opts.InMemory,
-		dataDir:         opts.DataDir,
-		memoryPolicy:    opts.MemoryPolicy,
-		schemas:         make(map[string]*SchemaManager),
-		retentionPolicy: retentionPolicy,
+		experimentalLayout: opts.ExperimentalLayout,
+		db:                 db,
+		inMemory:           opts.InMemory,
+		dataDir:            opts.DataDir,
+		memoryPolicy:       opts.MemoryPolicy,
+		schemas:            make(map[string]*SchemaManager),
+		retentionPolicy:    retentionPolicy,
 
 		nodeCacheMaxEntries:   opts.NodeCacheMaxEntries,
 		nodeCacheMaxBytes:     opts.NodeCacheMaxBytes,

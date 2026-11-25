@@ -109,7 +109,14 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 		if encodeErr != nil {
 			return nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
 		}
-		buf.Write(valueBuf.Bytes())
+		encoded := valueBuf.Bytes()
+		if b.experimentalLayout {
+			encoded, err = encodeExperimentalProperty(val, encoded)
+			if err != nil {
+				return nil, fmt.Errorf("encoding experimental property %q: %w", name, err)
+			}
+		}
+		buf.Write(encoded)
 	}
 	return buf.Bytes(), nil
 }
@@ -346,7 +353,11 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	// DecodeInterface is the msgpack package's hand-written scalar path.
 	// Decode(&any) routes through reflection and dominates large property
 	// arrays such as Graphiti embedding vectors.
-	return dec.DecodeInterface()
+	value, err := dec.DecodeInterface()
+	if packed, ok := value.(storedExperimentalProperty); ok {
+		return packed.value, err
+	}
+	return value, err
 }
 
 // decodeStrictTypedArray decodes a msgpack array. If every element is
