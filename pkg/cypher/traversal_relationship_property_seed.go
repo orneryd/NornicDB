@@ -30,26 +30,7 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 	if len(relationship.Types) != 1 {
 		return nil, false, false, nil
 	}
-	// Inline equality keeps its established path. For a WHERE equality, only
-	// mandatory top-level conjuncts on this relationship may supply a seed.
-	// The original WHERE still validates the pinned edge and other predicates.
-	valuesByProperty := relationship.Properties
-	if len(valuesByProperty) == 0 && relationship.Variable != "" {
-		for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
-			if !chainConjunctIsStable(ctx, term) {
-				continue
-			}
-			property, value, eligible := e.parseSimpleIndexedEquality(ctx, relationship.Variable, term)
-			if !eligible {
-				continue
-			}
-			if valuesByProperty == nil {
-				valuesByProperty = make(map[string]interface{})
-			}
-			valuesByProperty[property] = value
-		}
-	}
-	if len(valuesByProperty) == 0 {
+	if len(relationship.Properties) == 0 && (relationship.Variable == "" || whereClause == "") {
 		return nil, false, false, nil
 	}
 	// The index holds every stored relationship of the type, not one point in
@@ -64,6 +45,42 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 	}
 	schema := store.GetSchema()
 	if schema == nil {
+		return nil, false, false, nil
+	}
+	// Inline equality keeps its established path. For a WHERE equality, only
+	// mandatory top-level conjuncts on this relationship may supply a seed.
+	// The original WHERE still validates the pinned edge and other predicates.
+	valuesByProperty := relationship.Properties
+	if len(valuesByProperty) == 0 && relationship.Variable != "" {
+		// Pattern properties can be an allocated empty map. Derived WHERE
+		// values must never turn into inline pattern predicates.
+		valuesByProperty = nil
+		for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
+			clause := unwrapOuterParens(term)
+			scan, comparison := scanComparisonChain(clause)
+			if !comparison || scan.count != 1 {
+				continue
+			}
+			left, right := scan.operand(clause, 0), scan.operand(clause, 1)
+			leftBase, _, leftProperty := splitPostfixPropertyAccess(left)
+			rightBase, _, rightProperty := splitPostfixPropertyAccess(right)
+			if !(leftProperty && leftBase == relationship.Variable || rightProperty && rightBase == relationship.Variable) {
+				continue
+			}
+			if !chainConjunctIsStable(ctx, term) {
+				continue
+			}
+			property, value, eligible := e.parseSimpleIndexedEquality(ctx, relationship.Variable, term)
+			if !eligible {
+				continue
+			}
+			if valuesByProperty == nil {
+				valuesByProperty = make(map[string]interface{})
+			}
+			valuesByProperty[property] = value
+		}
+	}
+	if len(valuesByProperty) == 0 {
 		return nil, false, false, nil
 	}
 	relationshipType := relationship.Types[0]

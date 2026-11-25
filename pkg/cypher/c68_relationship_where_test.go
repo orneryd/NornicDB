@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,6 +56,12 @@ func TestC68RelationshipWhereIndexSeedBoundaries(t *testing.T) {
 							}
 						})
 					}
+					t.Run("subscript is not an indexed property", func(t *testing.T) {
+						_, err := exec.Execute(ctx, "MATCH (a)-[r:PD_RELATION]->(b) WHERE r.id[0] = 'r' RETURN count(r)", nil)
+						require.Error(t, err)
+						code, _ := nornicerrors.Neo4jStatus(err)
+						require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+					})
 				})
 			}
 		})
