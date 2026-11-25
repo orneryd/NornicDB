@@ -30,7 +30,7 @@ SKIP_POWERMETRICS=1 scripts/benchmark_northwind_vs_neo4j.sh \
 
 Supply one layout to measure it alone, or pass both in the order to run.
 The script creates separate isolated databases, seeds each through Bolt, and
-disables the query result cache so each timed query executes against storage.
+uses the server's default node and query result caches.
 Each layout gets its own query results and on-disk size. The server lifecycle
 and optional power sampling cover the pair. Reversing the flags gives a second
 trial with the opposite run order.
