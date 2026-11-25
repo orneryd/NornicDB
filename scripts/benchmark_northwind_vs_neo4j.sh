@@ -138,7 +138,8 @@ NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-/opt/homebrew/var/neo4j/data}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-testpass123}"
 REPORT_PARENT="${REPORT_DIR:-${SCRIPT_DIR}/benchmark_reports}"
 GRAPH_ONLY="${GRAPH_ONLY:-1}"
-NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic antlr}"
+NORNIC_PARSER_MODES_EXPLICIT="${NORNIC_PARSER_MODES:-}"
+NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES_EXPLICIT:-nornic antlr}"
 SKIP_POWERMETRICS="${SKIP_POWERMETRICS:-0}"
 SKIP_NEO4J="${SKIP_NEO4J:-0}"
 FALKOR_IMAGE="${FALKOR_IMAGE:-falkordb/falkordb:latest}"
@@ -167,14 +168,19 @@ SKIP_LADYBUG="${SKIP_LADYBUG:-0}"
 # Any env-provided SKIP_* / parser-mode settings are overridden so the selected
 # engine is the only thing that runs.
 ONLY_ENGINE=""
+NORNIC_LAYOUTS=()
+NORNIC_LAYOUT_COUNT=0
 for arg in "$@"; do
   case "${arg}" in
     --nornic-only)   ONLY_ENGINE="nornic" ;;
     --falkor-only)   ONLY_ENGINE="falkor" ;;
     --memgraph-only) ONLY_ENGINE="memgraph" ;;
     --ladybug-only)  ONLY_ENGINE="ladybug" ;;
-    -*)              die "unknown option: ${arg}" ;;
-    *)               die "unexpected argument: ${arg}" ;;
+    --layout=standard|--layout=experimental)
+      NORNIC_LAYOUTS+=("${arg#*=}")
+      NORNIC_LAYOUT_COUNT=$((NORNIC_LAYOUT_COUNT + 1))
+      ;;
+    *) printf 'Invalid option: %s (use --layout=standard or --layout=experimental)\n' "${arg}" >&2; exit 1 ;;
   esac
 done
 if [[ -n "${ONLY_ENGINE}" ]]; then
@@ -183,7 +189,7 @@ if [[ -n "${ONLY_ENGINE}" ]]; then
   # --nornic-only iteration run, keep a single fast mode unless the caller
   # explicitly asked for more.
   case "${ONLY_ENGINE}" in
-    nornic) NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic}" ;;
+    nornic) NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES_EXPLICIT:-nornic}" ;;
     *)      NORNIC_PARSER_MODES="" ;;
   esac
   SKIP_NEO4J=1
@@ -258,6 +264,15 @@ require go
 require python3
 require lsof
 require nc
+if (( NORNIC_LAYOUT_COUNT > 0 )); then
+  [[ -n "${NORNIC_PARSER_MODES}" ]] || die "--layout requires a NornicDB phase"
+  require curl
+  [[ "${NORNIC_DATABASE}" =~ ^[a-z][a-z0-9_-]*$ ]] || die "NORNIC_DATABASE must be a simple lowercase database name with --layout"
+  (( NORNIC_LAYOUT_COUNT <= 2 )) || die "--layout can select each layout once"
+  if [[ "${NORNIC_LAYOUT_COUNT}" -eq 2 && "${NORNIC_LAYOUTS[0]}" == "${NORNIC_LAYOUTS[1]}" ]]; then
+    die "--layout can select each layout once"
+  fi
+fi
 if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
   require sudo
   [[ -x /usr/bin/powermetrics ]] || die "/usr/bin/powermetrics not found"
@@ -576,10 +591,32 @@ run_nornic() {
   nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null || die "NornicDB bolt port never came up"
   log "NornicDB ready (pid ${NORNIC_PID})"
 
+  local run_labels=() run_databases=()
+  if (( NORNIC_LAYOUT_COUNT == 0 )); then
+    run_labels=("${label}")
+    run_databases=("${NORNIC_DATABASE}")
+  else
+    local layout database response statement
+    for layout in "${NORNIC_LAYOUTS[@]}"; do
+      database="${NORNIC_DATABASE}-${layout}"
+      printf -v statement "CREATE DATABASE \`%s\` OPTIONS {storage: 'isolated', layout: '%s'}" "${database}" "${layout}"
+      response=$(curl --fail --silent --show-error --retry 5 --retry-connrefused -H 'Content-Type: application/json' \
+        --data "{\"statements\":[{\"statement\":\"${statement}\"}]}" \
+        "http://127.0.0.1:${NORNIC_HTTP_PORT}/db/system/tx/commit") || die "could not create ${database}"
+      printf '%s' "${response}" | python3 -c 'import json, sys; errors = json.load(sys.stdin)["errors"]; sys.exit(str(errors) if errors else 0)' \
+        || die "could not create ${database}"
+      run_labels+=("${label}-${layout}")
+      run_databases+=("${database}")
+    done
+  fi
+  local i run_label run_start run_end
+  for i in "${!run_labels[@]}"; do
+    run_label="${run_labels[i]}"
+    run_start=$(date +%s.%N)
   "${BENCH_BIN}" \
     -uri "bolt://localhost:${NORNIC_BOLT_PORT}" \
     -no-auth \
-    -database "${NORNIC_DATABASE}" \
+    -database "${run_databases[i]}" \
     -categories "${CATEGORIES}" \
     -suppliers "${SUPPLIERS}" \
     -customers "${CUSTOMERS}" \
@@ -592,9 +629,14 @@ run_nornic() {
     -seed "${SEED}" \
     -iterations "${ITERATIONS}" \
     -warmup "${WARMUP}" \
-    -label "${label}" \
-    -out "${REPORT_DIR}/${label}.results.json" \
-    2>"${REPORT_DIR}/${label}.bench.log" || die "NornicDB (${mode}) benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+    -label "${run_label}" \
+    -out "${REPORT_DIR}/${run_label}.results.json" \
+    2>"${REPORT_DIR}/${run_label}.bench.log" || die "NornicDB benchmark failed — see ${REPORT_DIR}/${run_label}.bench.log"
+    run_end=$(date +%s.%N)
+    if (( NORNIC_LAYOUT_COUNT > 0 )); then
+      python3 -c "print(f'{float(${run_end}) - float(${run_start}):.3f}')" > "${REPORT_DIR}/${run_label}.wall_seconds.txt"
+    fi
+  done
 
   # Graceful shutdown so BadgerDB gets a chance to flush its in-memory
   # memtables and compact/rewrite vlog segments. Without this the
@@ -620,9 +662,24 @@ run_nornic() {
   # what actually landed in the filesystem.
   sync
   log "measuring NornicDB on-disk size"
-  du -sk "${NORNIC_DATA_DIR}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/${label}.disk_bytes.txt"
-  du -sh "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/${label}.disk_human.txt" || true
-  echo "${NORNIC_DATA_DIR}" > "${REPORT_DIR}/${label}.data_dir.txt"
+  for i in "${!run_labels[@]}"; do
+    run_label="${run_labels[i]}"
+    local store_path="${NORNIC_DATA_DIR}"
+    if (( NORNIC_LAYOUT_COUNT > 0 )); then
+      store_path=$(python3 - "${NORNIC_DATA_DIR}" "${run_databases[i]}" <<'PY'
+import json, pathlib, sys
+paths = [seal.parent for seal in pathlib.Path(sys.argv[1], "prepared-databases").glob("*/prepared.json")
+         if json.loads(seal.read_text())["database"] == sys.argv[2]]
+if len(paths) != 1:
+    sys.exit(f"Could not identify the isolated store for {sys.argv[2]}")
+print(paths[0])
+PY
+      ) || die "cannot measure ${run_databases[i]}"
+    fi
+    du -sk "${store_path}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/${run_label}.disk_bytes.txt"
+    du -sh "${store_path}" > "${REPORT_DIR}/${run_label}.disk_human.txt" || true
+    echo "${store_path}" > "${REPORT_DIR}/${run_label}.data_dir.txt"
+  done
 
   log "NornicDB run complete (parser=${mode})"
 }
