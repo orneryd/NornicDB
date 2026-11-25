@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1513,6 +1514,12 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 				db.mu.Unlock()
 				return ErrClosed
 			}
+			// Capture the old store's boundary before replacing it. Commands
+			// accepted after this point must remain eligible for crash replay.
+			var restoreWALFloor uint64
+			if db.wal != nil {
+				restoreWALFloor = db.wal.Sequence()
+			}
 			if err := restorable.Restore(path); err != nil {
 				if errors.Is(err, storage.ErrNotImplemented) {
 					db.mu.Unlock()
@@ -1523,7 +1530,13 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 			}
 			if db.config != nil && db.config.Database.DataDir != "" {
 				marker := filepath.Join(db.config.Database.DataDir, nativeRestoreMarker)
-				if err := security.WriteRootedFile(marker, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+				boundary := nativeRestoreBoundary{RestoredAt: time.Now().UTC(), WALSequence: restoreWALFloor}
+				data, err := json.Marshal(boundary)
+				if err != nil {
+					db.mu.Unlock()
+					return fmt.Errorf("encode native restore recovery boundary: %w", err)
+				}
+				if err := security.WriteRootedFile(marker, data, 0o600); err != nil {
 					db.mu.Unlock()
 					return fmt.Errorf("record native restore recovery boundary: %w", err)
 				}

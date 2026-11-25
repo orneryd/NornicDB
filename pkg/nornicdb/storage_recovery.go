@@ -89,6 +89,44 @@ func looksLikeCorruption(err error) bool {
 
 const nativeRestoreMarker = "native-restore.marker"
 
+// nativeRestoreBoundary records which accepted WAL entries belong to the store
+// that a successful native restore replaced. The marker's modification time
+// also keeps pre-restore snapshots out of corruption recovery.
+type nativeRestoreBoundary struct {
+	RestoredAt  time.Time `json:"restored_at"`
+	WALSequence uint64    `json:"wal_sequence"`
+}
+
+func nativeRestoreWALFloor(dataDir string) (uint64, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, nativeRestoreMarker))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read native restore boundary: %w", err)
+	}
+	var boundary nativeRestoreBoundary
+	if err := json.Unmarshal(data, &boundary); err != nil {
+		// Older markers held only a timestamp. They did not record a safe WAL
+		// floor, so retain their existing replay behavior rather than guess.
+		if _, legacyErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); legacyErr == nil {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("decode native restore boundary: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return 0, fmt.Errorf("decode native restore boundary fields: %w", err)
+	}
+	if _, ok := fields["wal_sequence"]; !ok {
+		return 0, errors.New("native restore boundary has no WAL sequence")
+	}
+	if boundary.RestoredAt.IsZero() {
+		return 0, errors.New("native restore boundary has no restore time")
+	}
+	return boundary.WALSequence, nil
+}
+
 func hasPostRestoreSnapshot(dataDir string) bool {
 	marker, err := os.Stat(filepath.Join(dataDir, nativeRestoreMarker))
 	if err != nil {

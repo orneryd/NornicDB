@@ -27,14 +27,23 @@ const bufferedRecoveryBatchBytes int64 = 8 << 20
 // deltas: crash recovery is rare, and the authoritative rebuild is the same
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
-	return recoverAcceptedCommits(engine, wal, walForeignImport)
+	return recoverAcceptedCommits(engine, wal, walForeignImport, 0)
 }
 
 // RecoverBufferedCommitsAtOpen replays both accepted record kinds and is exclusively the constructor's recovery of a
 // store's own configured WAL directory, before traffic. That structural authority
 // preserves unstamped historical upgrades; a foreign-populated store cannot use it.
 func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
-	return recoverAcceptedCommits(engine, wal, walOwnDirectoryAtOpen)
+	return RecoverBufferedCommitsAtOpenAfter(engine, wal, 0)
+}
+
+// RecoverBufferedCommitsAtOpenAfter replays accepted records newer than a
+// durable storage replacement boundary. A native restore replaces the physical
+// receipts that older WAL records refer to; those records belong to the prior
+// store and must not be submitted against the restored image. Later accepted
+// records still receive normal crash recovery.
+func RecoverBufferedCommitsAtOpenAfter(engine Engine, wal *WAL, afterSeq uint64) (int, error) {
+	return recoverAcceptedCommits(engine, wal, walOwnDirectoryAtOpen, afterSeq)
 }
 
 // recoverAcceptedCommits runs every phase step on the engine's own work
@@ -43,7 +52,7 @@ func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
 // cancels it. A stopping engine therefore ends recovery visibly instead of
 // letting it outlive its owner on an unowned root, while ordinary open-time
 // recovery keeps the same unbounded completion it always had.
-func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
+func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority, afterSeq uint64) (int, error) {
 	b, ok := engine.(*BadgerEngine)
 	if !ok || b == nil || wal == nil {
 		return 0, nil
@@ -89,7 +98,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err = VisitWALEntriesAfterFromDir(b.work.Context(), wal.config.Dir, 0, func(entry WALEntry) error {
+	err = VisitWALEntriesAfterFromDir(b.work.Context(), wal.config.Dir, afterSeq, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its
