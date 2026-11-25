@@ -207,6 +207,16 @@ func (e *StorageExecutor) validatePipelineProjectionExpressions(ctx context.Cont
 		return err
 	}
 	for _, expression := range expressions {
+		// A subscript on an aggregate result has no value on an input row.
+		// Its typed evaluation runs once per completed group; validating the
+		// aggregate receiver here would evaluate it for every input row.
+		if open := closingBracketGroupStart(expression); open > 0 {
+			if start := rowSubscriptReceiverStart(expression, open); start >= 0 && start < open {
+				if _, _, _, aggregate := parsePipelineAggregate(strings.TrimSpace(expression[start:open])); aggregate {
+					continue
+				}
+			}
+		}
 		for _, row := range rows {
 			if err := e.validateRowSubscriptTypes(ctx, expression, row); err != nil {
 				return err
