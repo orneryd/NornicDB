@@ -8,4 +8,4 @@
 - [x] Compare baseline/current latency, allocations, and peak heap on matched fixtures; document the remaining acceptance gap.
 - [x] Defer the new ordered-aggregation optimizer to child N145-34 with full acceptance criteria and test matrix.
 - [x] Run focused and affected-package tests, manually review reuse candidates, and leave the local duplicate checker to CI.
-- [ ] Open one release/v1.5.3 PR with exact head/base verification and link Plane.
+- [x] Open the partial release/v1.5.3 PR with exact head/base verification and link Plane.
