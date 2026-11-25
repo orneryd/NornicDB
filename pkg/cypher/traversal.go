@@ -409,7 +409,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// type, direction, inline properties, endpoint admission and the WHERE with
 	// their existing owners, and no indexed relationship means no match at all.
 	if relationship == nil && !matches.IsChained {
-		selected, none, pinned, err := e.relationshipPropertySeedEdge(ctx, matches)
+		selected, none, pinned, err := e.relationshipPropertySeedEdge(ctx, matches, whereClause)
 		if err != nil {
 			return nil, err
 		}
