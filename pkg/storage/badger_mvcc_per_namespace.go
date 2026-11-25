@@ -67,6 +67,26 @@ type namespaceMVCCState struct {
 	refillMu        contextRWMutex
 }
 
+// namespaceMVCCLoad lets concurrent first callers share one recovery result.
+// A failed load is removed so a later caller can retry after the cause clears.
+type namespaceMVCCLoad struct {
+	done  chan struct{}
+	state *namespaceMVCCState
+	err   error
+}
+
+// preloadNamespaceMVCC moves recovery of existing namespaces into engine
+// opening, before the engine can serve its first transaction. Counts were
+// already loaded from the primary keys and include edge-only namespaces.
+func (b *BadgerEngine) preloadNamespaceMVCC() error {
+	for _, namespace := range b.ListNamespaces() {
+		if _, err := b.namespaceMVCC(namespace); err != nil {
+			return fmt.Errorf("%s: %w", namespace, err)
+		}
+	}
+	return nil
+}
+
 // namespaceMVCC seeds an unopened namespace from the durable sequence
 // ceiling, the legacy global key and surviving entity heads. Older
 // binaries stored the last committed sequence in the same eight bytes;
@@ -77,42 +97,62 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 	}
 
 	b.mvccByNamespaceMu.RLock()
-	state, ok := b.mvccByNamespace[namespace]
-	b.mvccByNamespaceMu.RUnlock()
-	if ok {
+	if state := b.mvccByNamespace[namespace]; state != nil {
+		b.mvccByNamespaceMu.RUnlock()
 		return state, nil
 	}
+	if load := b.mvccNamespaceLoads[namespace]; load != nil {
+		b.mvccByNamespaceMu.RUnlock()
+		<-load.done
+		return load.state, load.err
+	}
+	b.mvccByNamespaceMu.RUnlock()
+
+	b.mvccByNamespaceMu.Lock()
+	if state := b.mvccByNamespace[namespace]; state != nil {
+		b.mvccByNamespaceMu.Unlock()
+		return state, nil
+	}
+	if load := b.mvccNamespaceLoads[namespace]; load != nil {
+		b.mvccByNamespaceMu.Unlock()
+		<-load.done
+		return load.state, load.err
+	}
+	if b.mvccNamespaceLoads == nil {
+		b.mvccNamespaceLoads = make(map[string]*namespaceMVCCLoad)
+	}
+	load := &namespaceMVCCLoad{done: make(chan struct{})}
+	b.mvccNamespaceLoads[namespace] = load
+	b.mvccByNamespaceMu.Unlock()
 
 	persisted, err := b.loadPersistedNamespaceSequence(namespace)
-	if err != nil {
-		return nil, err
-	}
-	recoveredSeq, recoveredHighWater, err := b.recoverNamespaceMVCCFloor(namespace)
-	if err != nil {
-		return nil, err
+	var recoveredSeq uint64
+	var recoveredHighWater int64
+	if err == nil {
+		recoveredSeq, recoveredHighWater, err = b.recoverNamespaceMVCCFloor(namespace)
 	}
 
-	// A concurrent caller may have published the namespace's state since the
-	// read check; only the first one is kept and persisted.
 	b.mvccByNamespaceMu.Lock()
-	state, ok = b.mvccByNamespace[namespace]
-	if !ok {
+	if err == nil {
 		if b.mvccByNamespace == nil {
 			b.mvccByNamespace = make(map[string]*namespaceMVCCState)
 		}
 		starting := max(persisted, b.mvccLegacyGlobalSeed, recoveredSeq)
-		state = &namespaceMVCCState{
+		load.state = &namespaceMVCCState{
 			persistKey: mvccNamespaceSequenceKey(namespace),
 		}
-		state.seq.Store(starting)
-		state.reservedThrough.Store(persisted)
+		load.state.seq.Store(starting)
+		load.state.reservedThrough.Store(persisted)
 		if recoveredHighWater > 0 {
-			state.highWaterNanos.Store(recoveredHighWater)
+			load.state.highWaterNanos.Store(recoveredHighWater)
 		}
-		b.mvccByNamespace[namespace] = state
+		b.mvccByNamespace[namespace] = load.state
 	}
+	load.err = err
+	delete(b.mvccNamespaceLoads, namespace)
+	close(load.done)
 	b.mvccByNamespaceMu.Unlock()
-	return state, nil
+	return load.state, load.err
 }
 
 // EnsureNamespaceMVCC eagerly loads the per-namespace MVCC state so a

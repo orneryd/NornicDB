@@ -381,6 +381,7 @@ type BadgerEngine struct {
 	// counter. See loadPersistedMVCCSequence and namespaceMVCC().
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
+	mvccNamespaceLoads   map[string]*namespaceMVCCLoad
 	mvccLegacyGlobalSeed uint64
 	// mvccReservations lists the versions reserved by writes that have not
 	// published yet; a transaction's cut copies it (mvccReservations).
@@ -1268,6 +1269,13 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 	if err := engine.ensureEmbeddingFailureIndex(engine.work.Context()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize embedding failure index: %w", err)
+	}
+	// Recover existing namespaces before handing the engine to a listener.
+	// Otherwise the first client write pays for a scan of every head in its
+	// namespace, after the service has reported itself ready.
+	if err := engine.preloadNamespaceMVCC(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("recover namespace MVCC floors: %w", err)
 	}
 
 	// Edge-between index backfill runs only after migrations have
