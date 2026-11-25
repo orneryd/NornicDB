@@ -37,7 +37,7 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 }
 
 // idEqualityLookup reads a WHERE that is one id(<variable>) = <value> or
-// elementId(<variable>) = <value> comparison: the variable, and the storage
+// elementId(<variable>) = <value> comparison, in either operand order: the variable, and the storage
 // ID the value names (an element ID's payload; elementKind is "4" for nodes,
 // "5" for relationships). empty is true when the value is null, not a string
 // or blank, which matches nothing; ok is false for any other WHERE.
@@ -69,6 +69,7 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 	if left == "" || right == "" {
 		return "", "", false, false
 	}
+	left, right = orientIDEqualityOperands(left, right)
 
 	kind := ""
 	lowerLeft := lowerASCII(left)
@@ -104,6 +105,19 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 		return variable, "", true, true
 	}
 	return variable, lookupID, false, true
+}
+
+// orientIDEqualityOperands keeps both equality orders on the same ID seek
+// path without changing comparisons between two ID expressions.
+func orientIDEqualityOperands(left, right string) (string, string) {
+	isID := func(expr string) bool {
+		lower := lowerASCII(expr)
+		return (strings.HasPrefix(lower, "id(") || strings.HasPrefix(lower, "elementid(")) && strings.HasSuffix(expr, ")")
+	}
+	if !isID(left) && isID(right) {
+		return right, left
+	}
+	return left, right
 }
 
 // entitySeekLookup retains the database until the selected engine accepts it.
@@ -184,6 +198,7 @@ func (e *StorageExecutor) resolveIDEqualityParamCandidates(
 	if left == "" || right == "" {
 		return nodeIDResults{}, false, nil
 	}
+	left, right = orientIDEqualityOperands(left, right)
 
 	// RHS must be a parameter reference ($paramName).
 	if !strings.HasPrefix(right, "$") {
