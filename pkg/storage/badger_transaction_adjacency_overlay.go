@@ -2,6 +2,72 @@ package storage
 
 import "context"
 
+type pendingBetweenKey struct {
+	start    NodeID
+	end      NodeID
+	typeName string
+}
+
+func pendingEdgeBetweenKey(edge *Edge) pendingBetweenKey {
+	return pendingBetweenKey{edge.StartNode, edge.EndNode, edge.Type}
+}
+
+func indexPendingBetween(index map[pendingBetweenKey]map[EdgeID]*Edge, edge *Edge) {
+	if edge == nil {
+		return
+	}
+	key := pendingEdgeBetweenKey(edge)
+	edges := index[key]
+	if edges == nil {
+		edges = make(map[EdgeID]*Edge)
+		index[key] = edges
+	}
+	edges[edge.ID] = edge
+}
+
+func (tx *BadgerTransaction) unindexPendingBetweenLocked(edge *Edge) {
+	if edge == nil {
+		return
+	}
+	key := pendingEdgeBetweenKey(edge)
+	edges := tx.pendingBetween[key]
+	delete(edges, edge.ID)
+	if len(edges) == 0 {
+		delete(tx.pendingBetween, key)
+	}
+}
+
+// pendingBetweenLocked narrows a transaction's staged relationship overlay to
+// one directed endpoint pair and type. The index is built once and maintained
+// by setPendingEdgeLocked/removePendingEdgeLocked; read-only lock images stay
+// outside it and are composed only for the exceptional read that needs them.
+func (tx *BadgerTransaction) pendingBetweenLocked(ctx context.Context, start, end NodeID, edgeType string, images map[EdgeID]*Edge) (map[EdgeID]*Edge, error) {
+	key := pendingBetweenKey{start, end, edgeType}
+	if len(images) != len(tx.pendingEdges) {
+		matched := make(map[EdgeID]*Edge)
+		for _, edge := range images {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if edge != nil && pendingEdgeBetweenKey(edge) == key {
+				matched[edge.ID] = edge
+			}
+		}
+		return matched, nil
+	}
+	if tx.pendingBetween == nil {
+		index := make(map[pendingBetweenKey]map[EdgeID]*Edge)
+		for _, edge := range tx.pendingEdges {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			indexPendingBetween(index, edge)
+		}
+		tx.pendingBetween = index
+	}
+	return tx.pendingBetween[key], ctx.Err()
+}
+
 // pendingAdjacencyLocked indexes the transaction's incident edges on first
 // adjacency use. Writes maintain it thereafter; unrelated edges never enter a
 // node's read/DELETE working set. All access is under tx.mu.
@@ -74,12 +140,19 @@ func (tx *BadgerTransaction) setPendingEdgeLocked(edge *Edge) {
 		tx.unindexPendingEdgeLocked(tx.pendingEdges[edge.ID])
 		indexPendingEdge(tx.pendingAdjacency, edge)
 	}
+	if tx.pendingBetween != nil {
+		tx.unindexPendingBetweenLocked(tx.pendingEdges[edge.ID])
+		indexPendingBetween(tx.pendingBetween, edge)
+	}
 	tx.pendingEdges[edge.ID] = edge
 }
 
 func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 	if tx.pendingAdjacency != nil {
 		tx.unindexPendingEdgeLocked(tx.pendingEdges[id])
+	}
+	if tx.pendingBetween != nil {
+		tx.unindexPendingBetweenLocked(tx.pendingEdges[id])
 	}
 	delete(tx.pendingEdges, id)
 }

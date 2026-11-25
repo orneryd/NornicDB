@@ -158,6 +158,7 @@ type BadgerTransaction struct {
 	pendingIndex     *pendingNodeIndex
 	pendingEdges     map[EdgeID]*Edge
 	pendingAdjacency map[NodeID]map[EdgeID]*Edge
+	pendingBetween   map[pendingBetweenKey]map[EdgeID]*Edge
 	snapshotEquality map[snapshotLabelCacheKey]*snapshotEqualityPopulation
 	// edgeCreateNoOps records CREATE candidates over stored hidden
 	// relationships. They stage only a hidden candidate image:
