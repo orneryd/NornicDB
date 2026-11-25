@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/internal/queryprofile"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -188,6 +189,11 @@ func createRelationshipForMerge(
 		}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
 			return edge, false, nil
 		}
+		// A relationship the statement deleted and MERGEd again is re-created at
+		// the deleted deterministic identity: the statement now holds a live
+		// relationship there, so its ledger takes the mark back before the
+		// remaining clauses read, write or return it (#N152-262).
+		contextslot.Get[deletedEntities](ctx).created(store, edge.ID)
 		return edge, true, nil
 	}
 }

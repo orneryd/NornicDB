@@ -13,7 +13,10 @@ import (
 // and a deleted path's parts included). It is the statement's, not a row's,
 // so it holds across WITH, aliases, collect() and the row-at-a-time runs of
 // a write stretch: Neo4j 5.26 reads a deleted entity the same way wherever
-// it is reached in the rest of the statement (#907).
+// it is reached in the rest of the statement (#907). Its marks are
+// identities, not incarnations: a relationship MERGE that re-creates what a
+// DELETE recorded takes that mark back (created), because the rest of the
+// statement holds the live relationship there (#N152-262).
 type deletedEntities struct {
 	nodes map[storage.NodeID]struct{}
 	edges map[storage.EdgeID]struct{}
@@ -463,6 +466,32 @@ func (d *deletedEntities) contains(value interface{}) bool {
 	return false
 }
 
+// created records that the statement holds a live relationship at id again: a
+// MERGE re-created a relationship the statement deleted, and its deterministic
+// identity is the one the DELETE recorded. The ledger records identities, so
+// the mark goes: the remaining clauses read, write and return the live
+// relationship, and a later DELETE finds the entity it deletes (#N152-262).
+func (d *deletedEntities) created(store storage.Engine, id storage.EdgeID) {
+	if d == nil || len(d.edges) == 0 {
+		return
+	}
+	delete(d.edges, storage.EdgeID(statementEntityIdentity(store, "5", string(id))))
+}
+
+// statementEntityIdentity translates a stored entity ID into the identity the
+// statement's deletion ledger records: the executing database's, unless a
+// composite's qualified ID names its own source.
+func statementEntityIdentity(store storage.Engine, kind, id string) string {
+	identity := storage.EntityIdentity{Database: storage.DatabaseOf(store), LocalID: id}
+	if storage.CompositeDatabaseOf(store) != "" {
+		actual, database, local, qualified := storage.ParseElementID(id)
+		if qualified && actual == kind {
+			identity = storage.EntityIdentity{Database: database, LocalID: local}
+		}
+	}
+	return identity.Key()
+}
+
 // deleteEdgeLookupID uses the same identity translation as collected targets
 // for relationships discovered while validating or detaching a node.
 func deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID {
@@ -473,23 +502,13 @@ func deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID
 // addFromStorage records identities rather than engine-relative lookup IDs.
 // The statement registry can span constituent calls, aliases and later clauses.
 func (d *deletedEntities) addFromStorage(store storage.Engine, nodes []storage.NodeID, edges map[storage.EdgeID]struct{}) {
-	key := func(kind, value string) string {
-		identity := storage.EntityIdentity{Database: storage.DatabaseOf(store), LocalID: value}
-		if storage.CompositeDatabaseOf(store) != "" {
-			actual, database, local, qualified := storage.ParseElementID(value)
-			if qualified && actual == kind {
-				identity = storage.EntityIdentity{Database: database, LocalID: local}
-			}
-		}
-		return identity.Key()
-	}
 	nodeKeys := make([]storage.NodeID, len(nodes))
 	for i, id := range nodes {
-		nodeKeys[i] = storage.NodeID(key("4", string(id)))
+		nodeKeys[i] = storage.NodeID(statementEntityIdentity(store, "4", string(id)))
 	}
 	edgeKeys := make(map[storage.EdgeID]struct{}, len(edges))
 	for id := range edges {
-		edgeKeys[storage.EdgeID(key("5", string(id)))] = struct{}{}
+		edgeKeys[storage.EdgeID(statementEntityIdentity(store, "5", string(id)))] = struct{}{}
 	}
 	d.add(nodeKeys, edgeKeys)
 }
