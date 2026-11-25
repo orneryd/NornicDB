@@ -584,7 +584,8 @@ run_nornic() {
       >"${REPORT_DIR}/${label}.stdout.log" 2>"${REPORT_DIR}/${label}.stderr.log" &
   NORNIC_PID=$!
 
-  for i in {1..30}; do
+  local startup_timeout="${NORNIC_STARTUP_TIMEOUT:-30}"
+  for (( i=0; i<startup_timeout; i++ )); do
     if nc -z 127.0.0.1 "${NORNIC_BOLT_PORT}" 2>/dev/null; then break; fi
     sleep 1
     if ! kill -0 "${NORNIC_PID}" 2>/dev/null; then
@@ -647,7 +648,7 @@ run_nornic() {
   # memtable and every write still sitting in the memtable — producing
   # absurd sizes like 50+ MiB for 10 kB of actual data.
   log "stopping NornicDB gracefully (SIGTERM, flushing storage)"
-  stop_pid_graceful "${NORNIC_PID}" 30
+  stop_pid_graceful "${NORNIC_PID}" "${NORNIC_SHUTDOWN_TIMEOUT:-30}"
   NORNIC_PID=""
 
   local t1=$(date +%s.%N)
