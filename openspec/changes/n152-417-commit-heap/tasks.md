@@ -8,4 +8,4 @@
 - [x] Correct the MVCC archive copy owner while preserving WAL, MVCC, rollback, and CDC payload paths.
 - [x] Compare baseline/current latency, allocated bytes, and peak live heap on the same fixture.
 - [x] Run focused and affected-package checks; review duplicate candidates manually and leave the local checker to CI.
-- [ ] Open one PR against `release/v1.5.3`, post exact head/base verification, and link Plane.
+- [x] Open one PR against `release/v1.5.3`, post exact head/base verification, and link Plane.
