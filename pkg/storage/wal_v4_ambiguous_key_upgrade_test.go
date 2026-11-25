@@ -854,7 +854,7 @@ func TestHistoricalAmbiguousRepairRefusesIncompleteProof(t *testing.T) {
 
 	t.Run("unknown key family", func(t *testing.T) {
 		unclassified := cloneBufferedCommit(commit.decoded)
-		unclassified.Writes[string([]byte{0x27, 0x00, 0xFF})] = []byte{}
+		unclassified.Writes[string([]byte{0x28, 0x00, 0xFF})] = []byte{}
 		_, err := repairV4BufferedCommitPhysicalKeys(unclassified)
 		require.ErrorContains(t, err, "not in a re-derivable numeric-key family")
 		require.ErrorContains(t, err, "unclassified family")

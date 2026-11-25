@@ -136,6 +136,14 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills(context.WithoutCancel(ctx))) }()
+	// A backup predating the failure-only index has no readiness marker. Build
+	// it after the restore's lifecycle hold is released, before returning the
+	// restored engine to ordinary callers.
+	defer func() {
+		if restoreErr == nil {
+			restoreErr = b.ensureEmbeddingFailureIndex(context.WithoutCancel(ctx))
+		}
+	}()
 
 	lifecycle, err := b.beginLifecycleWrite(ctx, "")
 	if err != nil {
@@ -426,6 +434,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(ctx context.Context, prefix string, li
 		append([]byte{prefixEdgeBetweenHead}, prefixBytes...),
 		append([]byte{prefixPendingEmbed}, prefixBytes...),
 		append([]byte{prefixEmbedding}, prefixBytes...),
+		append([]byte{prefixEmbeddingFailure}, prefixBytes...),
 		manualSuppressionKey(manualSuppressionNode, prefix),
 		manualSuppressionKey(manualSuppressionEdge, prefix),
 	}

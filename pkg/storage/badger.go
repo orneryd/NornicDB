@@ -51,6 +51,7 @@ const (
 	prefixMVCCIncomingAdj  = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 	prefixMVCCPruneFloor   = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
 	prefixBufferedFlush    = byte(0x13) // buffered_flush:txID -> []byte{} (write-behind commit reached Badger)
+	prefixEmbeddingFailure = byte(0x27) // embedding_failure:nodeID -> []byte{} (parked failures only)
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
@@ -128,6 +129,9 @@ const (
 	// prefixMVCCMetaTemporalIndexFormat records the temporal history index's
 	// key format; see temporalIndexFormatKey.
 	prefixMVCCMetaTemporalIndexFormat = byte(0x12)
+	// prefixMVCCMetaEmbeddingFailureReady certifies that every parked sidecar
+	// metadata record is represented in prefixEmbeddingFailure.
+	prefixMVCCMetaEmbeddingFailureReady = byte(0x13)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -1260,6 +1264,10 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 	if err := engine.ensureEdgeTypeCountsOnOpen(engine.work.Context(), clean); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
+	}
+	if err := engine.ensureEmbeddingFailureIndex(engine.work.Context()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize embedding failure index: %w", err)
 	}
 
 	// Edge-between index backfill runs only after migrations have
