@@ -670,10 +670,9 @@ func TestNodeSeedChoiceMergeVerifiesCompositeMiss(t *testing.T) {
 	require.Equal(t, []string{"3"}, rows, "MERGE must not create a duplicate")
 }
 
-// MERGE keeps the release's lookup, which reads the first written label's
-// indexes only. When that label has none, MERGE scans a label, as on the
-// release, but the pattern label with the fewest nodes, not the first
-// written one: the 2 Tiny nodes, not the 1,000 Big ones. Rows are unchanged
+// With no unique constraint, MERGE may scan a label when its ordinary index
+// cannot prove a complete answer. The scan picks the pattern label with the
+// fewest nodes: the 2 Tiny nodes, not the 1,000 Big ones. Rows are unchanged
 // and no duplicate is created.
 func TestNodeSeedChoiceMergeScansSmallestLabel(t *testing.T) {
 	fixture := newSeedFixture(t,
@@ -715,9 +714,7 @@ func seedDropIndexEntry(t *testing.T, fixture *seedFixture, label, property stri
 }
 
 // MERGE finds, in every state of an index answer, the nodes the release finds
-// (reviews r3 and r4). Its lookup is the release's: only the first written
-// label's own indexes can end the search, and an index on another label is
-// not read. So an index on a later label that omits a node, lists one node of
+// (reviews r3 and r4). A non-unique index on a later label that omits a node, lists one node of
 // two, or lists only a decoy the pattern's other label or properties reject,
 // neither hides an existing node nor makes MERGE create a duplicate. The
 // expected rows and node counts are the release head's, measured cell by
