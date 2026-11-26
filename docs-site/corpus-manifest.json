@@ -162,8 +162,8 @@
     },
     {
       "path": "architecture/knowledge-policy-visibility-layer.md",
-      "sha256": "254714fd7fe1897489e84cf7cb36571b4895eb6f12bde4953279176539e75a03",
-      "bytes": 16209
+      "sha256": "ed3c414a094363e9ae664c0327d270e2ca7c853a356ec253b70089e2bac1b25f",
+      "bytes": 16370
     },
     {
       "path": "architecture/multi-db-architecture.md",
@@ -657,8 +657,8 @@
     },
     {
       "path": "features/apoc-functions.md",
-      "sha256": "87d753ec49b1b3b6daf7f1b88d6bf70bfbd86590cf3e2974a493f10c5e2d66a2",
-      "bytes": 68242
+      "sha256": "0728cf24ca0f5af4a31c10a9554f40c9a61dce6016ddbdf78e8e6ebc5c659d84",
+      "bytes": 68681
     },
     {
       "path": "features/apoc-procedure-capabilities.md",
@@ -797,8 +797,8 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "3cac25587c0720d30c7a9f0d07ff870b6fa7a73780c8c5e44d7fab2c4519a381",
-      "bytes": 36076
+      "sha256": "396b8986127fc9fab1bd3d943c10c2cd3385c20efd0ec7bfd195b8f5401e9db5",
+      "bytes": 36234
     },
     {
       "path": "neo4j-migration/feature-parity.md",
@@ -1562,8 +1562,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "f7a42cb9a210fd83605b3fc69f08d087979f023261cad9c03ddc9a85828ab9c4",
-      "bytes": 12574
+      "sha256": "51025edded81b5d1290b6f1306ad8ad5884e1118db2178bd59ddc9fc88a11050",
+      "bytes": 15029
     },
     {
       "path": "security/http-security.md",
