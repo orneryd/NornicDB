@@ -657,8 +657,8 @@
     },
     {
       "path": "features/apoc-functions.md",
-      "sha256": "87d753ec49b1b3b6daf7f1b88d6bf70bfbd86590cf3e2974a493f10c5e2d66a2",
-      "bytes": 68242
+      "sha256": "0728cf24ca0f5af4a31c10a9554f40c9a61dce6016ddbdf78e8e6ebc5c659d84",
+      "bytes": 68681
     },
     {
       "path": "features/apoc-procedure-capabilities.md",

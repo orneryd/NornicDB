@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -146,4 +147,82 @@ func TestVerifyH9_002_Control_SourceStoreReopens(t *testing.T) {
 	t.Logf("VERIFY_H9 reopen source store: err=%v", err)
 	require.NoError(t, err)
 	assert.Equal(t, int64(50), again.count("FR"))
+}
+
+// M06: a successful public restore must make the restored account usable on
+// the server that performed it, without requiring a process restart.
+func TestRestoreReloadsLiveAccountDirectory(t *testing.T) {
+	base := t.TempDir()
+	backup := verifyH9SourceBackup(t, base, "restored-editor")
+	target, err := verifyH9Open(t, filepath.Join(base, "target"), true)
+	require.NoError(t, err)
+	_, err = target.auth.CreateUser(t.Context(), "target-only", "password123", []auth.Role{auth.RoleEditor})
+	require.NoError(t, err)
+	targetOnlyToken := getAuthToken(t, target.auth, "target-only")
+	targetOnlyBasic := "Basic " + base64.StdEncoding.EncodeToString([]byte("target-only:password123"))
+	resp := makeRequest(t, target.srv, http.MethodGet, "/auth/me", nil, targetOnlyBasic)
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	_, _, err = target.auth.Authenticate(t.Context(), "restored-editor", "Fu-acct-pass-1", "", "")
+	require.Error(t, err, "account must not exist before restore")
+	require.Equal(t, http.StatusOK, target.admin(http.MethodPost, "/admin/restore", map[string]any{"path": backup}))
+	_, user, err := target.auth.Authenticate(t.Context(), "restored-editor", "Fu-acct-pass-1", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "restored-editor", user.Username)
+	login := makeRequest(t, target.srv, http.MethodPost, "/auth/token", map[string]string{
+		"username": "restored-editor", "password": "Fu-acct-pass-1",
+	}, "")
+	require.Equal(t, http.StatusOK, login.Code, login.Body.String())
+	_, _, err = target.auth.Authenticate(t.Context(), "target-only", "password123", "", "")
+	require.Error(t, err, "an account absent from the restored store must lose access")
+	login = makeRequest(t, target.srv, http.MethodPost, "/auth/token", map[string]string{
+		"username": "target-only", "password": "password123",
+	}, "")
+	require.Equal(t, http.StatusUnauthorized, login.Code, login.Body.String())
+	resp = makeRequest(t, target.srv, http.MethodGet, "/auth/me", nil, "Bearer "+targetOnlyToken)
+	require.Equal(t, http.StatusUnauthorized, resp.Code, "pre-restore bearer token must lose access")
+	resp = makeRequest(t, target.srv, http.MethodGet, "/auth/me", nil, targetOnlyBasic)
+	require.Equal(t, http.StatusUnauthorized, resp.Code, "cached pre-restore Basic credentials must lose access")
+}
+
+// M06: the restored catalog's CDC setting must take effect in the same server.
+func TestRestoreReloadsLiveChangeCapture(t *testing.T) {
+	base := t.TempDir()
+	source, err := verifyH9Open(t, filepath.Join(base, "source"), true)
+	require.NoError(t, err)
+	admin := getAuthToken(t, source.auth, "admin")
+	require.Empty(t, txErrorCode(t, source.srv, "system", admin, "ALTER DATABASE nornic SET OPTION txLogEnrichment 'FULL'"))
+	backup := filepath.Join(base, "cdc.backup")
+	require.Equal(t, http.StatusOK, source.admin(http.MethodPost, "/admin/backup", map[string]any{"path": backup}))
+	source.close()
+
+	target, err := verifyH9Open(t, filepath.Join(base, "target"), true)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, target.admin(http.MethodPost, "/admin/restore", map[string]any{"path": backup}))
+	admin = getAuthToken(t, target.auth, "admin")
+	options, err := target.srv.dbManager.DatabaseOptions("nornic")
+	require.NoError(t, err)
+	require.Equal(t, "FULL", options["txLogEnrichment"])
+	rows := httpRows(t, target.srv, "Bearer "+admin, "/db/nornic/tx/commit", "CALL db.cdc.current() YIELD id RETURN id", nil)
+	require.Len(t, rows, 1)
+}
+
+func TestRestoreDisablesPreRestoreChangeCapture(t *testing.T) {
+	base := t.TempDir()
+	source, err := verifyH9Open(t, filepath.Join(base, "source"), true)
+	require.NoError(t, err)
+	backup := filepath.Join(base, "cdc-off.backup")
+	require.Equal(t, http.StatusOK, source.admin(http.MethodPost, "/admin/backup", map[string]any{"path": backup}))
+	source.close()
+
+	target, err := verifyH9Open(t, filepath.Join(base, "target"), true)
+	require.NoError(t, err)
+	admin := getAuthToken(t, target.auth, "admin")
+	require.Empty(t, txErrorCode(t, target.srv, "system", admin, "ALTER DATABASE nornic SET OPTION txLogEnrichment 'FULL'"))
+	require.Equal(t, http.StatusOK, target.admin(http.MethodPost, "/admin/restore", map[string]any{"path": backup}))
+	options, err := target.srv.dbManager.DatabaseOptions("nornic")
+	require.NoError(t, err)
+	require.Empty(t, options["txLogEnrichment"])
+	admin = getAuthToken(t, target.auth, "admin")
+	require.Equal(t, "Neo.DatabaseError.ChangeDataCapture.Disabled",
+		cdcWireErrorCode(t, target.srv, "Bearer "+admin, "/db/nornic/tx/commit", "CALL db.cdc.current()", nil))
 }

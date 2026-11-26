@@ -38,15 +38,44 @@ func (a *Authenticator) refreshFineGrainedUsers(ctx context.Context) error {
 // Refresh under the normal publication order so an in-process user mutation
 // cannot replace the cache with records from an earlier snapshot.
 func (a *Authenticator) refreshFineGrainedUsersOrdered(ctx context.Context) error {
+	return a.reloadUsersOrdered(ctx, false)
+}
+
+// ReloadUsersAfterRestore replaces the live account directory with the
+// restored system records. The record-order boundary prevents a concurrent
+// account mutation from publishing an older directory after this reload.
+func (a *Authenticator) ReloadUsersAfterRestore(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
+	if err := a.recordOrder.lock(ctx); err != nil {
+		return err
+	}
+	defer a.recordOrder.unlock()
+	if err := a.reloadUsersOrdered(ctx, true); err != nil {
+		// The storage replacement has committed. Keep no pre-restore
+		// principal authorized if the new directory cannot be read.
+		a.publishUserRecords(func() {
+			for name := range a.users {
+				a.notifyPasswordChange(name)
+			}
+			a.users = make(map[string]*User)
+		})
+		return err
+	}
+	return nil
+}
+
+func (a *Authenticator) reloadUsersOrdered(ctx context.Context, force bool) error {
 	directory := a.fgacUsers
 	var version uint64
-	if directory.provider != nil {
+	if directory != nil && directory.provider != nil {
 		var valid bool
 		version, valid = directory.provider.GraphMutationVersion()
 		if !valid {
 			return ErrFineGrainedForbidden
 		}
-		if directory.version.Load() == version+1 {
+		if !force && directory.version.Load() == version+1 {
 			return nil
 		}
 	}
@@ -55,7 +84,7 @@ func (a *Authenticator) refreshFineGrainedUsersOrdered(ctx context.Context) erro
 	if err != nil {
 		return err
 	}
-	if directory.provider != nil {
+	if directory != nil && directory.provider != nil {
 		after, valid := directory.provider.GraphMutationVersion()
 		if !valid || after != version {
 			return ErrFineGrainedForbidden
@@ -64,14 +93,16 @@ func (a *Authenticator) refreshFineGrainedUsersOrdered(ctx context.Context) erro
 	a.publishUserRecords(func() {
 		for name, previous := range a.users {
 			current := users[name]
-			if current == nil || current.ID != previous.ID || current.PasswordHash != previous.PasswordHash ||
+			if force || current == nil || current.ID != previous.ID || current.PasswordHash != previous.PasswordHash ||
 				current.Disabled != previous.Disabled || !current.LockedUntil.Equal(previous.LockedUntil) {
 				a.notifyPasswordChange(name)
 			}
 		}
 		a.users = users
 	})
-	directory.version.Store(version + 1)
+	if directory != nil {
+		directory.version.Store(version + 1)
+	}
 	return nil
 }
 

@@ -142,7 +142,17 @@ func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, o
 				return storage.ErrOfflineDatabaseRestore
 			}
 			status = "restore complete"
-			return s.db.Restore(ctx, req.Path)
+			// A failed restore can still have replaced some persisted state.
+			// Reconcile the live owners even when it reports an error, using
+			// the database lifetime once the request has crossed that boundary.
+			restoreErr := s.db.Restore(ctx, req.Path)
+			reloadCtx := s.db.LifetimeContext()
+			var authErr error
+			if s.auth != nil {
+				authErr = s.auth.ReloadUsersAfterRestore(reloadCtx)
+			}
+			catalogErr := s.dbManager.ReloadAfterRestore(reloadCtx)
+			return errors.Join(restoreErr, authErr, catalogErr)
 		default:
 			return errors.New("invalid backup operation")
 		}
