@@ -7,4 +7,4 @@
 - [x] Batch repeated vector owners and reuse revision-scoped admission decisions while retaining result and access semantics; exact completion scans remain for complete pages.
 - [x] Add regression tests for hidden fields, complete visible pages, updates, policy changes, restart, cancellation, and unrestricted cost.
 - [x] Run focused, package, race, vet, and matched benchmark checks; document CI duplicate and combined release verification as pending.
-- [ ] Open one PR against `release/v1.5.3` with the verification evidence.
+- [x] Open one PR against `release/v1.5.3` with the verification evidence ([#2009](https://github.com/orneryd/NornicDB/pull/2009)).
