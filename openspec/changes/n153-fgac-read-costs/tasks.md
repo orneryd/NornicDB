@@ -8,4 +8,4 @@
 - [x] F5: stream FGAC Bolt reads with policy validation at every PULL and bounded memory; preserve cancellation and policy-change invalidation.
 - [x] Review shared index, cache, and stream owners; integrate all five fixes on one branch. CI owns the staged duplicate checker per maintainer direction.
 - [x] Run focused and affected-package checks, security isolation tests, performance comparisons, and document remaining costs and verification limits.
-- [ ] Open one PR into release/v1.5.3 with exact head/base evidence and the AC map.
+- [x] Open one PR into release/v1.5.3 with exact head/base evidence and the AC map (#2010).
