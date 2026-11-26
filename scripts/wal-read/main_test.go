@@ -179,6 +179,27 @@ func TestWalReadPrintsTypedAndControlEntries(t *testing.T) {
 	require.Equal(t, []string{"seq", "timestamp", "database", "kind", "payload"}, firstLineKeys(t, stdout))
 }
 
+func TestWalReadEncryptedJournalRequiresKeyFile(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	key := []byte("12345678901234567890123456789012")
+	wal, err := storage.NewWAL(dir, &storage.WALConfig{Dir: dir, SyncMode: "immediate", EncryptionKey: key})
+	require.NoError(t, err)
+	_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "secret-tx"}, "test")
+	require.NoError(t, err)
+	require.NoError(t, wal.Close())
+	keyPath := filepath.Join(t.TempDir(), "key")
+	require.NoError(t, os.WriteFile(keyPath, key, 0600))
+	code, stdout, _ := runCommand(t, "-dir", dir)
+	require.Equal(t, exitRead, code)
+	require.Empty(t, stdout)
+	code, stdout, stderr := runCommand(t, "-dir", dir, "-key-file", keyPath)
+	require.Equal(t, exitOK, code, stderr)
+	lines := decodeLines(t, stdout)
+	require.Len(t, lines, 1)
+	require.JSONEq(t, `{"tx_id":"secret-tx"}`, string(lines[0].Payload))
+}
+
 func TestWalReadUnpacksActualCompressedBufferedCommit(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()

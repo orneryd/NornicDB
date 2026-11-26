@@ -238,7 +238,7 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 	if !hasPostRestoreSnapshot(dataDir) {
 		return nil, "", recoveryUnavailable(status, fmt.Errorf("native restore has no post-restore snapshot; refusing stale WAL recovery"))
 	}
-	if err := storage.ValidateWALFormat(filepath.Join(dataDir, "wal"), storage.WALValidateCurrent); err != nil {
+	if err := storage.ValidateWALFormatWithKey(filepath.Join(dataDir, "wal"), storage.WALValidateCurrent, badgerOpts.EncryptionKey); err != nil {
 		return nil, "", recoveryUnavailable(status, err)
 	}
 	_, priorStoreErr := os.Stat(filepath.Join(dataDir, "MANIFEST"))

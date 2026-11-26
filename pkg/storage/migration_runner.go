@@ -115,7 +115,7 @@ func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPh
 		oldWAL := false
 		dir := filepath.Join(b.dataDir, "wal")
 		if version == storageVersionCatalogV4 && allowUpgrade {
-			if err := ValidateWALFormat(dir, WALValidateCurrent); err != nil {
+			if err := ValidateWALFormatWithKey(dir, WALValidateCurrent, b.db.Opts().EncryptionKey); err != nil {
 				if !errors.Is(err, ErrWALUnsupportedVersion) {
 					return err
 				}

@@ -154,6 +154,12 @@ func (w *WAL) writeFrame(writer io.Writer, payload []byte, version uint8) (int64
 // frameReader is the reader matching the format this WAL writes.
 func (w *WAL) frameReader() walFrameReader { return walFrameReader{cipher: w.cipher} }
 
+// VisitEntriesAfter visits retained entries through this WAL's configured
+// frame reader, including encrypted frames, without exposing its key.
+func (w *WAL) VisitEntriesAfter(ctx context.Context, afterSeq uint64, visit func(WALEntry) error) error {
+	return visitWALEntriesAfterFromDir(ctx, w.config.Dir, afterSeq, w.frameReader(), visit)
+}
+
 // ValidateWALFormatWithKey is ValidateWALFormat for a journal written with key.
 // An empty key validates a plaintext journal. The format check authenticates
 // every complete encrypted frame, so a wrong key is refused here instead of at

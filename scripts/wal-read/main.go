@@ -102,7 +102,20 @@ func run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		fmt.Fprintf(stderr, "wal-read: %v\n", err)
 		return exitUsage
 	}
-	if err := writeEntries(ctx, options.dir, options.bounds, stdout); err != nil {
+	var key []byte
+	if options.keyFile != "" {
+		key, err = os.ReadFile(options.keyFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "wal-read: read key file: %v\n", err)
+			return exitRead
+		}
+		defer clear(key)
+		if len(key) != storage.WALEncryptionKeySize {
+			fmt.Fprintf(stderr, "wal-read: key file must contain exactly %d raw bytes\n", storage.WALEncryptionKeySize)
+			return exitUsage
+		}
+	}
+	if err := writeEntriesWithKey(ctx, options.dir, options.bounds, key, stdout); err != nil {
 		fmt.Fprintf(stderr, "wal-read: %v\n", err)
 		return exitRead
 	}
@@ -124,8 +137,9 @@ func requireDirectory(dir string) error {
 
 // options are the validated command arguments.
 type options struct {
-	dir    string
-	bounds bounds
+	dir     string
+	bounds  bounds
+	keyFile string
 }
 
 // parseArgs parses and validates the command line. -h is reported as
@@ -136,8 +150,9 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	dir := flags.String("dir", "", "existing WAL directory to read (segments/ and wal.log)")
 	from := flags.Int64("from", defaultFromSeq, "lowest WAL sequence to print (inclusive)")
 	to := flags.Int64("to", 0, "highest WAL sequence to print (inclusive; 0 for no upper bound)")
+	keyFile := flags.String("key-file", "", "file containing the raw 32-byte WAL encryption key")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "usage: go run ./scripts/wal-read -dir /path/to/wal [-from N] [-to N]")
+		fmt.Fprintln(stderr, "usage: go run ./scripts/wal-read -dir /path/to/wal [-from N] [-to N] [-key-file /path/to/key]")
 		fmt.Fprintln(stderr, "prints one JSON object per WAL entry: seq, timestamp, database, kind, payload")
 		flags.PrintDefaults()
 	}
@@ -158,7 +173,7 @@ func parseArgs(args []string, stderr io.Writer) (options, error) {
 	if err != nil {
 		return options{}, err
 	}
-	return options{dir: filepath.Clean(*dir), bounds: span}, nil
+	return options{dir: filepath.Clean(*dir), bounds: span, keyFile: *keyFile}, nil
 }
 
 // parseBounds validates inclusive sequence bounds. -from is at least 1, -to is
@@ -184,10 +199,14 @@ func parseBounds(from, to int64) (bounds, error) {
 // memory stays bounded by one entry rather than by the WAL length. A payload
 // that cannot be rendered fails the read instead of producing a partial line.
 func writeEntries(ctx context.Context, dir string, span bounds, out io.Writer) error {
+	return writeEntriesWithKey(ctx, dir, span, nil, out)
+}
+
+func writeEntriesWithKey(ctx context.Context, dir string, span bounds, key []byte, out io.Writer) error {
 	buffered := bufio.NewWriterSize(out, 64*1024)
 	encoder := json.NewEncoder(buffered)
 	encoder.SetEscapeHTML(false)
-	err := storage.VisitWALEntriesAfterFromDir(ctx, dir, span.scanAfter, func(entry storage.WALEntry) error {
+	err := storage.VisitWALEntriesAfterFromDirWithKey(ctx, dir, span.scanAfter, key, func(entry storage.WALEntry) error {
 		if !span.retained(entry.Sequence) {
 			return nil
 		}
