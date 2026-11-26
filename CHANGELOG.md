@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Detect native backup framing before legacy JSON restore so valid backups whose length prefix starts with JSON punctuation restore reliably.
+- Publish a fresh recovery snapshot before serving an upgraded historical WAL where automatic rebuilding is supported, and refuse rebuilding while that snapshot is pending so older transaction-only journals cannot silently lose acknowledged graph changes.
 - Report failed `apoc.periodic.commit` batches and their errors in Neo4j-compatible result columns, while keeping successful execution counts separate from attempted batches.
 - Recognize native backups whose binary length prefix starts with `{` or `[`, so restore does not misroute them to the legacy JSON reader.
 - Refresh accounts and database change-capture settings after an online restore so the restoring server uses the restored security and catalog state without a restart.

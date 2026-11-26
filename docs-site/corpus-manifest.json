@@ -902,8 +902,8 @@
     },
     {
       "path": "operations/recovery-format-compatibility.md",
-      "sha256": "9bff5f1f9f36f187172ae294da17f2c353e202eeee2f87e5ba2e6756917ccb4e",
-      "bytes": 14683
+      "sha256": "84b82b951c203ec737cf9af5d5f4d9a233726be67a300de4b2b72a32c18e6ba8",
+      "bytes": 15546
     },
     {
       "path": "operations/reverse-proxy.md",

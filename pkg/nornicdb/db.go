@@ -610,6 +610,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	needsHistoricalRecoveryBaseline := false
 	// Refuse an unsupported WAL before opening or migrating the Badger store.
 	// Otherwise a failed startup can advance the storage version while leaving
 	// the old WAL unreadable by the new binary.
@@ -618,9 +619,25 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
 		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
 			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+			// Encrypted stores do not enter the automatic snapshot/WAL rebuild
+			// path. Keep their historical upgrade behavior unchanged here.
+			needsHistoricalRecoveryBaseline = err == nil && !config.Database.EncryptionEnabled
 		}
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
+		}
+	}
+	if needsHistoricalRecoveryBaseline {
+		if err := markHistoricalRecoveryBaselinePending(dataDir); err != nil {
+			return nil, err
+		}
+	}
+	historicalBaselinePending := false
+	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
+		var err error
+		historicalBaselinePending, err = historicalRecoveryBaselineIsPending(dataDir)
+		if err != nil {
+			return nil, err
 		}
 	}
 	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
@@ -767,6 +784,12 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 				}
 			}
 
+			// A historical WAL can omit acknowledged entity images. Until the
+			// upgraded store has published a current snapshot, rebuilding from
+			// that old snapshot and WAL could silently lose acknowledged data.
+			if historicalBaselinePending {
+				return nil, fmt.Errorf("persistent store cannot be rebuilt while its post-upgrade recovery baseline is pending: %w", err)
+			}
 			// Auto-recover (Neo4j-style): if the primary store can't open due to corruption,
 			// rebuild a fresh Badger store from snapshot + WAL replay, preserving the old
 			// directory for forensics.
@@ -922,6 +945,9 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		// final recovered catalog for new statements before exposing the DB.
 		if err := multidb.LoadChangeCaptureModes(context.Background(), badgerEngine, "system"); err != nil {
 			return nil, fmt.Errorf("failed to load recovered database change-capture modes: %w", err)
+		}
+		if err := completeHistoricalRecoveryBaseline(db.work.Context(), dataDir, walEngine); err != nil {
+			return nil, fmt.Errorf("failed to publish post-upgrade recovery baseline: %w", err)
 		}
 
 		// Enable auto-compaction to prevent unbounded WAL growth
