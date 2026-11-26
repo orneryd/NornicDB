@@ -274,7 +274,13 @@ func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, 
 	if text == "" {
 		rs.fulltext.Remove(id)
 	} else {
-		rs.fulltext.Index(id, text, nil, nil, false)
+		if fieldIndex, ok := rs.fulltext.(interface {
+			IndexFields(string, string, []FulltextField)
+		}); ok {
+			fieldIndex.IndexFields(id, text, s.relationshipSearchableFieldTexts(edge))
+		} else {
+			rs.fulltext.Index(id, text, nil, nil, false)
+		}
 	}
 	entry := rs.entries[id]
 	if entry == nil && persisted != nil && persisted.Source == source {
@@ -702,10 +708,10 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		return created
 	}
 
-	fulltext := rs.fulltext
+	var fulltext bm25Ranker = rs.fulltext
 	scopedScoring := scope != nil && scope.keywordRestricted(true)
 	if scopedScoring && query != "" {
-		fulltext, err = visibleBM25(ctx, fulltext, func(readCtx context.Context, ids []string) ([]FulltextBatchEntry, error) {
+		fulltext, err = scope.relationshipBM25(ctx, rs.fulltext, func(readCtx context.Context, ids []string) ([]FulltextBatchEntry, error) {
 			entries := make([]FulltextBatchEntry, 0, len(ids))
 			for _, id := range ids {
 				if id == "" {

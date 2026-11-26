@@ -22,7 +22,11 @@ const (
 // bm25V2FormatVersion is the semver written into saved BM25 index files.
 // On load, a file whose version is not equal to this is not loaded (caller rebuilds).
 // Integrity trailer format: Codex NOR-283 lane, 29 October 2026.
-const bm25V2FormatVersion = "2.2.0"
+// 2.3.0 adds the optional per-document field provenance section
+// (bm25V2Snapshot.FieldDocuments) that IndexFields stores. A 2.2.0 checkpoint
+// has no provenance, so it is not loaded: its rebuild re-indexes the corpus and
+// only IndexFields restores provenance.
+const bm25V2FormatVersion = "2.3.0"
 
 const (
 	bm25PrefixWeight           = 0.8
@@ -100,6 +104,13 @@ type FulltextIndexV2 struct {
 	maxPrefixExpansions int
 	minPrefixLength     int
 	analyzer            Analyzer
+
+	// fieldDocuments holds the opt-in per-field analyzed provenance that
+	// IndexFields stores, keyed by document ID. Values are replaced whole and
+	// never mutated in place, so a snapshot keeps a stable view. No scoring
+	// path reads it: the global postings and unrestricted Search stay exactly
+	// as Index leaves them.
+	fieldDocuments map[string]bm25FieldDocument
 }
 
 // NewFulltextIndexV2WithAnalyzer creates a full-text search index with the supplied analyzer.
@@ -159,7 +170,7 @@ func (f *FulltextIndexV2) GetDocument(id string) (string, bool) {
 func (f *FulltextIndexV2) Clear() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.docCount == 0 && len(f.documents) == 0 && len(f.termIndex) == 0 {
+	if f.docCount == 0 && len(f.documents) == 0 && len(f.termIndex) == 0 && len(f.fieldDocuments) == 0 {
 		return
 	}
 	f.documents = make(map[string]string)
@@ -168,6 +179,7 @@ func (f *FulltextIndexV2) Clear() {
 	f.docLengths = nil
 	f.docIDsLexicalByNum = true
 	f.termIndex = make(map[string]*bm25TermState)
+	f.fieldDocuments = nil
 	f.lexicon = nil
 	f.lexiconDirty = false
 	f.docCount = 0
@@ -194,8 +206,9 @@ func (f *FulltextIndexV2) Index(id, text string, terms []string, frequency map[s
 
 // FulltextBatchEntry is one (id, text) pair for IndexBatch.
 type FulltextBatchEntry struct {
-	ID   string
-	Text string
+	ID     string
+	Text   string
+	Fields []FulltextField
 }
 
 // IndexBatch adds or updates many documents under one lock and updates
@@ -210,8 +223,16 @@ func (f *FulltextIndexV2) IndexBatch(entries []FulltextBatchEntry) {
 
 	dirty := false
 	for _, entry := range entries {
-		if entry.ID != "" && f.applyDocumentLocked(entry.ID, entry.Text, nil, nil, false) {
+		if entry.ID == "" {
+			continue
+		}
+		terms := f.analyze(entry.Text)
+		provenance, composable := f.composeFieldProvenance(entry.Fields, terms)
+		if f.applyDocumentLocked(entry.ID, entry.Text, terms, termFrequencies(terms), true) {
 			dirty = true
+		}
+		if composable && len(terms) != 0 {
+			f.writeFieldProvenanceLocked(entry.ID, provenance)
 		}
 	}
 
@@ -249,10 +270,7 @@ func (f *FulltextIndexV2) applyDocumentLocked(id, text string, terms []string, f
 		f.docNumToID[docNum] = id
 	}
 	if !prepared {
-		frequency = make(map[string]int, len(terms))
-		for _, term := range terms {
-			frequency[term]++
-		}
+		frequency = termFrequencies(terms)
 	}
 	f.documents[id] = text
 	f.docLengths[docNum] = uint32(len(terms))
@@ -273,6 +291,241 @@ func (f *FulltextIndexV2) applyDocumentLocked(id, text string, terms []string, f
 	return true
 }
 
+// FulltextField is one named field of a document for IndexFields. Name keys the
+// stored provenance, so it is what a later authorization rule selects; Text is
+// that field's own text.
+type FulltextField struct {
+	Name string
+	Text string
+}
+
+// FieldTermFrequency is one analyzed term of a document field and how many
+// times that field holds it.
+type FieldTermFrequency struct {
+	Term      string
+	Frequency int
+}
+
+// DocumentFieldProvenance is the analyzed content of one named field of an
+// indexed document: the field's analyzed length and the frequency of each
+// distinct analyzed term in it.
+type DocumentFieldProvenance struct {
+	Name   string
+	Length int
+	Terms  []FieldTermFrequency
+}
+
+// bm25FieldFrequency is one field term with that field's frequency of it,
+// saturated at the uint16 ceiling the document postings use.
+type bm25FieldFrequency struct {
+	Term      string `msgpack:"t"`
+	Frequency uint16 `msgpack:"f"`
+}
+
+// bm25Field is the analyzed content of one named field. Terms is sorted by term
+// and holds each distinct term once, so Length is their frequency sum unless a
+// frequency saturated at the uint16 ceiling, in which case it is at most it.
+type bm25Field struct {
+	Name   string               `msgpack:"n"`
+	Length uint32               `msgpack:"l"`
+	Terms  []bm25FieldFrequency `msgpack:"t"`
+}
+
+// bm25FieldDocument is one document's stored field provenance. Its fields
+// partition the document's analyzed text in the order IndexFields received
+// them, so their lengths sum to the document's analyzed length.
+type bm25FieldDocument struct {
+	Fields []bm25Field `msgpack:"f"`
+}
+
+// IndexFields adds or updates a document together with the provenance of the
+// named fields it was composed from. composedText is indexed exactly as
+// Index(id, composedText, nil, nil, false) indexes it: the same global BM25
+// postings, so Search and SearchAllowed stay unrestricted over the document.
+// fields are opt-in extra state: each field's own analysis is retained as its
+// analyzed length and per-term frequency, which is what authorization-aware
+// scoring needs to score only the fields a caller may read, without
+// re-analyzing stored text.
+//
+// Provenance is stored only when per-field analysis composes with the
+// document's analysis: the fields, in order, must reproduce the analysis of
+// composedText term for term. That check is what guarantees provenance is
+// sound, so a caller whose composedText joins the field texts with a separator
+// the analyzer reads as a term boundary gets it, and a caller whose text the
+// analyzer reads as different terms does not. When the two do not compose, when
+// a field name is empty, or when two fields share a name, the document is still
+// indexed and no provenance is kept. Restricted scoring must then use an
+// authorized projection; it must never use the unrestricted document score.
+//
+// Provenance never outlives the text it describes: indexing the document again
+// without IndexFields, Remove, Clear, and the rebuild Load performs for an
+// incompatible checkpoint all drop it.
+func (f *FulltextIndexV2) IndexFields(id, composedText string, fields []FulltextField) {
+	if id == "" {
+		return
+	}
+	terms := f.analyze(composedText)
+	provenance, composable := f.composeFieldProvenance(fields, terms)
+	if len(terms) == 0 {
+		// The index holds no document for text without terms, so it must hold
+		// no provenance for that text either.
+		provenance, composable = nil, false
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	changed := f.applyDocumentLocked(id, composedText, terms, termFrequencies(terms), true)
+	if composable {
+		f.writeFieldProvenanceLocked(id, provenance)
+	}
+	f.updateAvgDocLengthLocked()
+	if changed {
+		f.markDirtyLocked()
+	}
+}
+
+// IndexFieldsPrepared retains the caller's single analysis of a live write.
+// Field boundaries can be derived without another custom analyzer call only
+// for the built-in unstemmed analyzer. Other analyzers retain correct shared
+// postings; restricted searches safely project those documents if provenance
+// is unavailable until a full rebuild.
+func (f *FulltextIndexV2) IndexFieldsPrepared(id, composedText string, fields []FulltextField, terms []string, frequency map[string]int) {
+	if id == "" {
+		return
+	}
+	var provenance *bm25FieldDocument
+	var composable bool
+	if analyzer, ok := f.analyzer.(textAnalyzer); ok && analyzer.stem == nil && analyzer.stemTokens == nil {
+		provenance, composable = f.composeFieldProvenance(fields, terms)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	changed := f.applyDocumentLocked(id, composedText, terms, frequency, true)
+	if composable && len(terms) != 0 {
+		f.writeFieldProvenanceLocked(id, provenance)
+	}
+	f.updateAvgDocLengthLocked()
+	if changed {
+		f.markDirtyLocked()
+	}
+}
+
+// composeFieldProvenance analyzes each field on its own and reports whether
+// those analyses, in field order, are exactly the document's analysis: stored
+// provenance is sound only when its fields partition the text the document's
+// postings were built from.
+func (f *FulltextIndexV2) composeFieldProvenance(fields []FulltextField, documentTerms []string) (*bm25FieldDocument, bool) {
+	if len(fields) == 0 {
+		return nil, false
+	}
+	document := bm25FieldDocument{Fields: make([]bm25Field, 0, len(fields))}
+	names := make(map[string]struct{}, len(fields))
+	consumed := 0
+	for _, field := range fields {
+		if field.Name == "" {
+			return nil, false
+		}
+		if _, duplicate := names[field.Name]; duplicate {
+			return nil, false
+		}
+		names[field.Name] = struct{}{}
+		fieldTerms := f.analyze(field.Text)
+		end := consumed + len(fieldTerms)
+		if end > len(documentTerms) || !slices.Equal(fieldTerms, documentTerms[consumed:end]) {
+			return nil, false
+		}
+		consumed = end
+		document.Fields = append(document.Fields, bm25Field{
+			Name:   field.Name,
+			Length: uint32(len(fieldTerms)),
+			Terms:  fieldTermFrequencies(fieldTerms),
+		})
+	}
+	if consumed != len(documentTerms) {
+		return nil, false
+	}
+	return &document, true
+}
+
+// termFrequencies counts each distinct term of terms: the prepared form
+// applyDocumentLocked indexes.
+func termFrequencies(terms []string) map[string]int {
+	frequencies := make(map[string]int, len(terms))
+	for _, term := range terms {
+		frequencies[term]++
+	}
+	return frequencies
+}
+
+// fieldTermFrequencies returns a field's distinct terms with that field's
+// frequency of each, sorted by term and saturated at the uint16 ceiling the
+// document postings use.
+func fieldTermFrequencies(terms []string) []bm25FieldFrequency {
+	if len(terms) == 0 {
+		return nil
+	}
+	sorted := append([]string(nil), terms...)
+	slices.Sort(sorted)
+	frequencies := make([]bm25FieldFrequency, 0, len(sorted))
+	for start := 0; start < len(sorted); {
+		end := start + 1
+		for end < len(sorted) && sorted[end] == sorted[start] {
+			end++
+		}
+		frequencies = append(frequencies, bm25FieldFrequency{
+			Term:      sorted[start],
+			Frequency: uint16(minInt(end-start, math.MaxUint16)),
+		})
+		start = end
+	}
+	return frequencies
+}
+
+// writeFieldProvenanceLocked is the only writer of fieldDocuments: a nil or
+// empty provenance removes the document's entry. A value is stored whole and
+// never mutated in place, so a snapshot read cannot observe a half-updated
+// field.
+func (f *FulltextIndexV2) writeFieldProvenanceLocked(id string, provenance *bm25FieldDocument) {
+	if provenance == nil || len(provenance.Fields) == 0 {
+		delete(f.fieldDocuments, id)
+		return
+	}
+	if f.fieldDocuments == nil {
+		f.fieldDocuments = make(map[string]bm25FieldDocument)
+	}
+	f.fieldDocuments[id] = *provenance
+}
+
+// FieldProvenance returns the field provenance IndexFields stored for id and
+// whether the index holds any. The result is a copy, so changing it cannot
+// change the index. A document indexed without IndexFields, indexed again
+// without it, removed, or whose fields did not compose with its analyzed text
+// has none. Restricted callers must then project the readable corpus.
+func (f *FulltextIndexV2) FieldProvenance(id string) ([]DocumentFieldProvenance, bool) {
+	if id == "" {
+		return nil, false
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	stored, ok := f.fieldDocuments[id]
+	if !ok {
+		return nil, false
+	}
+	fields := make([]DocumentFieldProvenance, len(stored.Fields))
+	for fieldIndex, field := range stored.Fields {
+		terms := make([]FieldTermFrequency, len(field.Terms))
+		for termIndex, term := range field.Terms {
+			terms[termIndex] = FieldTermFrequency{Term: term.Term, Frequency: int(term.Frequency)}
+		}
+		fields[fieldIndex] = DocumentFieldProvenance{
+			Name:   field.Name,
+			Length: int(field.Length),
+			Terms:  terms,
+		}
+	}
+	return fields, true
+}
+
 func (f *FulltextIndexV2) Remove(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -282,6 +535,11 @@ func (f *FulltextIndexV2) Remove(id string) {
 }
 
 func (f *FulltextIndexV2) removeInternalLocked(id string) bool {
+	// A removed document's field provenance describes text the index no longer
+	// holds, so removal is also where provenance is dropped. Remove and the
+	// re-index inside applyDocumentLocked both reach this function; Clear resets
+	// the map wholesale for the same reason.
+	f.writeFieldProvenanceLocked(id, nil)
 	docNum, ok := f.docIDToNum[id]
 	if !ok {
 		return false
