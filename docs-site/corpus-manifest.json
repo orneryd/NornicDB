@@ -556,6 +556,11 @@
       "bytes": 1772
     },
     {
+      "path": "development/projected-reads.md",
+      "sha256": "19abac0de5a1b2983a4999f752d7da3928f1c1e9c0b4fc200632fda0ffa42bbd",
+      "bytes": 4922
+    },
+    {
       "path": "development/replay-snapshot-completion.md",
       "sha256": "e042a6f96f8110b67c79a678c0ac44e62da77e0aef653a78f6690ee94d40c9be",
       "bytes": 10858
@@ -624,11 +629,6 @@
       "path": "development/work-lifetime.md",
       "sha256": "bacd80711e17610d46072a8c1619edb69a8a622adf94b0b9475b3033ce54acb5",
       "bytes": 1775
-    },
-    {
-      "path": "development/projected-reads.md",
-      "sha256": "19abac0de5a1b2983a4999f752d7da3928f1c1e9c0b4fc200632fda0ffa42bbd",
-      "bytes": 4922
     },
     {
       "path": "encryption/cmek-setup.md",
