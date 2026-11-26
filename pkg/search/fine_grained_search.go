@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -31,6 +33,8 @@ type indexedSearchScope struct {
 	engine    storage.Engine
 	versions  graphMutationVersionProvider
 	version   uint64
+	nodeView  atomic.Pointer[visibleFieldCorpus]
+	edgeView  atomic.Pointer[visibleFieldCorpus]
 }
 
 type indexedSearchScopeKey struct{}
@@ -130,7 +134,17 @@ func visibleBM25(ctx context.Context, index bm25Index, read func(context.Context
 	return view, nil
 }
 
-func (scope *indexedSearchScope) nodeBM25(ctx context.Context, index bm25Index) (bm25Index, error) {
+func (scope *indexedSearchScope) nodeBM25(ctx context.Context, index bm25Index) (bm25Ranker, error) {
+	if shared, ok := index.(*FulltextIndexV2); ok {
+		view, err := scope.service.visibleCorpus(ctx, scope, shared, false)
+		if err == nil {
+			scope.nodeView.Store(view)
+			return visibleBM25Index{corpus: view}, nil
+		}
+		if !errors.Is(err, errMissingFieldProvenance) {
+			return nil, err
+		}
+	}
 	return visibleBM25(ctx, index, func(readCtx context.Context, ids []string) ([]FulltextBatchEntry, error) {
 		nodeIDs := make([]storage.NodeID, 0, len(ids))
 		for _, id := range ids {
@@ -157,7 +171,20 @@ func (scope *indexedSearchScope) check(ctx context.Context) error {
 		return err
 	}
 	if scope.versions != nil {
-		return checkContinuationGraphVersion(scope.versions, scope.version)
+		if err := checkContinuationGraphVersion(scope.versions, scope.version); err != nil {
+			return err
+		}
+	}
+	for _, view := range [...](*visibleFieldCorpus){scope.nodeView.Load(), scope.edgeView.Load()} {
+		if view == nil {
+			continue
+		}
+		view.index.mu.RLock()
+		stable := view.index.version == view.version && !view.stale.Load()
+		view.index.mu.RUnlock()
+		if !stable {
+			return resultstream.ErrInvalidated
+		}
 	}
 	return nil
 }
@@ -169,27 +196,106 @@ func (s *Service) searchReadEngine(ctx context.Context) storage.Engine {
 	return s.engine
 }
 
+// indexedVectorReadBatchSize bounds the candidate node images one authorized
+// vector-candidate read requests at a time.
+const indexedVectorReadBatchSize = 256
+
+// filterIndexedVectors admits indexed candidates through the request's
+// projected graph. Stable graph and policy revisions reuse bounded admission
+// decisions; cold reads batch repeated owners or use point reads when owners
+// are mostly distinct. Candidate order and each entry's source visibility are
+// preserved. Unreadable and missing nodes are skipped.
 func (s *Service) filterIndexedVectors(ctx context.Context, candidates []indexResult) ([]indexResult, error) {
 	scope := s.indexedScope(ctx)
 	if scope == nil {
 		return candidates, nil
 	}
+	visibility, err := s.vectorVisibilityForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	var candidateKeys []vectorDecisionKey
+	if visibility != nil {
+		if cached, complete := visibility.lookup(candidates); complete {
+			return cached, scope.check(ctx)
+		}
+		candidateKeys = make([]vectorDecisionKey, len(candidates))
+		for i := range candidates {
+			candidateKeys[i] = decisionKey(candidates[i])
+		}
+	}
 	admitted := candidates[:0]
-	for _, candidate := range candidates {
-		entry, ok := decodeVectorEntryKey(candidate.MatchID)
-		if !ok || entry.NodeID != candidate.ID {
+	for start := 0; start < len(candidates); start += indexedVectorReadBatchSize {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch := candidates[start:min(start+indexedVectorReadBatchSize, len(candidates))]
+		// Badger's batch API materializes result maps and projected node images.
+		// When almost every candidate has a different owner, point reads cost
+		// less memory; batching pays off when several vectors share one node.
+		owners := make(map[string]struct{}, len(batch))
+		for _, candidate := range batch {
+			owners[candidate.ID] = struct{}{}
+		}
+		if len(owners)*4 > len(batch)*3 {
+			for _, candidate := range batch {
+				entry, ok := decodeVectorEntryKey(candidate.MatchID)
+				if !ok || entry.NodeID != candidate.ID {
+					continue
+				}
+				node, err := scope.engine.GetNode(ctx, storage.NodeID(candidate.ID))
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				if indexedVectorVisible(node, entry) {
+					admitted = append(admitted, candidate)
+				}
+			}
 			continue
 		}
-		node, err := scope.engine.GetNode(ctx, storage.NodeID(candidate.ID))
-		if errors.Is(err, storage.ErrNotFound) {
+		// entries holds the decoded key of each candidate in batch order; a
+		// zero entry names no node and no source, so it is never read.
+		entries := make([]vectorEntry, len(batch))
+		nodeIDs := make([]storage.NodeID, 0, len(batch))
+		clear(owners)
+		requested := owners
+		for index, candidate := range batch {
+			entry, ok := decodeVectorEntryKey(candidate.MatchID)
+			if !ok || entry.NodeID != candidate.ID {
+				continue
+			}
+			entries[index] = entry
+			if _, seen := requested[candidate.ID]; seen {
+				continue
+			}
+			requested[candidate.ID] = struct{}{}
+			nodeIDs = append(nodeIDs, storage.NodeID(candidate.ID))
+		}
+		if len(nodeIDs) == 0 {
 			continue
 		}
+		nodes, err := scope.engine.BatchGetNodes(ctx, nodeIDs)
 		if err != nil {
 			return nil, err
 		}
-		if indexedVectorVisible(node, entry) {
-			admitted = append(admitted, candidate)
+		for index, candidate := range batch {
+			// A projected batch omits the nodes this request may not see, so a
+			// missing image keeps the entry out of the page without disclosing
+			// whether the node or its source exists.
+			node := nodes[storage.NodeID(candidate.ID)]
+			if node != nil && entries[index].Kind != 0 && indexedVectorVisible(node, entries[index]) {
+				admitted = append(admitted, candidate)
+			}
 		}
+	}
+	if visibility != nil {
+		if err := scope.check(ctx); err != nil {
+			return nil, err
+		}
+		visibility.remember(candidateKeys, admitted)
 	}
 	return admitted, nil
 }

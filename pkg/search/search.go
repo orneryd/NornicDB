@@ -172,6 +172,15 @@ type bm25Index interface {
 	IndexBatch(entries []FulltextBatchEntry)
 }
 
+// bm25Ranker is the read-only scoring surface used by retrieval. Restricted
+// searches can rank authorized fields from a shared index without owning a
+// second mutable BM25 index.
+type bm25Ranker interface {
+	Search(query string, limit int) []indexResult
+	SearchAllowed(query string, limit int, allowed func(string) bool) []indexResult
+	Count() int
+}
+
 // disabledBM25Index is a zero-cost no-op bm25Index used when BM25 is disabled
 // for a database. Every method is safe to call from the existing BuildIndexes
 // and IndexNode code paths; reads return empty, writes are dropped, Count()
@@ -1069,6 +1078,8 @@ type Service struct {
 	// resultCache caches Search() results by query+options (same semantics as Cypher query cache).
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
 	resultCache          *searchResultCache
+	visibleCorpora       visibleCorpusCache
+	vectorVisibility     vectorVisibilityCache
 	cacheNamespace       string
 	continuationMu       sync.Mutex
 	continuationRegistry continuationRegistry
@@ -3417,7 +3428,13 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 
 	// Add to fulltext index (skipped when BuildIndexes batches fulltext via IndexBatch)
 	if !skipFulltext && !fulltext.unchanged && fulltext.text != "" {
-		s.fulltext().Index(string(node.ID), fulltext.text, fulltext.terms, fulltext.frequency, true)
+		if fieldIndex, ok := s.fulltext().(interface {
+			IndexFieldsPrepared(string, string, []FulltextField, []string, map[string]int)
+		}); ok {
+			fieldIndex.IndexFieldsPrepared(string(node.ID), fulltext.text, s.searchableFieldTexts(node, s.FulltextProperties()), fulltext.terms, fulltext.frequency)
+		} else {
+			s.fulltext().Index(string(node.ID), fulltext.text, fulltext.terms, fulltext.frequency, true)
+		}
 	}
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
@@ -4685,7 +4702,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				entries := make([]FulltextBatchEntry, 0, len(filtered))
 				for _, n := range filtered {
 					text := s.extractSearchableText(n)
-					entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text})
+					entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text, Fields: s.searchableFieldTexts(n, s.FulltextProperties())})
 				}
 				chunkSize := fulltextIndexChunkSize
 				if chunkSize <= 0 {
@@ -4811,7 +4828,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			entries := make([]FulltextBatchEntry, 0, len(filtered))
 			for _, n := range filtered {
 				text := s.extractSearchableText(n)
-				entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text})
+				entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text, Fields: s.searchableFieldTexts(n, s.FulltextProperties())})
 			}
 			chunkSize := fulltextIndexChunkSize
 			if chunkSize <= 0 {
@@ -5955,7 +5972,7 @@ func (s *Service) completeVectorSearch(
 // (#938).
 func (s *Service) adaptiveBM25Search(
 	ctx context.Context,
-	index bm25Index,
+	index bm25Ranker,
 	query string,
 	opts *SearchOptions,
 	postProcess func([]indexResult) ([]indexResult, error),
@@ -5967,7 +5984,7 @@ func (s *Service) adaptiveBM25Search(
 	scope := s.indexedScope(ctx)
 	scopedScoring := scope != nil && scope.keywordRestricted(false)
 	if scopedScoring {
-		view, ok := ctx.Value(visibleNodeBM25Key{}).(bm25Index)
+		view, ok := ctx.Value(visibleNodeBM25Key{}).(bm25Ranker)
 		if !ok {
 			return nil, vectorOverfetchStats{exhausted: true}, nil
 		}
@@ -7702,6 +7719,10 @@ func (s *Service) relationshipSearchableText(edge *storage.Edge) string {
 	return s.searchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties}, s.RelationshipFulltextProperties())
 }
 
+func (s *Service) relationshipSearchableFieldTexts(edge *storage.Edge) []FulltextField {
+	return s.searchableFieldTexts(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties}, s.RelationshipFulltextProperties())
+}
+
 // searchableText is node's keyword text with the property allowlist
 // properties (empty: labels and every property).
 func (s *Service) searchableText(node *storage.Node, properties []string) string {
@@ -7724,6 +7745,32 @@ func (s *Service) searchableText(node *storage.Node, properties []string) string
 		return true
 	})
 	return strings.Join(parts, " ")
+}
+
+// searchableFieldTexts preserves the field boundaries in searchableText for
+// authorization-aware scoring. The reserved prefixes keep label positions and
+// property names distinct, including when a property itself has a label-like
+// name. Concatenating Text in order must equal searchableText's output.
+func (s *Service) searchableFieldTexts(node *storage.Node, properties []string) []FulltextField {
+	if !s.fulltextLabelAllowed(node) {
+		return nil
+	}
+	var fields []FulltextField
+	if len(properties) == 0 {
+		for index, label := range node.Labels {
+			fields = append(fields, FulltextField{Name: "\x00label:" + strconv.Itoa(index), Text: label})
+		}
+	}
+	visitSearchableFields(node, properties, func(key string, value any, named bool) bool {
+		if text := propertyToString(value); text != "" {
+			if named {
+				text = key + " " + text
+			}
+			fields = append(fields, FulltextField{Name: "\x01property:" + key, Text: text})
+		}
+		return true
+	})
+	return fields
 }
 
 // visitSearchableFields calls visit with each property the BM25 index reads

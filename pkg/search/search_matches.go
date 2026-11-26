@@ -110,9 +110,9 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 	var fulltextProperties []string
 	if query.text != "" {
 		fulltextProperties = s.FulltextProperties()
-		index := s.fulltext()
+		var index any = s.fulltext()
 		if scope := s.indexedScope(ctx); scope != nil && scope.keywordRestricted(false) {
-			index, _ = ctx.Value(visibleNodeBM25Key{}).(bm25Index)
+			index, _ = ctx.Value(visibleNodeBM25Key{}).(bm25Ranker)
 		}
 		terms = matchQueryTerms(analyzer, query.text, index)
 	}
@@ -309,7 +309,7 @@ type termIDFReader interface {
 
 // matchQueryTerms are query's distinct terms, each with its IDF in index (a
 // rarer term weighs more) and its position among them.
-func matchQueryTerms(analyzer Analyzer, query string, index bm25Index) map[string]*queryTerm {
+func matchQueryTerms(analyzer Analyzer, query string, index any) map[string]*queryTerm {
 	idf, _ := index.(termIDFReader)
 	terms := make(map[string]*queryTerm)
 	for _, term := range analyzer.Analyze(query) {

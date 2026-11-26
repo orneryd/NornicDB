@@ -28,6 +28,8 @@ type keywordCorpusReadSpy struct {
 	edges   []storage.EdgeID
 }
 
+func (spy *keywordCorpusReadSpy) GetInnerEngine() storage.Engine { return spy.Engine }
+
 func (spy *keywordCorpusReadSpy) BatchGetNodes(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	spy.mu.Lock()
 	spy.batches = append(spy.batches, append([]storage.NodeID(nil), ids...))
@@ -40,6 +42,14 @@ func (spy *keywordCorpusReadSpy) GetEdge(ctx context.Context, id storage.EdgeID)
 	spy.edges = append(spy.edges, id)
 	spy.mu.Unlock()
 	return spy.Engine.GetEdge(ctx, id)
+}
+
+func (spy *keywordCorpusReadSpy) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
+	provider, ok := spy.Engine.(storage.NamespaceGraphMutationVersionProvider)
+	if !ok {
+		return 0, false
+	}
+	return provider.GraphMutationVersionInNamespace(namespace)
 }
 
 func (spy *keywordCorpusReadSpy) reset() {
@@ -110,7 +120,9 @@ type fineGrainedKeywordNodeCorpus struct {
 func newFineGrainedKeywordNodeCorpus(t *testing.T, hidden bool) *fineGrainedKeywordNodeCorpus {
 	t.Helper()
 	ctx := t.Context()
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &keywordCorpusReadSpy{Engine: base}
 	store := storage.NewNamespacedEngine(spy, "work")
 	one := map[string]any{"content": "albatross"}
@@ -172,7 +184,9 @@ type fineGrainedKeywordRelationshipCorpus struct {
 func newFineGrainedKeywordRelationshipCorpus(t *testing.T, secretEdges int) *fineGrainedKeywordRelationshipCorpus {
 	t.Helper()
 	ctx := t.Context()
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &keywordCorpusReadSpy{Engine: base}
 	store := storage.NewNamespacedEngine(spy, "work")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
@@ -354,4 +368,105 @@ func TestFineGrainedUnrestrictedKeywordSearchSkipsCorpusProjection(t *testing.T)
 		require.Len(t, visible.Results, 3)
 		require.True(t, corpus.spy.readEdge("noise"), "restricted relationship search must project its readable corpus")
 	})
+}
+
+// A stable policy and index revision must reuse the authorization work needed
+// for visible-only scoring. Re-reading unrelated documents on every search
+// makes restricted keyword queries proportional to the whole database.
+func TestFineGrainedRestrictedKeywordSearchReusesVisibleCorpus(t *testing.T) {
+	t.Run("nodes", func(t *testing.T) {
+		corpus := newFineGrainedKeywordNodeCorpus(t, true)
+		corpus.reader.Fingerprint = "reader-policy"
+		ctx := auth.WithFineGrainedRequest(t.Context(), &corpus.reader)
+		first, err := corpus.service.Search(ctx, "albatross", nil, nil)
+		require.NoError(t, err)
+		corpus.spy.reset()
+		second, err := corpus.service.Search(ctx, "albatross albatross", nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, orderedIDs(first.Results), orderedIDs(second.Results))
+		require.False(t, corpus.spy.readNode("noise"), "stable policy rebuilt the whole node corpus")
+	})
+
+	t.Run("relationships", func(t *testing.T) {
+		corpus := newFineGrainedKeywordRelationshipCorpus(t, 2)
+		corpus.reader.Fingerprint = "reader-policy"
+		ctx := auth.WithFineGrainedRequest(t.Context(), &corpus.reader)
+		options := &SearchOptions{Limit: 10}
+		first, err := corpus.service.SearchRelationships(ctx, "zephyrine", nil, options)
+		require.NoError(t, err)
+		corpus.spy.reset()
+		second, err := corpus.service.SearchRelationships(ctx, "zephyrine zephyrine", nil, options)
+		require.NoError(t, err)
+		require.Equal(t, orderedIDs(first.Results), orderedIDs(second.Results))
+		require.False(t, corpus.spy.readEdge("noise"), "stable policy rebuilt the whole relationship corpus")
+	})
+}
+
+func TestFineGrainedKeywordSearchHiddenNodeTextPreservesAllVisibleRanks(t *testing.T) {
+	visibleOnly := newFineGrainedKeywordNodeCorpus(t, false)
+	withHidden := newFineGrainedKeywordNodeCorpus(t, true)
+	options := &SearchOptions{Limit: 10}
+	plain, err := visibleOnly.service.Search(t.Context(), "albatross", nil, options)
+	require.NoError(t, err)
+	got, err := withHidden.service.Search(auth.WithFineGrainedRequest(t.Context(), &withHidden.reader), "albatross", nil, options)
+	require.NoError(t, err)
+	require.Len(t, got.Results, 3)
+	require.Equal(t, orderedIDs(plain.Results), orderedIDs(got.Results))
+	require.Equal(t, keywordScores(plain.Results), keywordScores(got.Results))
+	for rank, hit := range got.Results {
+		require.Equal(t, rank+1, hit.BM25Rank)
+		require.NotContains(t, hit.Properties, "draft")
+	}
+}
+
+func TestFineGrainedRestrictedKeywordCorpusInvalidatesOnGraphChange(t *testing.T) {
+	corpus := newFineGrainedKeywordNodeCorpus(t, true)
+	corpus.reader.Fingerprint = "reader-policy"
+	ctx := auth.WithFineGrainedRequest(t.Context(), &corpus.reader)
+	first, err := corpus.service.Search(ctx, "albatross", nil, &SearchOptions{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, first.Results, 3)
+
+	node, err := corpus.service.engine.GetNode(t.Context(), "noise")
+	require.NoError(t, err)
+	node.Properties["content"] = "albatross"
+	require.NoError(t, corpus.service.engine.UpdateNode(t.Context(), storage.NodeUpdateRequest{After: node}))
+	require.NoError(t, corpus.service.IndexNode(node))
+
+	second, err := corpus.service.Search(ctx, "albatross", nil, &SearchOptions{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, second.Results, 4)
+	require.Contains(t, orderedIDs(second.Results), "noise")
+}
+
+func TestFineGrainedRestrictedKeywordCorpusDoesNotCacheDecayReads(t *testing.T) {
+	corpus := newFineGrainedKeywordNodeCorpus(t, true)
+	corpus.reader.Fingerprint = "reader-policy"
+	owner, ok := storage.UnwrapEngine(corpus.service.engine).(*storage.BadgerEngine)
+	require.True(t, ok)
+	owner.SetDecayEnabled(true)
+	ctx := auth.WithFineGrainedRequest(t.Context(), &corpus.reader)
+	_, err := corpus.service.Search(ctx, "albatross", nil, nil)
+	require.NoError(t, err)
+	corpus.spy.reset()
+	_, err = corpus.service.Search(ctx, "albatross albatross", nil, nil)
+	require.NoError(t, err)
+	require.True(t, corpus.spy.readNode("noise"), "time-based decay requires fresh visibility statistics")
+}
+
+func TestSearchableFieldTextsComposeIndexedText(t *testing.T) {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	service := NewService(base, 3, nil)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	node := &storage.Node{Labels: []string{"Article", "Public"}, Properties: map[string]any{
+		"content": "albatross harbor", "a-custom": "wind", "draft": "hidden winter",
+	}}
+	for _, properties := range [][]string{nil, {"content", "draft"}} {
+		fields := service.searchableFieldTexts(node, properties)
+		texts := make([]string, len(fields))
+		for i, field := range fields {
+			texts[i] = field.Text
+		}
+		require.Equal(t, service.searchableText(node, properties), strings.Join(texts, " "))
+	}
 }

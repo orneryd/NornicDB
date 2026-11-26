@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reuse shared full-text field provenance and revision-scoped visibility statistics for restricted search, preserving visible-only hits and scores without rebuilding BM25 on every stable query.
+- Reuse authorized vector candidate decisions across stable policy and graph revisions, with fresh reads when decay or manual suppression can change visibility independently.
 - Use declared relationship RANGE indexes for selective equality in a MATCH `WHERE` clause, preserving complete results for ordinary indexes and transaction reads.
 - Read indexed two-label ordered WITH pages before a later join without scanning the full label, while preserving the WITH sort and window semantics.
 - Use complete unique-constraint lookups from every pattern label in multi-label MERGE, so label order does not force scans of large node populations.
