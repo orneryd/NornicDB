@@ -1671,27 +1671,6 @@ func LoadSnapshot(ctx context.Context, path string) (*Snapshot, error) {
 	return &snapshot, nil
 }
 
-// loadSnapshotWithKey materializes an authenticated recovery snapshot for
-// callers that need the historical Snapshot collection API.
-func loadSnapshotWithKey(ctx context.Context, path string, key []byte) (*Snapshot, error) {
-	if len(key) == 0 {
-		return LoadSnapshot(ctx, path)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("wal: failed to open snapshot: %w", err)
-	}
-	defer file.Close()
-	snapshot := &Snapshot{Version: "1.0"}
-	metadata, err := ReadSnapshotWithKey(ctx, file, snapshotCollectionVisitor{snapshot: snapshot}, key)
-	if err != nil {
-		return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
-	}
-	snapshot.Sequence = metadata.Sequence
-	snapshot.Timestamp = metadata.Timestamp
-	return snapshot, nil
-}
-
 // snapshotFileInfo holds path and mod time for retention pruning.
 type snapshotFileInfo struct {
 	path    string
@@ -3175,7 +3154,7 @@ func recoverWithTransactions(ctx context.Context, walDir, snapshotPath string, f
 
 	// Load snapshot if available
 	if snapshotPath != "" {
-		snapshot, err := loadSnapshotWithKey(ctx, snapshotPath, key)
+		snapshot, err := LoadSnapshotWithKey(ctx, snapshotPath, key)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
 		}
@@ -3444,7 +3423,7 @@ func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, 
 			}
 			snapshotSeq = metadata.Sequence
 		} else {
-			snapshot, err := loadSnapshotWithKey(ctx, snapshotPath, key)
+			snapshot, err := LoadSnapshotWithKey(ctx, snapshotPath, key)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
