@@ -932,8 +932,8 @@
     },
     {
       "path": "operations/wal-compaction.md",
-      "sha256": "4601a956abf8c2e8f0c3ab50ccc1cd09eb645896cdeec1f3c32b6d6ed9119e03",
-      "bytes": 9670
+      "sha256": "12be1a4156fc95611fd3c92738d0fba840aceb69e8dac35ea8056de79908f85a",
+      "bytes": 9907
     },
     {
       "path": "packaging/README.md",
