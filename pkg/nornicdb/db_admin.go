@@ -1634,7 +1634,16 @@ func isJSONBackupFile(path string) (bool, error) {
 		return false, err
 	}
 	trimmed := bytes.TrimSpace(buffer[:read])
-	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '['), nil
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return false, nil
+	}
+	// A native Badger stream begins with an eight-byte binary record length.
+	// Its low byte can be a JSON opening delimiter, but a literal NUL in
+	// that prefix cannot occur in valid JSON text.
+	if bytes.IndexByte(trimmed[:min(len(trimmed), 8)], 0) >= 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (db *DB) restartSearchAfterRestore() {

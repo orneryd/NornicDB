@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Recognize native backups whose binary length prefix starts with `{` or `[`, so restore does not misroute them to the legacy JSON reader.
 - Restore indexed node lookups, revision-scoped full-text views and result caching, and Bolt streaming for eligible fine-grained reads while preserving policy checks; authorize restricted property vectors before scoring and reuse stable admission decisions.
 - Reuse shared full-text field provenance and revision-scoped visibility statistics for restricted search, preserving visible-only hits and scores without rebuilding BM25 on every stable query.
 - Reuse authorized vector candidate decisions across stable policy and graph revisions, with fresh reads when decay or manual suppression can change visibility independently.
