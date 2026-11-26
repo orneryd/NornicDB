@@ -20,6 +20,9 @@ type fulltextCountingStore struct {
 	*storage.NamespacedEngine
 	scans    atomic.Int64
 	nodeDocs atomic.Int64
+	// edgeLists counts whole-edge-list reads, the reader a projected graph
+	// falls back to because it filters edges instead of streaming them.
+	edgeLists atomic.Int64
 }
 
 func (s *fulltextCountingStore) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
@@ -35,6 +38,11 @@ func (s *fulltextCountingStore) StreamNodesWithOptions(ctx context.Context, opts
 func (s *fulltextCountingStore) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
 	s.scans.Add(1)
 	return s.NamespacedEngine.StreamEdges(ctx, visit)
+}
+
+func (s *fulltextCountingStore) AllEdges(ctx context.Context) ([]*storage.Edge, error) {
+	s.edgeLists.Add(1)
+	return s.NamespacedEngine.AllEdges(ctx)
 }
 
 // GetInnerEngine returns the counted view, preserving its namespace boundary.
@@ -134,3 +142,6 @@ func TestFulltextMaintainedPublicNoRebuild(t *testing.T) {
 func (s *fulltextCountingStore) take() (scans, docs int) {
 	return int(s.scans.Swap(0)), int(s.nodeDocs.Swap(0))
 }
+
+// takeEdgeLists reports and resets whole-edge-list corpus reads.
+func (s *fulltextCountingStore) takeEdgeLists() int { return int(s.edgeLists.Swap(0)) }

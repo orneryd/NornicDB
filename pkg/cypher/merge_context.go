@@ -129,6 +129,9 @@ func (e *StorageExecutor) planPatternPropertySeek(ctx context.Context, nodeInfo 
 	if len(nodeInfo.properties) == 0 {
 		return nodeIndexSeek{}, false, nil
 	}
+	if e.fineGrainedGraph != nil && len(nodeInfo.labels) == 0 {
+		return nodeIndexSeek{}, false, nil
+	}
 	schema := store.GetSchema()
 	if schema == nil {
 		return nodeIndexSeek{}, false, nil
@@ -167,6 +170,16 @@ func (e *StorageExecutor) planPatternPropertySeek(ctx context.Context, nodeInfo 
 				covered++
 			}
 			if covered == 0 {
+				continue
+			}
+			permitted := true
+			for i := 0; i < covered; i++ {
+				if !e.canUseNodePropertyIndexForFGAC(ctx, label, idx.Properties[i]) {
+					permitted = false
+					break
+				}
+			}
+			if !permitted {
 				continue
 			}
 			// Every covered value must be a scalar the index files under an
@@ -226,11 +239,17 @@ func (e *StorageExecutor) planPatternPropertySeek(ctx context.Context, nodeInfo 
 // count is known).
 func (e *StorageExecutor) patternPropertyIndexLabel(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, labels []string, property string, value interface{}) (string, bool, error) {
 	if len(labels) == 1 {
+		if !e.canUseNodePropertyIndexForFGAC(ctx, labels[0], property) {
+			return "", false, nil
+		}
 		indexed, err := schema.HasPropertyIndex(ctx, labels[0], property)
 		return labels[0], indexed && err == nil, err
 	}
 	var indexed []string
 	for _, label := range labels {
+		if !e.canUseNodePropertyIndexForFGAC(ctx, label, property) {
+			continue
+		}
 		exists, err := schema.HasPropertyIndex(ctx, label, property)
 		if err != nil {
 			return "", false, err

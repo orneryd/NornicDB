@@ -88,6 +88,9 @@ func (o *fulltextDocumentOwner) releaseDocuments(budget memory.Budget) {
 	}
 	report := false
 	for name := range o.views {
+		if strings.Contains(name, "\x00fgac:") {
+			continue
+		}
 		status := o.status[name]
 		if !status.StorageReads {
 			index, relationships := fulltextRetentionIdentity(name)
@@ -111,6 +114,12 @@ func (o *fulltextDocumentOwner) forgetProjection(name string, projection *fullte
 	if o.views[name] == projection {
 		delete(o.views, name)
 		delete(o.status, name)
+		for index, key := range o.policyOrder {
+			if key == name {
+				o.policyOrder = append(o.policyOrder[:index], o.policyOrder[index+1:]...)
+				break
+			}
+		}
 	}
 	o.changes.Unlock()
 }
@@ -124,6 +133,7 @@ func (o *fulltextDocumentOwner) retireDocuments() {
 
 func (o *fulltextDocumentOwner) retireDocumentsLocked() {
 	o.views = make(map[string]*fulltextDocumentProjection)
+	o.policyOrder = nil
 	o.nodes, o.edges = nil, nil
 	o.dirtyLimit = 1
 	o.invalidateBefore(o.events)
@@ -263,6 +273,30 @@ func (d FulltextDocuments) Entity(ctx context.Context, id string, document *Full
 	}
 	if image, exists := d.view.images[document]; exists {
 		return image.node, image.edge, nil
+	}
+	if d.policyGraph != nil {
+		current, ok := d.policyGraph.GraphMutationVersion()
+		if !ok || current != d.policyVersion {
+			return nil, nil, errFulltextRowUnavailable
+		}
+		var node *storage.Node
+		var edge *storage.Edge
+		var err error
+		if d.view.relationships {
+			edge, err = d.acquisition.engine.GetEdge(ctx, storage.EdgeID(id))
+		} else if reader, ok := d.acquisition.engine.(storage.QueryNodeReader); d.view.queryNodes && ok {
+			node, err = reader.GetQueryNode(ctx, storage.NodeID(id))
+		} else {
+			node, err = d.acquisition.engine.GetNode(ctx, storage.NodeID(id))
+		}
+		current, ok = d.policyGraph.GraphMutationVersion()
+		if !ok || current != d.policyVersion || err != nil || node == nil && edge == nil {
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			return nil, nil, errFulltextRowUnavailable
+		}
+		return node, edge, nil
 	}
 	if d.snapshot == nil {
 		return nil, nil, errFulltextRowUnavailable

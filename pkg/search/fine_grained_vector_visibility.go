@@ -7,8 +7,11 @@ import (
 )
 
 const (
-	vectorVisibilityMaxPolicies = 16
-	vectorVisibilityMaxKeys     = 20000
+	// A property vector query can name a 100k-node index. Retaining its
+	// admission decisions avoids rescanning every projected node for each
+	// different query vector, while the smaller policy cap bounds RAM.
+	vectorVisibilityMaxPolicies = 4
+	vectorVisibilityMaxKeys     = 120000
 )
 
 type vectorVisibilityKey struct {
@@ -51,7 +54,7 @@ func (s *Service) vectorVisibilityForScope(scope *indexedSearchScope) (*vectorVi
 	if id == "" {
 		return nil, nil
 	}
-	hash, err := searchAccessHash(scope.principal)
+	hash, err := scope.principal.AccessHash()
 	if err != nil {
 		return nil, err
 	}

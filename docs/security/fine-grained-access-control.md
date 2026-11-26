@@ -117,6 +117,29 @@ available and decay and manual suppression are off. Exact vector page
 completion and relationship vector ranking can still examine the full indexed
 population.
 
+For a property-vector query, a role with an unconditional read grant over the
+entire indexed label population scores the shared vectors directly. A narrower
+role checks the indexed population through its projected graph before scoring,
+so hidden vectors cannot affect scores or query-dependent work. That first
+read can grow with index size; subsequent queries reuse admission decisions
+while the graph and policy revisions remain stable. An index larger than the
+admission cache limit, or a source without stable revision tracking, requires
+another check on each query.
+
+Declared full-text procedures reuse the shared document view for a principal
+that can read the whole node or relationship corpus. Other principals retain
+a projected document view for a stable graph and effective policy revision;
+the first query and any revision change rebuild it. Retention is bounded, so
+memory pressure or several active policies can cause another rebuild.
+
+Indexed Cypher node lookups use property postings when the principal can read
+the indexed property for every node in that label. Conditional, denied, or
+entity-specific grants keep the scoped scan. Deterministic read results may
+be cached for a stable policy and graph revision; writes, transactions, time
+decay, and other non-cacheable statements still execute normally. Bolt
+auto-commit reads stream for FGAC principals and recheck policy admission at
+each PULL. The first rows no longer require materializing a large result.
+
 To select rows by stored data, use a property rule:
 
 ```cypher

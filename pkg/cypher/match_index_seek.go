@@ -1230,6 +1230,9 @@ func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *stor
 	if len(queryLabels) > 0 {
 		out := make([]string, 0, len(queryLabels))
 		for _, label := range queryLabels {
+			if !e.canUseNodePropertyIndexForFGAC(ctx, label, property) {
+				continue
+			}
 			exists, err := schema.HasPropertyIndex(ctx, label, property)
 			if err != nil {
 				return nil, err
@@ -1239,6 +1242,11 @@ func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *stor
 			}
 		}
 		return out, nil
+	}
+	if e.fineGrainedGraph != nil {
+		// A label-free posting may include a population the principal cannot
+		// read; no individual label can prove the union is safe.
+		return nil, nil
 	}
 	labels := make(map[string]struct{})
 	for _, raw := range schema.GetIndexes() {
@@ -1302,6 +1310,10 @@ func (e *StorageExecutor) seekCandidateLabels(ctx context.Context, schema *stora
 	if len(patternLabels) == 0 && len(anyOf) > 0 {
 		indexed := true
 		for _, label := range anyOf {
+			if !e.canUseNodePropertyIndexForFGAC(ctx, label, property) {
+				indexed = false
+				break
+			}
 			exists, err := schema.HasPropertyIndex(ctx, label, property)
 			if err != nil {
 				return nil, nil, err

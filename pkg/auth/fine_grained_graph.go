@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -74,6 +75,39 @@ func (r *FineGrainedRequest) AllowsDatabaseIdentity(action, databaseID, property
 	return r.Access.Allows(action, FineGrainedResource{
 		Kind: FineGrainedDatabase, DatabaseID: databaseID, Property: property, HomeDatabaseID: r.HomeDatabaseID,
 	})
+}
+
+// AllowsNodeIndexPopulation proves that a stored property posting cannot
+// expose a node or value hidden from this principal. An index seek may inspect
+// posting counts before it hydrates any node, so checking only the returned
+// node's permission would disclose hidden matches through plan and timing.
+// Conditional, entity-specific, and denied grants retain the scoped scan.
+func (r *FineGrainedRequest) AllowsNodeIndexPopulation(database, label, property string) bool {
+	if r == nil || label == "" || property == "" || r.DatabaseID == nil {
+		return false
+	}
+	target := FineGrainedResource{
+		Kind: FineGrainedNode, DatabaseID: r.DatabaseID(database), HomeDatabaseID: r.HomeDatabaseID,
+	}
+	return r.Access.allowsConstraintPopulation("graph.node.traverse", target, label, "") &&
+		r.Access.allowsConstraintPopulation("graph.node.property.read", target, label, property)
+}
+
+// AccessHash identifies the effective grant rules for a retained read view.
+// It keeps two requests with a reused revision string but different grants
+// from sharing cached rows or admission decisions.
+func (r *FineGrainedRequest) AccessHash() ([32]byte, error) {
+	state := struct {
+		Rules           []FineGrainedEntitlement
+		BoostedDatabase string
+		NativeABAC      bool
+		NativeTags      []string
+	}{r.Access.Rules(), r.Access.boostedDatabase, r.Access.nativeABAC, r.Access.nativeTags}
+	rules, err := json.Marshal(state)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(rules), nil
 }
 
 // AllowsDBMS checks an operation that affects the server rather than a database.
