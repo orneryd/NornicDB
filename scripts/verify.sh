@@ -244,6 +244,20 @@ step_allocations() {
       mkdir -p "${STATE_DIR}/worktrees" && git worktree add --quiet --detach "${dir}" "${sha}" || return 1
     fi
   done
+  # Native macOS llama archives are ignored build artifacts, so Git worktrees
+  # do not inherit the archive used by the checked source tree. Both benchmark
+  # checkouts must link the same archive without disabling local-LLM support.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local archive="libllama_darwin_$(go env GOARCH).a" dir
+    [[ -f "lib/llama/${archive}" ]] || { echo "missing lib/llama/${archive}" >&2; return 1; }
+    for dir in "${base_dir}" "${head_dir}"; do
+      cmp -s lib/llama/REVISION "${dir}/lib/llama/REVISION" || {
+        echo "llama revision differs in ${dir}; cannot reuse ${archive}" >&2
+        return 1
+      }
+      cp "lib/llama/${archive}" "${dir}/lib/llama/${archive}" || return 1
+    done
+  fi
   echo "base ${base_sha} (merge base with ${BASE}), head ${HEAD_SHA}"
   python3 "${head_dir}/scripts/cypher-tck/allocation_ratchet.py" --self-test &&
     python3 "${head_dir}/scripts/cypher-tck/allocation_ratchet.py" \
