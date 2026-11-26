@@ -24,6 +24,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1528,6 +1529,9 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 			}
+			// The replacement has committed. A disconnected request must not
+			// interrupt the derived state needed to serve the restored store.
+			settleCtx := db.LifetimeContext()
 			if db.config != nil && db.config.Database.DataDir != "" {
 				marker := filepath.Join(db.config.Database.DataDir, nativeRestoreMarker)
 				boundary := nativeRestoreBoundary{RestoredAt: time.Now().UTC(), WALSequence: restoreWALFloor}
@@ -1541,15 +1545,19 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 					return fmt.Errorf("record native restore recovery boundary: %w", err)
 				}
 			}
-			if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
+			if err := db.rebuildTemporalIndexesNoLock(settleCtx); err != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 			}
 			if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
-				if err := maint.RebuildMVCCHeads(ctx); err != nil {
+				if err := maint.RebuildMVCCHeads(settleCtx); err != nil {
 					db.mu.Unlock()
 					return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
 				}
+			}
+			if err := db.reloadChangeCaptureAfterRestore(settleCtx); err != nil {
+				db.mu.Unlock()
+				return err
 			}
 			db.mu.Unlock()
 			db.restartSearchAfterRestore()
@@ -1605,19 +1613,31 @@ legacyJSONRestore:
 		}
 	}
 
-	if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
+	settleCtx := db.LifetimeContext()
+	if err := db.rebuildTemporalIndexesNoLock(settleCtx); err != nil {
 		db.mu.Unlock()
 		return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
-		if err := maint.RebuildMVCCHeads(ctx); err != nil {
+		if err := maint.RebuildMVCCHeads(settleCtx); err != nil {
 			db.mu.Unlock()
 			return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
 		}
 	}
+	if err := db.reloadChangeCaptureAfterRestore(settleCtx); err != nil {
+		db.mu.Unlock()
+		return err
+	}
 	db.mu.Unlock()
 
 	db.restartSearchAfterRestore()
+	return nil
+}
+
+func (db *DB) reloadChangeCaptureAfterRestore(ctx context.Context) error {
+	if err := multidb.LoadChangeCaptureModes(ctx, db.baseStorage, "system"); err != nil {
+		return fmt.Errorf("load restored database change-capture modes: %w", err)
+	}
 	return nil
 }
 
