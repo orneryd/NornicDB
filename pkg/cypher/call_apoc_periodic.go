@@ -161,7 +161,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 }
 
 // callApocPeriodicCommit performs a query with periodic commits.
-// CALL apoc.periodic.commit(statement, params) YIELD updates, executions, runtime, batches
+// CALL apoc.periodic.commit(statement, params) YIELD updates, executions, runtime, batches, failedBatches, batchErrors, failedCommits, commitErrors, wasTerminated
 // This commits every N operations to avoid large transactions.
 func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.periodic.commit"
@@ -185,10 +185,16 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 	if err := internalFunctionCallError(ctx, statement); err != nil {
 		return nil, err
 	}
+	if err := e.checkPeriodicTransactionScope(ctx, procedure); err != nil {
+		return nil, err
+	}
 
 	// Execute the statement repeatedly until it affects 0 rows
 	totalUpdates := int64(0)
 	executions := int64(0)
+	batches := int64(0)
+	failedBatches := int64(0)
+	batchErrors := make(map[string]interface{})
 	stats := &QueryStats{}
 
 	for {
@@ -201,10 +207,20 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 		result, err := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
 			return batch.executeUserStatement(batchCtx, statement, params)
 		})
+		batches++
 		if err != nil {
+			// A failed statement is an attempted batch. Expose its error in
+			// the APOC result instead of returning a zero-work success.
+			// Cancellation and fatal expression failures remain call errors.
+			if ctx.Err() != nil || getExpressionFailure(ctx) != nil {
+				return nil, err
+			}
+			failedBatches++
+			message := err.Error()
+			count, _ := batchErrors[message].(int64)
+			batchErrors[message] = count + 1
 			break
 		}
-		executions++
 
 		// Check if any updates were made
 		updates := int64(0)
@@ -219,6 +235,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 		if updates == 0 {
 			break
 		}
+		executions++
 		totalUpdates += updates
 
 		// Safety limit
@@ -230,7 +247,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 	return &ExecuteResult{
 		Columns: columnNames(apocPeriodicCommitColumns),
 		Rows: [][]interface{}{
-			{totalUpdates, executions, int64(0), executions},
+			{totalUpdates, executions, int64(0), batches, failedBatches, batchErrors, int64(0), map[string]interface{}{}, false},
 		},
 		Stats: stats,
 	}, nil
