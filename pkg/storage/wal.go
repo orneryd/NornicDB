@@ -1671,6 +1671,27 @@ func LoadSnapshot(ctx context.Context, path string) (*Snapshot, error) {
 	return &snapshot, nil
 }
 
+// loadSnapshotWithKey materializes an authenticated recovery snapshot for
+// callers that need the historical Snapshot collection API.
+func loadSnapshotWithKey(ctx context.Context, path string, key []byte) (*Snapshot, error) {
+	if len(key) == 0 {
+		return LoadSnapshot(ctx, path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("wal: failed to open snapshot: %w", err)
+	}
+	defer file.Close()
+	snapshot := &Snapshot{Version: "1.0"}
+	metadata, err := ReadSnapshotWithKey(ctx, file, snapshotCollectionVisitor{snapshot: snapshot}, key)
+	if err != nil {
+		return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
+	}
+	snapshot.Sequence = metadata.Sequence
+	snapshot.Timestamp = metadata.Timestamp
+	return snapshot, nil
+}
+
 // snapshotFileInfo holds path and mod time for retention pruning.
 type snapshotFileInfo struct {
 	path    string
@@ -3127,7 +3148,7 @@ type TransactionState struct {
 // Returns the engine state and recovery statistics. Recovery preserves ctx values
 // but completes independently of its cancellation once restoring accepted data.
 func RecoverWithTransactions(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
-	return recoverWithTransactions(ctx, walDir, snapshotPath, walFrameReader{})
+	return recoverWithTransactions(ctx, walDir, snapshotPath, walFrameReader{}, nil)
 }
 
 // RecoverWithTransactionsWithKey is RecoverWithTransactions for a journal
@@ -3137,10 +3158,10 @@ func RecoverWithTransactionsWithKey(ctx context.Context, walDir, snapshotPath st
 	if err != nil {
 		return nil, nil, err
 	}
-	return recoverWithTransactions(ctx, walDir, snapshotPath, frameReader)
+	return recoverWithTransactions(ctx, walDir, snapshotPath, frameReader, key)
 }
 
-func recoverWithTransactions(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader) (*MemoryEngine, *TransactionRecoveryResult, error) {
+func recoverWithTransactions(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader, key []byte) (*MemoryEngine, *TransactionRecoveryResult, error) {
 	ctx = context.WithoutCancel(ctx)
 	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return nil, nil, fmt.Errorf("wal: failed to read WAL: %w", err)
@@ -3154,7 +3175,7 @@ func recoverWithTransactions(ctx context.Context, walDir, snapshotPath string, f
 
 	// Load snapshot if available
 	if snapshotPath != "" {
-		snapshot, err := LoadSnapshot(ctx, snapshotPath)
+		snapshot, err := loadSnapshotWithKey(ctx, snapshotPath, key)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)
 		}
@@ -3373,7 +3394,7 @@ func RecoverFromWALWithLogger(ctx context.Context, walDir, snapshotPath string, 
 // Use this for programmatic access to replay statistics and errors. ctx must
 // be non-nil; values survive but cancellation is detached to finish recovery.
 func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
-	return recoverFromWALWithResult(ctx, walDir, snapshotPath, walFrameReader{})
+	return recoverFromWALWithResult(ctx, walDir, snapshotPath, walFrameReader{}, nil)
 }
 
 // RecoverFromWALWithResultWithKey is RecoverFromWALWithResult for a journal
@@ -3383,10 +3404,10 @@ func RecoverFromWALWithResultWithKey(ctx context.Context, walDir, snapshotPath s
 	if err != nil {
 		return nil, ReplayResult{}, err
 	}
-	return recoverFromWALWithResult(ctx, walDir, snapshotPath, frameReader)
+	return recoverFromWALWithResult(ctx, walDir, snapshotPath, frameReader, key)
 }
 
-func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader) (*MemoryEngine, ReplayResult, error) {
+func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader, key []byte) (*MemoryEngine, ReplayResult, error) {
 	ctx = context.WithoutCancel(ctx)
 	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return nil, ReplayResult{}, fmt.Errorf("wal: failed to read WAL: %w", err)
@@ -3403,12 +3424,17 @@ func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, 
 		if detectErr != nil && !os.IsNotExist(detectErr) {
 			return nil, result, fmt.Errorf("wal: failed to inspect snapshot: %w", detectErr)
 		}
+		encrypted, detectErr := IsEncryptedSnapshot(snapshotPath)
+		if detectErr != nil && !os.IsNotExist(detectErr) {
+			return nil, result, fmt.Errorf("wal: failed to inspect snapshot: %w", detectErr)
+		}
+		streaming = streaming || encrypted
 		if streaming {
 			file, err := os.Open(snapshotPath)
 			if err != nil {
 				return nil, result, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
-			metadata, readErr := readSnapshot(ctx, file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
+			metadata, readErr := ReadSnapshotWithKey(ctx, file, engineSnapshotVisitor{engine: engine}, key)
 			closeErr := file.Close()
 			if readErr != nil {
 				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", readErr)
@@ -3418,7 +3444,7 @@ func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, 
 			}
 			snapshotSeq = metadata.Sequence
 		} else {
-			snapshot, err := LoadSnapshot(ctx, snapshotPath)
+			snapshot, err := loadSnapshotWithKey(ctx, snapshotPath, key)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", err)

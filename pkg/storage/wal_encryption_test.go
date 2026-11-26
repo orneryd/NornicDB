@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -733,4 +734,35 @@ func TestEncryptedWALReplayRequiresKey(t *testing.T) {
 	node, err = destination.GetNode(t.Context(), "test:a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"Doc"}, node.Labels)
+}
+
+func TestEncryptedWALRecoveryReadsEncryptedSnapshot(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	key := encryptedWALTestKey(19)
+	wal, err := NewWAL(dir, encryptedWALTestConfig(dir, key))
+	require.NoError(t, err)
+	require.NoError(t, wal.Close())
+	source := newTestMemoryEngine(t)
+	_, err = source.CreateNode(t.Context(), &Node{ID: "nornic:a", Labels: []string{"Doc"}})
+	require.NoError(t, err)
+	snapshot := filepath.Join(t.TempDir(), "snapshot-00000000000000000001.json")
+	require.NoError(t, SaveStreamingSnapshot(t.Context(), source, snapshot, SnapshotOptions{Sequence: 1, EncryptionKey: key}))
+
+	destination := newTestMemoryEngine(t)
+	_, status, err := RecoverIntoEngineWithKey(t.Context(), destination, dir, snapshot, key)
+	require.NoError(t, err)
+	require.True(t, status.SnapshotStreaming)
+	_, err = destination.GetNode(t.Context(), "nornic:a")
+	require.NoError(t, err)
+
+	recovered, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResultWithKey(t.Context(), dir, snapshot, key))
+	require.NoError(t, err)
+	_, err = recovered.GetNode(t.Context(), "nornic:a")
+	require.NoError(t, err)
+
+	transactional, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactionsWithKey(t.Context(), dir, snapshot, key))
+	require.NoError(t, err)
+	_, err = transactional.GetNode(t.Context(), "nornic:a")
+	require.NoError(t, err)
 }
