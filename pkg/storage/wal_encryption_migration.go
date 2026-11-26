@@ -66,7 +66,9 @@ func EncryptWALDirectory(ctx context.Context, dir string, key []byte) error {
 		return err
 	}
 	sizes := make([]int64, len(manifest.Segments))
+	listed := make(map[string]bool, len(manifest.Segments))
 	for i, segment := range manifest.Segments {
+		listed[segment.Path] = true
 		path, err := resolveWALSegmentPath(dir, segment.Path)
 		if err != nil {
 			return err
@@ -79,6 +81,25 @@ func EncryptWALDirectory(ctx context.Context, dir string, key []byte) error {
 			return err
 		}
 		sizes[i] = info.Size()
+	}
+	// Retention can leave a retired segment on disk after a crash. The manifest
+	// deliberately does not rediscover it for replay, but an encrypted store
+	// must not leave its old plaintext bytes in the WAL directory.
+	diskSegments, err := scanSegmentsFromDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, segment := range diskSegments {
+		if listed[segment.Path] {
+			continue
+		}
+		path, err := resolveWALSegmentPath(dir, segment.Path)
+		if err != nil {
+			return err
+		}
+		if err := EncryptWALFile(ctx, path, key); err != nil {
+			return fmt.Errorf("encrypt unlisted WAL segment %s: %w", path, err)
+		}
 	}
 	active := walActivePath(dir)
 	if _, err := os.Lstat(active); err != nil {

@@ -422,6 +422,10 @@ type WAL struct {
 	// plaintext journal format. It is fixed for the WAL's lifetime, and it is
 	// the only state the frame writer and the readers consult.
 	cipher *walFrameCipher
+	// snapshotKey is copied at construction so a caller reusing or mutating
+	// WALConfig cannot make later recovery snapshots use a different key from
+	// the journal this WAL opened with.
+	snapshotKey []byte
 	// work is the WAL's one owner: the batch sync loop is its accepted work,
 	// its seal is the closed state, and Close is its one stop.
 	work lifecycle.WorkLifetime
@@ -572,7 +576,8 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		// The record policy is fixed here for the WAL's lifetime.
 		recordPolicy: cfg.RecordPolicy,
 		// The frame format is fixed here for the WAL's lifetime.
-		cipher: cipher,
+		cipher:      cipher,
+		snapshotKey: append([]byte(nil), cfg.EncryptionKey...),
 	}
 	// cfg.Logger is guaranteed non-nil above.
 	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
