@@ -54,31 +54,7 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 	if len(valuesByProperty) == 0 && relationship.Variable != "" {
 		// Pattern properties can be an allocated empty map. Derived WHERE
 		// values must never turn into inline pattern predicates.
-		valuesByProperty = nil
-		for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
-			clause := unwrapOuterParens(term)
-			scan, comparison := scanComparisonChain(clause)
-			if !comparison || scan.count != 1 {
-				continue
-			}
-			left, right := scan.operand(clause, 0), scan.operand(clause, 1)
-			leftBase, _, leftProperty := splitPostfixPropertyAccess(left)
-			rightBase, _, rightProperty := splitPostfixPropertyAccess(right)
-			if !(leftProperty && leftBase == relationship.Variable || rightProperty && rightBase == relationship.Variable) {
-				continue
-			}
-			if !chainConjunctIsStable(ctx, term) {
-				continue
-			}
-			property, value, eligible := e.parseSimpleIndexedEquality(ctx, relationship.Variable, term)
-			if !eligible {
-				continue
-			}
-			if valuesByProperty == nil {
-				valuesByProperty = make(map[string]interface{})
-			}
-			valuesByProperty[property] = value
-		}
+		valuesByProperty = e.relationshipWhereEqualityValues(ctx, relationship.Variable, whereClause)
 	}
 	if len(valuesByProperty) == 0 {
 		return nil, false, false, nil
@@ -113,4 +89,36 @@ func (e *StorageExecutor) relationshipPropertySeedEdge(ctx context.Context, matc
 		// one or imposing uniqueness that the declaration does not require.
 		return nil, false, false, nil
 	}
+}
+
+// relationshipWhereEqualityValues extracts only stable, mandatory top-level
+// relationship-property equalities. The caller may use these values to narrow
+// a candidate source; the original WHERE remains the final predicate owner.
+func (e *StorageExecutor) relationshipWhereEqualityValues(ctx context.Context, variable, whereClause string) map[string]interface{} {
+	if variable == "" || whereClause == "" {
+		return nil
+	}
+	var values map[string]interface{}
+	for _, term := range splitTopLevelAndConjuncts(ctx, whereClause) {
+		clause := unwrapOuterParens(term)
+		scan, comparison := scanComparisonChain(clause)
+		if !comparison || scan.count != 1 {
+			continue
+		}
+		left, right := scan.operand(clause, 0), scan.operand(clause, 1)
+		leftBase, _, leftProperty := splitPostfixPropertyAccess(left)
+		rightBase, _, rightProperty := splitPostfixPropertyAccess(right)
+		if !(leftProperty && leftBase == variable || rightProperty && rightBase == variable) || !chainConjunctIsStable(ctx, term) {
+			continue
+		}
+		property, value, eligible := e.parseSimpleIndexedEquality(ctx, variable, term)
+		if !eligible {
+			continue
+		}
+		if values == nil {
+			values = make(map[string]interface{})
+		}
+		values[property] = value
+	}
+	return values
 }
