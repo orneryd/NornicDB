@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -695,4 +696,41 @@ func mustReadFile(t *testing.T, path string) []byte {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return data
+}
+
+// Replay reads an encrypted journal with the key: without one, or with a
+// different key, recovery is refused before it restores any record.
+func TestEncryptedWALReplayRequiresKey(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	key := encryptedWALTestKey(15)
+	wal, err := NewWAL(dir, encryptedWALTestConfig(dir, key))
+	require.NoError(t, err)
+	_, err = wal.AppendWithDatabaseReturningSeq(OpCreateNode, WALNodeData{Node: &Node{ID: "a", Labels: []string{"Doc"}}}, "test")
+	require.NoError(t, err)
+	require.NoError(t, wal.Close())
+
+	engine, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.Context(), dir, ""))
+	require.ErrorIs(t, err, ErrWALKeyRequired)
+	require.Nil(t, engine)
+	engine, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResultWithKey(t.Context(), dir, "", encryptedWALTestKey(16)))
+	require.ErrorIs(t, err, ErrWALCorrupted)
+	require.Nil(t, engine)
+
+	engine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResultWithKey(t.Context(), dir, "", key))
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Applied)
+	require.Zero(t, result.Failed)
+	node, err := engine.GetNode(t.Context(), "test:a")
+	require.NoError(t, err)
+	require.Equal(t, []string{"Doc"}, node.Labels)
+
+	destination := newTestMemoryEngine(t)
+	streamed, status, err := RecoverIntoEngineWithKey(t.Context(), destination, dir, "", key)
+	require.NoError(t, err)
+	require.Equal(t, 1, streamed.Applied)
+	require.Equal(t, uint64(1), status.WALEntries)
+	node, err = destination.GetNode(t.Context(), "test:a")
+	require.NoError(t, err)
+	require.Equal(t, []string{"Doc"}, node.Labels)
 }

@@ -107,3 +107,54 @@ func TestEncryptedArtifactInventoryProbe(t *testing.T) {
 	}))
 	require.Empty(t, exposed, "plaintext property appears in encrypted data directory")
 }
+
+func TestEncryptedStoreUpgradesPlaintextRecoveryArtifactsBeforeOpen(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testEncryptionConfig("upgrade-password-12345")
+	cfg.Memory.EmbeddingEnabled = false
+	cfg.Database.WALAutoCompactionEnabled = false
+	db, err := Open(dir, cfg)
+	require.NoError(t, err)
+	secret := "sensitive-upgrade-probe-c970d61adce4"
+	created, err := db.CreateNode(t.Context(), []string{"Probe"}, map[string]any{"secret": secret})
+	require.NoError(t, err)
+	snapshotPath := filepath.Join(dir, "snapshots", "snapshot-1.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(snapshotPath), 0700))
+	// Recreate the two plaintext recovery artifacts emitted by older encrypted
+	// installations. Badger itself remains encrypted throughout the upgrade.
+	require.NoError(t, storage.SaveStreamingSnapshot(t.Context(), db.baseStorage, snapshotPath, storage.SnapshotOptions{Sequence: 1}))
+	require.NoError(t, db.Close())
+	plainSnapshot, err := os.ReadFile(snapshotPath)
+	require.NoError(t, err)
+	require.Contains(t, string(plainSnapshot), secret)
+	walDir := filepath.Join(dir, "wal")
+	require.NoError(t, os.Remove(filepath.Join(walDir, "wal.log")))
+	plainWAL, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, SyncMode: "immediate"})
+	require.NoError(t, err)
+	require.NoError(t, plainWAL.AppendWithDatabase(storage.OpCheckpoint, map[string]any{"marker": secret}, "nornic"))
+	require.NoError(t, plainWAL.Close())
+	plainLog, err := os.ReadFile(filepath.Join(walDir, "wal.log"))
+	require.NoError(t, err)
+	require.Contains(t, string(plainLog), secret)
+
+	db, err = Open(dir, cfg)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	key, err := ReadStorageEncryptionKey(dir, cfg)
+	require.NoError(t, err)
+	snapshot, err := storage.LoadSnapshotWithKey(t.Context(), snapshotPath, key)
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshot.Nodes)
+	found := false
+	for _, node := range snapshot.Nodes {
+		if node.ID == storage.NodeID("nornic:"+created.ID) && node.Properties["secret"] == secret {
+			found = true
+		}
+	}
+	require.True(t, found, "converted snapshot retains the node")
+	for _, path := range []string{snapshotPath, filepath.Join(walDir, "wal.log")} {
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), secret, "converted recovery artifact %s", path)
+	}
+}

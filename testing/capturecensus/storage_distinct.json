@@ -18,8 +18,8 @@
       "ID": "pkg/storage/badger_decay_filter.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FilterEdgePropertyByDecay/declaration#1"
     },
     "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).StreamParkedEmbeddingFailures": {
-      "Digest": "524b699e65e9aa01f1167ab5537a101dc60d684ad6a3c9365529974728d65f6e",
-      "Reason": "Scans reserved embedding-failure metadata under withView, admitting pending namespace DROP and observing ctx before each key; emits metadata and IDs, never graph bodies or an overlay.",
+      "Digest": "e81c6e19d370996bbdda7dff95a8f8b697be6e610579b2c5103688bb06706b40",
+      "Reason": "Scans the derived parked embedding-failure key range under withView, revalidates every key against authoritative embedding metadata, admits pending namespace DROP and checks ctx before each key; emits metadata and IDs, never graph bodies or an overlay.",
       "Owners": [
         "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).withView"
       ],

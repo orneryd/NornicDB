@@ -70,8 +70,6 @@ func walFrameReaderForKey(key []byte) (walFrameReader, error) {
 	return walFrameReader{cipher: cipher}, nil
 }
 
-func (r walFrameReader) encrypted() bool { return r.cipher != nil }
-
 // version refuses a frame version this reader cannot read. A reader without a
 // key refuses ciphertext, and a reader with a key refuses plaintext: it is
 // never read as a record of an operation it was not written as.
