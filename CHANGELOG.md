@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Report failed `apoc.periodic.commit` batches and their errors in Neo4j-compatible result columns, while keeping successful execution counts separate from attempted batches.
 - Recognize native backups whose binary length prefix starts with `{` or `[`, so restore does not misroute them to the legacy JSON reader.
 - Refresh accounts and database change-capture settings after an online restore so the restoring server uses the restored security and catalog state without a restart.
 - Restore indexed node lookups, revision-scoped full-text views and result caching, and Bolt streaming for eligible fine-grained reads while preserving policy checks; authorize restricted property vectors before scoring and reuse stable admission decisions.

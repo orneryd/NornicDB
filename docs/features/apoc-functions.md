@@ -1107,7 +1107,14 @@ CALL apoc.periodic.commit(
    RETURN count(*)',
   {limit: 1000}
 )
+YIELD updates, executions, batches, failedBatches, batchErrors
+RETURN updates, executions, batches, failedBatches, batchErrors
 ```
+
+For `apoc.periodic.commit`, `batches` counts attempts, including the final
+zero-update attempt or a failed attempt; `executions` counts batches that made
+updates. A statement failure is reported in `failedBatches` and `batchErrors`.
+Check those fields before treating the returned row as a completed migration.
 
 `apoc.periodic.iterate` passes `config.params` to both inner statements. A
 configured value overrides an outer parameter of the same name; an iterate

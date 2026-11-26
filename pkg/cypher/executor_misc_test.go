@@ -595,7 +595,7 @@ func TestApocPeriodicIterateAndCommit_Direct(t *testing.T) {
 
 	res, err = exec.callApocPeriodicCommit(ctx, []interface{}{"MATCH (n:Nothing) RETURN n", map[string]interface{}{"limit": int64(10)}})
 	require.NoError(t, err)
-	require.Equal(t, []string{"updates", "executions", "runtime", "batches"}, res.Columns)
+	require.Equal(t, []string{"updates", "executions", "runtime", "batches", "failedBatches", "batchErrors", "failedCommits", "commitErrors", "wasTerminated"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 }
 
