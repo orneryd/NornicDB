@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1629,9 +1630,22 @@ func isJSONBackupFile(path string) (bool, error) {
 	defer file.Close()
 
 	buffer := make([]byte, 4096)
-	read, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
+	read, err := io.ReadFull(file, buffer)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return false, err
+	}
+	// Badger's native backup starts with an eight-byte little-endian frame
+	// length. The low byte can equal '{' or '[', so check its framing before
+	// interpreting the same bytes as legacy JSON.
+	if read >= 8 {
+		info, err := file.Stat()
+		if err != nil {
+			return false, err
+		}
+		frameLength := binary.LittleEndian.Uint64(buffer[:8])
+		if info.Size() >= 8 && frameLength > 0 && frameLength <= uint64(info.Size()-8) {
+			return false, nil
+		}
 	}
 	trimmed := bytes.TrimSpace(buffer[:read])
 	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '['), nil
