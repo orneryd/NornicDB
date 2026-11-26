@@ -138,10 +138,19 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills(context.WithoutCancel(ctx))) }()
 	// A backup predating the failure-only index has no readiness marker. Build
 	// it after the restore's lifecycle hold is released, before returning the
-	// restored engine to ordinary callers.
+	// restored engine to ordinary callers. Its DropPrefix and backfill writes
+	// need their own maintenance admission, which keeps them ordered against
+	// writes admitted after the restore hold ends.
 	defer func() {
 		if restoreErr == nil {
-			restoreErr = b.ensureEmbeddingFailureIndex(context.WithoutCancel(ctx))
+			maintenanceCtx := context.WithoutCancel(ctx)
+			maintenance, err := b.beginMaintenanceWrite(maintenanceCtx, nil)
+			if err != nil {
+				restoreErr = err
+				return
+			}
+			defer maintenance.finish()
+			restoreErr = b.ensureEmbeddingFailureIndex(maintenanceCtx)
 		}
 	}()
 

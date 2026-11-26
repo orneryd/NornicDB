@@ -611,17 +611,34 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		config = DefaultConfig()
 	}
 	needsHistoricalRecoveryBaseline := false
+	var durabilityKey []byte
+	if dataDir != "" && config.Database.EncryptionEnabled {
+		// Resolve the installation key before inspecting a possibly encrypted
+		// WAL. Unsupported or unauthenticatable frames must fail before the
+		// Badger store can be opened or upgraded.
+		var err error
+		durabilityKey, err = InitializeStorageEncryption(dataDir, config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Refuse an unsupported WAL before opening or migrating the Badger store.
 	// Otherwise a failed startup can advance the storage version while leaving
 	// the old WAL unreadable by the new binary.
 	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
 		walDir := filepath.Join(dataDir, "wal")
-		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
-		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
-			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
-			// Encrypted stores do not enter the automatic snapshot/WAL rebuild
-			// path. Keep their historical upgrade behavior unchanged here.
-			needsHistoricalRecoveryBaseline = err == nil && !config.Database.EncryptionEnabled
+		var err error
+		if len(durabilityKey) != 0 {
+			// A crash between file conversions can leave plain and encrypted
+			// segments together. Validate each file without changing it before
+			// the Badger startup migration is allowed to advance.
+			err = storage.ValidateWALFormatForEncryptionUpgrade(walDir, durabilityKey, config.Database.AllowStorageUpgrade)
+		} else {
+			err = storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
+			if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
+				err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+				needsHistoricalRecoveryBaseline = err == nil
+			}
 		}
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
@@ -653,7 +670,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// one result prepares the replication WAL, selects the journal record
 	// policy and starts replication; Open does not read it again.
 	cluster := resolveClusterStartup(dataDir)
-	if err := prepareReplicationWAL(cluster.replicationWALDir, config.Database.AllowStorageUpgrade, string(cluster.mode)); err != nil {
+	if err := prepareReplicationWALWithKey(cluster.replicationWALDir, config.Database.AllowStorageUpgrade, string(cluster.mode), durabilityKey); err != nil {
 		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 	config.Database.DataDir = dataDir
@@ -728,11 +745,11 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		badgerOpts.CatalogUpgradeV4 = catalogUpgrade
 		badgerOpts.MemoryPolicy = db.memoryPolicy
 		if config.Database.EncryptionEnabled {
-			encryptionKey, err := InitializeStorageEncryption(dataDir, config)
-			if err != nil {
-				return nil, err
-			}
+			encryptionKey := durabilityKey
 			badgerOpts.EncryptionKey = encryptionKey
+			// The same installation key is independently domain-separated by the
+			// durability codecs. Never create a plaintext WAL for an encrypted DB.
+			walConfig.EncryptionKey = encryptionKey
 			db.isolatedStoreEncryptionKey = encryptionKey
 			db.encryptionEnabled = true
 			provider := strings.ToLower(strings.TrimSpace(config.Database.EncryptionProvider))
@@ -813,6 +830,11 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 			}
 		}
 		db.baseStorage = badgerEngine
+		if db.encryptionEnabled {
+			if err := migrateEncryptedDurabilityArtifacts(db.work.Context(), dataDir, cluster.replicationWALDir, durabilityKey); err != nil {
+				return nil, fmt.Errorf("upgrade encrypted recovery artifacts: %w", err)
+			}
+		}
 		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
 			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
@@ -1644,6 +1666,23 @@ func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
 	return nil
 }
 
+func prepareReplicationWALWithKey(dir string, allowUpgrade bool, mode string, key []byte) error {
+	if dir == "" || len(key) == 0 {
+		return prepareReplicationWAL(dir, allowUpgrade, mode)
+	}
+	if err := storage.ValidateWALFormatForEncryptionUpgrade(dir, key, allowUpgrade); err != nil {
+		return err
+	}
+	if allowUpgrade {
+		// Historical replication commands need their existing payload
+		// transform before the encryption conversion seals those records.
+		if err := storage.ValidateWALFormat(dir, storage.WALValidateCurrent); errors.Is(err, storage.ErrWALUnsupportedVersion) {
+			return prepareReplicationWAL(dir, true, mode)
+		}
+	}
+	return nil
+}
+
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
 	cluster := db.cluster
 	if cluster == nil {
@@ -1654,7 +1693,7 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 			dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
 		}
 		resolved := resolveClusterStartup(dataDir)
-		if err := prepareReplicationWAL(resolved.replicationWALDir, allowUpgrade, string(resolved.mode)); err != nil {
+		if err := prepareReplicationWALWithKey(resolved.replicationWALDir, allowUpgrade, string(resolved.mode), db.isolatedStoreEncryptionKey); err != nil {
 			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 		}
 		cluster = &resolved
@@ -1663,7 +1702,7 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 	if cluster.replication == nil {
 		return base, nil
 	}
-	runtime, err := replication.StartRuntime(context.Background(), base, cluster.replication)
+	runtime, err := replication.StartRuntimeWithWALKey(context.Background(), base, cluster.replication, db.isolatedStoreEncryptionKey)
 	if err != nil {
 		return nil, err
 	}

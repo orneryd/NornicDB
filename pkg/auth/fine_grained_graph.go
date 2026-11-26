@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -103,7 +103,7 @@ func (r *FineGrainedRequest) AccessHash() ([32]byte, error) {
 		NativeABAC      bool
 		NativeTags      []string
 	}{r.Access.Rules(), r.Access.boostedDatabase, r.Access.nativeABAC, r.Access.nativeTags}
-	rules, err := json.Marshal(state)
+	rules, err := convert.PropertyJSON.Marshal(state)
 	if err != nil {
 		return [32]byte{}, err
 	}

@@ -39,6 +39,7 @@ import (
 	"context"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,9 +87,8 @@ func TestOlderTransactionIndexReadsKeepPinnedSnapshot(t *testing.T) {
 	} {
 		t.Run(schema.name, func(t *testing.T) {
 			ctx := context.Background()
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "n152")
 			peer := NewStorageExecutor(store)
 			executeClauseQueries(t, peer, ctx, schema.ddl...)

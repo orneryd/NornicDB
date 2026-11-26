@@ -315,6 +315,13 @@ type WALConfig struct {
 	// otherwise dominate ingest CPU.
 	DeferAppendFlush bool
 
+	// EncryptionKey is the optional 32-byte key this WAL authenticates and
+	// encrypts every frame with (XChaCha20-Poly1305, frame versions 8 and 9).
+	// Nil or empty keeps the journal's plaintext format. A configured key makes
+	// NewWAL write and read encrypted frames only: a journal that still holds
+	// plaintext frames is refused until EncryptWALDirectory converts it.
+	EncryptionKey []byte
+
 	// RecordPolicy is how this WAL writes the records it creates (NOR-412).
 	// The zero value, WALRecordsStandard, keeps every record in one frame and
 	// refuses a larger one. NewWAL keeps the value it is given: changing this
@@ -411,6 +418,10 @@ type WAL struct {
 	// recordPolicy is config.RecordPolicy as NewWAL received it. Writers
 	// read this copy, so the policy cannot change while the WAL lives.
 	recordPolicy WALRecordPolicy
+	// cipher is the frame cipher cfg.EncryptionKey selected and nil for the
+	// plaintext journal format. It is fixed for the WAL's lifetime, and it is
+	// the only state the frame writer and the readers consult.
+	cipher *walFrameCipher
 	// work is the WAL's one owner: the batch sync loop is its accepted work,
 	// its seal is the closed state, and Close is its one stop.
 	work lifecycle.WorkLifetime
@@ -486,6 +497,14 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		cfg.Dir = dir
 	}
 
+	// One key selects one journal format: a configured key writes and reads
+	// encrypted frames only, and its absence keeps the plaintext format.
+	cipher, err := walConfigCipher(cfg.EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	frameReader := walFrameReader{cipher: cipher}
+
 	// Create directory if needed
 	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
 		return nil, fmt.Errorf("wal: failed to create directory: %w", err)
@@ -512,10 +531,10 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	// This truncates only the *incomplete tail* (or the first corrupted tail record)
 	// back to the last known-good record boundary.
 	walPath := walActivePath(cfg.Dir)
-	if err := ValidateWALFormat(cfg.Dir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(cfg.Dir, WALValidateCurrent, nil, frameReader); err != nil {
 		return nil, err
 	}
-	if repaired, diag, err := repairWALTailIfNeeded(walPath, cfg.Logger); err != nil {
+	if repaired, diag, err := repairWALTailWithReader(walPath, cfg.Logger, frameReader); err != nil {
 		return nil, err
 	} else if repaired && diag != nil {
 		// Best-effort structured log; the diagnostic JSON artifact is already written.
@@ -552,6 +571,8 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
 		// The record policy is fixed here for the WAL's lifetime.
 		recordPolicy: cfg.RecordPolicy,
+		// The frame format is fixed here for the WAL's lifetime.
+		cipher: cipher,
 	}
 	// cfg.Logger is guaranteed non-nil above.
 	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
@@ -582,7 +603,7 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 
 // loadLastSequence reads the last sequence number from the current-format WAL.
 func (w *WAL) loadLastSequence() (uint64, error) {
-	entries, err := ReadWALEntriesFromDir(w.work.Context(), w.config.Dir)
+	entries, err := readWALEntriesFromDir(w.work.Context(), w.config.Dir, w.frameReader())
 	if err != nil {
 		return 0, err
 	}
@@ -605,7 +626,7 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 
 func (w *WAL) loadActiveSegmentState() {
 	activePath := walActivePath(w.config.Dir)
-	entries, err := ReadWALEntries(w.work.Context(), activePath, nil)
+	entries, err := readWALEntries(w.work.Context(), activePath, nil, w.frameReader())
 	if err != nil || len(entries) == 0 {
 		return
 	}
@@ -763,7 +784,7 @@ func (w *WAL) appendSerializedRecord(op OperationType, serialized walRecordData,
 	// Write atomically: each frame in one Write when using bufio so the last record
 	// is never split across a buffer flush (avoids partial-write on recovery after close).
 	// A spanned record's parts are all written under this hold of w.mu.
-	if err := w.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
+	if err := w.appendRecordLocked(&entry, record); err != nil {
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
 
@@ -901,7 +922,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		w.mu.Unlock()
 		return 0, err
 	}
-	if err := w.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
+	if err := w.appendRecordLocked(&entry, record); err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
@@ -1064,17 +1085,18 @@ func (w *WAL) nextEntryLocked(op OperationType, serialized walRecordData, databa
 }
 
 // appendRecordLocked writes a record numbered by encodeNextRecordLocked to the
-// active file with writeFrame and accounts it to the WAL's statistics and to
-// the active segment, whose roll-over limits maybeRotateLocked checks. The
-// caller holds w.mu.
-func (w *WAL) appendRecordLocked(entry *WALEntry, record walRecordFrames, writeFrame func(io.Writer, []byte, uint8) (int64, error)) error {
+// active file through the WAL's one frame writer (writeFrame, which applies the
+// configured frame format) and accounts it to the WAL's statistics and to the
+// active segment, whose roll-over limits maybeRotateLocked checks. The caller
+// holds w.mu.
+func (w *WAL) appendRecordLocked(entry *WALEntry, record walRecordFrames) error {
 	// Every embedding audit can remove an image on replay. Invalidate proof
 	// reuse at the canonical append owner, even when writing has an uncertain
 	// outcome; all direct and batched producers share this WAL-mutex cut.
 	if entry.Operation == OpUpdateEmbedding {
 		w.advanceManagedVectorGeneration()
 	}
-	alignedRecordLen, err := record.write(w.writer, writeFrame)
+	alignedRecordLen, err := record.write(w.writer, w.writeFrame)
 	if err != nil {
 		return err
 	}
@@ -1289,6 +1311,11 @@ type WALIntegrityReport struct {
 // This can be used for health checks, startup validation, or manual diagnostics.
 // It does NOT modify the WAL - read-only operation.
 func CheckWALIntegrity(walPath string) (*WALIntegrityReport, error) {
+	return checkWALIntegrity(walPath, walFrameReader{})
+}
+
+// checkWALIntegrity is CheckWALIntegrity for the frame format frameReader accepts.
+func checkWALIntegrity(walPath string, frameReader walFrameReader) (*WALIntegrityReport, error) {
 	report := &WALIntegrityReport{
 		Healthy: true,
 		Format:  "unknown",
@@ -1335,13 +1362,13 @@ func CheckWALIntegrity(walPath string) (*WALIntegrityReport, error) {
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
 		report.Format = "atomic"
-		return checkAtomicWALIntegrity(file, report)
+		return checkAtomicWALIntegrity(file, report, frameReader)
 	}
 
 	return nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
-func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
+func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport, frameReader walFrameReader) (*WALIntegrityReport, error) {
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9)
 	var lastGoodSeq uint64
@@ -1377,14 +1404,14 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 			break
 		}
 
-		version := headerBuf[4]
-		if !walFrameVersionReadable(version) {
-			return nil, unsupportedWALVersion(version)
+		frameVersion := headerBuf[4]
+		if err := frameReader.version(frameVersion); err != nil {
+			return nil, err
 		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 
-		if payloadLen > walMaxEntrySize {
-			entry, _, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+		if walFrameOversized(payloadLen, frameVersion) {
+			entry, _, err := readOversizedEmbeddingAudit(reader, payloadLen, frameVersion)
 			if err == nil {
 				report.TotalEntries++
 				report.ValidEntries++
@@ -1437,7 +1464,7 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		// Read trailer for v2+
-		if version >= 2 {
+		if frameVersion >= 2 {
 			trailerBuf := make([]byte, 8)
 			n, err = io.ReadFull(reader, trailerBuf)
 			if err != nil || n != 8 {
@@ -1461,9 +1488,15 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 			}
 		}
 
-		// Decode entry for sequence tracking
+		// Decode entry for sequence tracking. A frame the key cannot open is
+		// not a damaged record to count and continue past: the check reports
+		// the refusal instead of producing a report from ciphertext.
+		payload, payloadVersion, err := frameReader.plaintext(payload, frameVersion)
+		if err != nil {
+			return nil, fmt.Errorf("wal: integrity check after seq %d: %w", lastGoodSeq, err)
+		}
 		entry, err := WALEntry{}, error(nil)
-		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, payloadVersion)
 		if err != nil {
 			if storedCRC == computedCRC {
 				report.CorruptedEntries++
@@ -1474,7 +1507,7 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		if storedCRC == computedCRC {
-			logical, complete, spanErr := spanned.add(entry, version)
+			logical, complete, spanErr := spanned.add(entry, payloadVersion)
 			if spanErr != nil {
 				report.Healthy = false
 				report.CorruptedEntries++
@@ -1772,7 +1805,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 	// A missing or unreadable segment, unsupported format, or malformed manifest
 	// is not a corrupt tail that can be safely discarded after a snapshot.
 	// Check before closing the active file or changing any retained WAL state.
-	if err := ValidateWALFormat(w.config.Dir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(w.config.Dir, WALValidateCurrent, nil, w.frameReader()); err != nil {
 		return fmt.Errorf("wal: cannot truncate before validating WAL: %w", err)
 	}
 
@@ -1819,7 +1852,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 				return pathErr
 			}
 			sawNewer := false
-			if err := visitWALEntriesWithLogger(ctx, path, nil, walPayloadBorrowed, func(entry WALEntry) error {
+			if err := visitWALEntriesWithLogger(ctx, path, nil, walPayloadBorrowed, w.frameReader(), func(entry WALEntry) error {
 				if entry.Sequence > snapshotSeq {
 					sawNewer = true
 					retainedCount++
@@ -1840,7 +1873,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 			coveredSegments = append(coveredSegments, segment)
 		}
 		unreadableKind = "active WAL"
-		return visitWALEntriesWithLogger(ctx, walPath, nil, walPayloadBorrowed, func(entry WALEntry) error {
+		return visitWALEntriesWithLogger(ctx, walPath, nil, walPayloadBorrowed, w.frameReader(), func(entry WALEntry) error {
 			if entry.Sequence > snapshotSeq {
 				// The scan buffer expires after this callback; only the retained
 				// tail needs an independent payload for the later rewrite.
@@ -1907,7 +1940,7 @@ func (w *WAL) ManageSnapshot(ctx context.Context, snapshotSeq uint64, mode WALSn
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to serialize entry seq %d: %w", entry.Sequence, err)
 		}
-		alignedRecordLen, err := record.write(tmpWriter, writeAtomicRecordBufio)
+		alignedRecordLen, err := record.write(tmpWriter, w.writeFrame)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
@@ -2108,8 +2141,13 @@ func (w *WAL) reopenWAL() error {
 // A nil logger discards recovery diagnostics. ctx supplies diagnostic provenance;
 // reading the WAL does not cancel accepted recovery work.
 func ReadWALEntries(ctx context.Context, walPath string, logger *slog.Logger) ([]WALEntry, error) {
+	return readWALEntries(ctx, walPath, logger, walFrameReader{})
+}
+
+// readWALEntries reads one journal file in the frame format frameReader accepts.
+func readWALEntries(ctx context.Context, walPath string, logger *slog.Logger, frameReader walFrameReader) ([]WALEntry, error) {
 	entries := make([]WALEntry, 0)
-	err := visitWALEntriesWithLogger(ctx, walPath, logger, walPayloadRetained, func(entry WALEntry) error {
+	err := visitWALEntriesWithLogger(ctx, walPath, logger, walPayloadRetained, frameReader, func(entry WALEntry) error {
 		entries = append(entries, entry)
 		return nil
 	})
@@ -2126,7 +2164,7 @@ const (
 	walPayloadBorrowed
 )
 
-func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, lifetime walPayloadLifetime, visit func(WALEntry) error) error {
+func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog.Logger, lifetime walPayloadLifetime, frameReader walFrameReader, visit func(WALEntry) error) error {
 	if logger == nil {
 		logger = discardWALSlog()
 	}
@@ -2157,13 +2195,13 @@ func visitWALEntriesWithLogger(ctx context.Context, walPath string, logger *slog
 	// The current atomic format starts with magic "WALE".
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return visitAtomicWALEntries(ctx, file, logger, lifetime, visit)
+		return visitAtomicWALEntries(ctx, file, logger, lifetime, frameReader, visit)
 	}
 
 	return fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
-func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, lifetime walPayloadLifetime, visit func(WALEntry) error) error {
+func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logger, lifetime walPayloadLifetime, frameReader walFrameReader, visit func(WALEntry) error) error {
 	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
@@ -2206,15 +2244,15 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		}
 
 		// Read version (for future compatibility)
-		version := headerBuf[4]
-		if !walFrameVersionReadable(version) {
-			return unsupportedWALVersion(version)
+		frameVersion := headerBuf[4]
+		if err := frameReader.version(frameVersion); err != nil {
+			return err
 		}
 
 		// Read payload length
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
-		if payloadLen > walMaxEntrySize {
-			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+		if walFrameOversized(payloadLen, frameVersion) {
+			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, frameVersion)
 			if err != nil {
 				return fmt.Errorf("%w: entry size %d exceeds maximum %d: %w", ErrWALCorrupted, payloadLen, walMaxEntrySize, err)
 			}
@@ -2228,7 +2266,7 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		}
 
 		recordLen := int64(9 + payloadLen + 4)
-		if version >= 2 {
+		if frameVersion >= 2 {
 			recordLen = alignUp(recordLen + 8)
 		}
 		offset += uint64(recordLen)
@@ -2268,20 +2306,26 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 		// advancing; its trailer and alignment padding are not the next header.
 		storedCRC := binary.LittleEndian.Uint32(crcBuf)
 		computedCRC := crc32Checksum(payload)
+		payloadVersion := frameVersion
 		skipEmbedding := false
 		if storedCRC != computedCRC {
-			entry, decodeErr := WALEntry{}, error(nil)
-			_, decodeErr = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
-			if decodeErr == nil && entry.Operation == OpUpdateEmbedding {
-				skipEmbedding = true
-			} else {
+			// The stored payload is not the bytes the writer framed, so it is
+			// not decoded as a record: only an authenticated regenerable
+			// embedding audit is skipped, and a frame this key cannot open is
+			// refused instead of being read as one.
+			if opened, openedVersion, openErr := frameReader.plaintext(payload, frameVersion); openErr == nil {
+				entry, decodeErr := WALEntry{}, error(nil)
+				_, decodeErr = processWALEntryPayload(walPayloadDecode, nil, &entry, opened, openedVersion)
+				skipEmbedding = decodeErr == nil && entry.Operation == OpUpdateEmbedding
+			}
+			if !skipEmbedding {
 				return fmt.Errorf("%w: CRC mismatch (stored=%x, computed=%x) after seq %d",
 					ErrWALChecksumFailed, storedCRC, computedCRC, lastGoodSeq)
 			}
 		}
 
 		// Version 2+: Read and verify trailer canary
-		if version >= 2 {
+		if frameVersion >= 2 {
 			trailerBuf := make([]byte, 8)
 			n, err = io.ReadFull(reader, trailerBuf)
 			if err == io.ErrUnexpectedEOF || n != 8 {
@@ -2325,9 +2369,14 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 			continue
 		}
 
-		// Decode entry
+		// Decode entry: an encrypted frame is opened here, and the plaintext
+		// payload it holds is what the entry format describes.
+		payload, payloadVersion, err = frameReader.plaintext(payload, frameVersion)
+		if err != nil {
+			return fmt.Errorf("wal: frame after seq %d: %w", lastGoodSeq, err)
+		}
 		entry, err := WALEntry{}, error(nil)
-		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, payloadVersion)
 		if err != nil {
 			return fmt.Errorf("%w: failed to decode entry after seq %d: %v",
 				ErrWALCorrupted, lastGoodSeq, err)
@@ -2344,7 +2393,7 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 			return fmt.Errorf("%w: data checksum mismatch at seq %d",
 				ErrWALChecksumFailed, entry.Sequence)
 		}
-		logical, complete, spanErr := spanned.add(entry, version)
+		logical, complete, spanErr := spanned.add(entry, payloadVersion)
 		if spanErr != nil {
 			return spanErr
 		}
@@ -2383,6 +2432,11 @@ func visitAtomicWALEntries(ctx context.Context, file *os.File, logger *slog.Logg
 // This is safe because truncation only happens AFTER a snapshot is saved,
 // so corrupted entries before the snapshot sequence are no longer needed.
 func readWALEntriesForTruncation(walPath string, afterSeq uint64) ([]WALEntry, error) {
+	return readWALEntriesForTruncationWithReader(walPath, afterSeq, walFrameReader{})
+}
+
+// readWALEntriesForTruncationWithReader salvages entries in frameReader's format.
+func readWALEntriesForTruncationWithReader(walPath string, afterSeq uint64, frameReader walFrameReader) ([]WALEntry, error) {
 	file, err := os.Open(walPath)
 	if err != nil {
 		return nil, err
@@ -2405,13 +2459,17 @@ func readWALEntriesForTruncation(walPath string, afterSeq uint64) ([]WALEntry, e
 
 	magic := binary.LittleEndian.Uint32(header)
 	if magic == walMagic {
-		return readAtomicWALEntriesForTruncation(file, afterSeq)
+		return readAtomicWALEntriesForTruncationWithReader(file, afterSeq, frameReader)
 	}
 	return nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 }
 
 // readAtomicWALEntriesForTruncation reads atomic format entries, skipping corrupted ones.
 func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
+	return readAtomicWALEntriesForTruncationWithReader(file, afterSeq, walFrameReader{})
+}
+
+func readAtomicWALEntriesForTruncationWithReader(file *os.File, afterSeq uint64, frameReader walFrameReader) ([]WALEntry, error) {
 	var entries []WALEntry
 	var offset uint64
 	visit := withWALPropertyEpochs(func(entry WALEntry) error {
@@ -2441,13 +2499,13 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			break // Invalid magic, corrupted
 		}
 
-		version := headerBuf[4]
-		if !walFrameVersionReadable(version) {
-			return entries, unsupportedWALVersion(version)
+		frameVersion := headerBuf[4]
+		if err := frameReader.version(frameVersion); err != nil {
+			return entries, err
 		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
-		if payloadLen > walMaxEntrySize {
-			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, version)
+		if walFrameOversized(payloadLen, frameVersion) {
+			entry, length, err := readOversizedEmbeddingAudit(reader, payloadLen, frameVersion)
 			if err != nil {
 				break // Preserve the existing best-effort boundary for corruption.
 			}
@@ -2460,7 +2518,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 
 		recordLen := int64(9 + payloadLen + 4)
-		if version >= 2 {
+		if frameVersion >= 2 {
 			recordLen = alignUp(recordLen + 8)
 		}
 		offset += uint64(recordLen)
@@ -2480,7 +2538,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		trailerValid := true
 
 		// Version 2+: Read trailer
-		if version >= 2 {
+		if frameVersion >= 2 {
 			trailerBuf := make([]byte, 8)
 			n, err = io.ReadFull(reader, trailerBuf)
 			if err != nil || n != 8 {
@@ -2500,21 +2558,27 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			}
 		}
 
+		// A frame this key cannot open is refused: best-effort salvage must not
+		// turn ciphertext into a silent gap in dictionary authority.
+		payload, payloadVersion, err := frameReader.plaintext(payload, frameVersion)
+		if err != nil {
+			return entries, fmt.Errorf("wal: retained frame after seq %d: %w", getLastSeq(entries), err)
+		}
 		entry, err := WALEntry{}, error(nil)
-		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, payloadVersion)
 		if err != nil {
 			_ = visit(WALEntry{propertyScopeReset: true})
 			continue // Unknown record cannot carry dictionary authority across the gap
 		}
 
 		entry.recordEnd = offset
-		if version == walFormatVersionSpanned {
+		if payloadVersion == walFormatVersionSpanned {
 			// Best effort: a damaged part loses its whole record, never a prefix.
 			if !outerValid || !trailerValid || entry.Checksum != crc32Checksum(entry.Data) {
 				spanned.drop()
 				continue
 			}
-			logical, complete, spanErr := spanned.add(entry, version)
+			logical, complete, spanErr := spanned.add(entry, payloadVersion)
 			if spanErr != nil {
 				spanned.drop()
 				continue
@@ -2587,13 +2651,18 @@ const (
 
 // ReadWALEntriesAfter reads entries after a sequence from the selected WAL scope.
 func ReadWALEntriesAfter(ctx context.Context, path string, afterSeq uint64, scope WALReadScope) ([]WALEntry, error) {
+	return readWALEntriesAfter(ctx, path, afterSeq, scope, walFrameReader{})
+}
+
+// readWALEntriesAfter reads the entries after afterSeq in frameReader's format.
+func readWALEntriesAfter(ctx context.Context, path string, afterSeq uint64, scope WALReadScope, frameReader walFrameReader) ([]WALEntry, error) {
 	var all []WALEntry
 	var err error
 	switch scope {
 	case WALReadFile:
-		all, err = ReadWALEntries(ctx, path, nil)
+		all, err = readWALEntries(ctx, path, nil, frameReader)
 	case WALReadDirectory:
-		all, err = ReadWALEntriesFromDir(ctx, path)
+		all, err = readWALEntriesFromDir(ctx, path, frameReader)
 	default:
 		return nil, fmt.Errorf("wal: invalid read scope %d", scope)
 	}
@@ -3053,8 +3122,22 @@ type TransactionState struct {
 // Returns the engine state and recovery statistics. Recovery preserves ctx values
 // but completes independently of its cancellation once restoring accepted data.
 func RecoverWithTransactions(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
+	return recoverWithTransactions(ctx, walDir, snapshotPath, walFrameReader{})
+}
+
+// RecoverWithTransactionsWithKey is RecoverWithTransactions for a journal
+// written with key. An empty key recovers a plaintext journal.
+func RecoverWithTransactionsWithKey(ctx context.Context, walDir, snapshotPath string, key []byte) (*MemoryEngine, *TransactionRecoveryResult, error) {
+	frameReader, err := walFrameReaderForKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return recoverWithTransactions(ctx, walDir, snapshotPath, frameReader)
+}
+
+func recoverWithTransactions(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader) (*MemoryEngine, *TransactionRecoveryResult, error) {
 	ctx = context.WithoutCancel(ctx)
-	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return nil, nil, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
 	store := newRecoveredStore()
@@ -3090,7 +3173,7 @@ func RecoverWithTransactions(ctx context.Context, walDir, snapshotPath string) (
 	}
 
 	// Read all WAL entries
-	entries, err := ReadWALEntriesFromDir(ctx, walDir)
+	entries, err := readWALEntriesFromDir(ctx, walDir, frameReader)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
@@ -3285,8 +3368,22 @@ func RecoverFromWALWithLogger(ctx context.Context, walDir, snapshotPath string, 
 // Use this for programmatic access to replay statistics and errors. ctx must
 // be non-nil; values survive but cancellation is detached to finish recovery.
 func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
+	return recoverFromWALWithResult(ctx, walDir, snapshotPath, walFrameReader{})
+}
+
+// RecoverFromWALWithResultWithKey is RecoverFromWALWithResult for a journal
+// written with key. An empty key recovers a plaintext journal.
+func RecoverFromWALWithResultWithKey(ctx context.Context, walDir, snapshotPath string, key []byte) (*MemoryEngine, ReplayResult, error) {
+	frameReader, err := walFrameReaderForKey(key)
+	if err != nil {
+		return nil, ReplayResult{}, err
+	}
+	return recoverFromWALWithResult(ctx, walDir, snapshotPath, frameReader)
+}
+
+func recoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string, frameReader walFrameReader) (*MemoryEngine, ReplayResult, error) {
 	ctx = context.WithoutCancel(ctx)
-	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return nil, ReplayResult{}, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}
 	store := newRecoveredStore()
@@ -3377,11 +3474,11 @@ func RecoverFromWALWithResult(ctx context.Context, walDir, snapshotPath string) 
 	// Ensure we don't have a torn tail record before reading for recovery.
 	// This is critical when recovery is invoked because the main server never started,
 	// so NewWAL() (which also repairs tails) was never called.
-	if _, _, repairErr := repairWALTailIfNeeded(activePath, defaultWALLogger{}); repairErr != nil {
+	if _, _, repairErr := repairWALTailWithReader(activePath, defaultWALLogger{}, frameReader); repairErr != nil {
 		return nil, result, fmt.Errorf("wal: failed to inspect recovery log: %w", repairErr)
 	}
 
-	entries, err := ReadWALEntriesAfter(ctx, walDir, snapshotSeq, WALReadDirectory)
+	entries, err := readWALEntriesAfter(ctx, walDir, snapshotSeq, WALReadDirectory, frameReader)
 	if err != nil {
 		return nil, result, fmt.Errorf("wal: failed to read WAL: %w", err)
 	}

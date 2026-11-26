@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/jsontext"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -185,13 +186,16 @@ func encodeWALPropertyEpochFrame(frame walPropertyEpochFrame, sequence uint64, t
 	return payload, nil
 }
 
-func writeWALPropertyEpoch(writer *bufio.Writer, epoch *WALPropertyEpoch, sequence uint64) (int64, error) {
+// writeWALPropertyEpoch writes one authority control through writeFrame, the
+// frame writer of the journal that owns the file, so a control is stored in
+// the same format as the records it precedes.
+func writeWALPropertyEpoch(writer *bufio.Writer, epoch *WALPropertyEpoch, sequence uint64, writeFrame func(io.Writer, []byte, uint8) (int64, error)) (int64, error) {
 	frame := walPropertyEpochFrame{Format: 1, Epoch: epoch, Through: "ffffffffffffffff", Last: "ffffffffffffffff"}
 	payload, err := encodeWALPropertyEpochFrame(frame, sequence, time.Now())
 	if err != nil {
 		return 0, err
 	}
-	return writeAtomicRecordBufio(writer, payload, walFormatVersionPropertyEpoch)
+	return writeFrame(writer, payload, walFormatVersionPropertyEpoch)
 }
 
 // walPropertyEpochUnsealedName marks a log that may hold v4 controls. It is
@@ -219,7 +223,7 @@ func (w *WAL) writePropertyEpochFrameLocked(writer *bufio.Writer, epoch *WALProp
 		}
 		w.propertyEpochUnsealed = true
 	}
-	return writeWALPropertyEpoch(writer, epoch, sequence)
+	return writeWALPropertyEpoch(writer, epoch, sequence, w.writeFrame)
 }
 
 // Caller owns w.mu and has converted every file.
@@ -345,7 +349,7 @@ func (w *WAL) prepareEpochFormatLocked() error {
 	if w.propertyEpochFormatChecked || w.file == nil {
 		return nil
 	}
-	if err := validateWALFileVersion(walActivePath(w.config.Dir), false); err != nil {
+	if err := validateWALFileVersion(walActivePath(w.config.Dir), false, w.frameReader()); err != nil {
 		return err
 	}
 	info, err := os.Stat(walActivePath(w.config.Dir))

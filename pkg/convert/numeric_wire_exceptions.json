@@ -417,7 +417,7 @@
   },
   "pkg/storage/snapshot_stream.go:readSnapshot": {
     "reason": "Typed snapshot footer/checksum framing; entity payloads use the binary/property recovery owner.",
-    "sha256": "77d5a24c2f5f4dbad48df225d24caf46c9eff77be0182b21287576141a33e80b"
+    "sha256": "b291bbb14b2f68e0578507c709d3ac7a1938c8186d8f7fcc6f507832c96ba8c9"
   },
   "pkg/storage/wal_diagnostics.go:WAL.reportCorruption": {
     "reason": "Typed corruption diagnostic report; no property payload.",

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -109,8 +110,7 @@ func TestFineGrainedReadableIndexedLookupUsesSeek(t *testing.T) {
 
 func BenchmarkFineGrainedIndexedLookup(b *testing.B) {
 	ctx := b.Context()
-	base := storage.NewMemoryEngine()
-	b.Cleanup(func() { _ = base.Close() })
+	base := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "fgac_bench")
 	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 	_, err := exec.Execute(ctx, "CREATE INDEX person_email_fgac_bench IF NOT EXISTS FOR (p:Person) ON (p.email)", nil)

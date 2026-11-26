@@ -503,7 +503,7 @@ func (w *WALEngine) createSnapshotAndCompactAt(ctx context.Context, save compact
 		mutationLocked = false
 		w.mutationMu.Unlock()
 	}
-	if err := save(ctx, compactionSnapshot{engine: w.engine, source: source, sequence: snapshotSequence}, snapshotPath); err != nil {
+	if err := save(ctx, compactionSnapshot{engine: w.engine, source: source, sequence: snapshotSequence, encryptionKey: w.wal.config.EncryptionKey}, snapshotPath); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
 	}
 

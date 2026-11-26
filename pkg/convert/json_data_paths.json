@@ -1,4 +1,9 @@
 {
+  "pkg/auth/fine_grained_graph.go:FineGrainedRequest.AccessHash": {
+    "write_domain": "property",
+    "contract": "Hash the typed fine-grained grant image with the same exact numeric representation used by persisted policy values.",
+    "calls": {"property.Marshal": 1}
+  },
   "pkg/heimdall/handler.go:Handler.sendStreamNotifications": {
     "write_domain": "property",
     "contract": "Typed plugin notification SSE chunks retain the existing payload and framing.",
@@ -347,10 +352,17 @@
   },
   "pkg/nornicdb/db_admin.go:DB.Restore": {
     "read_domain": "property",
+	"write_domain": "property",
     "contract": "JSON backup imports intentionally preserve integer token digits for every backup version; old untagged whole FLOAT kind/sign cannot be recovered.",
     "calls": {
-      "property.Unmarshal": 1
+	  "property.Unmarshal": 1,
+	  "property.Marshal": 1
     }
+  },
+  "pkg/nornicdb/storage_recovery.go:nativeRestoreWALFloor": {
+    "read_domain": "property",
+    "contract": "Read the typed native restore marker with an exact WAL sequence and distinguish an absent field from zero.",
+    "calls": {"property.Unmarshal": 1}
   },
   "pkg/nornicdb/db.go:Open": {
     "write_domain": "property",

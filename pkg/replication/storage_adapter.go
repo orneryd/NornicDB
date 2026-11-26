@@ -31,6 +31,7 @@ type StorageAdapter struct {
 	// Persistent WAL for replication commands
 	wal         *storage.WAL
 	walDir      string
+	walKey      []byte
 	walMu       sync.RWMutex // Protects wal and walPosition
 	walPosition atomic.Uint64
 	// projectedIDs maps each retained accepted command identity (its database and
@@ -103,6 +104,12 @@ func NewStorageAdapter(engine storage.Engine) (*StorageAdapter, error) {
 // NewStorageAdapterWithWAL creates a new storage adapter with a custom WAL directory.
 // If walDir is empty, defaults to "data/replication/wal".
 func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAdapter, error) {
+	return NewStorageAdapterWithWALKey(engine, walDir, nil)
+}
+
+// NewStorageAdapterWithWALKey creates an adapter whose local projection WAL is
+// encrypted when key is set. The caller must supply the same key on reopen.
+func NewStorageAdapterWithWALKey(engine storage.Engine, walDir string, key []byte) (*StorageAdapter, error) {
 	if walDir == "" {
 		walDir = "data/replication/wal"
 	}
@@ -115,6 +122,7 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	// Create persistent WAL
 	walConfig := storage.DefaultWALConfig()
 	walConfig.Dir = walDir
+	walConfig.EncryptionKey = key
 	walConfig.SyncMode = "batch" // Batch sync for performance
 	walConfig.BatchSyncInterval = 100 * time.Millisecond
 
@@ -127,6 +135,7 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 		engine:   engine,
 		wal:      wal,
 		walDir:   walDir,
+		walKey:   append([]byte(nil), key...),
 		walQueue: make(chan *walWriteRequest, 1000), // Buffered channel for async WAL writes
 		walBatch: make([]*walWriteRequest, 0, 100),  // Pre-allocated batch buffer
 	}
@@ -149,7 +158,7 @@ func (a *StorageAdapter) loadWALPosition() error {
 	if a.wal != nil {
 		a.walPosition.Store(a.wal.Sequence())
 	}
-	entries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
+	entries, err := storage.ReadWALEntriesFromDirWithKey(a.work.Context(), a.walDir, a.walKey)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 	}
@@ -580,7 +589,7 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 	a.walMu.RLock()
 	defer a.walMu.RUnlock()
 
-	storageEntries, err := storage.ReadWALEntriesFromDir(a.work.Context(), a.walDir)
+	storageEntries, err := storage.ReadWALEntriesFromDirWithKey(a.work.Context(), a.walDir, a.walKey)
 	if err != nil {
 		// Handle missing WAL file gracefully (may not exist yet)
 		if os.IsNotExist(err) {

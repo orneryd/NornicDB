@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -105,8 +106,11 @@ func nativeRestoreWALFloor(dataDir string) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read native restore boundary: %w", err)
 	}
-	var boundary nativeRestoreBoundary
-	if err := json.Unmarshal(data, &boundary); err != nil {
+	var boundary struct {
+		RestoredAt  time.Time `json:"restored_at"`
+		WALSequence *uint64   `json:"wal_sequence"`
+	}
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &boundary); err != nil {
 		// Older markers held only a timestamp. They did not record a safe WAL
 		// floor, so retain their existing replay behavior rather than guess.
 		if _, legacyErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); legacyErr == nil {
@@ -114,17 +118,13 @@ func nativeRestoreWALFloor(dataDir string) (uint64, error) {
 		}
 		return 0, fmt.Errorf("decode native restore boundary: %w", err)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return 0, fmt.Errorf("decode native restore boundary fields: %w", err)
-	}
-	if _, ok := fields["wal_sequence"]; !ok {
+	if boundary.WALSequence == nil {
 		return 0, errors.New("native restore boundary has no WAL sequence")
 	}
 	if boundary.RestoredAt.IsZero() {
 		return 0, errors.New("native restore boundary has no restore time")
 	}
-	return boundary.WALSequence, nil
+	return *boundary.WALSequence, nil
 }
 
 func hasPostRestoreSnapshot(dataDir string) bool {
@@ -303,7 +303,7 @@ func recoverBadgerStore(ctx context.Context, dataDir string, badgerOpts storage.
 	status.Phase = RecoveryPhaseReplay
 	// The old store has moved. Finish recovery under that ownership so request
 	// cancellation cannot leave a partially rebuilt store at the catalog path.
-	replay, streamStatus, err := storage.RecoverIntoEngine(context.WithoutCancel(ctx), newStore, walDir, snapPath)
+	replay, streamStatus, err := storage.RecoverIntoEngineWithKey(context.WithoutCancel(ctx), newStore, walDir, snapPath, badgerOpts.EncryptionKey)
 	status.SnapshotStreaming = streamStatus.SnapshotStreaming
 	status.SnapshotNodes = streamStatus.SnapshotNodes
 	status.SnapshotEdges = streamStatus.SnapshotEdges

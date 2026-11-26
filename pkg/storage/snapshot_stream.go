@@ -29,6 +29,11 @@ const (
 type SnapshotOptions struct {
 	Sequence       uint64
 	MaxRecordBytes int64
+	// EncryptionKey is the explicit optional 32-byte AES-256 key for the
+	// snapshot stream. Nil or empty writes the unchanged plaintext NDS2
+	// stream. A set key writes the chunked authenticated envelope owned by
+	// snapshot_encryption.go; the key itself is never stored in the snapshot.
+	EncryptionKey []byte
 }
 
 type SnapshotMetadata struct {
@@ -60,6 +65,11 @@ type SnapshotVisitor interface {
 // snapshot automatic compaction takes is written with this default (NOR-412).
 // options.MaxRecordBytes can only lower that, for a caller that wants a
 // bounded export.
+//
+// options.EncryptionKey encrypts the stream when set: the NDS2 frames pass
+// through the chunked AES-256-GCM envelope of snapshot_encryption.go directly
+// to writer, so no plaintext copy is staged anywhere. A nil key writes the
+// plaintext NDS2 stream unchanged.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
 	_, ok := ResolveStreamingEngine(engine)
 	if !ok {
@@ -90,10 +100,21 @@ func writeSnapshotPopulation(ctx context.Context, writer io.Writer, options Snap
 		return fmt.Errorf("snapshot max record bytes must be between 0 and %d", materializedSnapshotRecordSize)
 	}
 
+	output := writer
+	var envelope *snapshotEnvelopeWriter
+	if len(options.EncryptionKey) > 0 {
+		var err error
+		envelope, err = newSnapshotEnvelopeWriter(writer, options.EncryptionKey)
+		if err != nil {
+			return err
+		}
+		output = envelope
+	}
+
 	// A snapshot holds what storage holds: the entities the visibility
 	// layer hides from reads are stored data too, and the WAL is truncated
 	// once the snapshot is written.
-	return writeSnapshotRecords(writer, options.Sequence, time.Now(), maxRecordBytes, nil,
+	err := writeSnapshotRecords(output, options.Sequence, time.Now(), maxRecordBytes, nil,
 		func(write func(byte, any) error) error {
 			if err := nodes(ctx, func(node *Node) error {
 				return write(streamSnapshotNode, snapshotNodeVectorMetadata(node))
@@ -105,10 +126,18 @@ func writeSnapshotPopulation(ctx context.Context, writer io.Writer, options Snap
 			}
 			return nil
 		})
+	if err != nil {
+		return err
+	}
+	if envelope != nil {
+		return envelope.Finish()
+	}
+	return nil
 }
 
 // SaveStreamingSnapshot writes a framed snapshot using temp-file, sync, and
-// atomic-rename durability semantics.
+// atomic-rename durability semantics. options.EncryptionKey encrypts the
+// temporary file while it is written; the plaintext stream never reaches it.
 func SaveStreamingSnapshot(ctx context.Context, engine Engine, path string, options SnapshotOptions) error {
 	return saveSnapshotFile(path, func(writer io.Writer) error {
 		return WriteSnapshot(ctx, engine, writer, options)
@@ -237,6 +266,9 @@ func readSnapshot(ctx context.Context, reader io.Reader, visitor SnapshotVisitor
 				return metadata, fmt.Errorf("streaming snapshot footer count mismatch")
 			}
 			if _, err := buffered.Peek(1); err != io.EOF {
+				if err != nil {
+					return metadata, err
+				}
 				return metadata, fmt.Errorf("trailing data after streaming snapshot footer")
 			}
 			return metadata, nil

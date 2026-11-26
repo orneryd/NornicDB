@@ -4,7 +4,7 @@ Recovery records preserve node and relationship timestamps, embedding metadata,
 inline vectors, visibility flags, relationship confidence, and exact integer
 property values. Client-facing node and relationship JSON is unchanged.
 
-Current WAL framing is format 6; recovery snapshots use `NDS2` version 2. These are format identifiers, independent of the application release label and the named V4 storage-upgrade arm. Record the binary/build commit with backups. For operating policy, see [durability](durability.md), [WAL lifecycle](wal-compaction.md), and [backup/restore](backup-restore.md).
+Unencrypted WAL framing is format 6 (7 for spanned records). Database encryption uses authenticated WAL formats 8 and 9 and an authenticated envelope around `NDS2` version 2 recovery snapshots. These are format identifiers, independent of the application release label and the named V4 storage-upgrade arm. Record the binary/build commit and required encryption material with backups. For operating policy, see [durability](durability.md), [WAL lifecycle](wal-compaction.md), and [backup/restore](backup-restore.md).
 
 ## Write-ahead logs
 

@@ -28,10 +28,24 @@ const recoveryBatchSize = 1000
 // ctx must be non-nil. Recovery retains its values and detaches cancellation
 // so restoring acknowledged data completes independently of the initiator.
 func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
+	return recoverIntoEngine(ctx, destination, walDir, snapshotPath, walFrameReader{})
+}
+
+// RecoverIntoEngineWithKey is RecoverIntoEngine for a journal written with
+// key. An empty key recovers a plaintext journal.
+func RecoverIntoEngineWithKey(ctx context.Context, destination Engine, walDir, snapshotPath string, key []byte) (ReplayResult, RecoveryStreamStatus, error) {
+	frameReader, err := walFrameReaderForKey(key)
+	if err != nil {
+		return ReplayResult{}, RecoveryStreamStatus{}, err
+	}
+	return recoverIntoEngine(ctx, destination, walDir, snapshotPath, frameReader)
+}
+
+func recoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshotPath string, frameReader walFrameReader) (ReplayResult, RecoveryStreamStatus, error) {
 	ctx = context.WithoutCancel(ctx)
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
-	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return result, status, err
 	}
 	var snapshotSeq uint64
@@ -99,10 +113,10 @@ func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshot
 	}
 
 	activePath := walActivePath(walDir)
-	if _, _, err := repairWALTailIfNeeded(activePath, defaultWALLogger{}); err != nil {
+	if _, _, err := repairWALTailWithReader(activePath, defaultWALLogger{}, frameReader); err != nil {
 		return result, status, fmt.Errorf("wal: failed to inspect recovery log: %w", err)
 	}
-	err := VisitWALEntriesAfterFromDir(ctx, walDir, snapshotSeq, func(entry WALEntry) error {
+	err := visitWALEntriesAfterFromDir(ctx, walDir, snapshotSeq, frameReader, func(entry WALEntry) error {
 		status.WALEntries++
 		if entry.Operation == OpCheckpoint {
 			result.Skipped++
