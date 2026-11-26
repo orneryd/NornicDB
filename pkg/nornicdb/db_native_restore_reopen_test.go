@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -48,4 +49,28 @@ func TestNativeRestoreReopensAfterTargetHadWrites(t *testing.T) {
 	restored, err = reopened.GetNode(ctx, want.ID)
 	require.NoError(t, err)
 	require.Equal(t, "from-backup", restored.Properties["name"])
+}
+
+func TestNativeRestoreReloadsChangeCaptureWithoutServer(t *testing.T) {
+	ctx := t.Context()
+	source, err := Open(t.TempDir(), nil)
+	require.NoError(t, err)
+	sourceManager, err := multidb.NewDatabaseManager(ctx, source.GetBaseStorageForManager(), nil)
+	require.NoError(t, err)
+	require.NoError(t, sourceManager.SetDatabaseOption(ctx, "nornic", multidb.OptionTxLogEnrichment, "FULL"))
+	backup := filepath.Join(t.TempDir(), "capture.backup")
+	require.NoError(t, source.Backup(ctx, backup))
+	require.NoError(t, source.Close())
+	// The manager shares source's engine; its Close releases manager state and
+	// may report that source already closed the shared engine.
+	_ = sourceManager.Close()
+
+	target, err := Open(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	capture, ok := storage.ChangeCaptureOf(target.GetBaseStorageForManager())
+	require.True(t, ok)
+	require.Equal(t, storage.ChangeCaptureOff, capture.ChangeCapture("nornic"))
+	require.NoError(t, target.Restore(ctx, backup))
+	require.Equal(t, storage.ChangeCaptureFull, capture.ChangeCapture("nornic"))
 }
