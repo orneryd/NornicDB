@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Detect native backup framing before legacy JSON restore so valid backups whose length prefix starts with JSON punctuation restore reliably.
+- Publish a fresh recovery snapshot before serving an upgraded historical WAL where automatic rebuilding is supported, and refuse rebuilding while that snapshot is pending so older transaction-only journals cannot silently lose acknowledged graph changes.
 - Restore indexed node lookups, revision-scoped full-text views and result caching, and Bolt streaming for eligible fine-grained reads while preserving policy checks; authorize restricted property vectors before scoring and reuse stable admission decisions.
 - Reuse shared full-text field provenance and revision-scoped visibility statistics for restricted search, preserving visible-only hits and scores without rebuilding BM25 on every stable query.
 - Reuse authorized vector candidate decisions across stable policy and graph revisions, with fresh reads when decay or manual suppression can change visibility independently.
