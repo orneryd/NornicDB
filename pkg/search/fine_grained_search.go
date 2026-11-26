@@ -77,17 +77,27 @@ func (scope *indexedSearchScope) keywordRestricted(relationships bool) bool {
 	if database == "" {
 		database = s.continuationDatabase()
 	}
+	return !SharedCorpusVisible(request, database, relationships)
+}
+
+// SharedCorpusVisible proves that a request can read every entity and field
+// in a shared node or relationship text corpus. A narrower request must use
+// a policy-scoped corpus so hidden text cannot affect scores or hit counts.
+func SharedCorpusVisible(request *auth.FineGrainedRequest, database string, relationships bool) bool {
+	if request == nil || database == "" || request.DatabaseID == nil {
+		return false
+	}
 	id := request.DatabaseID(database)
 	allows := func(action string) bool {
 		return request.Access.AllowsEntireGraphAction(action, id, request.HomeDatabaseID)
 	}
 	if !allows("graph.node.traverse") {
-		return true
+		return false
 	}
 	if relationships {
-		return !allows("graph.relationship.traverse") || !allows("graph.relationship.property.read")
+		return allows("graph.relationship.traverse") && allows("graph.relationship.property.read")
 	}
-	return !allows("graph.node.property.read")
+	return allows("graph.node.property.read")
 }
 
 // visibleBM25 projects the shared index population into request-local scoring

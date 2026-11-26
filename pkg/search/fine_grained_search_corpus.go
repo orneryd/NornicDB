@@ -2,13 +2,10 @@ package search
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -19,14 +16,6 @@ const (
 )
 
 var errMissingFieldProvenance = errors.New("search: field provenance unavailable")
-
-func searchAccessHash(request *auth.FineGrainedRequest) ([32]byte, error) {
-	rules, err := json.Marshal(request.Access.Rules())
-	if err != nil {
-		return [32]byte{}, err
-	}
-	return sha256.Sum256(rules), nil
-}
 
 // searchVisibilityCacheSafe requires a known local storage owner without
 // decay or manual suppression. The clock and query-local reveal scopes can
@@ -127,7 +116,7 @@ func (s *Service) visibleCorpus(ctx context.Context, scope *indexedSearchScope, 
 		// The runtime fingerprint binds the principal and policy revision.
 		// Include the effective rules as well so manually assembled requests
 		// cannot share a cache entry by reusing an arbitrary fingerprint.
-		accessHash, err := searchAccessHash(scope.principal)
+		accessHash, err := scope.principal.AccessHash()
 		if err != nil {
 			return nil, err
 		}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/internal/jsontext"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -42,8 +43,20 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 	}
 	// Decay and REVEAL can change the visible corpus without a graph write.
 	// Its owner remains the same, but its document view is request-scoped.
-	fresh := requestLocal || e.fineGrainedGraph != nil
-	if storageHasDecayFiltering(e.storage) {
+	engine := e.storage
+	fresh := requestLocal
+	var policyRequest *auth.FineGrainedRequest
+	var policySource storage.Engine
+	if request := e.fineGrainedGraph; request != nil {
+		if e.fineGrainedSource != nil && search.SharedCorpusVisible(request, e.executionDatabaseName(ctx), relationships) {
+			engine = e.fineGrainedSource
+		} else if !requestLocal && e.fineGrainedSource != nil && request.Fingerprint != "" {
+			policyRequest, policySource = request, e.fineGrainedSource
+		} else {
+			fresh = true
+		}
+	}
+	if storageHasDecayFiltering(engine) {
 		fresh = true
 	}
 	// Schema identities use the same lossless string owner as catalog/schema
@@ -55,6 +68,7 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 		name = "relationships:" + indexName
 	}
 	retain := func(name string) bool {
+		name, _, _ = strings.Cut(name, "\x00fgac:")
 		_, index, _ := strings.Cut(name, ":")
 		if fulltextIndexNeedsNoDeclaration(index) {
 			return true
@@ -73,8 +87,8 @@ func (e *StorageExecutor) withFulltextDocuments(ctx context.Context, indexName s
 		}
 		return &search.FulltextDocument{Text: doc.contentLower, Tokens: doc.contentTokenN, Value: doc, MatchFields: doc.properties, RetainedBytes: doc.retainedSize}
 	}
-	scope := search.FulltextDocumentScope{QueryNodes: e.queryNodeReader(ctx, e.storage) != nil, NodeLabels: labels, Name: name, Definition: string(definition), Relationships: relationships, Fresh: fresh, Retain: retain, Candidate: candidate, EntityRows: true}
-	return svc.ReadFulltextDocuments(ctx, e.storage, scope, build, read)
+	scope := search.FulltextDocumentScope{QueryNodes: e.queryNodeReader(ctx, engine) != nil, NodeLabels: labels, Name: name, Definition: string(definition), Relationships: relationships, Fresh: fresh, Retain: retain, Candidate: candidate, EntityRows: true, PolicyRequest: policyRequest, PolicySource: policySource}
+	return svc.ReadFulltextDocuments(ctx, engine, scope, build, read)
 }
 
 // fulltextIndexMember is the index's label or relationship-type membership, the

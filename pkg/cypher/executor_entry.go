@@ -3,6 +3,7 @@ package cypher
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/internal/transportread"
@@ -665,7 +666,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, fabricPreparedExecKey{}, preparedFabric)
-		allowResultCache := !preparedFabric.hasRemote
+		allowResultCache := !preparedFabric.hasRemote && auth.FineGrainedRequestFromContext(ctx) == nil
 		fabricResultCacheKey := ""
 
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
@@ -1003,12 +1004,27 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if e.canUseResultCache(ctx, info, cypher) {
+		// A cache hit is still a statement by this principal. Check the
+		// current database and privileges before looking up a retained result;
+		// the execution path creates its scoped graph on a miss.
+		if auth.FineGrainedRequestFromContext(ctx) != nil {
+			if _, err := e.bindFineGrainedGraph(ctx, cypher); err != nil {
+				return nil, err
+			}
+		}
 		resultCacheKey = resultCacheEntryKey(ctx, cypher, params)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
+		}
+		if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+			accessHash, err := request.AccessHash()
+			if err != nil {
+				return nil, err
+			}
+			resultCacheKey += ":fgac:" + request.Fingerprint + ":rules:" + hex.EncodeToString(accessHash[:]) + ":db:" + request.DatabaseID(e.executionDatabaseName(ctx))
 		}
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {

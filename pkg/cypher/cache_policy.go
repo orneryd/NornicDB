@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // The write effect read here is the statement-effect owner's answer
@@ -58,7 +59,24 @@ func (e *StorageExecutor) invalidateCachesForQuery(ctx context.Context, info *Qu
 // runtime work is admitted only when the resolved text is deterministic, and a
 // nested write or unknown text refuses it there.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
-	return auth.FineGrainedRequestFromContext(ctx) == nil && !e.inTransaction(ctx) && info.readResult() && e.StatementCacheSelectionValid() && e.cache != nil &&
+	if request := auth.FineGrainedRequestFromContext(ctx); request != nil {
+		// A principal's cached result may be reused only for the same policy
+		// revision and a graph whose mutation revision can be checked. The
+		// fingerprint includes effective identity and roles; its key is added
+		// by the result-cache lookup owner.
+		if request.Fingerprint == "" || request.DatabaseID == nil || request.DatabaseID(e.executionDatabaseName(ctx)) == "" ||
+			(e.fineGrainedGraph != nil && e.fineGrainedGraph != request) {
+			return false
+		}
+		owner, ok := e.storage.(storage.GraphMutationVersionProvider)
+		if !ok {
+			return false
+		}
+		if _, supported := owner.GraphMutationVersion(); !supported {
+			return false
+		}
+	}
+	return !e.inTransaction(ctx) && info.readResult() && e.StatementCacheSelectionValid() && e.cache != nil &&
 		info.deterministicExecution(ctx, cypher) && !profileExecutionBypassesCache(ctx) && !e.queryPropertyDecayEnabled()
 }
 

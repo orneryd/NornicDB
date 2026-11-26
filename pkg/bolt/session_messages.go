@@ -290,12 +290,12 @@ func (s *Session) handleRun(data []byte) error {
 
 	runStart := time.Now()
 	var result *QueryResult
-	if principal == nil && !s.inTransaction && !isWrite && s.messageQueue != nil {
+	if !s.inTransaction && !isWrite && s.messageQueue != nil && (principal == nil || principal.Fingerprint != "" && !principal.PasswordChangeRequired) {
 		// An auto-commit read produces its rows as PULL asks for them
 		// once it has more than lazyResultThreshold (#939); RUN and those
 		// PULLs are then already answered.
 		var served bool
-		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart, newFineGrainedResultScope(principal, impersonated))
 		if served {
 			return nil
 		}
@@ -820,7 +820,7 @@ func (s *Session) handlePull(data []byte) error {
 	}
 
 	rowContext := s.parentContext()
-	if stream.fgac.fingerprint != "" && stream.result != nil && len(stream.result.Rows) != 0 {
+	if stream.fgac.fingerprint != "" && stream.result != nil && (len(stream.result.Rows) != 0 || stream.lazy != nil) {
 		s.refreshAuthResult()
 		var current *auth.FineGrainedRequest
 		var target *auth.User
