@@ -34,13 +34,13 @@ const (
 // validates a store journal, whose upgrade has no payload transform: a record
 // over one frame is admitted whole.
 func ValidateWALFormat(dir string, mode WALFormatValidation) error {
-	return validateWALFormat(dir, mode, nil)
+	return validateWALFormat(dir, mode, nil, walFrameReader{})
 }
 
 // validateWALFormat is ValidateWALFormat for a journal whose upgrade converts
 // its records with records (UpgradeWALV4): upgrade validation runs that conversion on
 // every record other than a property-epoch control and refuses a record it refuses.
-func validateWALFormat(dir string, mode WALFormatValidation, records *v4UpgradeRecords) error {
+func validateWALFormat(dir string, mode WALFormatValidation, records *v4UpgradeRecords, frameReader walFrameReader) error {
 	if mode != WALValidateCurrent && mode != WALValidateV4Upgrade {
 		return fmt.Errorf("wal: unknown validation mode %d", mode)
 	}
@@ -57,7 +57,7 @@ func validateWALFormat(dir string, mode WALFormatValidation, records *v4UpgradeR
 			if _, err := planV4WALMigration(path, false, records, true); err != nil {
 				return err
 			}
-		} else if err := validateWALFileVersion(path, false); err != nil {
+		} else if err := validateWALFileVersion(path, false, frameReader); err != nil {
 			return err
 		}
 	}
@@ -71,10 +71,10 @@ func validateWALFormat(dir string, mode WALFormatValidation, records *v4UpgradeR
 		_, err := planV4WALMigration(active, true, records, true)
 		return err
 	}
-	return validateWALFileVersion(active, true)
+	return validateWALFileVersion(active, true, frameReader)
 }
 
-func validateWALFileVersion(path string, optional bool) error {
+func validateWALFileVersion(path string, optional bool, frameReader walFrameReader) error {
 	file, err := os.Open(path)
 	if optional && os.IsNotExist(err) {
 		return nil
@@ -106,20 +106,36 @@ func validateWALFileVersion(path string, optional bool) error {
 			}
 			return nil // a damaged current tail is handled by the repair owner
 		}
-		if n >= 5 && !walFrameVersionReadable(header[4]) {
-			return fmt.Errorf("%s: %w", path, unsupportedWALVersion(header[4]))
+		if n >= 5 {
+			if err := frameReader.version(header[4]); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
 		}
 		if n < len(header) {
 			return nil
 		}
+		version := header[4]
 		size := binary.LittleEndian.Uint32(header[5:])
-		if size > walMaxEntrySize {
-			_, length, err := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, int64(size)+19), size, header[4])
+		if walFrameOversized(size, version) {
+			_, length, err := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, int64(size)+19), size, version)
 			if err != nil {
 				return nil // repair/integrity owner reports the malformed record
 			}
 			offset += length
 			continue
+		}
+		if walFrameEncrypted(version) {
+			// The format check walks past every frame, so it authenticates the
+			// encrypted ones as it goes: a wrong key is refused here, and a
+			// frame the file does not hold completely is the repair owner's
+			// tail.
+			payload := make([]byte, size)
+			if _, err := file.ReadAt(payload, offset+9); err != nil {
+				return nil
+			}
+			if _, _, err := frameReader.plaintext(payload, version); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
 		}
 		offset += alignUp(int64(9) + int64(size) + 4 + 8)
 	}

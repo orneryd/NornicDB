@@ -28,10 +28,24 @@ const recoveryBatchSize = 1000
 // ctx must be non-nil. Recovery retains its values and detaches cancellation
 // so restoring acknowledged data completes independently of the initiator.
 func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
+	return recoverIntoEngine(ctx, destination, walDir, snapshotPath, walFrameReader{}, nil)
+}
+
+// RecoverIntoEngineWithKey is RecoverIntoEngine for a journal written with
+// key. An empty key recovers a plaintext journal.
+func RecoverIntoEngineWithKey(ctx context.Context, destination Engine, walDir, snapshotPath string, key []byte) (ReplayResult, RecoveryStreamStatus, error) {
+	frameReader, err := walFrameReaderForKey(key)
+	if err != nil {
+		return ReplayResult{}, RecoveryStreamStatus{}, err
+	}
+	return recoverIntoEngine(ctx, destination, walDir, snapshotPath, frameReader, key)
+}
+
+func recoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshotPath string, frameReader walFrameReader, key []byte) (ReplayResult, RecoveryStreamStatus, error) {
 	ctx = context.WithoutCancel(ctx)
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
-	if err := ValidateWALFormat(walDir, WALValidateCurrent); err != nil {
+	if err := validateWALFormat(walDir, WALValidateCurrent, nil, frameReader); err != nil {
 		return result, status, err
 	}
 	var snapshotSeq uint64
@@ -44,6 +58,11 @@ func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshot
 		if err != nil && !os.IsNotExist(err) {
 			return result, status, fmt.Errorf("wal: failed to inspect snapshot: %w", err)
 		}
+		encrypted, err := IsEncryptedSnapshot(snapshotPath)
+		if err != nil && !os.IsNotExist(err) {
+			return result, status, fmt.Errorf("wal: failed to inspect snapshot: %w", err)
+		}
+		streaming = streaming || encrypted
 		status.SnapshotStreaming = streaming
 		if streaming {
 			file, err := os.Open(snapshotPath)
@@ -55,7 +74,7 @@ func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshot
 				return result, status, err
 			}
 			visitor := newRecoverySnapshotVisitor(destination, recoveryBatchSize)
-			metadata, readErr := readSnapshot(ctx, file, visitor, nil, materializedSnapshotRecordSize)
+			metadata, readErr := ReadSnapshotWithKey(ctx, file, visitor, key)
 			if readErr == nil {
 				readErr = visitor.Flush(ctx)
 			}
@@ -70,6 +89,9 @@ func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshot
 			status.SnapshotNodes = metadata.NodeCount
 			status.SnapshotEdges = metadata.EdgeCount
 		} else {
+			if len(key) != 0 && err == nil {
+				return result, status, ErrSnapshotEncryptionNotEncrypted
+			}
 			snapshot, err := LoadSnapshot(ctx, snapshotPath)
 			if err != nil {
 				if !os.IsNotExist(err) {
@@ -99,10 +121,10 @@ func RecoverIntoEngine(ctx context.Context, destination Engine, walDir, snapshot
 	}
 
 	activePath := walActivePath(walDir)
-	if _, _, err := repairWALTailIfNeeded(activePath, defaultWALLogger{}); err != nil {
+	if _, _, err := repairWALTailWithReader(activePath, defaultWALLogger{}, frameReader); err != nil {
 		return result, status, fmt.Errorf("wal: failed to inspect recovery log: %w", err)
 	}
-	err := VisitWALEntriesAfterFromDir(ctx, walDir, snapshotSeq, func(entry WALEntry) error {
+	err := visitWALEntriesAfterFromDir(ctx, walDir, snapshotSeq, frameReader, func(entry WALEntry) error {
 		status.WALEntries++
 		if entry.Operation == OpCheckpoint {
 			result.Skipped++

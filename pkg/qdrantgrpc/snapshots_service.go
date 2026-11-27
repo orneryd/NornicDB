@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/grpcresponse"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -270,6 +272,22 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 // CreateFull creates a full storage snapshot (all collections).
 // Maps to: BadgerEngine.Backup or WAL.CreateSnapshot for all data
 func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
+	if collections, ok := s.collections.(*databaseCollectionStore); ok {
+		var response *qpb.CreateSnapshotResponse
+		err := collections.dbManager.WithBackupCatalog(ctx, func(catalog multidb.BackupCatalog) error {
+			var err error
+			response, err = s.createFull(ctx, catalog)
+			return err
+		})
+		return response, err
+	}
+	return s.createFull(ctx, multidb.BackupCatalog{})
+}
+
+func (s *SnapshotsService) createFull(ctx context.Context, catalog multidb.BackupCatalog) (*qpb.CreateSnapshotResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := s.allowFullAccess(ctx); err != nil {
 		return nil, err
 	}
@@ -290,8 +308,23 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	snapshotName := fmt.Sprintf("full-%d.snapshot", timestamp.UnixNano())
 	snapshotPath := filepath.Join(fullSnapshotDir, snapshotName)
 
-	// Try to use BadgerEngine.Backup if available.
-	if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
+	// Mixed snapshots use the catalog inventory. For a single store, use the
+	// storage supplied to this service, including any caller-owned decorators.
+	native, canStream := s.baseStorage.(storage.NativeBackupStreamer)
+	if dedicated := catalog.HasDedicatedStores(); dedicated || canStream {
+		var err error
+		if dedicated {
+			err = catalog.Write(ctx, snapshotPath, nil)
+		} else {
+			err = storage.WriteNativeDatabaseBackup(ctx, snapshotPath, native)
+		}
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
+		}
+	} else if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
 		if err := badger.Backup(snapshotPath); err != nil {
 			return nil, grpcresponse.LocalizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err), grpcresponse.QdrantSourceFallback)
 		}

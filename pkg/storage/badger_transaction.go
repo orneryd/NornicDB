@@ -50,6 +50,9 @@ type BadgerTransaction struct {
 	// writeAdmission decides whether the transaction may write, before its
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
 	writeAdmission func() error
+	// Fine-grained schema observations survive staging so a later commit
+	// context cannot lose the authorization view used by the write.
+	constraintAdmissions []*constraintAdmission
 
 	// entityLocks are the write locks of the existing nodes and
 	// relationships the transaction's statements write, held until it ends
@@ -158,6 +161,7 @@ type BadgerTransaction struct {
 	pendingIndex     *pendingNodeIndex
 	pendingEdges     map[EdgeID]*Edge
 	pendingAdjacency map[NodeID]map[EdgeID]*Edge
+	pendingBetween   map[pendingBetweenKey]map[EdgeID]*Edge
 	snapshotEquality map[snapshotLabelCacheKey]*snapshotEqualityPopulation
 	// edgeCreateNoOps records CREATE candidates over stored hidden
 	// relationships. They stage only a hidden candidate image:
@@ -946,6 +950,7 @@ func (tx *BadgerTransaction) createNode(ctx context.Context, node *Node, minted 
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	tx.rememberConstraintAdmissionLocked(ctx)
 
 	// Enforce namespace prefix at storage layer and pin the transaction to a
 	// single namespace; cross-namespace writes break per-database MVCC
@@ -1055,6 +1060,7 @@ func (tx *BadgerTransaction) UpdateGraphNode(ctx context.Context, updateRequest 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.rememberConstraintAdmissionLocked(ctx)
 
 	if node == nil || node.ID == "" {
 		return ErrInvalidID
@@ -1738,6 +1744,7 @@ func (tx *BadgerTransaction) bulkCreateEdges(ctx context.Context, edges []*Edge,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	tx.rememberConstraintAdmissionLocked(ctx)
 	if len(edges) == 0 {
 		return nil
 	}
@@ -1998,6 +2005,7 @@ func (tx *BadgerTransaction) UpdateEdge(ctx context.Context, updateRequest EdgeU
 	if err := tx.ensureOperationAllowedLocked(transactionDataWrite); err != nil {
 		return err
 	}
+	tx.rememberConstraintAdmissionLocked(ctx)
 	if err := tx.materializeDeferredEdgeLocked(edge.ID); err != nil {
 		return err
 	}

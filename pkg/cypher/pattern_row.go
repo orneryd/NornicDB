@@ -98,7 +98,16 @@ func (p *patternRowPlan) bind(ctx context.Context, e *StorageExecutor, pattern s
 			params[properties.parameters[index]] = values[key]
 		}
 	}
-	rowCtx = withParams(rowCtx, params)
+	rows := make(map[string]interface{}, len(outer)+len(p.maps)+1)
+	for name, value := range parameterRowValues(ctx) {
+		rows[name] = value
+	}
+	for _, properties := range p.maps {
+		for _, name := range properties.parameters {
+			rows["$"+name] = parameterRowValue(params[name])
+		}
+	}
+	rowCtx = withPreparedParams(rowCtx, params, rows)
 	return context.WithValue(rowCtx, preparedPatternRowKey{}, p.pattern), p.pattern, nil
 }
 

@@ -89,10 +89,17 @@ value on a visible entity. See the
 Keyword and vector searches query the database's existing indexes. Search
 returns only graph-visible nodes and relationships, with their readable
 properties. When traversal or property reads are restricted, keyword ranking
-uses only the documents and fields readable by the caller. This requires a
-scan of the shared index population to compute the caller's scoring statistics.
-Callers with unrestricted traversal and property reads use the shared scoring
-path.
+uses only the documents and fields readable by the caller. A restricted
+search reads the shared index population once to derive its visible field
+masks and BM25 statistics. Later searches reuse that bounded metadata while
+the graph, index, and effective policy revisions stay the same. If revision
+tracking or field provenance is unavailable, each restricted search projects
+the readable corpus before ranking. Callers with unrestricted traversal and
+property reads use the existing shared scoring path without that scan.
+Time-based decay and manual suppression also disable reuse because visibility
+or a query-local reveal scope can change without a graph write.
+The first startup with this index format rebuilds older BM25 checkpoints from
+graph storage to record field provenance.
 
 A vector stored in a graph property requires read access to that property.
 Managed vectors require `graph.node.embedding.read` or
@@ -102,7 +109,36 @@ does not identify every source property. Vectors stored as graph properties
 continue to use the permission on the vector property.
 Matches and result properties are still projected under the caller's read
 permissions. Searches reuse stored vectors without calling the document
-embedder to rebuild them.
+embedder to rebuild them. Indexed vector candidates are checked through
+bounded, authorized node batches when they share owners and through point
+reads when owners are mostly distinct. Their admission decisions are reused
+for the same graph and effective policy revision when revision tracking is
+available and decay and manual suppression are off. Exact vector page
+completion and relationship vector ranking can still examine the full indexed
+population.
+
+For a property-vector query, a role with an unconditional read grant over the
+entire indexed label population scores the shared vectors directly. A narrower
+role checks the indexed population through its projected graph before scoring,
+so hidden vectors cannot affect scores or query-dependent work. That first
+read can grow with index size; subsequent queries reuse admission decisions
+while the graph and policy revisions remain stable. An index larger than the
+admission cache limit, or a source without stable revision tracking, requires
+another check on each query.
+
+Declared full-text procedures reuse the shared document view for a principal
+that can read the whole node or relationship corpus. Other principals retain
+a projected document view for a stable graph and effective policy revision;
+the first query and any revision change rebuild it. Retention is bounded, so
+memory pressure or several active policies can cause another rebuild.
+
+Indexed Cypher node lookups use property postings when the principal can read
+the indexed property for every node in that label. Conditional, denied, or
+entity-specific grants keep the scoped scan. Deterministic read results may
+be cached for a stable policy and graph revision; writes, transactions, time
+decay, and other non-cacheable statements still execute normally. Bolt
+auto-commit reads stream for FGAC principals and recheck policy admission at
+each PULL. The first rows no longer require materializing a large result.
 
 To select rows by stored data, use a property rule:
 

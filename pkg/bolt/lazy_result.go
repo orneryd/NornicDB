@@ -32,6 +32,7 @@ type lazyResult struct {
 	database string
 	start    time.Time
 	rows     int
+	fgac     fineGrainedResultScope
 
 	// helperDone is closed when serveLazyResult returns; nil until the
 	// statement streams.
@@ -58,8 +59,8 @@ var errStatementAborted = errors.New("statement aborted")
 // client's PULLs on a helper goroutine while the statement runs here;
 // runStreamed then returns served once both are done, with nothing left to
 // answer. Only a statement that streams starts a goroutine.
-func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time) (result *QueryResult, served bool, err error) {
-	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start}
+func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time, fgac fineGrainedResultScope) (result *QueryResult, served bool, err error) {
+	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start, fgac: fgac}
 	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
@@ -82,6 +83,7 @@ func (l *lazyResult) ResultStreamStarted() {
 	s.lastQueryIsWrite = false
 	s.lastQueryDatabase = l.database
 	s.lastResult = &QueryResult{Columns: l.stream.Columns()}
+	s.lastResultFGAC = l.fgac
 	s.resultIndex = 0
 	s.lastLazy = l
 	l.helperDone = make(chan struct{})
@@ -164,6 +166,7 @@ func (s *Session) closeLazyResult() {
 	s.lastResultMemoryLease.Release()
 	s.lastResultMemoryLease = nil
 	s.lastResult = nil
+	s.lastResultFGAC = fineGrainedResultScope{}
 	s.resultIndex = 0
 	lazy.close()
 	if !lazy.errorConsumed && nornicerrors.HasStatusDiagnostic(lazy.err) {

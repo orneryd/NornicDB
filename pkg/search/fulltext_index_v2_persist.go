@@ -26,6 +26,10 @@ type bm25V2Snapshot struct {
 	AvgDocLength   float64                   `msgpack:"avg_doc_len"`
 	DocCount       int                       `msgpack:"doc_count"`
 	TotalDocLength int64                     `msgpack:"total_doc_len"`
+	// FieldDocuments is the opt-in per-document field provenance IndexFields
+	// stores. A corpus indexed only through Index has none, and omitempty keeps
+	// such a snapshot a documents-only one.
+	FieldDocuments map[string]bm25FieldDocument `msgpack:"fields,omitempty"`
 }
 
 // EncodeMsgpack streams the snapshot and then its integrity trailer through
@@ -98,6 +102,7 @@ func (f *FulltextIndexV2) Save(path string) error {
 			IDF:      st.IDF,
 		}
 	}
+	fieldDocuments := copyBM25FieldDocuments(f.fieldDocuments)
 	lexicon := append([]string(nil), f.lexicon...)
 	avg := f.avgDocLength
 	docCount := f.docCount
@@ -116,6 +121,7 @@ func (f *FulltextIndexV2) Save(path string) error {
 		AvgDocLength:   avg,
 		DocCount:       docCount,
 		TotalDocLength: total,
+		FieldDocuments: fieldDocuments,
 	}, func() {
 		f.markPersisted(version)
 	})
@@ -135,6 +141,7 @@ func (f *FulltextIndexV2) SaveNoCopy(path string) error {
 		AvgDocLength:   f.avgDocLength,
 		DocCount:       f.docCount,
 		TotalDocLength: f.totalDocLength,
+		FieldDocuments: f.fieldDocuments,
 	}
 	f.mu.RUnlock()
 	return saveBM25V2Snapshot(path, snap, func() {
@@ -153,7 +160,9 @@ func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) erro
 // Load replaces the fulltext index with the one stored at path (msgpack format).
 // A missing file leaves the index as it is and no error is returned; a file
 // that is not a compatible BM25 snapshot empties the index so the caller
-// rebuilds it from graph storage. Only
+// rebuilds it from graph storage. A checkpoint written before field provenance
+// (format 2.2.0) is such an incompatible file: the rebuild re-indexes the
+// corpus, and only IndexFields restores provenance. Only
 // unexpected I/O (e.g. permission denied) returns an error.
 func (f *FulltextIndexV2) Load(path string) error {
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
@@ -289,7 +298,7 @@ func (f *FulltextIndexV2) validV2Snapshot(s bm25V2Snapshot) bool {
 			}
 		}
 	}
-	return true
+	return validBM25FieldDocuments(s)
 }
 
 // applyV2Snapshot installs admitted content. Load is its sole production caller.
@@ -312,6 +321,9 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	if s.Lexicon == nil {
 		s.Lexicon = []string{}
 	}
+	if s.FieldDocuments == nil {
+		s.FieldDocuments = make(map[string]bm25FieldDocument)
+	}
 
 	f.mu.Lock()
 	f.documents = s.Documents
@@ -331,6 +343,7 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 			delete(f.termIndex, term)
 		}
 	}
+	f.fieldDocuments = s.FieldDocuments
 	f.lexicon = s.Lexicon
 	f.lexiconDirty = len(f.lexicon) != len(f.termIndex) || !sort.StringsAreSorted(f.lexicon)
 	f.avgDocLength = s.AvgDocLength
@@ -362,4 +375,92 @@ func docIDsAreLexicalByNumber(docIDs []string) bool {
 		previous = id
 	}
 	return true
+}
+
+// copyBM25FieldDocuments copies stored provenance for a snapshot that outlives
+// the index lock. Stored values are immutable, so only the map and the term
+// slices need copying.
+func copyBM25FieldDocuments(stored map[string]bm25FieldDocument) map[string]bm25FieldDocument {
+	if len(stored) == 0 {
+		return nil
+	}
+	copied := make(map[string]bm25FieldDocument, len(stored))
+	for id, document := range stored {
+		fields := make([]bm25Field, len(document.Fields))
+		for fieldIndex, field := range document.Fields {
+			fields[fieldIndex] = bm25Field{
+				Name:   field.Name,
+				Length: field.Length,
+				Terms:  append([]bm25FieldFrequency(nil), field.Terms...),
+			}
+		}
+		copied[id] = bm25FieldDocument{Fields: fields}
+	}
+	return copied
+}
+
+// validBM25FieldDocuments is the admission owner for stored field provenance:
+// it may describe only a live document, its field names must be unique and
+// non-empty, and its fields must account for the document's analyzed length,
+// which is what makes composing them with the document's postings sound.
+func validBM25FieldDocuments(s bm25V2Snapshot) bool {
+	for id, document := range s.FieldDocuments {
+		number, mapped := s.DocIDToNum[id]
+		if id == "" || !mapped || uint64(number) >= uint64(len(s.DocLengths)) {
+			return false
+		}
+		documentLength := s.DocLengths[number]
+		if documentLength == 0 {
+			return false
+		}
+		if _, live := s.Documents[id]; !live {
+			return false
+		}
+		if len(document.Fields) == 0 {
+			return false
+		}
+		names := make(map[string]struct{}, len(document.Fields))
+		var total uint64
+		for _, field := range document.Fields {
+			if field.Name == "" {
+				return false
+			}
+			if _, duplicate := names[field.Name]; duplicate {
+				return false
+			}
+			names[field.Name] = struct{}{}
+			if !validBM25Field(field) {
+				return false
+			}
+			total += uint64(field.Length)
+		}
+		if total != uint64(documentLength) {
+			return false
+		}
+	}
+	return true
+}
+
+// validBM25Field admits one field's stored frequencies: sorted distinct
+// non-empty terms with a positive frequency each, and a length their saturated
+// sum accounts for.
+func validBM25Field(field bm25Field) bool {
+	var total uint64
+	saturated := false
+	for position, term := range field.Terms {
+		if term.Term == "" || term.Frequency == 0 {
+			return false
+		}
+		if position > 0 && field.Terms[position-1].Term >= term.Term {
+			return false
+		}
+		total += uint64(term.Frequency)
+		if term.Frequency == ^uint16(0) {
+			saturated = true
+		}
+		if total > uint64(field.Length) {
+			return false
+		}
+	}
+	return saturated || total == uint64(field.Length)
 }

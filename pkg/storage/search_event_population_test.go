@@ -262,6 +262,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.LockEdgeForWrite":                "takes a relationship's write lock and reads its committed image; the write is published by UpdateEdge/DeleteEdge at Commit",
 	"BadgerEngine.Close":                                "deletes the stored suppressions of entities deleted before it (endSuppressions); no entity state",
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
+	"BadgerEngine.RestoreFrom":                          "loads the native stream into an offline store; offline admin restore loads a private destination, and DB.Restore rebuilds search after the live restore wrapper returns",
 	"BadgerEngine.RunOnStartMigrations":                 "manual entry rejects pre-V4 stores before any migration writes; opening runs the ordered migration before search exists, and search builds from the migrated snapshot",
 	"BadgerEngine.ConsumeCleanShutdownMarker":           "a startup marker; no entity state",
 	"BadgerEngine.FindNodeNeedingEmbedding":             "maintains the pending-embedding work index; no entity state",

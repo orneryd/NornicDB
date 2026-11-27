@@ -107,7 +107,7 @@ func (a *analysis) decisions() []Decision {
 
 // source reports whether a call returns hidden state or a read that sees
 // hidden entities.
-func (d *decider) source(c *ssa.CallCommon) bool {
+func (d *decider) source(caller *ssa.Function, c *ssa.CallCommon) bool {
 	if c.IsInvoke() {
 		return d.stored[c.Method.Name()] && d.reader != nil && types.Implements(c.Value.Type(), d.reader)
 	}
@@ -116,6 +116,9 @@ func (d *decider) source(c *ssa.CallCommon) bool {
 		return false
 	}
 	name := d.a.p.funcName(callee)
+	if d.isCatalogMetadataRead(caller, c, name) {
+		return false
+	}
 	if visibilityPrimitives[name] || d.tainted[callee] {
 		return true
 	}
@@ -125,13 +128,32 @@ func (d *decider) source(c *ssa.CallCommon) bool {
 	return false
 }
 
+// The system catalog's fixed metadata record controls physical store routing.
+// Reading that record does not test whether a graph entity is visible. Match
+// the exact scoped read so other entity reads in the helper still get tainted.
+func (d *decider) isCatalogMetadataRead(caller *ssa.Function, call *ssa.CallCommon, target string) bool {
+	if target != "pkg/storage.GetStoredNode" || len(call.Args) != 3 || d.a.p.funcName(caller) != "pkg/multidb.readCatalogMetadataNode" {
+		return false
+	}
+	id, ok := call.Args[2].(*ssa.Const)
+	if !ok || id.Value == nil || id.Value.Kind() != constant.String || constant.StringVal(id.Value) != "databases:metadata" {
+		return false
+	}
+	scope, ok := call.Args[1].(*ssa.MakeInterface)
+	if !ok {
+		return false
+	}
+	namespace, ok := scope.X.(*ssa.Call)
+	return ok && namespace.Call.StaticCallee() != nil && d.a.p.funcName(namespace.Call.StaticCallee()) == "pkg/storage.NewNamespacedEngine"
+}
+
 // taint is the values of fn that depend on a source.
 func (d *decider) taint(fn *ssa.Function) map[ssa.Value]bool {
 	t := map[ssa.Value]bool{}
 	var work []ssa.Value
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
-			if call, ok := ins.(*ssa.Call); ok && d.source(call.Common()) {
+			if call, ok := ins.(*ssa.Call); ok && d.source(fn, call.Common()) {
 				t[call] = true
 				work = append(work, call)
 			}
@@ -324,6 +346,10 @@ func deferCellReturnsExact(branch *ssa.BasicBlock, cell *ssa.Alloc, errv ssa.Val
 	if cell.Referrers() == nil {
 		return false
 	}
+	ret, ok := branch.Instrs[len(branch.Instrs)-1].(*ssa.Return)
+	if !ok {
+		return false
+	}
 	safe := true
 	stored := false
 	for _, use := range *cell.Referrers() {
@@ -344,15 +370,18 @@ func deferCellReturnsExact(branch *ssa.BasicBlock, cell *ssa.Alloc, errv ssa.Val
 	for _, ins := range branch.Instrs {
 		switch ins := ins.(type) {
 		case *ssa.Store:
-			if ins.Addr != cell || ins.Val != errv {
-				safe = false
-			} else {
-				stored = true
+			if ins.Addr != cell {
+				safe = safe && clearsSiblingResult(ins, ret, nil, cell)
+				continue
 			}
+			safe = safe && ins.Val == errv && !stored
+			stored = true
 		case *ssa.UnOp:
-			if ins.X != cell || ins.Op != token.MUL {
-				safe = false
+			if ins.Op == token.MUL && ins.X == cell {
+				continue
 			}
+			sibling, ok := ins.X.(*ssa.Alloc)
+			safe = safe && ok && ins.Op == token.MUL && unaliasedSiblingResult(sibling, ret.Parent(), nil, cell)
 		case *ssa.RunDefers, *ssa.Return, *ssa.DebugRef:
 		default:
 			safe = false

@@ -4,7 +4,7 @@ Recovery records preserve node and relationship timestamps, embedding metadata,
 inline vectors, visibility flags, relationship confidence, and exact integer
 property values. Client-facing node and relationship JSON is unchanged.
 
-Current WAL framing is format 6; recovery snapshots use `NDS2` version 2. These are format identifiers, independent of the application release label and the named V4 storage-upgrade arm. Record the binary/build commit with backups. For operating policy, see [durability](durability.md), [WAL lifecycle](wal-compaction.md), and [backup/restore](backup-restore.md).
+Unencrypted WAL framing is format 6 (7 for spanned records). Database encryption uses authenticated WAL formats 8 and 9 and an authenticated envelope around `NDS2` version 2 recovery snapshots. These are format identifiers, independent of the application release label and the named V4 storage-upgrade arm. Record the binary/build commit and required encryption material with backups. For operating policy, see [durability](durability.md), [WAL lifecycle](wal-compaction.md), and [backup/restore](backup-restore.md).
 
 ## Write-ahead logs
 
@@ -28,6 +28,19 @@ retired or unknown command kinds stop the upgrade instead of being discarded.
 Other historical recovery payloads retain their existing representation. Old
 JSON cannot reconstruct physical key bytes that an older writer already
 replaced, so an ambiguous record is rejected instead of silently applied.
+
+Some older embedded Cypher writers acknowledged graph changes while leaving
+only transaction begin/commit markers after the last snapshot. A successful
+upgrade now publishes a fresh snapshot of the migrated store before serving
+traffic, even when automatic WAL compaction is disabled. The durable
+`.historical-recovery-baseline-pending` marker makes an interrupted upgrade
+retry that snapshot. If the primary store cannot open while the marker is
+pending, automatic snapshot-and-WAL rebuilding is refused because those older
+artifacts may omit acknowledged changes; preserve the original directory and
+restore it from a verified matching backup instead.
+This extra baseline applies to stores that support automatic snapshot-and-WAL
+rebuilding. Encrypted stores retain their existing upgrade behavior because
+automatic corruption rebuilding is disabled for them.
 
 The migration first stages and syncs the original WAL and every converted file.
 Only after conversion succeeds does it publish the protected `wal.before-v4-v6`

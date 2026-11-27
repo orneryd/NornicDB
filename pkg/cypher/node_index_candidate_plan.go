@@ -100,6 +100,13 @@ type nodeIndexCandidatePlan struct {
 	params  map[string]interface{}
 }
 
+// canUseNodePropertyIndexForFGAC checks permission before reading a posting or
+// its count. A projected node is still hydrated through the scoped graph after
+// the seek, but that later check cannot undo an index-side timing disclosure.
+func (e *StorageExecutor) canUseNodePropertyIndexForFGAC(ctx context.Context, label, property string) bool {
+	return e.fineGrainedGraph == nil || e.fineGrainedGraph.AllowsNodeIndexPopulation(e.executionDatabaseName(ctx), label, property)
+}
+
 // candidateCount is the number of candidates the plan prepared, without reading
 // a node body: the ordered window's nodes, otherwise the IDs the route listed.
 // It guides orientation only and never decides that a query is empty by itself:
@@ -119,16 +126,33 @@ func (p nodeIndexCandidatePlan) candidateCount() int {
 // route's own empty answer, not an estimate: the caller still reads the plan to
 // report it, and that read reads no node.
 func (e *StorageExecutor) planPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
-	if e.fineGrainedGraph != nil {
-		// Stored property postings cannot answer a predicate over a projected
-		// property image. Use the regular row filter for this request.
-		return nodeIndexCandidatePlan{}, false, nil
+	wrapper, transactional := e.storage.(*transactionStorageWrapper)
+	if transactional && wrapper.owner != nil {
+		current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+		if err != nil || !current {
+			return nodeIndexCandidatePlan{}, false, err
+		}
 	}
+	plan, used, err := e.planPipelineIndexedNodeCandidatesCurrent(ctx, nodePattern, whereClause, hint)
+	if err != nil || !used || !transactional || wrapper.owner == nil {
+		return plan, used, err
+	}
+	current, err := wrapper.tx.CurrentNodeIndexMatchesSnapshot(ctx)
+	if err != nil || !current {
+		return nodeIndexCandidatePlan{}, false, err
+	}
+	return plan, used, nil
+}
+
+// planPipelineIndexedNodeCandidatesCurrent prepares routes from the current
+// postings. Its caller certifies that an explicit transaction still reads
+// those postings' version before and after this preparation.
+func (e *StorageExecutor) planPipelineIndexedNodeCandidatesCurrent(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodeIndexCandidatePlan, bool, error) {
 	params := getParamsFromContext(ctx)
 	// The pattern, WHERE and parameters are the resolved inputs the read
 	// applies; they are read once, here, as the dispatch read them.
 	seed := nodeIndexCandidatePlan{pattern: nodePattern, where: whereClause, params: params}
-	if hint.limit > 0 && hint.orderExpr != "" {
+	if e.fineGrainedGraph == nil && hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {
 				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderExplicitNotNull)

@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -80,7 +81,24 @@ func (cw *commitWriter) replaceEmbeddingRange(id NodeID, embeddings [][]float32,
 			return err
 		}
 	}
-	return nil
+	// Keep failure membership in the same logical commit as its authoritative
+	// sidecar metadata. Every business replacement and sidecar outcome reaches
+	// this owner, so clearing or deleting metadata removes the old marker.
+	failed, _ := metadata["embedding_failed"].(bool)
+	if failed {
+		return cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Set(embeddingFailureKey(id), []byte{}) })
+	}
+	// Healthy writes are common. Avoid creating a tombstone when the node was
+	// never parked, while retaining the read in the commit's conflict set.
+	key := embeddingFailureKey(id)
+	_, err := cw.txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return cw.write(cw.ctx, func(txn *badger.Txn) error { return txn.Delete(key) })
 }
 
 // replaceEmbeddingSidecarKeys includes metadata in the same replacement plan;

@@ -417,6 +417,25 @@ func (w *WALEngine) autoSnapshotLoop(ctx context.Context, ticker *time.Ticker) {
 // engine owner: the snapshot stops when the owner closes or compaction is
 // disabled.
 func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactionSnapshotWriter) error {
+	return w.createSnapshotAndCompactAt(ctx, save, w.snapshotDir, false)
+}
+
+// CreateRecoveryBaseline publishes a fresh snapshot before an upgraded store
+// can serve traffic. Historical journals may contain transaction boundaries
+// without enough entity images to rebuild the migrated Badger state, so this
+// snapshot is required even when no new WAL sequence has been appended and
+// automatic compaction is disabled.
+func (w *WALEngine) CreateRecoveryBaseline(ctx context.Context, snapshotDir string) error {
+	if snapshotDir == "" {
+		return fmt.Errorf("wal: recovery baseline requires a snapshot directory")
+	}
+	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
+		return fmt.Errorf("wal: create recovery baseline directory: %w", err)
+	}
+	return w.createSnapshotAndCompactAt(ctx, saveCompactionSnapshot, snapshotDir, true)
+}
+
+func (w *WALEngine) createSnapshotAndCompactAt(ctx context.Context, save compactionSnapshotWriter, snapshotDir string, force bool) error {
 	if err := w.compactionMu.LockContext(ctx); err != nil {
 		if w.work.Closing() || w.wal.work.Closing() {
 			return ErrWALClosed
@@ -445,11 +464,11 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactio
 	if err := checkNativeSnapshotPublication(w.engine); err != nil {
 		return err
 	}
-	if err := removeInterruptedSnapshotFiles(w.snapshotDir); err != nil {
+	if err := removeInterruptedSnapshotFiles(snapshotDir); err != nil {
 		return err
 	}
 	snapshotSequence := w.wal.sequence.Load()
-	if w.hasCompacted.Load() && snapshotSequence == w.compactedSequence.Load() {
+	if !force && w.hasCompacted.Load() && snapshotSequence == w.compactedSequence.Load() {
 		return nil
 	}
 	if err := w.wal.Checkpoint(); err != nil {
@@ -460,7 +479,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactio
 
 	// Save snapshot with high-resolution timestamp to avoid filename collisions
 	// when snapshots happen multiple times within the same second.
-	snapshotPath := filepath.Join(w.snapshotDir, time.Now().Format(autoSnapshotNameLayout))
+	snapshotPath := filepath.Join(snapshotDir, time.Now().Format(autoSnapshotNameLayout))
 
 	// Flush any acknowledged write-behind commits into Badger before the
 	// snapshot and WAL truncation. A snapshot must never truncate
@@ -484,7 +503,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactio
 		mutationLocked = false
 		w.mutationMu.Unlock()
 	}
-	if err := save(ctx, compactionSnapshot{engine: w.engine, source: source, sequence: snapshotSequence}, snapshotPath); err != nil {
+	if err := save(ctx, compactionSnapshot{engine: w.engine, source: source, sequence: snapshotSequence, encryptionKey: w.wal.snapshotKey}, snapshotPath); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
 	}
 
@@ -497,7 +516,7 @@ func (w *WALEngine) createSnapshotAndCompact(ctx context.Context, save compactio
 	}
 
 	// Prune old snapshot files so disk space stays bounded
-	if err := PruneOldSnapshotFiles(w.snapshotDir, w.wal.config); err != nil {
+	if err := PruneOldSnapshotFiles(snapshotDir, w.wal.config); err != nil {
 		// Log but don't fail the compaction.
 		w.logger().Warn("wal snapshot pruning failed",
 			"subsystem", "wal_compaction",

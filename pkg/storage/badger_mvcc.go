@@ -57,7 +57,9 @@ func mvccSnapshotNode(node *Node) *Node {
 	if node == nil {
 		return nil
 	}
-	snapshot := copyNode(node)
+	// The historical record drops vector payloads, so detach only the fields
+	// that it retains. A full copy transiently duplicates every chunk vector.
+	snapshot := copyNodeWithoutEmbeddings(node)
 	// Historical MVCC records keep logical graph state but do not inline large
 	// embedding payloads. The materialized current row continues to store full
 	// embeddings using the existing separate-chunk path.
@@ -639,7 +641,9 @@ func (b *BadgerEngine) archiveNodePrimaryIntoMVCCVersionInTxn(txn *badger.Txn, i
 	var node *Node
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
-		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
+		// Historical records retain embedding metadata, not vector payloads.
+		// Keep sidecar freshness handling without materializing the chunks.
+		node, decodeErr = b.decodeNodeEmbeddingState(txn, val, id, false)
 		return decodeErr
 	}); err != nil {
 		return fmt.Errorf("archiving node %s: decoding primary: %w", id, err)

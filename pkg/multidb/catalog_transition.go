@@ -24,6 +24,7 @@ const (
 type catalogTransitionPolicy struct {
 	durability catalogDurability
 	dropName   string
+	prepared   *isolatedStorePublication
 }
 
 // transitionCatalog serializes proposals until the authoritative storage receipt
@@ -35,7 +36,16 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 		return ctx.Err()
 	case <-m.catalogGate:
 	}
-	release := func() { m.catalogGate <- struct{}{} }
+	accepted := false
+	release := func() {
+		if p := policy.prepared; p != nil && p.engine != nil {
+			_ = p.engine.Close()
+			if !accepted && p.discard != nil {
+				_ = p.discard(p.id)
+			}
+		}
+		m.catalogGate <- struct{}{}
+	}
 	if err := ctx.Err(); err != nil {
 		release()
 		return err
@@ -105,6 +115,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 	var publicationErr error
 	handoff := &dropHandoff{name: policy.dropName}
 	receipt, err := owner.route.Submitter.SubmitEntityCommit(ctx, prepared, func(outcome storage.CommitOutcome) {
+		accepted = outcome.State == storage.CommitApplied || outcome.State == storage.CommitRecoveryPending
 		if outcome.State == storage.CommitApplied {
 			freshDrop := false
 			if policy.durability == catalogDurableDrop && candidate.pendingDrops[policy.dropName] {
@@ -112,12 +123,15 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 				freshDrop = !m.pendingDrops[policy.dropName]
 				m.mu.RUnlock()
 			}
-			publicationErr = m.publishCatalog(candidate)
+			if p := policy.prepared; p != nil && p.engine != nil {
+				publicationErr = errors.Join(m.installIsolatedStore(p), m.syncCatalogMetadata())
+			}
+			publicationErr = errors.Join(publicationErr, m.publishCatalog(candidate))
 			if freshDrop {
 				defer handoff.intentApplied(m)
 			}
 			if policy.durability == catalogDurableDrop {
-				syncErr := m.syncDropMetadata()
+				syncErr := m.syncCatalogMetadata()
 				if syncErr != nil {
 					// Applied metadata is never restored. The existing DROP
 					// owner retains only the unavailable-name durability fence.
@@ -169,7 +183,7 @@ func (m *DatabaseManager) publishCatalog(candidate *DatabaseManager) (result err
 			}
 		}
 		if next == nil {
-			m.applyChangeCapture(name, nil)
+			m.applyChangeCapture(name, old, nil)
 			delete(m.limitCheckers, name)
 			continue
 		}
@@ -213,7 +227,12 @@ func (m *DatabaseManager) publishCatalog(candidate *DatabaseManager) (result err
 		}
 		published[name] = current
 		if fresh && !m.statementCachesClosed && current.Type == "standard" && !candidate.pendingDrops[name] {
-			runtime, err := bindManagedRuntime(current, current.Limits, name, managedEntityOwnerFor(m.inner))
+			owner, err := m.storeForDatabaseInfoLocked(current)
+			if err != nil {
+				result = errors.Join(result, err)
+				continue
+			}
+			runtime, err := bindManagedRuntime(current, current.Limits, name, managedEntityOwnerFor(owner))
 			if err != nil {
 				result = errors.Join(result, err)
 			} else {
@@ -223,7 +242,7 @@ func (m *DatabaseManager) publishCatalog(candidate *DatabaseManager) (result err
 		// Accepted metadata can settle after Close; runtime effects belong to
 		// the open manager lifetime and must not restart a stopped CDC owner.
 		if !m.statementCachesClosed {
-			m.applyChangeCapture(name, next.Options)
+			m.applyChangeCapture(name, current, next.Options)
 		}
 	}
 	m.databases = published

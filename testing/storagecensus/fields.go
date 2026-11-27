@@ -57,6 +57,19 @@ var fieldClasses = map[string]fieldRow{
 	// Exact operation-local scratch: queued encoded bytes and pinned-read probe progress.
 	"pkg/storage.BatchWriter.bytes":              {class: "WAL batch encoded buffer bytes"},
 	"pkg/storage.snapshotEmbeddingAbsence.reads": {class: "snapshot embedding-probe progress"},
+	// Encryption envelopes keep only one frame of request-local scratch. The
+	// WAL manifest's segment size is refreshed from the converted file before
+	// the manifest is published; none of these is entity or quota state.
+	"pkg/storage.WALSegment.SizeBytes":             {class: "WAL conversion manifest size"},
+	"pkg/storage.snapshotEnvelopeWriter.aad":       {class: "snapshot envelope frame scratch"},
+	"pkg/storage.snapshotEnvelopeWriter.counter":   {class: "snapshot envelope nonce cursor"},
+	"pkg/storage.snapshotEnvelopeWriter.plaintext": {class: "snapshot envelope frame scratch"},
+	"pkg/storage.snapshotEnvelopeWriter.sealed":    {class: "snapshot envelope frame scratch"},
+	"pkg/storage.snapshotEnvelopeReader.aad":       {class: "snapshot envelope frame scratch"},
+	"pkg/storage.snapshotEnvelopeReader.counter":   {class: "snapshot envelope nonce cursor"},
+	"pkg/storage.snapshotEnvelopeReader.frame":     {class: "snapshot envelope frame scratch"},
+	"pkg/storage.snapshotEnvelopeReader.offset":    {class: "snapshot envelope frame cursor"},
+	"pkg/storage.snapshotEnvelopeReader.plaintext": {class: "snapshot envelope frame scratch"},
 	// Author: #1667 implementation lane (Codex). This is the dictionary
 	// number returned in a caller-owned snapshot reference, not stored count,
 	// quota, suppression or publication state. Future fields need their own row.
@@ -348,6 +361,7 @@ var typeClasses = map[string]string{
 	"pkg/storage.WALManifest":                  "WAL file bookkeeping",
 	"pkg/storage.v4WALControlRewrite":          "WAL upgrade staging offsets",
 	"pkg/storage.RecoveryStreamStatus":         "report",
+	"pkg/storage.PreparedDatabase":             "offline store seal and initial graph counts",
 	"pkg/storage.ReplayResult":                 "report",
 	"pkg/storage.changeCapture":                "configuration",
 	"pkg/storage.changeLog":                    "change capture sequence",

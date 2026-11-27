@@ -555,7 +555,13 @@ func TestWALPropertyEpochFramesUseMarkerOwner(t *testing.T) {
 					callers = append(callers, fn.Name.Name)
 				}
 				for _, arg := range call.Args {
-					if id, ok := arg.(*ast.Ident); ok && name.Name == "writeAtomicRecordBufio" && id.Name == "walFormatVersionPropertyEpoch" {
+					id, ok := arg.(*ast.Ident)
+					if !ok || id.Name != "walFormatVersionPropertyEpoch" {
+						continue
+					}
+					// A control is written through the journal's one frame writer
+					// (writeFrame) or, for a plaintext journal, its plaintext body.
+					if name.Name == "writeAtomicRecordBufio" || name.Name == "writeFrame" {
 						callers = append(callers, fn.Name.Name)
 					}
 				}

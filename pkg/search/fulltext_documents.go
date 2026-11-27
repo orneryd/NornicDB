@@ -13,6 +13,7 @@ import (
 	"sync"
 	"weak"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -42,6 +43,10 @@ type FulltextDocumentBuilder func(*storage.Node, *storage.Edge) *FulltextDocumen
 // tells the service which named schema projections still exist.
 type FulltextDocumentScope struct {
 	Name, Definition string
+	// PolicyRequest and PolicySource permit a bounded retained projection of
+	// this principal's readable corpus. The request itself is never retained.
+	PolicyRequest *auth.FineGrainedRequest
+	PolicySource  storage.Engine
 	// NodeLabels limits population to the union of these label indexes.
 	// Membership remains the dialect builder's responsibility.
 	NodeLabels []string
@@ -94,9 +99,11 @@ type fulltextDocumentView struct {
 // and supplies it to the read callback; callers must not retain this value or
 // mutate documents.
 type FulltextDocuments struct {
-	view        *fulltextDocumentView
-	acquisition fulltextAcquisition
-	snapshot    storage.EntityReadSnapshot
+	view          *fulltextDocumentView
+	acquisition   fulltextAcquisition
+	snapshot      storage.EntityReadSnapshot
+	policyGraph   storage.GraphMutationVersionProvider
+	policyVersion uint64
 }
 
 // Count and AverageLength describe the complete scoped corpus, before limits
@@ -337,6 +344,7 @@ type fulltextDocumentOwner struct {
 	// returns; a read that would exceed it costs its view one repopulation.
 	changes          sync.Mutex
 	views            map[string]*fulltextDocumentProjection
+	policyOrder      []string
 	nodes            map[storage.NodeID]uint64
 	edges            map[storage.EdgeID]uint64
 	events           uint64
@@ -438,6 +446,11 @@ func (s *Service) ReadFulltextDocuments(ctx context.Context, engine storage.Engi
 		return deliverFulltextDocuments(ctx, read, FulltextDocuments{acquisition: fulltextAcquisition{engine: engine, relationships: scope.Relationships, queryNodes: scope.QueryNodes, nodeLabels: scope.NodeLabels}})
 	}
 	acquisition := fulltextAcquisition{engine: engine, relationships: scope.Relationships, queryNodes: scope.QueryNodes, nodeLabels: scope.NodeLabels}
+	if scope.PolicyRequest != nil && !scope.Fresh && scope.PolicySource != nil && storage.SameEventView(scope.PolicySource, s.engine) {
+		if served, err := s.readPolicyFulltextDocuments(ctx, &acquisition, scope, build, read); served {
+			return err
+		}
+	}
 	provider, versioned := engine.(graphMutationVersionProvider)
 	if scope.Fresh || !versioned || !storage.SameEventView(engine, s.engine) {
 		return readFulltextOriginal(ctx, &acquisition, scope, build, read)

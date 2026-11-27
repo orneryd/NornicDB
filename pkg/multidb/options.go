@@ -5,14 +5,19 @@ import (
 	"errors"
 	"time"
 
-	"github.com/orneryd/nornicdb/internal/jsontext"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // OptionTxLogEnrichment is Neo4j's change data capture option: OFF (the
 // default), DIFF or FULL (#937).
 const OptionTxLogEnrichment = "txLogEnrichment"
+
+// Storage layout is chosen at catalog creation; it cannot be altered in place.
+const (
+	OptionStorageLayout = "storage"
+	StorageShared       = "shared"
+	StorageIsolated     = "isolated"
+)
 
 // DatabaseOptions returns a copy of a database's options.
 func (m *DatabaseManager) DatabaseOptions(databaseName string) (map[string]string, error) {
@@ -26,6 +31,9 @@ func (m *DatabaseManager) DatabaseOptions(databaseName string) (map[string]strin
 	for key, value := range info.Options {
 		options[key] = value
 	}
+	if info.IsolatedStoreID != "" {
+		options[OptionStorageLayout] = StorageIsolated
+	}
 	return options, nil
 }
 
@@ -33,6 +41,9 @@ func (m *DatabaseManager) DatabaseOptions(databaseName string) (map[string]strin
 // empty, and persists the database metadata. The caller validates the
 // option.
 func (m *DatabaseManager) SetDatabaseOption(ctx context.Context, databaseName, key, value string) error {
+	if key == OptionStorageLayout {
+		return storage.ErrInvalidData
+	}
 	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 		info, exists := m.databases[databaseName]
 		if !exists {
@@ -61,8 +72,12 @@ func (m *DatabaseManager) SetDatabaseOption(ctx context.Context, databaseName, k
 // applyChangeCapture tells the storage engine a database's change capture
 // mode, its txLogEnrichment option (#937): at load, when the option is set,
 // and off when the database is dropped.
-func (m *DatabaseManager) applyChangeCapture(databaseName string, options map[string]string) {
-	if capture, ok := storage.ChangeCaptureOf(m.inner); ok {
+func (m *DatabaseManager) applyChangeCapture(databaseName string, info *DatabaseInfo, options map[string]string) {
+	owner, err := m.storeForDatabaseInfoLocked(info)
+	if err != nil {
+		return
+	}
+	if capture, ok := storage.ChangeCaptureOf(owner); ok {
 		capture.SetChangeCapture(databaseName, storage.ParseChangeCaptureMode(options[OptionTxLogEnrichment]))
 	}
 }
@@ -88,13 +103,9 @@ func LoadChangeCaptureModes(ctx context.Context, engine storage.Engine, systemDa
 	if err != nil {
 		return err
 	}
-	data, ok := node.Properties["data"].(string)
-	if !ok {
-		return nil
-	}
-	var databases map[string]*DatabaseInfo
-	if err := jsontext.Unmarshal([]byte(data), &databases); err != nil {
-		return localizedError(localization.MultidbMetadataParseFailed(err), err)
+	databases, err := decodeCatalogDatabases(node)
+	if err != nil {
+		return err
 	}
 	capture, ok := storage.ChangeCaptureOf(engine)
 	if !ok {
@@ -104,7 +115,7 @@ func LoadChangeCaptureModes(ctx context.Context, engine storage.Engine, systemDa
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if info != nil {
+		if info != nil && info.IsolatedStoreID == "" {
 			capture.SetChangeCapture(name, storage.ParseChangeCaptureMode(info.Options[OptionTxLogEnrichment]))
 		}
 	}

@@ -10,6 +10,8 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // =============================================================================
@@ -123,21 +125,46 @@ func (s *Server) handleBackupOperation(w http.ResponseWriter, r *http.Request, o
 		s.writeBoundaryError(w, r, http.StatusBadRequest, errors.New("backup path is required"), ErrBadRequest)
 		return
 	}
-	var operationErr error
 	var status string
-	switch operation {
-	case backupCreate:
-		operationErr = s.db.Backup(r.Context(), req.Path)
-		if operationErr == nil {
-			status = s.localizedText(w, r, localization.BackupComplete())
+	denied := false
+	ctx := r.Context()
+	operationErr := s.dbManager.WithBackupCatalog(ctx, func(catalog multidb.BackupCatalog) error {
+		if auth.FineGrainedRequestFromContext(ctx) == nil && !s.authorizeAllDatabaseOperation(w, r) {
+			denied = true
+			return nil
 		}
-	case backupRestore:
-		operationErr = s.db.Restore(r.Context(), req.Path)
-		status = "restore complete"
-	default:
-		operationErr = errors.New("invalid backup operation")
+		switch operation {
+		case backupCreate:
+			status = s.localizedText(w, r, localization.BackupComplete())
+			return catalog.Write(ctx, req.Path, func() error { return s.db.Backup(ctx, req.Path) })
+		case backupRestore:
+			if catalog.HasDedicatedStores() {
+				return storage.ErrOfflineDatabaseRestore
+			}
+			status = "restore complete"
+			// A failed restore can still have replaced some persisted state.
+			// Reconcile the live owners even when it reports an error, using
+			// the database lifetime once the request has crossed that boundary.
+			restoreErr := s.db.Restore(ctx, req.Path)
+			reloadCtx := s.db.LifetimeContext()
+			var authErr error
+			if s.auth != nil {
+				authErr = s.auth.ReloadUsersAfterRestore(reloadCtx)
+			}
+			catalogErr := s.dbManager.ReloadAfterRestore(reloadCtx)
+			return errors.Join(restoreErr, authErr, catalogErr)
+		default:
+			return errors.New("invalid backup operation")
+		}
+	})
+	if denied {
+		return
 	}
 	if operationErr != nil {
+		if errors.Is(operationErr, storage.ErrOfflineDatabaseRestore) {
+			s.writeBoundaryError(w, r, http.StatusConflict, operationErr, storage.ErrOfflineDatabaseRestore)
+			return
+		}
 		s.writeBoundaryError(w, r, http.StatusInternalServerError, operationErr, ErrInternalError)
 		return
 	}

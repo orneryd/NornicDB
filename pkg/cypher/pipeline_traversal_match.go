@@ -77,6 +77,11 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		if prepareErr != nil {
 			return nil, true, prepareErr
 		}
+		// A required MATCH cannot rebind a pattern variable that this row
+		// already bound to null. Reject it before ordered or seeded traversal.
+		if pipelineNullPatternBinding(row, variables) {
+			continue
+		}
 		materializedWhere := whereClause
 		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
@@ -100,8 +105,8 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		if !handled {
 			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
 			if seedRejected {
-				// The bound node fails the pattern's own labels or inline
-				// properties on that endpoint, so this row matches nothing.
+				// A bound endpoint that fails its labels or inline properties
+				// makes this row match nothing.
 				continue
 			}
 			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
@@ -203,6 +208,15 @@ func pipelineTraversalPredicates(ctx context.Context, whereClause string, row pi
 	return strings.Join(pushable, " AND "), strings.Join(residual, " AND ")
 }
 
+func pipelineNullPatternBinding(row pipelineRow, variables []string) bool {
+	for _, variable := range variables {
+		if value, bound := row[variable]; bound && value == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
 	for _, variable := range variables {
 		if _, bound := row[variable]; bound {
@@ -281,15 +295,41 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		if topLevelKeywordIndex(ctx, clause.text, "WHERE") >= 0 {
 			return hint
 		}
+		orderIndex := topLevelKeywordIndex(ctx, clause.text, "ORDER BY")
+		admission := clause
+		if orderIndex >= 0 {
+			// Only the hint inspects the projection without its ordered window.
+			// The WITH executor must still sort before applying its own LIMIT.
+			admission.text = clause.text[:orderIndex]
+		}
 		// The hint asks whether the clause's own items are locally planable.
 		// Its SKIP / LIMIT window is the projection's, read below, so the row
 		// plan is read without declining on it.
-		if _, local := compilePipelineRowWith(ctx, clause, true); !local {
+		projection, local := compilePipelineRowWith(ctx, admission, true)
+		if !local {
 			return hint
 		}
 		limit, hasLimit := e.parseIntModifier(ctx, clause.text, "LIMIT")
 		skip, _ := e.parseIntModifier(ctx, clause.text, "SKIP")
 		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
+			return hint
+		}
+		if orderIndex >= 0 {
+			// This narrow pushdown preserves the one projected node's order.
+			// An alias, expression, multiple projections or SKIP stays on the
+			// general WITH path. No unordered early cap may precede the sort.
+			if skip != 0 || projection.star || len(projection.projections) != 1 {
+				return hint
+			}
+			item := projection.projections[0]
+			if item.expression != item.alias {
+				return hint
+			}
+			orderExpr := strings.TrimSpace(clauseTextUntil(ctx, clause.text, orderIndex+len("ORDER BY"), "SKIP", "LIMIT"))
+			if _, direct := e.parseNodeOrderSpecs(ctx, orderExpr, item.expression); !direct {
+				return hint
+			}
+			hint.limit, hint.orderExpr = limit, orderExpr
 			return hint
 		}
 		hint.limit, hint.earlyLimit = skip+limit, skip+limit

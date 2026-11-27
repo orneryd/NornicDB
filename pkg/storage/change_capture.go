@@ -30,6 +30,11 @@ import (
 // ChangeEvent. 0x26 is the first byte no key family has used.
 const prefixChangeEvent = byte(0x26)
 
+// prefixChangeBounds stores one database's first retained and last committed
+// event positions. Each position has its own key and writer, so retention and
+// capturing commits do not race on one metadata record.
+const prefixChangeBounds = byte(0x29)
+
 // ChangeCaptureMode is a database's txLogEnrichment.
 type ChangeCaptureMode uint8
 
@@ -208,6 +213,38 @@ func changeEventKey(namespace string, commitSeq uint64, seq uint32) []byte {
 	return binary.BigEndian.AppendUint32(key, seq)
 }
 
+func changeEventFloorKey(namespace string) []byte {
+	key := append([]byte{prefixChangeBounds}, namespace...)
+	return append(key, ':', 'f')
+}
+
+func changeEventLastKey(namespace string) []byte {
+	key := append([]byte{prefixChangeBounds}, namespace...)
+	return append(key, ':', 'l')
+}
+
+// changeEventStart returns the first key a reader needs to seek. Databases
+// written before the floor was introduced still use the original prefix seek
+// until their next retention pass records a floor.
+func changeEventStart(txn *badger.Txn, namespace string) ([]byte, bool, error) {
+	prefix := changeEventPrefix(namespace)
+	item, err := txn.Get(changeEventFloorKey(namespace))
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return prefix, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	position, err := item.ValueCopy(nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(position) != 12 {
+		return nil, false, fmt.Errorf("invalid change event floor for %q: %d bytes", namespace, len(position))
+	}
+	return append(prefix, position...), true, nil
+}
+
 // changeEventPosition reads (commitSeq, seq) from an event key.
 func changeEventPosition(key []byte) (uint64, uint32, bool) {
 	if len(key) < 12 {
@@ -228,8 +265,8 @@ func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, er
 		return 0, 0, err
 	}
 	err = b.withView(func(txn *badger.Txn) error {
-		earliest, last = changeBoundsIn(txn, namespace)
-		return nil
+		earliest, last, err = changeBoundsIn(txn, namespace)
+		return err
 	})
 	return earliest, last, err
 }
@@ -252,8 +289,8 @@ func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint
 // the last change it reports is the last one the transaction can see.
 func (tx *BadgerTransaction) ChangeBounds(namespace string) (earliest, last uint64, err error) {
 	err = tx.withChangeSnapshot(namespace, func(txn *badger.Txn) error {
-		earliest, last = changeBoundsIn(txn, namespace)
-		return nil
+		earliest, last, err = changeBoundsIn(txn, namespace)
+		return err
 	})
 	return earliest, last, err
 }
@@ -293,17 +330,42 @@ func (tx *BadgerTransaction) withChangeSnapshot(namespace string, read func(*bad
 }
 
 // changeBoundsIn reads a database's change bounds in txn.
-func changeBoundsIn(txn *badger.Txn, namespace string) (earliest, last uint64) {
+func changeBoundsIn(txn *badger.Txn, namespace string) (earliest, last uint64, err error) {
 	prefix := changeEventPrefix(namespace)
+	start, hasFloor, err := changeEventStart(txn, namespace)
+	if err != nil {
+		return 0, 0, err
+	}
+	if hasFloor {
+		earliest, _, _ = changeEventPosition(start)
+	} else {
+		opts := badgerIteratorOptions()
+		opts.Prefix = prefix
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		it.Seek(start)
+		if it.ValidForPrefix(prefix) {
+			earliest, _, _ = changeEventPosition(it.Item().Key())
+		}
+		it.Close()
+	}
+	item, getErr := txn.Get(changeEventLastKey(namespace))
+	if getErr == nil {
+		position, valueErr := item.ValueCopy(nil)
+		if valueErr != nil {
+			return 0, 0, valueErr
+		}
+		if len(position) != 8 {
+			return 0, 0, fmt.Errorf("invalid last change event for %q: %d bytes", namespace, len(position))
+		}
+		return earliest, binary.BigEndian.Uint64(position), nil
+	}
+	if !errors.Is(getErr, badger.ErrKeyNotFound) {
+		return 0, 0, getErr
+	}
 	opts := badgerIteratorOptions()
 	opts.Prefix = prefix
 	opts.PrefetchValues = false
-	it := txn.NewIterator(opts)
-	it.Seek(prefix)
-	if it.ValidForPrefix(prefix) {
-		earliest, _, _ = changeEventPosition(it.Item().Key())
-	}
-	it.Close()
 	opts.Reverse = true
 	reverse := txn.NewIterator(opts)
 	defer reverse.Close()
@@ -311,7 +373,7 @@ func changeBoundsIn(txn *badger.Txn, namespace string) (earliest, last uint64) {
 	if reverse.ValidForPrefix(prefix) {
 		last, _, _ = changeEventPosition(reverse.Item().Key())
 	}
-	return earliest, last
+	return earliest, last, nil
 }
 
 // changeEventsIn reads up to limit of a database's events after
@@ -319,13 +381,21 @@ func changeBoundsIn(txn *badger.Txn, namespace string) (earliest, last uint64) {
 func changeEventsIn(txn *badger.Txn, namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
 	prefix := changeEventPrefix(namespace)
 	after := changeEventKey(namespace, commitSeq, seq)
+	start, _, err := changeEventStart(txn, namespace)
+	if err != nil {
+		return nil, err
+	}
+	originalAfter := after
+	if bytes.Compare(after, start) < 0 {
+		after = start
+	}
 	var events []ChangeEvent
 	opts := badgerIteratorOptions()
 	opts.Prefix = prefix
 	it := txn.NewIterator(opts)
 	defer it.Close()
 	for it.Seek(after); it.ValidForPrefix(prefix); it.Next() {
-		if bytes.Equal(it.Item().Key(), after) {
+		if bytes.Equal(it.Item().Key(), originalAfter) {
 			continue
 		}
 		var event ChangeEvent
@@ -476,12 +546,18 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(ctx context.Context, w *bat
 	if capture == nil {
 		return nil
 	}
-	return tx.changeEventsLocked(ctx, operations, capture.commitSeq, capture.mode, commitTime,
+	err := tx.changeEventsLocked(ctx, operations, capture.commitSeq, capture.mode, commitTime,
 		func(read func(*badger.Txn) error) error { return w.write(ctx, read) },
 		func(key, value []byte) error {
 			capture.wrote = true
 			return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(key, value) })
 		})
+	if err != nil || !capture.wrote {
+		return err
+	}
+	var last [8]byte
+	binary.BigEndian.PutUint64(last[:], capture.commitSeq)
+	return w.write(ctx, func(txn *badger.Txn) error { return txn.Set(changeEventLastKey(tx.namespace), last[:]) })
 }
 
 // changeEventsLocked builds a commit's change events for operations as the
@@ -913,12 +989,19 @@ func (b *BadgerEngine) PruneChangeEvents(ctx context.Context, namespace string, 
 		return 0, err
 	}
 	var expired [][]byte
+	var firstRemaining []byte
+	var hasFloor bool
 	err = b.withView(func(txn *badger.Txn) error {
+		start, floorPresent, err := changeEventStart(txn, namespace)
+		if err != nil {
+			return err
+		}
+		hasFloor = floorPresent
 		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Seek(start); it.ValidForPrefix(prefix); it.Next() {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -927,29 +1010,109 @@ func (b *BadgerEngine) PruneChangeEvents(ctx context.Context, namespace string, 
 				return err
 			}
 			if event.CommitTime >= cutoff.UnixNano() || event.CommitSeq == last {
+				firstRemaining = it.Item().KeyCopy(nil)
 				return nil
 			}
 			expired = append(expired, it.Item().KeyCopy(nil))
 		}
 		return nil
 	})
-	if err != nil || len(expired) == 0 {
+	if err != nil {
 		return 0, err
+	}
+	if len(expired) == 0 {
+		// An upgraded store can already contain pruned event versions but no
+		// floor. Record the current live first key once so later reads avoid
+		// walking that historical prefix.
+		if !hasFloor && firstRemaining != nil {
+			err = b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+				if _, readErr := txn.Get(firstRemaining); readErr != nil {
+					return readErr
+				}
+				if _, getErr := txn.Get(changeEventFloorKey(namespace)); getErr == nil {
+					return nil
+				} else if !errors.Is(getErr, badger.ErrKeyNotFound) {
+					return getErr
+				}
+				return txn.Set(changeEventFloorKey(namespace), firstRemaining[len(prefix):])
+			})
+		}
+		if err != nil {
+			return 0, err
+		}
+		return 0, b.backfillChangeEventLast(ctx, namespace)
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
+		floor := firstRemaining
+		if end < len(expired) {
+			floor = expired[end]
+		}
 		if err := b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+			if _, readErr := txn.Get(floor); readErr != nil {
+				return readErr
+			}
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err
 				}
 			}
-			return nil
+			return txn.Set(changeEventFloorKey(namespace), floor[len(prefix):])
 		}); err != nil {
 			return start, err
 		}
 	}
-	return len(expired), nil
+	return len(expired), b.backfillChangeEventLast(ctx, namespace)
+}
+
+// backfillChangeEventLast repairs the last-position metadata for a store
+// created before it existed. Capturing commits already write this key. The
+// read and write share one Badger transaction so a concurrent capturing commit
+// or namespace drop conflicts instead of publishing a stale position.
+func (b *BadgerEngine) backfillChangeEventLast(ctx context.Context, namespace string) error {
+	var present bool
+	if err := b.withView(func(txn *badger.Txn) error {
+		_, err := txn.Get(changeEventLastKey(namespace))
+		if err == nil {
+			present = true
+			return nil
+		}
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil
+		}
+		return err
+	}); err != nil || present {
+		return err
+	}
+	return b.withUpdate(ctx, updateRequest{scope: cacheWriteScope{known: true}, metadata: true}, func(txn *badger.Txn) error {
+		if _, err := txn.Get(changeEventLastKey(namespace)); err == nil {
+			return nil
+		} else if !errors.Is(err, badger.ErrKeyNotFound) {
+			return err
+		}
+		prefix := changeEventPrefix(namespace)
+		opts := badgerIteratorOptions()
+		opts.Prefix = prefix
+		opts.PrefetchValues = false
+		opts.Reverse = true
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		it.Seek(append(append([]byte(nil), prefix...), 0xFF))
+		if !it.ValidForPrefix(prefix) {
+			return nil
+		}
+		key := it.Item().KeyCopy(nil)
+		last, _, ok := changeEventPosition(key)
+		if !ok {
+			return fmt.Errorf("invalid last change event key for %q", namespace)
+		}
+		if _, err := txn.Get(key); err != nil {
+			return err
+		}
+		var position [8]byte
+		binary.BigEndian.PutUint64(position[:], last)
+		return txn.Set(changeEventLastKey(namespace), position[:])
+	})
 }
 
 // changeRetentionJob deletes the change events older than the retention

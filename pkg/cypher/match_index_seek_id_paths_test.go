@@ -91,6 +91,13 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
+	ids, used, err = exec.resolveIDEqualityCandidates(ctx, pattern, "'person-1' = id(n)")
+	nodes, used, err = readResolvedCandidateNodes(exec, ctx, pattern, nodeCandidateIDEquality, ids, used, err)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.Len(t, nodes, 1)
+	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
+
 	ids, used, err = exec.resolveIDEqualityCandidates(ctx, pattern, "elementId(n) = '"+storage.NodeElementID("seek_id_eq_cov", "person-1")+"'")
 	nodes, used, err = readResolvedCandidateNodes(exec, ctx, pattern, nodeCandidateIDEquality, ids, used, err)
 	require.NoError(t, err)
@@ -140,6 +147,13 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.Empty(t, nodes)
 
 	ids, used, err = exec.resolveIDEqualityParamCandidates(ctx, pattern, "elementId(n) = $id", map[string]interface{}{"id": storage.NodeElementID("seek_id_param_cov", "n1")})
+	nodes, used, err = readResolvedCandidateNodes(exec, ctx, pattern, nodeCandidateIDEquality, ids, used, err)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.Len(t, nodes, 1)
+	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
+
+	ids, used, err = exec.resolveIDEqualityParamCandidates(ctx, pattern, "$id = elementId(n)", map[string]interface{}{"id": storage.NodeElementID("seek_id_param_cov", "n1")})
 	nodes, used, err = readResolvedCandidateNodes(exec, ctx, pattern, nodeCandidateIDEquality, ids, used, err)
 	require.NoError(t, err)
 	require.True(t, used)

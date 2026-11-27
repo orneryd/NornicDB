@@ -137,7 +137,7 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 `tx.setMetaData()` accepts a MAP, including an empty map, and returns no result columns or rows. It uses an active explicit transaction or a statement-scoped implicit transaction for an autocommit call; it does not leave an explicit transaction open. Its SHOW PROCEDURES mode is `DBMS`.
 
-`db.awaitIndex()`, `db.awaitIndexes()`, and `db.resampleIndex()` return no result columns or rows. Named-index calls validate existence and report `Neo.ClientError.Schema.IndexNotFound` for an unknown name. Native indexes are maintained synchronously, so waiting completes immediately and resampling does not invent a background-progress result.
+`db.awaitIndex()`, `db.awaitIndexes()`, and `db.resampleIndex()` return no result columns or rows. Named-index calls validate existence and report `Neo.ClientError.Schema.IndexNotFound` for an unknown name. Native indexes are maintained synchronously, so waiting for them completes immediately. Vector indexes may populate during startup; the await procedures wait until they are ONLINE, fail if population fails, and honor the requested timeout. Resampling does not invent a background-progress result.
 
 `db.create.setNodeVectorProperty()` and `db.create.setRelationshipVectorProperty()` accept entity arguments and return no result columns or rows. An in-query call preserves outer variables for a subsequent RETURN. Native string IDs remain supported as an input extension. SHOW PROCEDURES declares the shared entity/key/vector argument names and types; native descriptions do not claim a special Neo4j storage representation.
 

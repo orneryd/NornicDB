@@ -26,9 +26,13 @@ func reviewedCallbackBoundary(qualified string, argument int, syntax ast.Node, s
 	if !ok || declaration.Body == nil {
 		return false
 	}
+	return matchesReviewedBody(declaration.Body, set, "ecaa5aa04706799b8116c64a788fbf51a2e923386332eb1cd0f85ae6b2ebcf25")
+}
+
+func matchesReviewedBody(body *ast.BlockStmt, set *token.FileSet, digest string) bool {
 	var normalized bytes.Buffer
-	if err := format.Node(&normalized, set, declaration.Body); err != nil {
+	if err := format.Node(&normalized, set, body); err != nil {
 		return false
 	}
-	return fmt.Sprintf("%x", sha256.Sum256(normalized.Bytes())) == "ecaa5aa04706799b8116c64a788fbf51a2e923386332eb1cd0f85ae6b2ebcf25"
+	return fmt.Sprintf("%x", sha256.Sum256(normalized.Bytes())) == digest
 }

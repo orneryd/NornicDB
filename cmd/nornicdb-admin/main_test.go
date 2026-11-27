@@ -99,6 +99,7 @@ Available Commands:
   version     Print version
 
 Flags:
+      --config string     Path to YAML config file (overrides auto-discovery)
       --data-dir string   Target data directory (default "./data")
   -h, --help              help for nornicdb-admin
 

@@ -77,7 +77,7 @@ func TestIndexBackfill_AdditionalBranches(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.NoError(t, engine.Close())
-				require.NoError(t, engine.restartIndexBackfills(), "supported closed restart remains a no-op")
+				require.NoError(t, engine.restartIndexBackfills(t.Context()), "supported closed restart remains a no-op")
 				_, err = tc.rebuild(engine, context.Background())
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.closedError)

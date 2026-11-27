@@ -26,7 +26,7 @@ func BenchmarkCSVEntityExport(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
-			if err := exportNodesCSV(path, nodes, opts); err != nil {
+			if err := exportNodesCSV(path, nodes, inferNodeColumns(nodes), opts); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -36,7 +36,7 @@ func BenchmarkCSVEntityExport(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for range b.N {
-			if err := exportRelationshipsCSV(path, edges, opts); err != nil {
+			if err := exportRelationshipsCSV(path, edges, inferEdgeColumns(edges), opts); err != nil {
 				b.Fatal(err)
 			}
 		}

@@ -346,6 +346,7 @@ func (s *Server) registerProductRoutes(mux *http.ServeMux) {
 		{"/nornicdb/search/rebuild", auth.PermWrite, s.handleSearchRebuild},
 		{"/admin/stats", auth.PermAdmin, s.handleAdminStats},
 		{"/admin/config", auth.PermAdmin, s.handleAdminConfig},
+		{"/admin/databases/imports/publish", auth.PermAdmin, s.handlePublishPreparedDatabase},
 		{"/admin/backup", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupCreate) }},
 		{"/admin/restore", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupRestore) }},
 

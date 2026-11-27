@@ -620,12 +620,17 @@ func collapseScoredNodesByID(nodes []vectorQueryScoredNode) []vectorQueryScoredN
 	return out
 }
 
+// propertyVectorNodeScores scores the property-vector index population that
+// supplements a query whose property names a vector index.
+//
+// A principal with whole-population read grants scores the shared index
+// directly. A restricted principal first admits the property-vector entries
+// through the projected graph, then scores only admitted vectors. The existing
+// revision-keyed visibility cache avoids repeating that corpus read while the
+// graph and policy stay stable. Hidden vectors never influence score order or
+// query-dependent work.
 func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery []float32, label, property string, quantizedIndex *HNSWIndex) ([]vectorQueryScoredNode, error) {
-	type candidate struct {
-		nodeID string
-		vecID  string
-	}
-	candidates := make([]candidate, 0, 64)
+	candidates := make([]indexResult, 0, 64)
 	// The node and relationship metadata is written under indexMu (index
 	// writes): lock order indexMu -> mu.
 	s.indexMu.RLock()
@@ -647,13 +652,20 @@ func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery 
 				continue
 			}
 		}
-		candidates = append(candidates, candidate{nodeID: nodeID, vecID: vecID})
+		candidates = append(candidates, indexResult{ID: nodeID, MatchID: vecID})
 	}
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
 
 	if len(candidates) == 0 {
 		return nil, nil
+	}
+	if scope := s.indexedScope(ctx); scope != nil && !s.propertyVectorPopulationReadable(scope, label, property) {
+		var err error
+		candidates, err = s.filterIndexedVectors(ctx, candidates)
+		if err != nil {
+			return nil, err
+		}
 	}
 	scoreVector, release := s.vectorQueryScoreReader(normalizedQuery, quantizedIndex)
 	defer release()
@@ -664,25 +676,24 @@ func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery 
 			return nil, ctx.Err()
 		default:
 		}
-		if scope := s.indexedScope(ctx); scope != nil {
-			node, err := scope.engine.GetNode(ctx, storage.NodeID(cand.nodeID))
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			if _, visible := node.Properties[property]; !visible {
-				continue
-			}
-		}
-		score, ok := scoreVector(cand.vecID)
+		score, ok := scoreVector(cand.MatchID)
 		if !ok {
 			continue
 		}
-		out = append(out, vectorQueryScoredNode{id: cand.nodeID, score: score})
+		out = append(out, vectorQueryScoredNode{id: cand.ID, score: score})
 	}
 	return out, nil
+}
+
+func (s *Service) propertyVectorPopulationReadable(scope *indexedSearchScope, label, property string) bool {
+	database := storage.DatabaseOf(s.engine)
+	if database == "" {
+		database = s.continuationDatabase()
+	}
+	if label != "" {
+		return scope.principal.AllowsNodeIndexPopulation(database, label, property)
+	}
+	return SharedCorpusVisible(scope.principal, database, false)
 }
 
 type vectorQueryCandidateMeta struct {

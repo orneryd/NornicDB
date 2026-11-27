@@ -45,6 +45,7 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 	for _, path := range protocols {
 		disposition[path] = "delegated public MCP / GraphQL / Heimdall inventories"
 	}
+	disposition["/admin/databases/imports/publish"] = "DBMS catalog publication, covered through the public route in TestFineGrainedPreparedDatabasePublication and TestPreparedImportAndDatabaseStorageLayouts"
 	// TestFineGrainedQueryAPIImpersonation exercises the Query API sessions
 	// and the graph entity lookup through their public registrations.
 	for _, path := range strings.Fields(`

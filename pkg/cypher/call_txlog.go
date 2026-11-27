@@ -55,16 +55,15 @@ var errTxlogLimitReached = errors.New("txlog limit reached")
 // handed them and claim no other access, so no catalog count is invented here.
 const profileKindWALEntryScan = "WALEntryScan"
 
-// txlogWAL returns the WAL directory and the database whose entries the
+// txlogWAL returns the WAL and the database whose entries the
 // txlog procedures return. An empty database (an executor not bound to one)
 // returns entries of every database.
-func (e *StorageExecutor) txlogWAL() (string, string, error) {
+func (e *StorageExecutor) txlogWAL() (*storage.WAL, string, error) {
 	wal, database := e.resolveWALAndDatabase()
 	if wal == nil {
-		return "", "", localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
+		return nil, "", localizedError(localization.CypherSpecializedCallsWALUnavailable(), nil)
 	}
-	// NewWAL always sets a configuration with a directory.
-	return wal.Config().Dir, database, nil
+	return wal, database, nil
 }
 
 // txlogInteger reads an optional integer argument: absent or null is
@@ -152,7 +151,7 @@ func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, s
 			return nil, err
 		}
 	}
-	walDir, database, err := e.txlogWAL()
+	wal, database, err := e.txlogWAL()
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +159,7 @@ func (e *StorageExecutor) callDBTxlog(ctx context.Context, args []interface{}, s
 	// One counter for the whole visit: the read is the WAL walk, so the
 	// statement resolves its counter once instead of once per entry.
 	entries := queryprofile.Access(ctx, profileKindWALEntryScan, database)
-	err = storage.VisitWALEntriesAfterFromDir(ctx, walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
+	err = wal.VisitEntriesAfter(ctx, uint64(fromSeq-1), func(entry storage.WALEntry) error {
 		// The WAL handed this entry over, so it is one entry read; the
 		// selections below decide whether it becomes a row.
 		entries.Add(1, 1)

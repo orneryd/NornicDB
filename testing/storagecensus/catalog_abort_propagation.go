@@ -1,6 +1,7 @@
 package storagecensus
 
 import (
+	"go/ast"
 	"go/token"
 	"go/types"
 
@@ -187,6 +188,9 @@ func catalogGateRelease(owner *ssa.Function, call *ssa.Call, gate *types.Var) bo
 	if !ok || function.Signature.Params().Len() != 0 || function.Signature.Results().Len() != 0 {
 		return false
 	}
+	if reviewedPreparedCatalogRelease(owner, closure, function, gate) {
+		return true
+	}
 	if len(function.FreeVars) != 1 || len(closure.Bindings) != 1 || len(function.Blocks) != 1 {
 		return false
 	}
@@ -194,6 +198,33 @@ func catalogGateRelease(owner *ssa.Function, call *ssa.Call, gate *types.Var) bo
 		return false
 	}
 	return catalogGateSend(function, gate)
+}
+
+// The prepared-store release closes the proposal's own handle, discards an
+// unaccepted newly allocated store, and returns the same catalog token. The
+// cleanup has no authority over a live graph. Pin its exact body and compiled
+// receiver/gate binding so additional side effects revoke this summary.
+func reviewedPreparedCatalogRelease(owner *ssa.Function, closure *ssa.MakeClosure, function *ssa.Function, gate *types.Var) bool {
+	if owner.Name() != "transitionCatalog" || function.Parent() != owner {
+		return false
+	}
+	literal, ok := function.Syntax().(*ast.FuncLit)
+	if !ok || !matchesReviewedBody(literal.Body, owner.Prog.Fset, "e58e06b3b77bffed925f348184fb09323ce5fe501c1f45ab96122aa039edcebc") {
+		return false
+	}
+	for i, binding := range closure.Bindings {
+		if !catalogCapturedReceiver(owner, binding) {
+			continue
+		}
+		for _, block := range function.Blocks {
+			for _, instruction := range block.Instrs {
+				if send, ok := instruction.(*ssa.Send); ok && catalogToken(send.X) && catalogGateChannel(send.Chan, gate, function.FreeVars[i]) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // catalogReleaseClosure resolves the closure a call invokes: the make-closure

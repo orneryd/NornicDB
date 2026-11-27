@@ -259,7 +259,7 @@ func ensureBuiltInProceduresRegistered() {
 			}, cypherfn.CanonicalReads)
 		registerProcedure(awaitIndexProcedureSpec("db.awaitIndexes", false),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbAwaitIndexes()
+				return e.callDbAwaitIndexes(ctx, args)
 			}, cypherfn.CanonicalReads)
 		registerProcedure(ProcedureSpec{
 			Name:               "db.resampleIndex",

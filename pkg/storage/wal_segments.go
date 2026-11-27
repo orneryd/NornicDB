@@ -232,6 +232,12 @@ func resolveWALSegmentPath(walDir, segmentName string) (string, error) {
 
 // ReadWALEntriesFromDir reads WAL entries across all segments and the active WAL file.
 func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, error) {
+	return readWALEntriesFromDir(ctx, walDir, walFrameReader{})
+}
+
+// readWALEntriesFromDir reads the retained segments and the active file of one
+// journal directory in frameReader's format.
+func readWALEntriesFromDir(ctx context.Context, walDir string, frameReader walFrameReader) ([]WALEntry, error) {
 	info, err := os.Stat(walDir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -250,7 +256,7 @@ func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, erro
 		if err != nil {
 			return nil, err
 		}
-		segmentEntries, err := ReadWALEntries(ctx, segmentPath, nil)
+		segmentEntries, err := readWALEntries(ctx, segmentPath, nil, frameReader)
 		if err != nil {
 			return nil, err
 		}
@@ -259,7 +265,7 @@ func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, erro
 
 	activePath := walActivePath(walDir)
 	if _, err := os.Stat(activePath); err == nil {
-		activeEntries, err := ReadWALEntries(ctx, activePath, nil)
+		activeEntries, err := readWALEntries(ctx, activePath, nil, frameReader)
 		if err != nil {
 			return nil, err
 		}
@@ -272,13 +278,18 @@ func ReadWALEntriesFromDir(ctx context.Context, walDir string) ([]WALEntry, erro
 // VisitWALEntriesAfterFromDir visits WAL entries after the given sequence in
 // segment order without retaining the complete WAL in memory.
 func VisitWALEntriesAfterFromDir(ctx context.Context, walDir string, afterSeq uint64, visit func(WALEntry) error) error {
+	return visitWALEntriesAfterFromDir(ctx, walDir, afterSeq, walFrameReader{}, visit)
+}
+
+// visitWALEntriesAfterFromDir visits entries in frameReader's format.
+func visitWALEntriesAfterFromDir(ctx context.Context, walDir string, afterSeq uint64, frameReader walFrameReader, visit func(WALEntry) error) error {
 	manifest, err := accessWALManifest(walDir, walReadManifest, nil)
 	if err != nil {
 		return err
 	}
 
 	visitFile := func(path string) error {
-		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), walPayloadRetained, func(entry WALEntry) error {
+		return visitWALEntriesWithLogger(ctx, path, discardWALSlog(), walPayloadRetained, frameReader, func(entry WALEntry) error {
 			if entry.Sequence <= afterSeq {
 				return nil
 			}

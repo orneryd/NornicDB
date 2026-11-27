@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,8 +46,6 @@ import (
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
-	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -207,6 +206,7 @@ type DB struct {
 
 	// Async embedding queue for auto-generating embeddings
 	embedQueue        *EmbedQueue
+	embedStoreCatalog atomic.Pointer[multidb.DatabaseManager]
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
 	embedQueueYieldFn func() bool
 
@@ -215,7 +215,8 @@ type DB struct {
 	lastClusteredEmbedCount int // Track embedding count at last clustering
 
 	// Encryption flag - when true, all data is encrypted at BadgerDB level
-	encryptionEnabled bool
+	encryptionEnabled          bool
+	isolatedStoreEncryptionKey []byte
 
 	// work is the DB's one admission, completion and outcome owner: background
 	// tasks, constructors, provider users and the stop signal are its accepted
@@ -248,6 +249,7 @@ type DB struct {
 	dbConfigResolver        DbConfigResolver
 	dbSearchOptionsResolver DbSearchOptionsResolver
 	databaseStorageResolver func(string) (storage.Engine, error)
+	closeIsolatedStores     func() error
 
 	// Per-database search index master switches + warming triggers. When the
 	// resolver is unset, every database defaults to (true, true, startup,
@@ -608,17 +610,51 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	needsHistoricalRecoveryBaseline := false
+	var durabilityKey []byte
+	if dataDir != "" && config.Database.EncryptionEnabled {
+		// Resolve the installation key before inspecting a possibly encrypted
+		// WAL. Unsupported or unauthenticatable frames must fail before the
+		// Badger store can be opened or upgraded.
+		var err error
+		durabilityKey, err = InitializeStorageEncryption(dataDir, config)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Refuse an unsupported WAL before opening or migrating the Badger store.
 	// Otherwise a failed startup can advance the storage version while leaving
 	// the old WAL unreadable by the new binary.
 	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
 		walDir := filepath.Join(dataDir, "wal")
-		err := storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
-		if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
-			err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+		var err error
+		if len(durabilityKey) != 0 {
+			// A crash between file conversions can leave plain and encrypted
+			// segments together. Validate each file without changing it before
+			// the Badger startup migration is allowed to advance.
+			err = storage.ValidateWALFormatForEncryptionUpgrade(walDir, durabilityKey, config.Database.AllowStorageUpgrade)
+		} else {
+			err = storage.ValidateWALFormat(walDir, storage.WALValidateCurrent)
+			if err != nil && config.Database.AllowStorageUpgrade && errors.Is(err, storage.ErrWALUnsupportedVersion) {
+				err = storage.ValidateWALFormat(walDir, storage.WALValidateV4Upgrade)
+				needsHistoricalRecoveryBaseline = err == nil
+			}
 		}
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
+		}
+	}
+	if needsHistoricalRecoveryBaseline {
+		if err := markHistoricalRecoveryBaselinePending(dataDir); err != nil {
+			return nil, err
+		}
+	}
+	historicalBaselinePending := false
+	if info, statErr := os.Stat(dataDir); dataDir != "" && statErr == nil && info.IsDir() {
+		var err error
+		historicalBaselinePending, err = historicalRecoveryBaselineIsPending(dataDir)
+		if err != nil {
+			return nil, err
 		}
 	}
 	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
@@ -634,7 +670,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// one result prepares the replication WAL, selects the journal record
 	// policy and starts replication; Open does not read it again.
 	cluster := resolveClusterStartup(dataDir)
-	if err := prepareReplicationWAL(cluster.replicationWALDir, config.Database.AllowStorageUpgrade, string(cluster.mode)); err != nil {
+	if err := prepareReplicationWALWithKey(cluster.replicationWALDir, config.Database.AllowStorageUpgrade, string(cluster.mode), durabilityKey); err != nil {
 		return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}
 	config.Database.DataDir = dataDir
@@ -708,57 +744,19 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		}
 		badgerOpts.CatalogUpgradeV4 = catalogUpgrade
 		badgerOpts.MemoryPolicy = db.memoryPolicy
-		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
-		if providerMode == "" {
-			providerMode = "password"
-		}
-
-		// Enable BadgerDB-level encryption at rest if configured
 		if config.Database.EncryptionEnabled {
-			switch providerMode {
-			case "password":
-				// Require password if password-based encryption is enabled
-				if config.Database.EncryptionPassword == "" {
-					return nil, localizedError(localization.NornicDBCoreEncryptionPasswordRequired(), nil)
-				}
-				// Load or generate salt for this database
-				saltFile := dataDir + "/db.salt"
-				var salt []byte
-				if existingSalt, err := os.ReadFile(saltFile); err == nil && len(existingSalt) == 32 {
-					salt = existingSalt
-					fmt.Println("🔐 Loading existing encryption salt")
-				} else {
-					// Generate new salt for new encrypted database
-					var err error
-					salt, err = encryption.GenerateSalt()
-					if err != nil {
-						return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
-					}
-					// Persist salt (required for decryption after restart)
-					if err := os.MkdirAll(dataDir, 0700); err != nil {
-						return nil, localizedError(localization.NornicDBCoreDataDirectoryCreateFailed(err), err)
-					}
-					if err := os.WriteFile(saltFile, salt, 0600); err != nil {
-						return nil, localizedError(localization.NornicDBCoreEncryptionSaltSaveFailed(err), err)
-					}
-					fmt.Println("🔐 Generated new encryption salt")
-				}
-
-				// Derive 32-byte AES-256 key from password using PBKDF2
-				encryptionKey := encryption.DeriveKey([]byte(config.Database.EncryptionPassword), salt, 600000)
-				badgerOpts.EncryptionKey = encryptionKey
-				db.encryptionEnabled = true
-				fmt.Println("🔒 Database encryption enabled (AES-256/password)")
-			default:
-				// Provider-backed key management with persisted encrypted DEK
-				encryptionKey, err := resolveProviderManagedDBKey(dataDir, config, providerMode)
-				if err != nil {
-					return nil, err
-				}
-				badgerOpts.EncryptionKey = encryptionKey
-				db.encryptionEnabled = true
-				fmt.Printf("🔒 Database encryption enabled (AES-256/%s)\n", providerMode)
+			encryptionKey := durabilityKey
+			badgerOpts.EncryptionKey = encryptionKey
+			// The same installation key is independently domain-separated by the
+			// durability codecs. Never create a plaintext WAL for an encrypted DB.
+			walConfig.EncryptionKey = encryptionKey
+			db.isolatedStoreEncryptionKey = encryptionKey
+			db.encryptionEnabled = true
+			provider := strings.ToLower(strings.TrimSpace(config.Database.EncryptionProvider))
+			if provider == "" {
+				provider = "password"
 			}
+			fmt.Printf("🔒 Database encryption enabled (AES-256/%s)\n", provider)
 		}
 
 		if dataInfo, statErr := os.Stat(dataDir); statErr == nil && dataInfo.IsDir() {
@@ -803,6 +801,12 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 				}
 			}
 
+			// A historical WAL can omit acknowledged entity images. Until the
+			// upgraded store has published a current snapshot, rebuilding from
+			// that old snapshot and WAL could silently lose acknowledged data.
+			if historicalBaselinePending {
+				return nil, fmt.Errorf("persistent store cannot be rebuilt while its post-upgrade recovery baseline is pending: %w", err)
+			}
 			// Auto-recover (Neo4j-style): if the primary store can't open due to corruption,
 			// rebuild a fresh Badger store from snapshot + WAL replay, preserving the old
 			// directory for forensics.
@@ -826,20 +830,15 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 			}
 		}
 		db.baseStorage = badgerEngine
+		if db.encryptionEnabled {
+			if err := migrateEncryptedDurabilityArtifacts(db.work.Context(), dataDir, cluster.replicationWALDir, durabilityKey); err != nil {
+				return nil, fmt.Errorf("upgrade encrypted recovery artifacts: %w", err)
+			}
+		}
 		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
 			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
-		if config.Database.MVCCLifecycleEnabled {
-			lifecycleConfig := lifecycle.DefaultLifecycleConfig()
-			lifecycleConfig.Enabled = config.Database.MVCCRetentionMaxVersions > 1 || config.Database.MVCCRetentionTTL > 0
-			lifecycleConfig.CycleInterval = config.Database.MVCCLifecycleCycleInterval
-			lifecycleConfig.MaxVersionsPerKey = config.Database.MVCCRetentionMaxVersions
-			lifecycleConfig.TTL = config.Database.MVCCRetentionTTL
-			lifecycleConfig.MaxSnapshotLifetime = config.Database.MVCCLifecycleMaxSnapshotAge
-			lifecycleConfig.MaxChainHardCap = config.Database.MVCCLifecycleMaxChainCap
-			db.lifecycleManager = lifecycle.NewMVCCLifecycleManager(lifecycleConfig, badgerEngine)
-			badgerEngine.SetLifecycleController(db.lifecycleManager)
-		}
+		db.lifecycleManager = attachStorageLifecycle(config, badgerEngine)
 
 		if config.Compliance.RetentionEnabled {
 			rm := retention.NewManager()
@@ -954,7 +953,11 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 
 		// Replay accepted semantic transactions and buffered ACKs before traffic.
 		// Semantic records can precede physical publication in either mode.
-		if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {
+		restoreWALFloor, err := nativeRestoreWALFloor(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		if recovered, recErr := storage.RecoverBufferedCommitsAtOpenAfter(badgerEngine, wal, restoreWALFloor); recErr != nil {
 			return nil, fmt.Errorf("failed to replay accepted commits from WAL: %w", recErr)
 		} else if recovered > 0 {
 			fmt.Printf("♻️  Recovered %d accepted commits from the WAL\n", recovered)
@@ -964,6 +967,9 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 		// final recovered catalog for new statements before exposing the DB.
 		if err := multidb.LoadChangeCaptureModes(context.Background(), badgerEngine, "system"); err != nil {
 			return nil, fmt.Errorf("failed to load recovered database change-capture modes: %w", err)
+		}
+		if err := completeHistoricalRecoveryBaseline(db.work.Context(), dataDir, walEngine); err != nil {
+			return nil, fmt.Errorf("failed to publish post-upgrade recovery baseline: %w", err)
 		}
 
 		// Enable auto-compaction to prevent unbounded WAL growth
@@ -1122,10 +1128,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// write amplification on every CreateNode/UpsertNode. Thread the flag
 	// down to the engine once at startup.
 	if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
-		be.SetEmbeddingsEnabled(config.Memory.EmbeddingEnabled)
-		be.SetEmbeddingLabelPolicy("", config.EmbeddingWorker.EligibleLabels, config.EmbeddingWorker.ExcludedLabels)
-		be.SetEmbeddingTextPolicy(embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromFields(
-			config.EmbeddingWorker.PropertiesInclude, config.EmbeddingWorker.PropertiesExclude, config.EmbeddingWorker.IncludeLabels)))
+		configureEmbeddingStore(be, config)
 	}
 
 	// Initialize knowledge-layer decay: wire scorer into BadgerEngine read paths.
@@ -1269,7 +1272,7 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config.Memory.EmbeddingEnabled && db.baseStorage != nil && db.embedWorkerConfig != nil {
 		workerCfg := *db.embedWorkerConfig
 		workerCfg.DeferWorkerStart = true
-		db.embedQueue = NewEmbedQueue(nil, db.baseStorage, &workerCfg)
+		db.embedQueue = NewEmbedQueue(nil, db.embeddingQueueStorage(), &workerCfg)
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
@@ -1304,21 +1307,8 @@ func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
 	// (storage.EventSubscriber), and one that does not fails Open.
 	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
-		// The downstream mutation path is debounced, so events are queued
-		// inline; only the ID is queued, the refresh reads the stored state.
-		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
-			NodeCreated: db.indexNodeFromEvent,
-			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
-			// Relationship vectors are indexed whether or not relationship
-			// search (#1065) is on.
-			EdgeCreated:    db.indexRelationshipFromEvent,
-			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
-			NamespaceReset: db.dropSearchForPrefix,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
+		if err := db.subscribeSearchEvents(namespaced.GetInnerEngine()); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1676,6 +1666,23 @@ func prepareReplicationWAL(dir string, allowUpgrade bool, mode string) error {
 	return nil
 }
 
+func prepareReplicationWALWithKey(dir string, allowUpgrade bool, mode string, key []byte) error {
+	if dir == "" || len(key) == 0 {
+		return prepareReplicationWAL(dir, allowUpgrade, mode)
+	}
+	if err := storage.ValidateWALFormatForEncryptionUpgrade(dir, key, allowUpgrade); err != nil {
+		return err
+	}
+	if allowUpgrade {
+		// Historical replication commands need their existing payload
+		// transform before the encryption conversion seals those records.
+		if err := storage.ValidateWALFormat(dir, storage.WALValidateCurrent); errors.Is(err, storage.ErrWALUnsupportedVersion) {
+			return prepareReplicationWAL(dir, true, mode)
+		}
+	}
+	return nil
+}
+
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
 	cluster := db.cluster
 	if cluster == nil {
@@ -1686,7 +1693,7 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 			dataDir, allowUpgrade = db.config.Database.DataDir, db.config.Database.AllowStorageUpgrade
 		}
 		resolved := resolveClusterStartup(dataDir)
-		if err := prepareReplicationWAL(resolved.replicationWALDir, allowUpgrade, string(resolved.mode)); err != nil {
+		if err := prepareReplicationWALWithKey(resolved.replicationWALDir, allowUpgrade, string(resolved.mode), db.isolatedStoreEncryptionKey); err != nil {
 			return nil, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 		}
 		cluster = &resolved
@@ -1695,7 +1702,7 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 	if cluster.replication == nil {
 		return base, nil
 	}
-	runtime, err := replication.StartRuntime(context.Background(), base, cluster.replication)
+	runtime, err := replication.StartRuntimeWithWALKey(context.Background(), base, cluster.replication, db.isolatedStoreEncryptionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,9 +1807,8 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		return true
 	}
 
-	// Create embed queue against the un-namespaced base storage so it can pull work
-	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
-	db.embedQueue = NewEmbedQueue(embedder, db.baseStorage, db.embedWorkerConfig)
+	// The queue processes fully qualified node IDs across the physical stores.
+	db.embedQueue = NewEmbedQueue(embedder, db.embeddingQueueStorage(), db.embedWorkerConfig)
 	db.embedQueue.setEmbeddingAdmission(db.managedEmbeddingAllowed)
 	if db.embedQueueYieldFn != nil {
 		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
@@ -2462,8 +2468,8 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 		return 0, storage.ErrStorageClosed
 	}
 	defer release()
-	// Unwrap storage layers to find the BadgerEngine
-	// The storage chain is: WALEngine -> BadgerEngine
+	// Strip the namespace wrapper. The physical store retains its WAL and
+	// exposes the same prefix-reset operation through its decorators.
 	engine := scopedStorage
 	idPrefix := ""
 
@@ -2476,16 +2482,14 @@ func (db *DB) clearEmbeddings(database string, scopedStorage storage.Engine) (in
 	// Storage publishes each accepted reset through the existing per-node
 	// refresh owner. Catch up those reservations before returning, including
 	// completed nodes of a partial reset, without discarding newer vectors.
-	var count int
-	var err error
-	switch native := engine.(type) {
-	case *storage.WALEngine:
-		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
-	case *storage.BadgerEngine:
-		count, err = native.ClearAllEmbeddingsForPrefix(idPrefix)
-	default:
+	native, ok := engine.(interface{ ClearAllEmbeddingsForPrefix(string) (int, error) })
+	// MemoryEngine embeds Badger's methods. Keep regeneration limited to
+	// the same persistent storage implementations as the public reset API.
+	_, inMemory := engine.(*storage.MemoryEngine)
+	if !ok || inMemory {
 		return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 	}
+	count, err := native.ClearAllEmbeddingsForPrefix(idPrefix)
 	if count > 0 {
 		db.searchServicesMu.RLock()
 		entry := db.searchServices[database]
@@ -2598,7 +2602,7 @@ func unwrapToBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
 
 // SetEmbeddingLabelPolicy configures managed-embedding admission for one database.
 func (db *DB) SetEmbeddingLabelPolicy(dbName string, eligible, excluded []string) {
-	if badger := unwrapToBadgerEngine(db.baseStorage); badger != nil {
+	if badger := db.embeddingPolicyEngine(dbName); badger != nil {
 		badger.SetEmbeddingLabelPolicy(dbName, eligible, excluded)
 	}
 }

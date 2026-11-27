@@ -3,6 +3,7 @@ package storage
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"maps"
 	"time"
@@ -883,7 +884,21 @@ type embeddingKeyScanOptions struct {
 }
 
 func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
-	return visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...)
+	if err := visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...); err != nil {
+		return err
+	}
+	// Entity cleanup also retires the derived failure-only membership key.
+	// Range replacement uses visitEmbeddingKeysExcept and writes its final
+	// membership explicitly; ordinary deletes use this broader owner.
+	key := embeddingFailureKey(nodeID)
+	_, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return visit(key)
 }
 
 // visitEmbeddingKeysExcept observes the full range but copies only keys whose

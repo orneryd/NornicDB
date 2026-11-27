@@ -335,9 +335,9 @@
     "reason": "Typed encryption key envelope persistence; no graph property values.",
     "sha256": "b8254bb5de30b3ba952efabd2a14d197541c19a2ae7e6365fbbc595ce6437795"
   },
-  "pkg/nornicdb/db_encryption_provider.go:resolveProviderManagedDBKey": {
+  "pkg/nornicdb/db_encryption_provider.go:providerManagedDBKey": {
     "reason": "Typed encryption key envelope; no graph property payload.",
-    "sha256": "a31b5b17e59e479ae8c3130e0a317141da27006be5e4940cb9697afc6acd42e5"
+    "sha256": "ab15d444f9e12b877b45af99bf9b4ca0e13d5d0545d870a7ae5e4c093e625127"
   },
   "pkg/nornicdb/embed_queue.go:WorkerStats.MarshalJSON": {
     "reason": "WorkerStats custom JSON contains booleans and typed integer counters only.",
@@ -403,13 +403,21 @@
     "reason": "Typed model requests, stemmer checks or index manifests; graph result properties are encoded at the server domain boundary.",
     "sha256": "785a9ce4603567cd9a92ff8cd21f0aa5d1ec2006b60085a0d754feed097bfdca"
   },
+  "pkg/storage/prepared_database.go:ReadPreparedDatabaseSeal": {
+    "reason": "Reads a typed store seal containing a database name and two int64 counts.",
+    "sha256": "ced3fde0fe5e0bd84f03620e26dde927cf4b3e1808cfc1f9216a58018b0b3179"
+  },
+  "pkg/storage/prepared_database.go:SealPreparedDatabase": {
+    "reason": "Writes a typed store seal containing a database name and two int64 counts.",
+    "sha256": "9787365a57d148cfc62260823c619bc15b8815825d7b0e08c41e6ebe6a3f0957"
+  },
   "pkg/storage/receipt.go:computeReceiptHash": {
     "reason": "Stable receipt hash over typed sequence counters and strings; changing bytes changes the hash contract.",
     "sha256": "8a6bee212022ea17fec7e5794622d4801e86b3386f1f7e292d7ba2d0df7d819e"
   },
   "pkg/storage/snapshot_stream.go:readSnapshot": {
     "reason": "Typed snapshot footer/checksum framing; entity payloads use the binary/property recovery owner.",
-    "sha256": "77d5a24c2f5f4dbad48df225d24caf46c9eff77be0182b21287576141a33e80b"
+    "sha256": "b291bbb14b2f68e0578507c709d3ac7a1938c8186d8f7fcc6f507832c96ba8c9"
   },
   "pkg/storage/wal_diagnostics.go:WAL.reportCorruption": {
     "reason": "Typed corruption diagnostic report; no property payload.",
@@ -627,9 +635,9 @@
     "reason": "Author: #1665 implementation lane (Codex). Explicit historical Gob-or-JSON fallback, gated by allowJSON and strict trailing rejection; current format admission is separate.",
     "sha256": "151eb2c5908e723125d276757d00dcde7a08db40d13345373cad982f0a71132d"
   },
-  "scripts/wal-read/main.go:writeEntries": {
+  "scripts/wal-read/main.go:writeEntriesWithKey": {
     "reason": "Author: #1665 implementation lane (Codex). Offline inspection serializes rendered WAL report rows after the retained reader validates records; it is not a storage write or recovery decoder.",
-    "sha256": "cf9351703388e50347a20396881dde4e541004a264d7c65b5b5a7c09c3217304"
+    "sha256": "f97b561663c7d16a2166f530b00fb1be0e8be542b1fba040a51d76f3ab73f0a0"
   },
   "scripts/go_owner_bindings/main.go:run": {
     "reason": "Release developer tool: reads one JSON request of root and file paths and writes go/types binding evidence; no graph properties, Cypher parameters or persisted state. Reviewed by the L6 / #1665 lane (Claude Opus 5.5).",

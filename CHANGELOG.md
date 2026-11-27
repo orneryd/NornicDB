@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Detect native backup framing before legacy JSON restore so valid backups whose length prefix starts with JSON punctuation restore reliably.
+- Publish a fresh recovery snapshot before serving an upgraded historical WAL where automatic rebuilding is supported, and refuse rebuilding while that snapshot is pending so older transaction-only journals cannot silently lose acknowledged graph changes.
+- Report failed `apoc.periodic.commit` batches and their errors in Neo4j-compatible result columns, while keeping successful execution counts separate from attempted batches.
+- Recognize native backups whose binary length prefix starts with `{` or `[`, so restore does not misroute them to the legacy JSON reader.
+- Refresh accounts and database change-capture settings after an online restore so the restoring server uses the restored security and catalog state without a restart.
+- Restore indexed node lookups, revision-scoped full-text views and result caching, and Bolt streaming for eligible fine-grained reads while preserving policy checks; authorize restricted property vectors before scoring and reuse stable admission decisions.
+- Reuse shared full-text field provenance and revision-scoped visibility statistics for restricted search, preserving visible-only hits and scores without rebuilding BM25 on every stable query.
+- Reuse authorized vector candidate decisions across stable policy and graph revisions, with fresh reads when decay or manual suppression can change visibility independently.
+- Use declared relationship RANGE indexes for selective equality in a MATCH `WHERE` clause, preserving complete results for ordinary indexes and transaction reads.
+- Read indexed two-label ordered WITH pages before a later join without scanning the full label, while preserving the WITH sort and window semantics.
+- Use complete unique-constraint lookups from every pattern label in multi-label MERGE, so label order does not force scans of large node populations.
+- Seed fixed Cypher relationship chains from a single-candidate indexed inline right endpoint, avoiding a full left-side scan for selective two-hop matches.
+- Keep change-feed bounds and resumed event reads fast after retention by recording snapshot-visible first and last event positions.
+- Reuse successful parameterized semantic validation for repeated statements with the same bound type classes, while rechecking new types and request-local values.
+
 ## [1.5.2-hotfix]
 
 - Apply caller graph authorization to MCP related results and resolve scoped recall IDs in the selected database.

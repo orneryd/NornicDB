@@ -48,7 +48,7 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 	switch key[0] {
 	case prefixNode:
 		fact.id, fact.node = string(key[1:]), true
-	case prefixPendingEmbed:
+	case prefixPendingEmbed, prefixEmbeddingFailure:
 		// Queue membership does not change any stored body or embedding range.
 		return
 	case prefixEmbedding:
@@ -113,7 +113,7 @@ func (p *physicalCacheProjection) add(b *BadgerEngine, key, value []byte) {
 			p.unknown = true
 			return
 		}
-	case prefixSchema, prefixMVCCMeta, prefixBufferedFlush, prefixChangeEvent,
+	case prefixSchema, prefixMVCCMeta, prefixBufferedFlush, prefixChangeEvent, prefixChangeBounds,
 		prefixIDDictNodeForward, prefixIDDictEdgeForward, prefixIDDictCounter,
 		prefixIDDictNodeReverse, prefixIDDictEdgeReverse, prefixIDFreelist,
 		prefixPropKeyForward, prefixPropKeyReverse, prefixPropKeyCounter,

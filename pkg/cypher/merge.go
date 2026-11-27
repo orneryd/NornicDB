@@ -294,34 +294,39 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 			}
 		}
 
-		for _, prop := range mergePropertyNamesSorted(props) {
-			val := props[prop]
-			nodeID, valueFound, constraintExists, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, label, prop, val)
-			if err != nil {
-				return nil, err
-			}
-			if !constraintExists {
-				continue
-			}
-			e.markMergeSchemaLookupUsed()
-			if !valueFound {
+		// A complete unique constraint on any pattern label proves the key's
+		// candidate set. Ordinary indexes retain the existing first-label
+		// lookup, since an unfilled later index must not hide a match.
+		for _, uniqueLabel := range labels {
+			for _, prop := range mergePropertyNamesSorted(props) {
+				val := props[prop]
+				nodeID, valueFound, constraintExists, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, uniqueLabel, prop, val)
+				if err != nil {
+					return nil, err
+				}
+				if !constraintExists {
+					continue
+				}
+				e.markMergeSchemaLookupUsed()
+				if !valueFound {
+					if cacheComplete {
+						schemaLookupUsed = true
+					}
+					continue
+				}
+				candidates, err := e.loadMergeCandidateNodes(ctx, store, []storage.NodeID{nodeID})
+				if err != nil {
+					return nil, err
+				}
+				for _, n := range candidates {
+					if mergeNodeMatches(n, labels, props) {
+						e.cacheMergeNode(labels, props, n)
+						return n, nil
+					}
+				}
 				if cacheComplete {
 					schemaLookupUsed = true
 				}
-				continue
-			}
-			candidates, err := e.loadMergeCandidateNodes(ctx, store, []storage.NodeID{nodeID})
-			if err != nil {
-				return nil, err
-			}
-			for _, n := range candidates {
-				if mergeNodeMatches(n, labels, props) {
-					e.cacheMergeNode(labels, props, n)
-					return n, nil
-				}
-			}
-			if cacheComplete {
-				schemaLookupUsed = true
 			}
 		}
 
@@ -488,24 +493,28 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 	if schema == nil {
 		return nil, false, nil
 	}
-	label := labels[0]
-	for _, prop := range mergePropertyNamesSorted(props) {
-		nodeID, valueFound, constraintExists, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, label, prop, props[prop])
-		if err != nil {
-			return nil, false, err
-		}
-		if !constraintExists {
-			continue
-		}
-		if valueFound {
-			e.markMergeSchemaLookupUsed()
-			return []storage.NodeID{nodeID}, true, nil
-		}
-		if cacheComplete {
-			e.markMergeSchemaLookupUsed()
-			return nil, true, nil
+	// A complete unique constraint can answer for any pattern label. Keep
+	// ordinary indexes on the first label to preserve incomplete-index fallback.
+	for _, uniqueLabel := range labels {
+		for _, prop := range mergePropertyNamesSorted(props) {
+			nodeID, valueFound, constraintExists, cacheComplete, err := schema.LookupUniqueConstraintValue(ctx, uniqueLabel, prop, props[prop])
+			if err != nil {
+				return nil, false, err
+			}
+			if !constraintExists {
+				continue
+			}
+			if valueFound {
+				e.markMergeSchemaLookupUsed()
+				return []storage.NodeID{nodeID}, true, nil
+			}
+			if cacheComplete {
+				e.markMergeSchemaLookupUsed()
+				return nil, true, nil
+			}
 		}
 	}
+	label := labels[0]
 	indexes, err := schema.SeekableCompositeIndexesForLabel(ctx, label)
 	if err != nil {
 		return nil, false, err

@@ -26,11 +26,10 @@ const embeddingContentUpdatedAtKey = "__nornic_content_updated_at"
 
 // reservedEmbeddingMetaChunkIndex is the chunk index under which the worker's
 // embedding metadata record is stored. It lives in the EXISTING embedding key
-// space (prefixEmbedding, 0x08) so no new key prefix or migration arm is
-// needed, and every existing cleanup of that prefix (business writes, legacy
-// embedding updates, chunk replacement) removes it together with the chunk
-// vectors. Real chunk counts never approach 2^31-1, so the index cannot
-// collide with a stored vector.
+// space (prefixEmbedding, 0x08). The authoritative metadata therefore needs
+// no migration arm; the separate failure-only index is rebuilt from it when
+// an older store opens. Real chunk counts never approach 2^31-1, so the
+// reserved index cannot collide with a stored vector.
 const reservedEmbeddingMetaChunkIndex = int(0x7FFFFFFF)
 
 // embeddingMetaKey creates the key for a node's sidecar embedding metadata
@@ -38,6 +37,14 @@ const reservedEmbeddingMetaChunkIndex = int(0x7FFFFFFF)
 func embeddingMetaKey(nodeID NodeID) []byte {
 	return embeddingKey(nodeID, reservedEmbeddingMetaChunkIndex)
 }
+
+// embeddingFailureKey is ordered by fully qualified node ID, matching the
+// previous metadata scan's failure order while omitting healthy embeddings.
+func embeddingFailureKey(nodeID NodeID) []byte {
+	return append([]byte{prefixEmbeddingFailure}, []byte(nodeID)...)
+}
+
+var embeddingFailureIndexReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEmbeddingFailureReady}
 
 // embeddingMetaFromKey reports whether a raw embedding-prefix key is the
 // metadata record for some node and, when so, the node ID it belongs to.
@@ -234,6 +241,10 @@ var embeddingSourceCheckedHook atomic.Pointer[func()]
 // feeds) differs from embedded's, the copy the embedding was computed from
 // (#889, #963). The read is conflict-tracked by txn.
 func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badger.Txn, embedded *Node, logicalSource ...*Node) error {
+	attempt := embedded.EmbeddingAttempt()
+	if owner := embedded.runtimeState().embeddingOwner; attempt != nil && owner != nil && owner != b {
+		return ErrEmbeddingSourceChanged
+	}
 	var stored *Node
 	var physical uint64
 	if len(logicalSource) > 0 {
@@ -262,7 +273,6 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(ctx context.Context, txn *badge
 	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
-	attempt := embedded.EmbeddingAttempt()
 	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
 	if attempt != nil && (attempt.RequireExactBody || failed || len(embedded.EmbedMeta) == 0) {
 		var matches bool
@@ -470,9 +480,9 @@ func validateEmbeddingSidecarMeta(meta map[string]any, node *Node) (map[string]a
 	return meta, true, nil
 }
 
-// StreamParkedEmbeddingFailures iterates the embedding key space and visits
-// each node whose reserved-chunk-index metadata record marks a permanent
-// embedding failure, without decoding any node body.
+// StreamParkedEmbeddingFailures visits only parked failure keys once the
+// durable index is ready. Older stores use the authoritative metadata scan
+// until their one-time backfill finishes. Neither path decodes node bodies.
 func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
 	if err := b.pendingNamespaceConflict(""); err != nil {
 		return 0, err
@@ -483,21 +493,42 @@ func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit 
 	}
 	count := 0
 	err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEmbedding}))
+		indexed, err := embeddingFailureIndexReady(txn)
+		if err != nil {
+			return err
+		}
+		prefix := []byte{prefixEmbedding}
+		if indexed {
+			prefix[0] = prefixEmbeddingFailure
+		}
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix([]byte{prefixEmbedding}); it.Next() {
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			key := it.Item().Key()
-			nodeID, ok := embeddingMetaFromKey(key)
-			if !ok {
-				continue // A chunk vector (or its shard part), not metadata.
+			item := it.Item()
+			var nodeID NodeID
+			if indexed {
+				nodeID = NodeID(item.Key()[1:])
+				item, err = txn.Get(embeddingMetaKey(nodeID))
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					continue // A stale derived key cannot invent a failure.
+				}
+				if err != nil {
+					return err
+				}
+			} else {
+				var ok bool
+				nodeID, ok = embeddingMetaFromKey(item.Key())
+				if !ok {
+					continue // A chunk vector (or shard part), not metadata.
+				}
 			}
 			var meta map[string]any
-			if err := it.Item().Value(func(val []byte) error {
+			if err := item.Value(func(val []byte) error {
 				return decodeValue(val, &meta)
 			}); err != nil {
 				continue
@@ -520,4 +551,20 @@ func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit 
 		err = nil
 	}
 	return count, err
+}
+
+func embeddingFailureIndexReady(txn *badger.Txn) (bool, error) {
+	item, err := txn.Get(embeddingFailureIndexReadyKey)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var ready bool
+	err = item.Value(func(value []byte) error {
+		ready = len(value) == 1 && value[0] == 1
+		return nil
+	})
+	return ready, err
 }

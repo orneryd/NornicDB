@@ -162,13 +162,13 @@
     },
     {
       "path": "architecture/knowledge-policy-visibility-layer.md",
-      "sha256": "254714fd7fe1897489e84cf7cb36571b4895eb6f12bde4953279176539e75a03",
-      "bytes": 16209
+      "sha256": "ed3c414a094363e9ae664c0327d270e2ca7c853a356ec253b70089e2bac1b25f",
+      "bytes": 16370
     },
     {
       "path": "architecture/multi-db-architecture.md",
-      "sha256": "c6d0e4d5a5be88fed958e1631c332381b1f3add95e6d6b2bf90f53707237f6db",
-      "bytes": 11722
+      "sha256": "a0ab8af775b320d8153212349977e2832b747d0ca61795c70b022e51a01f7ef8",
+      "bytes": 14454
     },
     {
       "path": "architecture/multi-db-implementation-spec.md",
@@ -657,8 +657,8 @@
     },
     {
       "path": "features/apoc-functions.md",
-      "sha256": "87d753ec49b1b3b6daf7f1b88d6bf70bfbd86590cf3e2974a493f10c5e2d66a2",
-      "bytes": 68242
+      "sha256": "0728cf24ca0f5af4a31c10a9554f40c9a61dce6016ddbdf78e8e6ebc5c659d84",
+      "bytes": 68681
     },
     {
       "path": "features/apoc-procedure-capabilities.md",
@@ -682,8 +682,8 @@
     },
     {
       "path": "features/cross-encoder-reranking.md",
-      "sha256": "4ec41061b810f63fd0c7b3a92c208e4e9dd2fa8cb15af6dd9df4f17af7c0bc47",
-      "bytes": 18162
+      "sha256": "224ace46e28c7b7d25b6f3ef2b18dd8149f2f85e3f71f5264480ff02e72756c8",
+      "bytes": 18424
     },
     {
       "path": "features/feature-flags.md",
@@ -727,13 +727,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "208720a1394e879230ce765b35422df2c12e275ce0e5e855e6c29efcdeae2d84",
-      "bytes": 220994
+      "sha256": "0ea3acb1e4d465ede7d514eb951c7110b137b7128f849b5c4919979f27f31c8e",
+      "bytes": 228472
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "fbd5082d70001da4814bab054fac840565a9327a2fa9c341a6ef6596120513d8",
-      "bytes": 161328
+      "sha256": "02c5ad6f262256145f9b6950c389a7cee5f0b0eac6b7391537e2bb5e65bc33d2",
+      "bytes": 166738
     },
     {
       "path": "getting-started/README.md",
@@ -797,8 +797,8 @@
     },
     {
       "path": "neo4j-migration/cypher-compatibility.md",
-      "sha256": "3cac25587c0720d30c7a9f0d07ff870b6fa7a73780c8c5e44d7fab2c4519a381",
-      "bytes": 36076
+      "sha256": "396b8986127fc9fab1bd3d943c10c2cd3385c20efd0ec7bfd195b8f5401e9db5",
+      "bytes": 36234
     },
     {
       "path": "neo4j-migration/feature-parity.md",
@@ -822,8 +822,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "46bf016a026825323a5ed4aa7eb0270de14078da782cbb42fc9a6b243d951191",
-      "bytes": 7962
+      "sha256": "8b506f7436750a6a130161914ce28a06a85eae39d2df41d0230aa22d2bb0725d",
+      "bytes": 13692
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
@@ -832,8 +832,8 @@
     },
     {
       "path": "operations/backup-restore.md",
-      "sha256": "b4ea9440906796c63b8cf6e0c59b4278df0f32bc9c0c3d28b4781144f97da2d0",
-      "bytes": 6097
+      "sha256": "43e34c0b4e58bc3d7b228d09cdc2b1a5ba195a9b2e8921d9c56877e52895e3ef",
+      "bytes": 6565
     },
     {
       "path": "operations/cli-commands.md",
@@ -867,8 +867,8 @@
     },
     {
       "path": "operations/durability.md",
-      "sha256": "ed66f09be82c88271aac44e3be678c6e88c5bf2581c9dcd05da32d32c5584967",
-      "bytes": 8998
+      "sha256": "30d4c03549191580db93ddf8a02b55935459d2622bb28f3a8d5bc00b9d3361e4",
+      "bytes": 9996
     },
     {
       "path": "operations/environment-variables.md",
@@ -902,8 +902,8 @@
     },
     {
       "path": "operations/recovery-format-compatibility.md",
-      "sha256": "9bff5f1f9f36f187172ae294da17f2c353e202eeee2f87e5ba2e6756917ccb4e",
-      "bytes": 14683
+      "sha256": "8f4cf94382c4bd0c7e636a02be2628cad798c4dd5d86668bb57733f669c593e2",
+      "bytes": 15699
     },
     {
       "path": "operations/reverse-proxy.md",
@@ -932,8 +932,8 @@
     },
     {
       "path": "operations/wal-compaction.md",
-      "sha256": "4601a956abf8c2e8f0c3ab50ccc1cd09eb645896cdeec1f3c32b6d6ed9119e03",
-      "bytes": 9670
+      "sha256": "12be1a4156fc95611fd3c92738d0fba840aceb69e8dac35ea8056de79908f85a",
+      "bytes": 9907
     },
     {
       "path": "packaging/README.md",
@@ -1361,6 +1361,11 @@
       "bytes": 4050
     },
     {
+      "path": "performance/graphalytics-wiki-talk.md",
+      "sha256": "d5c626f80bd13731bf13dd91fe75874417e6dbbce36bf54762569a8d2afec78d",
+      "bytes": 2107
+    },
+    {
       "path": "performance/hnsw-recall-100k.svg",
       "sha256": "f18cef9917517174cd524f8c76128543a79ef4f1b45012740afc366b161d8b7f",
       "bytes": 4201
@@ -1557,8 +1562,8 @@
     },
     {
       "path": "security/fine-grained-access-control.md",
-      "sha256": "f7a42cb9a210fd83605b3fc69f08d087979f023261cad9c03ddc9a85828ab9c4",
-      "bytes": 12574
+      "sha256": "51025edded81b5d1290b6f1306ad8ad5884e1118db2178bd59ddc9fc88a11050",
+      "bytes": 15029
     },
     {
       "path": "security/http-security.md",
@@ -1842,8 +1847,8 @@
     },
     {
       "path": "user-guides/search-continuation.md",
-      "sha256": "b4a133e0cca0ff96c03bd4165fc2353beafe843aec85f87d75af6b87a8e67959",
-      "bytes": 17646
+      "sha256": "e11f2edaaead19d6ebfe1bfa2f7f4a601b782f5b0c9aff5b771195b611d60f3f",
+      "bytes": 17810
     },
     {
       "path": "user-guides/transactions.md",

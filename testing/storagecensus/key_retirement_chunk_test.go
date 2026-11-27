@@ -44,8 +44,9 @@ func TestChunkRetirementKeepsForeignChunkKeysUnclassified(t *testing.T) {
 	path := filepath.Join(abs, "pkg/storage/badger_count_deltas.go")
 	source, err := os.ReadFile(path)
 	require.NoError(t, err)
-	text := strings.Replace(string(source), "\treturn keys, nil\n}\n", "\treturn censusForeignChunk, nil\n}\n", 1)
-	require.NotEqual(t, string(source), text, "the chunk reader's own return must be the mutation site")
+	original := strings.ReplaceAll(string(source), "\r\n", "\n")
+	text := strings.Replace(original, "\treturn keys, nil\n}\n", "\treturn censusForeignChunk, nil\n}\n", 1)
+	require.NotEqual(t, original, text, "the chunk reader's own return must be the mutation site")
 	text += `
 // censusForeignChunk stands in for a key chunk a reader receives from outside
 // the module: the census cannot bound its provenance.

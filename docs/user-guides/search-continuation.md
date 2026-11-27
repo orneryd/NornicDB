@@ -70,7 +70,9 @@ without provider input. Completion therefore still comes from retrieval
 exhaustion, `max_results`, `ranked_limit`, or an explicit engine or adapter
 candidate budget. For a multi-chunk query the chunks are searched without their
 own rerank, the chunk lists are fused, and that fused order is what the
-continuation reranks once, keyed by the original query.
+continuation reranks once, keyed by the original query. The provider receives
+the first searched query chunk for each window; the other kept chunks still
+participate in retrieval and fusion, but not in the rerank score.
 
 When `ranked` mode reaches the natural end of an exact producer without a
 candidate-budget boundary, the terminal page reports

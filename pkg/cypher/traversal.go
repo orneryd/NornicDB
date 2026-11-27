@@ -409,7 +409,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// type, direction, inline properties, endpoint admission and the WHERE with
 	// their existing owners, and no indexed relationship means no match at all.
 	if relationship == nil && !matches.IsChained {
-		selected, none, pinned, err := e.relationshipPropertySeedEdge(ctx, matches)
+		selected, none, pinned, err := e.relationshipPropertySeedEdge(ctx, matches, whereClause)
 		if err != nil {
 			return nil, err
 		}
@@ -504,9 +504,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// prune each path prefix as soon as they can be decided on it.
 	matches.pruneWhere = whereClause
 
-	// Only unbound, single-segment traversals choose their orientation here.
-	// Index availability alone says nothing about adjacency expansion cost.
-	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && !matches.IsChained && matches.pinnedRelationship == nil {
+	// Unbound single segments compare both orientations here. A fixed chain
+	// can also start at a single-candidate indexed inline end; the chooser limits that
+	// case to at most one candidate before any reverse traversal starts.
+	if len(seedNodes) == 0 && len(endSeedNodes) == 0 && matches.pinnedRelationship == nil &&
+		(!matches.IsChained || matches.canSeedEnd() && len(matches.EndNode.properties) > 0) {
 		endNodes, selected, err := e.chooseTraversalEndSeeds(ctx, matches, optimizedStartNodes, startDecided, whereClause, hint.statistics)
 		if err != nil {
 			return nil, err
@@ -1467,6 +1469,15 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
+	// Narrow the type-index endpoints with mandatory relationship-local
+	// equalities before loading nodes and traversing their adjacency. The
+	// complete WHERE is still evaluated for every resulting path.
+	whereValues := e.relationshipWhereEqualityValues(ctx, relationship.Variable, match.pruneWhere)
+	if viewport, active := TemporalViewportFromContext(ctx); active && viewport.Enabled() {
+		// The type index may hold current properties while the traversal reads
+		// a historical relationship version.
+		whereValues = nil
+	}
 	seen := make(map[storage.NodeID]bool)
 	add := func(id storage.NodeID) {
 		if seen[id] {
@@ -1483,7 +1494,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return nil, true, err
 		}
 		for _, edge := range edges {
-			if edge == nil {
+			if edge == nil || (len(whereValues) > 0 && !e.edgeMatchesProps(edge, whereValues)) {
 				continue
 			}
 			switch relationship.Direction {

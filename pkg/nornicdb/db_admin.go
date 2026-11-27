@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1513,6 +1515,12 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 				db.mu.Unlock()
 				return ErrClosed
 			}
+			// Capture the old store's boundary before replacing it. Commands
+			// accepted after this point must remain eligible for crash replay.
+			var restoreWALFloor uint64
+			if db.wal != nil {
+				restoreWALFloor = db.wal.Sequence()
+			}
 			if err := restorable.Restore(path); err != nil {
 				if errors.Is(err, storage.ErrNotImplemented) {
 					db.mu.Unlock()
@@ -1521,22 +1529,35 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 			}
+			// The replacement has committed. A disconnected request must not
+			// interrupt the derived state needed to serve the restored store.
+			settleCtx := db.LifetimeContext()
 			if db.config != nil && db.config.Database.DataDir != "" {
 				marker := filepath.Join(db.config.Database.DataDir, nativeRestoreMarker)
-				if err := security.WriteRootedFile(marker, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+				boundary := nativeRestoreBoundary{RestoredAt: time.Now().UTC(), WALSequence: restoreWALFloor}
+				data, err := valueconvert.PropertyJSON.Marshal(boundary)
+				if err != nil {
+					db.mu.Unlock()
+					return fmt.Errorf("encode native restore recovery boundary: %w", err)
+				}
+				if err := security.WriteRootedFile(marker, data, 0o600); err != nil {
 					db.mu.Unlock()
 					return fmt.Errorf("record native restore recovery boundary: %w", err)
 				}
 			}
-			if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
+			if err := db.rebuildTemporalIndexesNoLock(settleCtx); err != nil {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 			}
 			if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
-				if err := maint.RebuildMVCCHeads(ctx); err != nil {
+				if err := maint.RebuildMVCCHeads(settleCtx); err != nil {
 					db.mu.Unlock()
 					return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
 				}
+			}
+			if err := db.reloadChangeCaptureAfterRestore(settleCtx); err != nil {
+				db.mu.Unlock()
+				return err
 			}
 			db.mu.Unlock()
 			db.restartSearchAfterRestore()
@@ -1592,19 +1613,31 @@ legacyJSONRestore:
 		}
 	}
 
-	if err := db.rebuildTemporalIndexesNoLock(ctx); err != nil {
+	settleCtx := db.LifetimeContext()
+	if err := db.rebuildTemporalIndexesNoLock(settleCtx); err != nil {
 		db.mu.Unlock()
 		return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 	}
 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
-		if err := maint.RebuildMVCCHeads(ctx); err != nil {
+		if err := maint.RebuildMVCCHeads(settleCtx); err != nil {
 			db.mu.Unlock()
 			return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
 		}
 	}
+	if err := db.reloadChangeCaptureAfterRestore(settleCtx); err != nil {
+		db.mu.Unlock()
+		return err
+	}
 	db.mu.Unlock()
 
 	db.restartSearchAfterRestore()
+	return nil
+}
+
+func (db *DB) reloadChangeCaptureAfterRestore(ctx context.Context) error {
+	if err := multidb.LoadChangeCaptureModes(ctx, db.baseStorage, "system"); err != nil {
+		return fmt.Errorf("load restored database change-capture modes: %w", err)
+	}
 	return nil
 }
 
@@ -1616,12 +1649,34 @@ func isJSONBackupFile(path string) (bool, error) {
 	defer file.Close()
 
 	buffer := make([]byte, 4096)
-	read, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
+	read, err := io.ReadFull(file, buffer)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return false, err
 	}
+	// Badger's native backup starts with an eight-byte little-endian frame
+	// length. The low byte can equal '{' or '[', so check its framing before
+	// interpreting the same bytes as legacy JSON.
+	if read >= 8 {
+		info, err := file.Stat()
+		if err != nil {
+			return false, err
+		}
+		frameLength := binary.LittleEndian.Uint64(buffer[:8])
+		if info.Size() >= 8 && frameLength > 0 && frameLength <= uint64(info.Size()-8) {
+			return false, nil
+		}
+	}
 	trimmed := bytes.TrimSpace(buffer[:read])
-	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '['), nil
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return false, nil
+	}
+	// A native Badger stream begins with an eight-byte binary record length.
+	// Its low byte can be a JSON opening delimiter, but a literal NUL in
+	// that prefix cannot occur in valid JSON text.
+	if bytes.IndexByte(trimmed[:min(len(trimmed), 8)], 0) >= 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (db *DB) restartSearchAfterRestore() {

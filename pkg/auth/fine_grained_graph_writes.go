@@ -16,7 +16,7 @@ func newlyCreated(entities *sync.Map, id any, stamp time.Time) bool {
 	return ok && prior.(time.Time).Equal(stamp)
 }
 
-func (g *fineGrainedGraph) allowNodeCreate(node *storage.Node) error {
+func (g *fineGrainedGraph) allowNodeCreate(ctx context.Context, node *storage.Node) error {
 	if node == nil {
 		return storage.ErrInvalidData
 	}
@@ -34,7 +34,7 @@ func (g *fineGrainedGraph) allowNodeCreate(node *storage.Node) error {
 	if err := g.requireGraphTokens(node.Labels, nil); err != nil {
 		return err
 	}
-	if err := g.authorizeCreateProperties(target, node.Properties); err != nil {
+	if err := g.authorizeCreateProperties(ctx, target, node.Properties); err != nil {
 		return err
 	}
 	if (len(node.NamedEmbeddings) != 0 || len(node.ChunkEmbeddings) != 0) &&
@@ -45,7 +45,8 @@ func (g *fineGrainedGraph) allowNodeCreate(node *storage.Node) error {
 }
 
 func (g *fineGrainedGraph) CreateNode(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
-	if err := g.allowNodeCreate(node); err != nil {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
+	if err := g.allowNodeCreate(ctx, node); err != nil {
 		return "", err
 	}
 	id, err := g.engine.CreateNode(ctx, node)
@@ -66,7 +67,7 @@ func (g *fineGrainedGraph) allowEdgeCreate(ctx context.Context, edge *storage.Ed
 	if err := g.requireGraphTokens(nil, []string{edge.Type}); err != nil {
 		return err
 	}
-	if err := g.authorizeCreateProperties(target, edge.Properties); err != nil {
+	if err := g.authorizeCreateProperties(ctx, target, edge.Properties); err != nil {
 		return err
 	}
 	for _, id := range [...]storage.NodeID{edge.StartNode, edge.EndNode} {
@@ -83,6 +84,7 @@ func (g *fineGrainedGraph) allowEdgeCreate(ctx context.Context, edge *storage.Ed
 }
 
 func (g *fineGrainedGraph) CreateEdge(ctx context.Context, edge *storage.Edge) error {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
 	if err := g.allowEdgeCreate(ctx, edge); err != nil {
 		return err
 	}
@@ -105,15 +107,23 @@ func (g *fineGrainedGraph) requireGraphTokens(labels, types []string) error {
 	return nil
 }
 
-func (g *fineGrainedGraph) authorizeCreateProperties(target FineGrainedResource, properties map[string]any) error {
+func (g *fineGrainedGraph) authorizeCreateProperties(ctx context.Context, target FineGrainedResource, properties map[string]any) error {
+	if len(properties) == 0 {
+		return nil
+	}
 	readAction, writeAction := propertyActions(target.Kind)
 	canCreateName := g.request.AllowsDatabaseIdentity("database.token.property.create", target.DatabaseID, "")
+	constraints, err := g.writeUniquenessConstraints(ctx, target)
+	if err != nil {
+		return err
+	}
 	for key, value := range properties {
 		if value == nil {
 			continue
 		}
 		target.Property = key
-		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, true) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, true) ||
+			!g.allowsConstrainedPropertyWrite(target, key, constraints) {
 			return ErrFineGrainedForbidden
 		}
 	}
@@ -127,6 +137,105 @@ func propertyActions(kind FineGrainedResourceKind) (read, write string) {
 	return "graph.node.property.read", "graph.node.property.set"
 }
 
+// A uniqueness check can reveal whether another entity holds a value even
+// when its diagnostic is redacted. Read only schema metadata here, before any
+// write reaches the constraint validator.
+func (g *fineGrainedGraph) writeUniquenessConstraints(ctx context.Context, target FineGrainedResource) ([]storage.Constraint, error) {
+	schema := g.engine.GetSchema()
+	if schema == nil {
+		return nil, ErrFineGrainedForbidden
+	}
+	constraints, err := schema.GetConstraintsForLabels(ctx, target.Types, storage.ConstraintUnique, storage.ConstraintNodeKey, storage.ConstraintRelationshipKey)
+	if err != nil {
+		return nil, err
+	}
+	kind := storage.ConstraintEntityNode
+	if target.Kind == FineGrainedRelationship {
+		kind = storage.ConstraintEntityRelationship
+	}
+	storage.RecordConstraintAdmission(ctx, kind, target.Types, constraints)
+	return constraints, nil
+}
+
+func (g *fineGrainedGraph) allowsConstrainedPropertyWrite(target FineGrainedResource, property string, constraints []storage.Constraint) bool {
+	entityType := storage.ConstraintEntityNode
+	if target.Kind == FineGrainedRelationship {
+		entityType = storage.ConstraintEntityRelationship
+	}
+	for _, constraint := range constraints {
+		if constraint.EffectiveEntityType() != entityType || !slices.Contains(constraint.Properties, property) {
+			continue
+		}
+		if !g.readsConstraintProperties(target, constraint) {
+			return false
+		}
+	}
+	return true
+}
+
+// A composite key can reveal an unreadable sibling even when the written
+// member itself is readable.
+func (g *fineGrainedGraph) readsConstraintProperties(target FineGrainedResource, constraint storage.Constraint) bool {
+	readAction, _ := propertyActions(target.Kind)
+	traverseAction := "graph.node.traverse"
+	if target.Kind == FineGrainedRelationship {
+		// A relationship is hidden when either endpoint is hidden, regardless
+		// of the relationship's own TRAVERSE and READ grants. Its endpoints
+		// may have any labels, so a type-scoped node grant is insufficient.
+		if !g.request.Access.AllowsEntireGraphAction("graph.node.traverse", target.DatabaseID, target.HomeDatabaseID) {
+			return false
+		}
+		traverseAction = "graph.relationship.traverse"
+	}
+	if !g.request.Access.allowsConstraintPopulation(traverseAction, target, constraint.Label, "") {
+		return false
+	}
+	for _, member := range constraint.Properties {
+		target.Property = member
+		if !g.request.Access.allowsConstraintPopulation(readAction, target, constraint.Label, member) {
+			return false
+		}
+	}
+	return true
+}
+
+// Adding a label can place existing, unreadable properties under a uniqueness
+// rule without an explicit property edit. Check the resulting property image
+// before the label update reaches storage.
+func (g *fineGrainedGraph) authorizeUniqueLabelAddition(ctx context.Context, target FineGrainedResource, labels []string, properties map[string]any) error {
+	for _, label := range labels {
+		if slices.Contains(target.Types, label) {
+			continue
+		}
+		labelTarget := target
+		labelTarget.Types = []string{label}
+		labelTarget.EntityProperties = properties
+		constraints, err := g.writeUniquenessConstraints(ctx, labelTarget)
+		if err != nil {
+			return err
+		}
+		for _, constraint := range constraints {
+			if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
+				continue
+			}
+			complete := true
+			for _, member := range constraint.Properties {
+				if properties[member] == nil {
+					complete = false
+					break
+				}
+			}
+			if !complete {
+				continue
+			}
+			if !g.readsConstraintProperties(labelTarget, constraint) {
+				return ErrFineGrainedForbidden
+			}
+		}
+	}
+	return nil
+}
+
 // Check read authorization before looking up a name so an unreadable key has
 // the same write denial whether or not the database has registered it.
 func (g *fineGrainedGraph) allowsPropertyWrite(readAction, writeAction string, target FineGrainedResource, canCreateName, setValue bool) bool {
@@ -138,14 +247,23 @@ func (g *fineGrainedGraph) allowsPropertyWrite(readAction, writeAction string, t
 // applyPropertyEdit checks the change against the authorized image that could
 // have produced it, then applies the change to a copy of the stored image.
 // Unobserved properties survive updates that never supplied those properties.
-func (g *fineGrainedGraph) applyPropertyEdit(target FineGrainedResource, visible, after map[string]any, intent storage.PropertyWriteIntent) (map[string]any, error) {
+func (g *fineGrainedGraph) applyPropertyEdit(ctx context.Context, target FineGrainedResource, visible, after map[string]any, intent storage.PropertyWriteIntent) (map[string]any, error) {
 	readAction, writeAction := propertyActions(target.Kind)
 	canCreateName := g.request.AllowsDatabaseIdentity("database.token.property.create", target.DatabaseID, "")
+	var constraints []storage.Constraint
+	if len(intent.Keys) != 0 || intent.Replace || !reflect.DeepEqual(visible, after) {
+		var err error
+		constraints, err = g.writeUniquenessConstraints(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+	}
 	merged := make(map[string]any, len(target.EntityProperties))
 	maps.Copy(merged, target.EntityProperties)
 	for key, set := range intent.Keys {
 		target.Property = key
-		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, set) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, set) ||
+			!g.allowsConstrainedPropertyWrite(target, key, constraints) {
 			return nil, ErrFineGrainedForbidden
 		}
 		if _, retained := after[key]; !retained {
@@ -163,7 +281,8 @@ func (g *fineGrainedGraph) applyPropertyEdit(target FineGrainedResource, visible
 			if !canCreateName && !g.request.Access.Allows(readAction, target) {
 				continue
 			}
-			if !g.request.Access.Allows(writeAction, target) {
+			if !g.request.Access.Allows(writeAction, target) ||
+				!g.allowsConstrainedPropertyWrite(target, key, constraints) {
 				return nil, ErrFineGrainedForbidden
 			}
 			delete(merged, key)
@@ -175,7 +294,8 @@ func (g *fineGrainedGraph) applyPropertyEdit(target FineGrainedResource, visible
 				continue
 			}
 			target.Property = key
-			if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, false) {
+			if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, false) ||
+				!g.allowsConstrainedPropertyWrite(target, key, constraints) {
 				return nil, ErrFineGrainedForbidden
 			}
 			delete(merged, key)
@@ -186,7 +306,8 @@ func (g *fineGrainedGraph) applyPropertyEdit(target FineGrainedResource, visible
 			continue
 		}
 		target.Property = key
-		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, next != nil) {
+		if !g.allowsPropertyWrite(readAction, writeAction, target, canCreateName, next != nil) ||
+			!g.allowsConstrainedPropertyWrite(target, key, constraints) {
 			return nil, ErrFineGrainedForbidden
 		}
 		merged[key] = next
@@ -263,7 +384,7 @@ func updateAuthorizedGraphEntity[T storage.Node | storage.Edge](ctx context.Cont
 		}
 	}
 	after := graphPropertyFields(submitted)
-	merged, err := g.applyPropertyEdit(target, *readable.properties, *after.properties, writes)
+	merged, err := g.applyPropertyEdit(ctx, target, *readable.properties, *after.properties, writes)
 	if err != nil {
 		return err
 	}
@@ -277,12 +398,16 @@ func updateAuthorizedGraphEntity[T storage.Node | storage.Edge](ctx context.Cont
 }
 
 func (g *fineGrainedGraph) UpdateNode(ctx context.Context, request storage.NodeUpdateRequest) error {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
 	return updateAuthorizedGraphEntity(ctx, g, request.Before, request.After, request.PropertyWrites, graphUpdateOperations[storage.Node]{
 		load: func(ctx context.Context, submitted *storage.Node) (*storage.Node, error) {
 			return g.engine.GetNode(ctx, submitted.ID)
 		},
 		authorize: g.authorizeNodeUpdate,
 		complete: func(updated, visible, submitted *storage.Node, target FineGrainedResource) error {
+			if err := g.authorizeUniqueLabelAddition(ctx, target, submitted.Labels, updated.Properties); err != nil {
+				return err
+			}
 			updated.Labels = submitted.Labels
 			if !reflect.DeepEqual(visible.NamedEmbeddings, submitted.NamedEmbeddings) ||
 				!reflect.DeepEqual(visible.ChunkEmbeddings, submitted.ChunkEmbeddings) {
@@ -317,6 +442,7 @@ func (g *fineGrainedGraph) authorizeNodeUpdate(_ context.Context, before, stored
 }
 
 func (g *fineGrainedGraph) UpdateEdge(ctx context.Context, request storage.EdgeUpdateRequest) error {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
 	return updateAuthorizedGraphEntity(ctx, g, request.Before, request.After, request.PropertyWrites, graphUpdateOperations[storage.Edge]{
 		load: func(ctx context.Context, submitted *storage.Edge) (*storage.Edge, error) {
 			return g.engine.GetEdge(ctx, submitted.ID)
@@ -417,8 +543,9 @@ func (g *fineGrainedGraph) DeleteEdge(ctx context.Context, id storage.EdgeID) er
 }
 
 func (g *fineGrainedGraph) BulkCreateNodes(ctx context.Context, nodes []*storage.Node) error {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
 	for _, node := range nodes {
-		if err := g.allowNodeCreate(node); err != nil {
+		if err := g.allowNodeCreate(ctx, node); err != nil {
 			return err
 		}
 	}
@@ -432,6 +559,7 @@ func (g *fineGrainedGraph) BulkCreateNodes(ctx context.Context, nodes []*storage
 }
 
 func (g *fineGrainedGraph) BulkCreateEdges(ctx context.Context, edges []*storage.Edge) error {
+	ctx = storage.WithConstraintAdmission(ctx, ErrFineGrainedForbidden)
 	for _, edge := range edges {
 		if err := g.allowEdgeCreate(ctx, edge); err != nil {
 			return err

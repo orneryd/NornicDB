@@ -185,7 +185,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 		}
 		lastSeq = seq
 
-		if err := b.wal.appendRecordLocked(&entry, record, writeAtomicRecordBufio); err != nil {
+		if err := b.wal.appendRecordLocked(&entry, record); err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
 	}

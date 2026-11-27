@@ -18,9 +18,9 @@ func (m *DatabaseManager) transitionPendingDrop(name string, pending bool) {
 	}
 }
 
-// syncDropMetadata establishes the durable catalog boundary before deleting
-// data, and before a subsequent same-name CREATE can accept fresh writes.
-func (m *DatabaseManager) syncDropMetadata() error {
+// syncCatalogMetadata establishes the durable catalog boundary for changes
+// that add or remove a physical database store.
+func (m *DatabaseManager) syncCatalogMetadata() error {
 	if durable, ok := storage.UnwrapEngine(m.inner).(interface{ Sync() error }); ok {
 		return durable.Sync()
 	}

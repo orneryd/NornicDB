@@ -18,6 +18,10 @@ type walPropertyEpochSealPlan struct {
 	end      int64
 	last     uint64
 	controls []walPropertyEpochSealControl
+	// cipher is the frame cipher this file's controls are rewritten with, nil
+	// for a plaintext file. Sealing rewrites controls in place, so it writes
+	// them in the format they were read in.
+	cipher *walFrameCipher
 }
 
 type walPropertyEpochSealControl struct {
@@ -42,7 +46,13 @@ func sealWALPropertyEpochFile(path string) error {
 // optional visit sees every decoded entry in the same read, so close-time
 // checks need no second pass over the log.
 func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan walPropertyEpochSealPlan, err error) {
-	plan.path = path
+	return scanWALPropertyEpochFileWithReader(path, walFrameReader{}, visit)
+}
+
+// scanWALPropertyEpochFileWithReader validates one file in frameReader's
+// format and records its controls.
+func scanWALPropertyEpochFileWithReader(path string, frameReader walFrameReader, visit func(WALEntry) error) (plan walPropertyEpochSealPlan, err error) {
+	plan.path, plan.cipher = path, frameReader.cipher
 	source, err := os.Open(path)
 	if err != nil {
 		return plan, err
@@ -72,16 +82,16 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		if err != nil {
 			return plan, err
 		}
-		version := header[4]
+		frameVersion := header[4]
 		size := binary.LittleEndian.Uint32(header[5:])
-		if !walFrameVersionReadable(version) {
-			return plan, unsupportedWALVersion(version)
+		if err := frameReader.version(frameVersion); err != nil {
+			return plan, err
 		}
 		if binary.LittleEndian.Uint32(header[:]) != walMagic {
 			return plan, ErrWALCorrupted
 		}
-		if size > walMaxEntrySize {
-			entry, length, err := readOversizedEmbeddingAudit(reader, size, version)
+		if walFrameOversized(size, frameVersion) {
+			entry, length, err := readOversizedEmbeddingAudit(reader, size, frameVersion)
 			if err != nil {
 				return plan, err
 			}
@@ -97,7 +107,7 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 			continue
 		}
 		length := int64(9 + size + 4)
-		if version >= 2 {
+		if frameVersion >= 2 {
 			length = alignUp(length + 8)
 		}
 		if cap(record) < int(length) {
@@ -113,11 +123,15 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 		if binary.LittleEndian.Uint32(record[9+size:]) != crc32Checksum(payload) {
 			return plan, ErrWALChecksumFailed
 		}
-		if version >= 2 && binary.LittleEndian.Uint64(record[13+size:]) != walTrailer {
+		if frameVersion >= 2 && binary.LittleEndian.Uint64(record[13+size:]) != walTrailer {
 			return plan, ErrWALCorrupted
 		}
+		plaintext, payloadVersion, err := frameReader.plaintext(payload, frameVersion)
+		if err != nil {
+			return plan, err
+		}
 		entry, err := WALEntry{}, error(nil)
-		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, plaintext, payloadVersion)
 		if err != nil {
 			return plan, err
 		}
@@ -135,7 +149,7 @@ func scanWALPropertyEpochFile(path string, visit func(WALEntry) error) (plan wal
 			plan.controls = append(plan.controls, walPropertyEpochSealControl{plan.end, length, frame, entry.Timestamp})
 		}
 		if visit != nil {
-			logical, complete, err := spanned.add(entry, version)
+			logical, complete, err := spanned.add(entry, payloadVersion)
 			if err != nil {
 				return plan, err
 			}
@@ -192,14 +206,14 @@ func (plan walPropertyEpochSealPlan) apply() error {
 		if err != nil {
 			return err
 		}
-		if alignUp(int64(9+len(payload)+4+8)) != c.length {
+		if walFrameAlignedLen(plan.cipher, len(payload), walFormatVersionCurrent) != c.length {
 			return fmt.Errorf("wal: property epoch sealing changed frame length")
 		}
 		if _, err := temp.Seek(c.offset, io.SeekStart); err != nil {
 			return err
 		}
 		writer := bufio.NewWriter(temp)
-		if _, err := writeAtomicRecordBufio(writer, payload, walFormatVersionCurrent); err != nil {
+		if _, err := writeWALFrame(plan.cipher, writer, payload, walFormatVersionCurrent); err != nil {
 			return err
 		}
 		if err := writer.Flush(); err != nil {
@@ -252,13 +266,13 @@ func (w *WAL) planPropertyEpochSealLocked(visit func(WALEntry) error) ([]walProp
 		if err != nil {
 			return nil, err
 		}
-		plan, err := scanWALPropertyEpochFile(path, visit)
+		plan, err := scanWALPropertyEpochFileWithReader(path, w.frameReader(), visit)
 		if err != nil {
 			return nil, err
 		}
 		plans = append(plans, plan)
 	}
-	plan, err := scanWALPropertyEpochFile(walActivePath(w.config.Dir), visit)
+	plan, err := scanWALPropertyEpochFileWithReader(walActivePath(w.config.Dir), w.frameReader(), visit)
 	if err != nil {
 		return nil, err
 	}

@@ -116,6 +116,10 @@ version that wrote the WAL, run:
 
 ```bash
 go run ./scripts/wal-read -dir /path/to/copied/wal -from 1 -to 100 > wal.jsonl
+
+# For an encrypted WAL, provide a protected file containing the raw 32-byte
+# storage encryption key (never pass the key in a command-line argument).
+go run ./scripts/wal-read -dir /path/to/copied/wal -key-file /path/to/key > wal.jsonl
 ```
 
 The reader uses the same frame, decompression and typed-payload decoders as

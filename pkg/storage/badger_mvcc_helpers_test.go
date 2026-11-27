@@ -1,12 +1,35 @@
 package storage
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+func TestMVCCSnapshotNodeDoesNotAllocateDiscardedVectors(t *testing.T) {
+	// The archive keeps graph state but drops both vector payloads. A large
+	// input makes an accidental deep copy visible without timing assumptions.
+	original := &Node{
+		ID:              "mvcc-vector-copy",
+		Properties:      map[string]any{"title": "before"},
+		ChunkEmbeddings: [][]float32{make([]float32, 2<<20)},
+		NamedEmbeddings: map[string][]float32{"title": make([]float32, 2<<20)},
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	snapshot := mvccSnapshotNode(original)
+	runtime.ReadMemStats(&after)
+	if snapshot == nil || snapshot.ChunkEmbeddings != nil || snapshot.NamedEmbeddings != nil {
+		t.Fatalf("snapshot retained vector payloads: %#v", snapshot)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= 1<<20 {
+		t.Fatalf("snapshot allocated %d bytes while discarding vectors", allocated)
+	}
+	runtime.KeepAlive(original)
+}
 
 func TestMVCCSnapshotNodeStripsEmbeddingsAndDeepCopies(t *testing.T) {
 	original := &Node{

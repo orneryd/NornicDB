@@ -107,9 +107,17 @@ func (ew *EmbedWorker) commitNodeOutcome(node *storage.Node) error {
 		if !node.EmbeddingAttempt().IsCurrent() {
 			return storage.ErrEmbeddingSourceChanged
 		}
-		sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
+		engine := ew.storage
+		if routed, ok := engine.(*embeddingQueueStorage); ok {
+			var err error
+			engine, err = routed.storeForNode(node.ID)
+			if err != nil {
+				return err
+			}
+		}
+		sidecar, ok := engine.(storage.EmbeddingSidecarUpdater)
 		if !ok {
-			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
+			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
 		}
 		return sidecar.UpdateNodeEmbeddingSidecar(ctx, node)
 	})

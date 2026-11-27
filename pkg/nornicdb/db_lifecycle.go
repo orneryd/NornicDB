@@ -193,6 +193,14 @@ func (db *DB) retire() error {
 	if continuation != nil {
 		continuation.Close()
 	}
+	db.dbConfigResolverMu.RLock()
+	closeIsolatedStores := db.closeIsolatedStores
+	db.dbConfigResolverMu.RUnlock()
+	if closeIsolatedStores != nil {
+		if err := closeIsolatedStores(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 
 	if db.baseStorage != nil {
 		if err := db.baseStorage.Close(); err != nil {

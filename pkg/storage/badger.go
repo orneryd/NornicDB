@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +51,7 @@ const (
 	prefixMVCCIncomingAdj  = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 	prefixMVCCPruneFloor   = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
 	prefixBufferedFlush    = byte(0x13) // buffered_flush:txID -> []byte{} (write-behind commit reached Badger)
+	prefixEmbeddingFailure = byte(0x27) // embedding_failure:nodeID -> []byte{} (parked failures only)
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
@@ -126,6 +129,9 @@ const (
 	// prefixMVCCMetaTemporalIndexFormat records the temporal history index's
 	// key format; see temporalIndexFormatKey.
 	prefixMVCCMetaTemporalIndexFormat = byte(0x12)
+	// prefixMVCCMetaEmbeddingFailureReady certifies that every parked sidecar
+	// metadata record is represented in prefixEmbeddingFailure.
+	prefixMVCCMetaEmbeddingFailureReady = byte(0x13)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -375,6 +381,7 @@ type BadgerEngine struct {
 	// counter. See loadPersistedMVCCSequence and namespaceMVCC().
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
+	mvccNamespaceLoads   map[string]*namespaceMVCCLoad
 	mvccLegacyGlobalSeed uint64
 	// mvccReservations lists the versions reserved by writes that have not
 	// published yet; a transaction's cut copies it (mvccReservations).
@@ -958,9 +965,28 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 // OpenBadgerForOfflineImport opens the native store for a single offline graph
 // import. The importer owns the handle and is the only producer of graph writes
 // until the bulk creates are complete. An existing store uses ordinary bulk
-// validation, including when the requested namespace is empty.
-func OpenBadgerForOfflineImport(dataDir, namespace string) (*BadgerEngine, error) {
-	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true}, namespace)
+// validation, including when the requested namespace is empty. For encrypted
+// storage, supply the installation's encryption key as the optional third argument.
+func OpenBadgerForOfflineImport(dataDir, namespace string, encryptionKey ...[]byte) (*BadgerEngine, error) {
+	var key []byte
+	switch len(encryptionKey) {
+	case 1:
+		key = encryptionKey[0]
+	case 0:
+	default:
+		return nil, fmt.Errorf("offline import accepts at most one encryption key: %w", ErrInvalidData)
+	}
+	return openBadgerEngine(BadgerOptions{DataDir: dataDir, HighPerformance: true, EncryptionKey: key}, namespace)
+}
+
+// VerifyBadgerEncryptionKey checks an existing registry without taking the
+// graph store lock or writing data. The engine remains the registry owner.
+func VerifyBadgerEncryptionKey(dataDir string, key []byte) error {
+	if _, err := os.Stat(filepath.Join(dataDir, badger.KeyRegistryFileName)); err != nil {
+		return err
+	}
+	_, err := badger.OpenKeyRegistry(badger.KeyRegistryOptions{Dir: dataDir, ReadOnly: true, EncryptionKey: key})
+	return err
 }
 
 func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngine, error) {
@@ -1239,6 +1265,17 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 	if err := engine.ensureEdgeTypeCountsOnOpen(engine.work.Context(), clean); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-type counts: %w", err)
+	}
+	if err := engine.ensureEmbeddingFailureIndex(engine.work.Context()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize embedding failure index: %w", err)
+	}
+	// Recover existing namespaces before handing the engine to a listener.
+	// Otherwise the first client write pays for a scan of every head in its
+	// namespace, after the service has reported itself ready.
+	if err := engine.preloadNamespaceMVCC(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("recover namespace MVCC floors: %w", err)
 	}
 
 	// Edge-between index backfill runs only after migrations have

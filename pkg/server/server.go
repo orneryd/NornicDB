@@ -1192,6 +1192,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		SystemDatabase:                "system",
 		MaxDatabases:                  0, // Unlimited
 		AllowDropDefault:              false,
+		IsolatedStores:                db.IsolatedStoreConfig(),
 		RemoteCredentialEncryptionKey: remoteCredentialEncryptionKey,
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
 			useUserPassword := strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password")
@@ -1212,6 +1213,10 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (re
 		return nil, fmt.Errorf("failed to initialize database manager: %w", err)
 	}
 	db.SetDatabaseStorageResolver(dbManager.GetStorage)
+	if multiDBConfig.IsolatedStores != nil {
+		db.SetEmbeddingStoreCatalog(dbManager)
+	}
+	db.SetIsolatedStoresClose(dbManager.CloseIsolatedStores)
 
 	s.dbManager = dbManager
 	s.auth = authenticator

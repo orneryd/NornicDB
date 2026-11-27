@@ -24,6 +24,13 @@ import (
 // - It never modifies *valid* prefix records
 // - It does not attempt resynchronization (no "scan for next magic") to avoid false positives
 func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionDiagnostics, error) {
+	return repairWALTailWithReader(walPath, logger, walFrameReader{})
+}
+
+// repairWALTailWithReader is repairWALTailIfNeeded for the frame format
+// frameReader accepts. A frame it cannot authenticate is refused, never
+// truncated.
+func repairWALTailWithReader(walPath string, logger WALLogger, frameReader walFrameReader) (bool, *CorruptionDiagnostics, error) {
 	if walPath == "" {
 		return false, nil, nil
 	}
@@ -48,7 +55,7 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	if readErr != nil {
 		// If we can't even read the header, treat as partial tail and truncate to 0.
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			if err := validateWALFileVersion(walPath, false); err != nil {
+			if err := validateWALFileVersion(walPath, false, frameReader); err != nil {
 				return false, nil, err
 			}
 			if !bytes.HasPrefix([]byte("WALE"), header[:n]) {
@@ -65,7 +72,7 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	if binary.LittleEndian.Uint32(header) != walMagic {
 		return false, nil, fmt.Errorf("%w: unrecognized WAL header in %s", ErrWALUnsupportedVersion, walPath)
 	}
-	if err := validateWALFileVersion(walPath, false); err != nil {
+	if err := validateWALFileVersion(walPath, false, frameReader); err != nil {
 		return false, nil, err
 	}
 
@@ -76,7 +83,7 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 	}
 	defer rw.Close()
 
-	truncateOffset, lastGoodSeq, reason, ok, err := scanAtomicWALForRepair(rw, fi.Size())
+	truncateOffset, lastGoodSeq, reason, ok, err := scanAtomicWALForRepairWithReader(rw, fi.Size(), frameReader)
 	if err != nil {
 		return false, nil, err
 	}
@@ -88,6 +95,10 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 }
 
 func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64, lastGoodSeq uint64, reason string, ok bool, err error) {
+	return scanAtomicWALForRepairWithReader(file, fileSize, walFrameReader{})
+}
+
+func scanAtomicWALForRepairWithReader(file *os.File, fileSize int64, frameReader walFrameReader) (truncateOffset int64, lastGoodSeq uint64, reason string, ok bool, err error) {
 	offset := int64(0)
 	lastGoodSeq = 0
 	// A spanned record is complete only with its last part. A cut while its
@@ -133,16 +144,16 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 			return cut(offset, "invalid_magic")
 		}
 
-		version := header[4]
-		if !walFrameVersionReadable(version) {
-			// A newer format is not evidence of a torn write. Never destroy data
-			// merely because this binary cannot read it.
-			return 0, lastGoodSeq, "", false, unsupportedWALVersion(version)
+		frameVersion := header[4]
+		if err := frameReader.version(frameVersion); err != nil {
+			// A format this reader cannot read is not evidence of a torn write.
+			// Never destroy data merely because the version or the key is missing.
+			return 0, lastGoodSeq, "", false, err
 		}
 
 		payloadLen := binary.LittleEndian.Uint32(header[5:9])
-		if payloadLen > walMaxEntrySize {
-			entry, length, readErr := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, fileSize-offset-9), payloadLen, version)
+		if walFrameOversized(payloadLen, frameVersion) {
+			entry, length, readErr := readOversizedEmbeddingAudit(io.NewSectionReader(file, offset+9, fileSize-offset-9), payloadLen, frameVersion)
 			if readErr == nil {
 				lastGoodSeq = entry.Sequence
 				offset += length
@@ -184,7 +195,7 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 
 		// Version 2+: verify trailer and padding.
 		recordLen := minRecordLen
-		if version >= 2 {
+		if frameVersion >= 2 {
 			// Trailer must be present.
 			if fileSize-offset < recordLen+8 {
 				return cut(offset, "incomplete_tail")
@@ -211,9 +222,15 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 			recordLen = alignedRecordLen
 		}
 
-		// Decode entry to track last-good sequence (best-effort).
+		// Decode entry to track last-good sequence (best-effort). A frame the
+		// key cannot open is not a torn tail: repair never truncates bytes it
+		// cannot authenticate.
+		plaintext, payloadVersion, openErr := frameReader.plaintext(payload, frameVersion)
+		if openErr != nil {
+			return 0, lastGoodSeq, "", false, openErr
+		}
 		entry, err := WALEntry{}, error(nil)
-		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, payload, version)
+		_, err = processWALEntryPayload(walPayloadDecode, nil, &entry, plaintext, payloadVersion)
 		if err != nil {
 			return cut(offset, "invalid_json")
 		}
@@ -222,10 +239,10 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 			return cut(offset, "data_checksum_mismatch")
 		}
 
-		if version == walFormatVersionSpanned && len(entry.Data) >= walSpannedPartHeaderLen && binary.LittleEndian.Uint32(entry.Data[0:4]) == 0 {
+		if payloadVersion == walFormatVersionSpanned && len(entry.Data) >= walSpannedPartHeaderLen && binary.LittleEndian.Uint32(entry.Data[0:4]) == 0 {
 			groupStart = offset
 		}
-		logical, complete, spanErr := spanned.add(entry, version)
+		logical, complete, spanErr := spanned.add(entry, payloadVersion)
 		if spanErr != nil {
 			return cut(offset, "invalid_spanned_record")
 		}
