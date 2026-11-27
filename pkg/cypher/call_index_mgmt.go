@@ -62,6 +62,7 @@ func indexWaitDeadline(procedure string, arguments []interface{}, offset int) (t
 // an explicit procedure's ONLINE promise. A drop or replacement during the
 // wait must not acknowledge the retired definition.
 func (e *StorageExecutor) waitForCurrentVectorIndex(ctx context.Context, name string, deadline time.Time, requireName bool) error {
+	var warmedService *search.Service
 	for {
 		current, exists := e.storage.GetSchema().GetVectorIndex(name)
 		if !exists {
@@ -70,7 +71,8 @@ func (e *StorageExecutor) waitForCurrentVectorIndex(ctx context.Context, name st
 			}
 			return nil
 		}
-		state, failure := readVectorIndexState(ctx, e.search(), name)
+		svc := e.search()
+		state, failure := readVectorIndexState(ctx, svc, name)
 		switch state {
 		case search.VectorIndexOnline:
 			if later, exists := e.storage.GetSchema().GetVectorIndex(name); exists && later == current {
@@ -93,6 +95,21 @@ func (e *StorageExecutor) waitForCurrentVectorIndex(ctx context.Context, name st
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed", "Expected index to come online within a reasonable time.")
+		}
+		if svc != nil && svc != warmedService && readVectorIndexPopulation(ctx, svc, name) == nil {
+			// A service that did not populate this index reports its own build
+			// state. An explicit await starts a deferred build through its
+			// existing owner. A short join lets a replaced service be observed
+			// without waiting on the retired service through the full deadline.
+			warmedService = svc
+			warmWait := remaining
+			if warmWait > 10*time.Millisecond {
+				warmWait = 10 * time.Millisecond
+			}
+			warmCtx, cancel := context.WithTimeout(ctx, warmWait)
+			_ = svc.EnsureWarm(warmCtx)
+			cancel()
+			continue // observe ONLINE or FAILED through the same state owner
 		}
 		if remaining > 10*time.Millisecond {
 			remaining = 10 * time.Millisecond

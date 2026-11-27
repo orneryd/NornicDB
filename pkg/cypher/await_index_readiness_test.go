@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,5 +94,41 @@ func TestAwaitIndexProceduresReportFailedPopulation(t *testing.T) {
 			require.ErrorContains(t, err, "FAILED", statement)
 			require.ErrorContains(t, err, "index memory budget exceeded", statement)
 		}
+	})
+}
+
+// A newly published index may use the storage fallback when its dimensions
+// differ from the search service. Awaiting it must start a lazy service build;
+// otherwise the index has no population record and remains POPULATING forever.
+func TestAwaitIndexesWarmsUnservedLazyVectorIndex(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		ctx := t.Context()
+		store := newTestBadgerNamespacedStore(t)
+		service := search.NewService(store, 3, nil)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		var warmed atomic.Int32
+		buildErr := make(chan error, 1)
+		service.SetLazyWarming(true, func() {
+			warmed.Add(1)
+			buildErr <- service.BuildIndexes(service.LifetimeContext())
+		})
+		exec := NewStorageExecutor(store)
+		exec.SetSearchService(service)
+		_, err := exec.Execute(ctx, "CREATE VECTOR INDEX docs FOR (n:Doc) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`:4,`vector.similarity_function`:'cosine'}}", nil)
+		require.NoError(t, err)
+		state, err := exec.Execute(ctx, "SHOW VECTOR INDEXES YIELD name,state RETURN name,state", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"docs", "POPULATING"}}, state.Rows)
+		require.Zero(t, warmed.Load())
+
+		result, err := exec.Execute(ctx, "CALL db.awaitIndexes(1)", nil)
+		require.NoError(t, err)
+		require.Empty(t, result.Columns)
+		require.Empty(t, result.Rows)
+		require.EqualValues(t, 1, warmed.Load())
+		require.NoError(t, <-buildErr)
+		state, err = exec.Execute(ctx, "SHOW VECTOR INDEXES YIELD name,state RETURN name,state", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"docs", "ONLINE"}}, state.Rows)
 	})
 }
