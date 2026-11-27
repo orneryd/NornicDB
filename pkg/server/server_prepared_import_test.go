@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
+	badgeroptions "github.com/dgraph-io/badger/v4/options"
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -108,10 +111,13 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	query("system", "CREATE DATABASE shared OPTIONS {storage: 'shared'}")
 	query("system", "CREATE DATABASE dedicated")
 	query("system", "CREATE DATABASE explicit OPTIONS {storage: 'isolated'}")
+	query("system", "CREATE DATABASE experimental OPTIONS {layout: 'experimental'}")
 	require.Empty(t, storeID("legacy"))
 	require.Empty(t, storeID("shared"))
 	require.NotEmpty(t, storeID("dedicated"))
 	require.NotEmpty(t, storeID("explicit"))
+	experimentalID := storeID("experimental")
+	require.NotEmpty(t, experimentalID)
 	store, err := server.dbManager.GetStorage("dedicated")
 	require.NoError(t, err)
 	native, ok := storage.UnwrapEngine(store).(*storage.BadgerEngine)
@@ -120,6 +126,18 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	query("dedicated", "CREATE (:Person {name:'Separate'})")
 	query("shared", "CREATE (:Person {name:'Root'})")
+	experimentalBody := strings.Repeat("experimental restore content ", 128)
+	query("experimental", "CREATE (:Person {name:'Experiment', text:'"+experimentalBody+"'})")
+	checkExperimental := func(want int) {
+		options, err := server.dbManager.DatabaseOptions("experimental")
+		require.NoError(t, err)
+		require.Equal(t, multidb.LayoutExperimental, options[multidb.OptionPhysicalLayout])
+		require.Equal(t, experimentalID, storeID("experimental"))
+		count("experimental", "MATCH (n:Person) RETURN count(n)", want)
+		result := query("experimental", "MATCH (n:Person {name:'Experiment'}) RETURN n.text")
+		require.Equal(t, experimentalBody, result.Results[0].Data[0].Row[0])
+	}
+	checkExperimental(1)
 	require.NotEmpty(t, postStatement(t, server, "system", "ALTER DATABASE dedicated SET OPTION storage 'shared'", "").Errors)
 
 	key, err = nornicdb.ReadStorageEncryptionKey(root, settings)
@@ -174,10 +192,11 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	require.NoError(t, readErr)
 	require.Equal(t, settings.Database.EncryptionEnabled, archive.RequiresEncryption)
 	members := archive.Stores
-	require.Len(t, members, 4)
+	require.Len(t, members, 5)
 	require.NotNil(t, members[""])
 	require.NotNil(t, members[storeID("explicit")])
 	require.NotNil(t, members[storeID("dedicated")])
+	require.NotNil(t, members[experimentalID])
 	require.NotNil(t, members[id])
 
 	partialBackup := filepath.Join(inputs, "root-only.backup")
@@ -187,10 +206,22 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	require.NoDirExists(t, partialDestination)
 
 	closeServer()
+	experimentalDir, err := storage.PreparedDatabaseDirectory(root, experimentalID)
+	require.NoError(t, err)
+	manifestFile, err := os.Open(filepath.Join(experimentalDir, "MANIFEST"))
+	require.NoError(t, err)
+	manifest, _, err := badger.ReplayManifestFile(manifestFile, 0, badger.DefaultOptions(experimentalDir))
+	require.NoError(t, manifestFile.Close())
+	require.NoError(t, err)
+	require.NotEmpty(t, manifest.Tables)
+	for _, table := range manifest.Tables {
+		require.Equal(t, badgeroptions.NornicColumnar, table.Compression)
+	}
 	server, _ = open(root)
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	count("shared", "MATCH (n:Person) RETURN count(n)", 1)
 	count("dedicated", "MATCH (n:Person) RETURN count(n)", 1)
+	checkExperimental(1)
 	count("loaded", "MATCH (n:Person) RETURN count(n)", 3)
 	count("loaded", "MATCH ()-[r:KNOWS]->() RETURN count(r)", 2)
 	query("system", "DROP DATABASE loaded")
@@ -228,8 +259,15 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 		require.NoError(t, err)
 		require.Error(t, storage.VerifyBadgerEncryptionKey(dedicatedDir, nil))
 		require.NoError(t, storage.VerifyBadgerEncryptionKey(dedicatedDir, restoredKey))
+		experimentalDir, err := storage.PreparedDatabaseDirectory(restoredRoot, experimentalID)
+		require.NoError(t, err)
+		require.Error(t, storage.VerifyBadgerEncryptionKey(experimentalDir, nil))
+		require.NoError(t, storage.VerifyBadgerEncryptionKey(experimentalDir, restoredKey))
+		wrongKey := append([]byte(nil), restoredKey...)
+		wrongKey[0] ^= 0xff
+		require.Error(t, storage.VerifyBadgerEncryptionKey(experimentalDir, wrongKey))
 	}
-	server, _ = open(restoredRoot)
+	server, closeServer = open(restoredRoot)
 	require.Empty(t, storeID("legacy"))
 	require.Empty(t, storeID("shared"))
 	require.Equal(t, id, storeID("loaded"))
@@ -238,11 +276,16 @@ func checkPreparedImportAndDatabaseStorageLayouts(t *testing.T, encryptionMode s
 	count("legacy", "MATCH (n:Person) RETURN count(n)", 2)
 	count("shared", "MATCH (n:Person {name:'Root'}) RETURN count(n)", 1)
 	count("dedicated", "MATCH (n:Person {name:'Separate'}) RETURN count(n)", 1)
+	checkExperimental(1)
 	count("loaded", "MATCH (n:Person) RETURN count(n)", 3)
 	resolved, err = server.dbManager.ResolveDatabase("archive_alias")
 	require.NoError(t, err)
 	require.Equal(t, "loaded", resolved)
 	count(resolved, "MATCH (:Person {name:'Ada'})-[:KNOWS]->(:Person {name:'Bea'}) RETURN count(*)", 1)
+	query("experimental", "CREATE (:Person {name:'AfterRestore', text:'"+experimentalBody+"'})")
+	closeServer()
+	server, _ = open(restoredRoot)
+	checkExperimental(2)
 
 	server, _ = open(t.TempDir())
 	query("nornic", "CREATE (:RestoreSentinel)")

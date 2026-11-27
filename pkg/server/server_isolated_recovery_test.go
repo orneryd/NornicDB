@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,9 +46,10 @@ func TestFineGrainedPreparedDatabasePublication(t *testing.T) {
 }
 
 func TestIsolatedStoreCorruptionRecovery(t *testing.T) {
-	t.Run("corrupt manifest", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, false) })
-	t.Run("missing manifest", func(t *testing.T) { checkIsolatedStoreRecovery(t, true, false) })
-	t.Run("encrypted store", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, true) })
+	t.Run("corrupt manifest", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, false, false) })
+	t.Run("missing manifest", func(t *testing.T) { checkIsolatedStoreRecovery(t, true, false, false) })
+	t.Run("encrypted store", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, true, false) })
+	t.Run("experimental encrypted store", func(t *testing.T) { checkIsolatedStoreRecovery(t, false, true, true) })
 }
 
 func TestCreateDatabaseExperimentalLayout(t *testing.T) {
@@ -81,7 +83,7 @@ func TestCreateDatabaseExperimentalLayout(t *testing.T) {
 	require.False(t, server.dbManager.Exists("badlayout"))
 }
 
-func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
+func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted, experimental bool) {
 	t.Setenv("NORNICDB_AUTO_RECOVER_ON_CORRUPTION", "true")
 	root := t.TempDir()
 	settings := func() *nornicdb.Config {
@@ -121,13 +123,26 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	server, closeDB := open()
 	key, err := nornicdb.ReadStorageEncryptionKey(root, settings())
 	require.NoError(t, err)
+	createDatabase := "CREATE DATABASE recoverable"
+	recoveryNode := "CREATE (:Recovery {value: 1})"
+	recoveryPayload := ""
+	if experimental {
+		createDatabase += " OPTIONS {layout: 'experimental'}"
+		recoveryPayload = strings.Repeat("recovery payload ", 64)
+		recoveryNode = "CREATE (:Recovery {value: 1, payload: '" + recoveryPayload + "'})"
+	}
 	for db, statement := range map[string]string{
-		"system": "CREATE DATABASE recoverable",
+		"system": createDatabase,
 		"nornic": "CREATE (:Healthy {value: 1})",
 	} {
 		require.Empty(t, postStatement(t, server, db, statement, "").Errors)
 	}
-	require.Empty(t, postStatement(t, server, "recoverable", "CREATE (:Recovery {value: 1})", "").Errors)
+	require.Empty(t, postStatement(t, server, "recoverable", recoveryNode, "").Errors)
+	if experimental {
+		options, err := server.dbManager.DatabaseOptions("recoverable")
+		require.NoError(t, err)
+		require.Equal(t, multidb.LayoutExperimental, options[multidb.OptionPhysicalLayout])
+	}
 	info, err := server.dbManager.GetDatabase("recoverable")
 	require.NoError(t, err)
 	dir, err := storage.PreparedDatabaseDirectory(root, info.IsolatedStoreID)
@@ -150,7 +165,7 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, EncryptionKey: key})
 	require.NoError(t, err)
 	native, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(
-		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key}),
+		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key, ExperimentalLayout: experimental}),
 	)
 	require.NoError(t, err)
 	snapshots := filepath.Join(dir, "snapshots")
@@ -158,7 +173,7 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	require.NoError(t, storage.SaveStreamingSnapshot(t.Context(), native, filepath.Join(snapshots, "snapshot-00000000000000000001.json"), storage.SnapshotOptions{Sequence: wal.Sequence(), EncryptionKey: key}))
 	require.NoError(t, native.Close())
 	require.NoError(t, wal.AppendWithDatabase(storage.OpCreateNode, storage.WALNodeData{
-		Node: &storage.Node{ID: "after-snapshot", Labels: []string{"Recovery"}},
+		Node: &storage.Node{ID: "after-snapshot", Labels: []string{"Recovery"}, Properties: map[string]any{"payload": recoveryPayload}},
 	}, "recoverable"))
 	require.NoError(t, wal.Close())
 	damage := []byte("corrupted native manifest")
@@ -178,6 +193,12 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	}
 	checkCount("nornic", "MATCH (n:Healthy) RETURN count(n)", 1)
 	checkCount("recoverable", "MATCH (n:Recovery) RETURN count(n)", 2)
+	if experimental {
+		checkCount("recoverable", "MATCH (n:Recovery {payload: '"+recoveryPayload+"'}) RETURN count(n)", 2)
+		options, err := server.dbManager.DatabaseOptions("recoverable")
+		require.NoError(t, err)
+		require.Equal(t, multidb.LayoutExperimental, options[multidb.OptionPhysicalLayout])
+	}
 	failed, err := server.dbManager.GetDatabase("seeded")
 	require.NoError(t, err)
 	require.Equal(t, "offline", failed.Status)
@@ -199,4 +220,7 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	closeDB()
 	server, _ = open()
 	checkCount("recoverable", "MATCH (n:Recovery) RETURN count(n)", 2)
+	if experimental {
+		checkCount("recoverable", "MATCH (n:Recovery {payload: '"+recoveryPayload+"'}) RETURN count(n)", 2)
+	}
 }
