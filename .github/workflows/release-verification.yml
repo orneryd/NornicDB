@@ -180,11 +180,40 @@ jobs:
         env:
           SHARD: ${{ matrix.item }}
         run: bash .ci-workflow-tools/scripts/ci/make-test-shard.sh "$SHARD"
-      - name: Upload coverage logs
+      # The trusted runner can briefly lose DNS or the artifact connection
+      # after coverage has passed. Retry transport failures, with distinct
+      # artifact names in case an earlier attempt created a partial upload.
+      - name: Upload coverage logs (attempt 1)
+        id: coverage_logs_1
         if: ${{ !cancelled() && matrix.kind == 'coverage' }}
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: release-coverage-${{ matrix.item }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .verify/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+      - name: Pause before coverage log retry
+        if: ${{ !cancelled() && matrix.kind == 'coverage' && steps.coverage_logs_1.outcome == 'failure' }}
+        run: sleep 15
+      - name: Upload coverage logs (attempt 2)
+        id: coverage_logs_2
+        if: ${{ !cancelled() && matrix.kind == 'coverage' && steps.coverage_logs_1.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-coverage-${{ matrix.item }}-${{ github.run_id }}-${{ github.run_attempt }}-retry-2
+          path: .verify/runs/
+          include-hidden-files: true
+          if-no-files-found: warn
+      - name: Pause before final coverage log retry
+        if: ${{ !cancelled() && matrix.kind == 'coverage' && steps.coverage_logs_2.outcome == 'failure' }}
+        run: sleep 30
+      - name: Upload coverage logs (final attempt)
+        if: ${{ !cancelled() && matrix.kind == 'coverage' && steps.coverage_logs_2.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-coverage-${{ matrix.item }}-${{ github.run_id }}-${{ github.run_attempt }}-retry-3
           path: .verify/runs/
           include-hidden-files: true
           if-no-files-found: warn

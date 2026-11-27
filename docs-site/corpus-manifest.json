@@ -727,13 +727,13 @@
     },
     {
       "path": "generated/stored-entity-census.json",
-      "sha256": "d2c79eed7435bc05c744d0096df17d5a699149848a27e639d08043143e8449dc",
-      "bytes": 220925
+      "sha256": "0ea3acb1e4d465ede7d514eb951c7110b137b7128f849b5c4919979f27f31c8e",
+      "bytes": 228472
     },
     {
       "path": "generated/stored-entity-census.md",
-      "sha256": "8f0df49591486aac7c77a2984285430ba52f6dab0b87aee4e7d426fd2440eb24",
-      "bytes": 161259
+      "sha256": "02c5ad6f262256145f9b6950c389a7cee5f0b0eac6b7391537e2bb5e65bc33d2",
+      "bytes": 166738
     },
     {
       "path": "getting-started/README.md",
