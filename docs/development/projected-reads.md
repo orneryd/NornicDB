@@ -2,8 +2,9 @@
 
 Projected reads request named properties instead of materializing every property
 of an entity. They work with the ordinary NornicDB node and relationship formats.
-They do not mean that Badger reads individual property bytes from a device:
-Badger still reads and decodes its normal blocks.
+The default format still reads normal Badger blocks and full value-log values;
+only a newly created isolated store with `projected: true` uses bounded property
+reads from Badger's value log.
 
 ## Default read behavior
 
@@ -33,13 +34,31 @@ entries already held still widen.
 ## Dependency and format boundary
 
 The module replacement in `go.mod` pins an exact commit from
-`orneryd/nornic-badger` branch `feature/database-layout-v1.5.3`. The fork
+`orneryd/nornic-badger` with the bounded value-range API. The fork also
 combines experimental property codecs and columnar SST blocks with ordered
 transaction writes. NornicDB selects the experimental encodings only for a
 new isolated database created with `OPTIONS {layout: 'experimental'}`.
 Ordinary databases use the standard format and receive projected reads
 automatically. See the [admin guide](../operations/admin-tool.md#database-storage-layout)
 for creation and import limits.
+
+## Opt-in physical projection
+
+`CREATE DATABASE name OPTIONS {storage: 'isolated', projected: true}` chooses
+the additive projected node format for a new persistent store. The default is
+`false`; existing stores keep their bytes and cannot be converted in place.
+The catalog option and an on-disk marker must agree when reopening a store.
+
+Each projected node has a small metadata header and a sorted directory from
+property key ID to offset, length, and checksum within that node's value.
+Property IDs resolve in the same Badger snapshot as the node. Badger follows
+its current value pointer and reads only the requested ranges from a value-log
+record, including when encryption is enabled. The directory moves with the
+record when value-log GC relocates it, so it never stores an absolute SST or
+value-log address. Inline values are already present in Badger's block.
+When whole-value checksum verification is configured, the range API reads the
+whole value to retain that existing integrity check. An eligible finite
+projection decodes only selected properties; a full-entity read decodes all.
 
 ## Inside the SST block
 

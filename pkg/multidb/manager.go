@@ -468,8 +468,12 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 	}
 	isolated := layout == StorageIsolated || layout == "" && config != nil && config.Create != nil
 	experimental := request.Options[OptionPhysicalLayout] == LayoutExperimental
+	projected := request.Options[OptionProjected] == "true"
 	if experimental && !isolated {
 		return fmt.Errorf("experimental layout requires isolated storage on a persistent standalone server: %w", storage.ErrInvalidData)
+	}
+	if projected && !isolated {
+		return fmt.Errorf("projected storage requires isolated storage on a persistent standalone server: %w", storage.ErrInvalidData)
 	}
 	policy := catalogTransitionPolicy{}
 	if isolated {
@@ -486,7 +490,7 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 			return nil
 		}
 		if err := m.checkSharedNamespace(ctx, request.Name); err != nil {
-			if layout == "" && !experimental && errors.Is(err, ErrDatabaseExists) {
+			if layout == "" && !experimental && !projected && errors.Is(err, ErrDatabaseExists) {
 				return nil
 			}
 			return err
@@ -543,6 +547,15 @@ func (m *DatabaseManager) addStandardDatabase(request DatabaseCreateRequest) err
 					continue
 				default:
 					return fmt.Errorf("invalid database layout %q: %w", value, storage.ErrInvalidData)
+				}
+			}
+			if key == OptionProjected {
+				switch value {
+				case "true", "false":
+					options[key] = value
+					continue
+				default:
+					return fmt.Errorf("invalid projected option %q: %w", value, storage.ErrInvalidData)
 				}
 			}
 			mode := strings.ToUpper(strings.TrimSpace(value))

@@ -183,6 +183,45 @@ func (d *projectedNodeDecoder) resolveToken(token uint64) (projectedProperty, er
 	return property, nil
 }
 
+// decodePhysicalItem is the finite-demand scan path shared by prefix and
+// label scans. It returns handled=false for a legacy body or a scan whose
+// filter contract needs the full token walk. A rejected row is handled with
+// a nil node, so neither caller reads its unrelated properties.
+func (d *projectedNodeDecoder) decodePhysicalItem(item *badger.Item) (*Node, bool, error) {
+	if !d.b.projected || len(item.Key()) <= 1 || len(d.equals) != 0 ||
+		(d.include == nil && d.filterSelection == nil) {
+		return nil, false, nil
+	}
+	id := NodeID(item.Key()[1:])
+	selection := d.include
+	if d.filterSelection != nil {
+		selection = d.filterSelection
+	}
+	node, used, err := d.b.readPhysicalProjectedNode(d.txn, item, id, selection, nil)
+	if err != nil || !used {
+		return node, used, err
+	}
+	if d.filter != nil && !d.filter(node.Properties) {
+		return nil, true, nil
+	}
+	if d.filterSelection != nil {
+		// A hinted scan without a projection returns the whole kept node.
+		// Re-read it only after the finite filter has accepted the row.
+		err = item.Value(func(value []byte) error {
+			var decodeErr error
+			node, decodeErr = d.b.decodeNodeProjected(d.txn, namespaceForNodeID(id), value, nil)
+			return decodeErr
+		})
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	if d.hydration != nodeItemBodyOnly {
+		node, err = d.b.loadNodeEmbeddingState(embeddingRecordReader{txn: d.txn}, node, id, d.hydration == nodeItemFullEmbeddings)
+	}
+	return node, true, err
+}
+
 // decode returns the node of body (the value of node key key) with only the
 // projected properties (every property when the scan has no projection), or nil
 // when the filter rejects it. Invalid envelopes and values that must be read fail decoding; a rejected
@@ -412,6 +451,8 @@ func SplitNodeEnvelope(data []byte) (NodeEnvelope, error) {
 		return NodeEnvelope{}, fmt.Errorf("node body: malformed properties length varint")
 	case nodeEnvelopeShortProperties:
 		return NodeEnvelope{}, fmt.Errorf("node body: properties payload truncated")
+	case nodeEnvelopeInvalidProjected:
+		return NodeEnvelope{}, fmt.Errorf("node body: invalid projected directory")
 	}
 	return envelope, nil
 }
@@ -427,11 +468,24 @@ const (
 	nodeEnvelopeShortVarint
 	nodeEnvelopeOverflowVarint
 	nodeEnvelopeShortProperties
+	nodeEnvelopeInvalidProjected
 )
 
 func splitNodeEnvelope(data []byte) (NodeEnvelope, nodeEnvelopeFailure) {
 	if len(data) == 0 {
 		return NodeEnvelope{}, nodeEnvelopeEmpty
+	}
+	if data[0] == nodeFormatProjectedV1 {
+		header, err := parseProjectedNodeHeader(data)
+		if err != nil {
+			return NodeEnvelope{}, nodeEnvelopeInvalidProjected
+		}
+		legacy := data[projectedNodeHeaderSize+header.directoryLength:]
+		envelope, failure := splitNodeEnvelope(legacy)
+		if failure != nodeEnvelopeValid || len(envelope.metadata) != int(header.metadataLength) {
+			return NodeEnvelope{}, nodeEnvelopeInvalidProjected
+		}
+		return envelope, nodeEnvelopeValid
 	}
 	if data[0] != nodeFormatTokenizedV1 {
 		return NodeEnvelope{}, nodeEnvelopeWrongFormat

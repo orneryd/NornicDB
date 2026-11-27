@@ -210,21 +210,27 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 				decodeInclude[name] = struct{}{}
 			}
 		}
-		err := item.Value(func(value []byte) error {
-			if node == nil {
-				var err error
-				node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
-				return err
-			}
-			// The version-matched cache supplied the metadata. Only the
-			// missing properties need decoding from this physical image.
-			envelope, err := SplitNodeEnvelope(value)
-			if err != nil {
-				return err
-			}
-			_, err = b.decodeTokenizedPropertiesInto(txn, namespaceForNodeID(id), envelope.properties, decodeInclude, node.Properties)
-			return err
-		})
+		physical, usedPhysical, err := b.readPhysicalProjectedNode(txn, item, id, decodeInclude, node)
+		if usedPhysical && err == nil {
+			node = physical
+		}
+		if !usedPhysical && err == nil {
+			err = item.Value(func(value []byte) error {
+				if node == nil {
+					var decodeErr error
+					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+					return decodeErr
+				}
+				// The version-matched cache supplied the metadata. Only the
+				// missing properties need decoding from this physical image.
+				envelope, decodeErr := SplitNodeEnvelope(value)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				_, decodeErr = b.decodeTokenizedPropertiesInto(txn, namespaceForNodeID(id), envelope.properties, decodeInclude, node.Properties)
+				return decodeErr
+			})
+		}
 		if err != nil {
 			return node, err
 		}

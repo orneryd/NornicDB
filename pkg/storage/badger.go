@@ -133,6 +133,9 @@ const (
 	// prefixMVCCMetaEmbeddingFailureReady certifies that every parked sidecar
 	// metadata record is represented in prefixEmbeddingFailure.
 	prefixMVCCMetaEmbeddingFailureReady = byte(0x13)
+	// prefixMVCCMetaProjectedFormat pins the immutable physical projection
+	// choice to the store itself, independently of its catalog options.
+	prefixMVCCMetaProjectedFormat = byte(0x14)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -181,6 +184,7 @@ const (
 //	engine.CreateNode(node)
 type BadgerEngine struct {
 	experimentalLayout          bool
+	projected                   bool
 	cleanShutdownMu             sync.Mutex // serializes marker consumption and publication
 	startupCleanShutdown        bool
 	startupCleanShutdownChecked bool
@@ -723,6 +727,9 @@ func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
 type BadgerOptions struct {
 	// ExperimentalLayout selects experimental property and SST encodings for this store.
 	ExperimentalLayout bool
+	// Projected selects the opt-in physical projected-read format for a new store.
+	// It is independent of ExperimentalLayout and absent for existing stores.
+	Projected bool
 	// CatalogUpgradeV4 is the optional exact catalog migration plan. It is
 	// captured at open; startup integration decides when V4 is authorized.
 	CatalogUpgradeV4 *CatalogUpgradeV4
@@ -1097,6 +1104,10 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
+	if err := validateProjectedStoreMode(db, opts.Projected); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	// Warn (but don't fail) if the data directory still holds legacy gob
 	// bodies. The decoder handles them, but operators should run
@@ -1112,6 +1123,7 @@ func openBadgerEngine(opts BadgerOptions, offlineNamespace string) (*BadgerEngin
 
 	engine := &BadgerEngine{
 		experimentalLayout: opts.ExperimentalLayout,
+		projected:          opts.Projected,
 		db:                 db,
 		inMemory:           opts.InMemory,
 		dataDir:            opts.DataDir,

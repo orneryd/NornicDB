@@ -122,7 +122,7 @@ func restoreDedicatedStores(ctx context.Context, stage string, key []byte, catal
 		if member == nil {
 			return fmt.Errorf("backup is missing the store for database %q: %w", name, storage.ErrInvalidData)
 		}
-		if err := restoreDedicatedStore(ctx, stage, name, id, key, member); err != nil {
+		if err := restoreDedicatedStore(ctx, stage, name, id, key, member, database.Options[OptionProjected] == "true"); err != nil {
 			return fmt.Errorf("restoring database %q: %w", name, err)
 		}
 		delete(members, id)
@@ -133,7 +133,7 @@ func restoreDedicatedStores(ctx context.Context, stage string, key []byte, catal
 	return nil
 }
 
-func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []byte, member *zip.File) error {
+func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []byte, member *zip.File, projected bool) error {
 	dir, err := storage.PreparedDatabaseDirectory(stage, id)
 	if err != nil {
 		return err
@@ -153,17 +153,18 @@ func restoreDedicatedStore(ctx context.Context, stage, name, id string, key []by
 		edges, edgeErr := view.EdgeCount(ctx)
 		graph.Nodes, graph.Relationships = nodes, edges
 		return errors.Join(nodeErr, edgeErr)
-	}); err != nil {
+	}, projected); err != nil {
 		return err
 	}
 	return storage.SealPreparedDatabase(dir, graph)
 }
 
-func restoreNativeStore(ctx context.Context, dir string, key []byte, src io.Reader, inspect func(*storage.BadgerEngine) error) (err error) {
+func restoreNativeStore(ctx context.Context, dir string, key []byte, src io.Reader, inspect func(*storage.BadgerEngine) error, projected ...bool) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, HighPerformance: true, EncryptionKey: key})
+	selected := len(projected) != 0 && projected[0]
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, HighPerformance: true, EncryptionKey: key, Projected: selected})
 	if err != nil {
 		return err
 	}

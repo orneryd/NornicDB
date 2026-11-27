@@ -20,6 +20,9 @@ const (
 	OptionPhysicalLayout = "layout"
 	LayoutStandard       = "standard"
 	LayoutExperimental   = "experimental"
+	// OptionProjected selects the opt-in physical projection format for a new
+	// isolated store. An absent option means false.
+	OptionProjected = "projected"
 )
 
 // DatabaseOptions returns a copy of a database's options.
@@ -44,7 +47,7 @@ func (m *DatabaseManager) DatabaseOptions(databaseName string) (map[string]strin
 // empty, and persists the database metadata. The caller validates the
 // option.
 func (m *DatabaseManager) SetDatabaseOption(ctx context.Context, databaseName, key, value string) error {
-	if key == OptionStorageLayout || key == OptionPhysicalLayout {
+	if key == OptionStorageLayout || key == OptionPhysicalLayout || key == OptionProjected {
 		return storage.ErrInvalidData
 	}
 	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {

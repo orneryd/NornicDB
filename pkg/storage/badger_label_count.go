@@ -54,6 +54,8 @@ func decodeStoredNodeLabels(data []byte) ([]string, error) {
 		return nil, fmt.Errorf("node body: malformed properties length varint")
 	case nodeEnvelopeShortProperties:
 		return nil, fmt.Errorf("node body: properties payload truncated")
+	case nodeEnvelopeInvalidProjected:
+		return nil, fmt.Errorf("node body: invalid projected directory")
 	}
 
 	var node storedNodeLabels

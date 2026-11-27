@@ -585,12 +585,14 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return node, nil
 			}
 			if filtered != nil {
-				var node *Node
-				err := item.Value(func(val []byte) error {
-					var decodeErr error
-					node, decodeErr = filtered.decode(item.Key(), val)
-					return decodeErr
-				})
+				node, usedPhysical, err := filtered.decodePhysicalItem(item)
+				if !usedPhysical && err == nil {
+					err = item.Value(func(val []byte) error {
+						var decodeErr error
+						node, decodeErr = filtered.decode(item.Key(), val)
+						return decodeErr
+					})
+				}
 				if err != nil {
 					// A decode failure is a scan error, just as in the generic scanner.
 					// The decoder may skip unneeded values on a rejected row; it

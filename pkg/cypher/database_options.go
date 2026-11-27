@@ -66,6 +66,19 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	}
 	options := make(map[string]string)
 	for key, raw := range fields {
+		if key == multidb.OptionProjected {
+			selected, ok := raw.(bool)
+			if !ok {
+				return "", nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+					localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(raw), "true, false"))
+			}
+			if selected {
+				options[key] = "true"
+			} else {
+				options[key] = "false"
+			}
+			continue
+		}
 		if key == multidb.OptionStorageLayout || key == multidb.OptionPhysicalLayout {
 			value, _ := raw.(string)
 			value = strings.ToLower(strings.TrimSpace(value))

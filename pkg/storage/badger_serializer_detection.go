@@ -60,7 +60,7 @@ func detectStoredSerializer(db badgerKV) (detectedSerializer, bool, error) {
 					continue
 				}
 				switch val[0] {
-				case nodeFormatTokenizedV1, edgeFormatCompactV2:
+				case nodeFormatTokenizedV1, nodeFormatProjectedV1, edgeFormatCompactV2:
 					detected = detectedTokenizedV2
 					it.Close()
 					return ErrIterationStopped

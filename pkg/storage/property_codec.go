@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"time"
@@ -57,12 +58,21 @@ const (
 // above, allocating dictionary IDs inside the caller's txn so the
 // dict writes commit atomically with the body that references them.
 func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace string, props map[string]any) ([]byte, error) {
+	data, _, err := b.encodeTokenizedPropertiesWithRegions(txn, namespace, props, false)
+	return data, err
+}
+
+func (b *BadgerEngine) encodeTokenizedPropertiesWithRegions(txn *badger.Txn, namespace string, props map[string]any, projected bool) ([]byte, []projectedPropertyRegion, error) {
 	var buf bytes.Buffer
+	var regions []projectedPropertyRegion
+	if projected {
+		regions = make([]projectedPropertyRegion, 0, len(props))
+	}
 	scratch := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(scratch, uint64(len(props)))
 	buf.Write(scratch[:n])
 	if len(props) == 0 {
-		return buf.Bytes(), nil
+		return buf.Bytes(), regions, nil
 	}
 	encoder := msgpack.GetEncoder()
 	defer msgpack.PutEncoder(encoder)
@@ -70,7 +80,7 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 	for name, val := range props {
 		id, err := b.propKeyDict.resolveOrAllocateInTxn(txn, namespace, name)
 		if err != nil {
-			return nil, fmt.Errorf("allocating property key id for %q: %w", name, err)
+			return nil, nil, fmt.Errorf("allocating property key id for %q: %w", name, err)
 		}
 		n := binary.PutUvarint(scratch, id)
 		buf.Write(scratch[:n])
@@ -90,7 +100,7 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 				// collection's writer or encoder state with its siblings.
 				needsIsolation, err := inspectPropertyEncoding(val, 0, -1)
 				if err != nil {
-					return nil, fmt.Errorf("marshaling property %q value: %w", name, err)
+					return nil, nil, fmt.Errorf("marshaling property %q value: %w", name, err)
 				}
 				if needsIsolation {
 					encodeErr = encodeIsolatedPropertyValue(encoder, converted, 0, -1)
@@ -107,18 +117,25 @@ func (b *BadgerEngine) encodeTokenizedProperties(txn *badger.Txn, namespace stri
 			}
 		}
 		if encodeErr != nil {
-			return nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
+			return nil, nil, fmt.Errorf("marshaling property %q value: %w", name, encodeErr)
 		}
 		encoded := valueBuf.Bytes()
 		if b.experimentalLayout {
 			encoded, err = encodeExperimentalProperty(val, encoded)
 			if err != nil {
-				return nil, fmt.Errorf("encoding experimental property %q: %w", name, err)
+				return nil, nil, fmt.Errorf("encoding experimental property %q: %w", name, err)
 			}
 		}
+		start := buf.Len()
 		buf.Write(encoded)
+		if projected {
+			regions = append(regions, projectedPropertyRegion{
+				id: id, start: uint32(start), length: uint32(len(encoded)),
+				crc: crc32.Checksum(encoded, projectedNodeCRC),
+			})
+		}
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), regions, nil
 }
 
 func propertyProjectionSet(properties []string) map[string]struct{} {

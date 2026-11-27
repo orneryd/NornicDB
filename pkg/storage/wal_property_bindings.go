@@ -316,6 +316,8 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 				return nil, fmt.Errorf("varint overflow")
 			case nodeEnvelopeShortProperties:
 				return nil, fmt.Errorf("wal: truncated node properties")
+			case nodeEnvelopeInvalidProjected:
+				return nil, fmt.Errorf("wal: invalid projected node directory")
 			}
 			end = len(body) - len(envelope.metadata)
 			start = end - len(envelope.properties)
@@ -348,7 +350,14 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 			rebound = append(rebound, body[:start]...)
 		}
 		rebound = append(rebound, props...)
-		out[key] = append(rebound, body[end:]...)
+		rebound = append(rebound, body[end:]...)
+		if key[0] == prefixNode && body[0] == nodeFormatProjectedV1 {
+			rebound, err = buildProjectedNodeFrame(rebound)
+			if err != nil {
+				return nil, fmt.Errorf("wal: rebuild projected node directory for %q: %w", key[1:], err)
+			}
+		}
+		out[key] = rebound
 	}
 	return out, nil
 }

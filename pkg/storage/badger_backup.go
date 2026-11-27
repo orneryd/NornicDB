@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
+
+const projectedNativeBackupPrefix = "NDB-PROJECTED-V1\n"
 
 // Backup creates a backup of the database to the specified file path.
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
@@ -28,7 +31,7 @@ func (b *BadgerEngine) Backup(path string) error {
 			return localizedError(localization.StorageClientBackupFileCreateFailed(path, err), err)
 		}
 		defer f.Close()
-		if err := writeBadgerBackup(ctx, db, f); err != nil {
+		if err := writeBadgerBackup(ctx, db, f, b.projected); err != nil {
 			return err
 		}
 		if err := f.Sync(); err != nil {
@@ -41,7 +44,7 @@ func (b *BadgerEngine) Backup(path string) error {
 // BackupTo emits the same native snapshot as Backup to a caller-owned stream.
 func (b *BadgerEngine) BackupTo(ctx context.Context, dst io.Writer) error {
 	return b.withBackupSnapshot(ctx, func(db *managedBadgerDB) error {
-		return writeBadgerBackup(ctx, db, dst)
+		return writeBadgerBackup(ctx, db, dst, b.projected)
 	})
 }
 
@@ -63,8 +66,13 @@ func (b *BadgerEngine) withBackupSnapshot(ctx context.Context, write func(*manag
 	return write(b.db)
 }
 
-func writeBadgerBackup(ctx context.Context, db *managedBadgerDB, dst io.Writer) error {
+func writeBadgerBackup(ctx context.Context, db *managedBadgerDB, dst io.Writer, projected bool) error {
 	buf := bufio.NewWriterSize(dst, 16*1024*1024)
+	if projected {
+		if _, err := buf.WriteString(projectedNativeBackupPrefix); err != nil {
+			return localizedError(localization.StorageClientBackupFailed(err), err)
+		}
+	}
 	if _, err := db.Backup(backupStreamWriter{ctx: ctx, dst: buf}, 0); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -133,6 +141,15 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	reader := bufio.NewReaderSize(src, 16*1024)
+	first, peekErr := reader.Peek(len(projectedNativeBackupPrefix))
+	hasProjectedPrefix := peekErr == nil && string(first) == projectedNativeBackupPrefix
+	if hasProjectedPrefix != b.projected {
+		return fmt.Errorf("native backup projected mode differs from destination store: %w", ErrInvalidData)
+	}
+	if hasProjectedPrefix {
+		_, _ = reader.Discard(len(projectedNativeBackupPrefix))
+	}
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills(context.WithoutCancel(ctx))) }()
@@ -184,7 +201,7 @@ func (b *BadgerEngine) RestoreFrom(ctx context.Context, src io.Reader) (restoreE
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.InvalidatePendingEmbeddingsIndex()
-	if err := db.Load(ctx, bufio.NewReaderSize(src, 16*1024), 1000); err != nil {
+	if err := db.Load(ctx, reader, 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	// The restored derived-count deltas are folded, as open folds them:
