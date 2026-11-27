@@ -1252,7 +1252,15 @@ func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) *searc
 // newUnmanagedSearchService creates a procedure service through the existing
 // executor/database ownership policy.
 func (e *StorageExecutor) newUnmanagedSearchService(dimensions int) *search.Service {
-	return e.keepUnmanagedSearchService(search.NewService(e.storage, dimensions, nil))
+	svc := search.NewService(e.storage, dimensions, nil)
+	// An executor without a database search owner can retain this service after
+	// a fulltext read. Give its first readiness-dependent reader the same build
+	// trigger as a managed lazy service, so a later vector index does not stay
+	// POPULATING solely because no startup owner built this service.
+	svc.SetLazyWarming(true, func() {
+		_ = svc.BuildIndexes(svc.LifetimeContext())
+	})
+	return e.keepUnmanagedSearchService(svc)
 }
 
 // shareSearchFor gives target the search of database: the resolver, for the

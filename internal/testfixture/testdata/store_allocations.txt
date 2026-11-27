@@ -161,9 +161,13 @@ github.com/orneryd/nornicdb/pkg/storage.RecoverFromWAL -> github.com/orneryd/nor
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithLogger -> github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult
-github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResult -> github.com/orneryd/nornicdb/pkg/storage.recoverFromWALWithResult calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResultWithKey
+github.com/orneryd/nornicdb/pkg/storage.RecoverFromWALWithResultWithKey -> github.com/orneryd/nornicdb/pkg/storage.recoverFromWALWithResult calls=1
 github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions
-github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactions -> github.com/orneryd/nornicdb/pkg/storage.recoverWithTransactions calls=1
+github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactionsWithKey
+github.com/orneryd/nornicdb/pkg/storage.RecoverWithTransactionsWithKey -> github.com/orneryd/nornicdb/pkg/storage.recoverWithTransactions calls=1
 github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore
 github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
 github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine
@@ -171,6 +175,10 @@ github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine -> github.com/orneryd/n
 github.com/orneryd/nornicdb/pkg/storage.openBadgerEngine -> github.com/orneryd/nornicdb/pkg/storage.openManagedBadger calls=1
 github.com/orneryd/nornicdb/pkg/storage.openManagedBadger
 github.com/orneryd/nornicdb/pkg/storage.openManagedBadger -> github.com/dgraph-io/badger/v4.OpenManaged calls=1
+github.com/orneryd/nornicdb/pkg/storage.recoverFromWALWithResult
+github.com/orneryd/nornicdb/pkg/storage.recoverFromWALWithResult -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
+github.com/orneryd/nornicdb/pkg/storage.recoverWithTransactions
+github.com/orneryd/nornicdb/pkg/storage.recoverWithTransactions -> github.com/orneryd/nornicdb/pkg/storage.newRecoveredStore calls=1
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.Open -> github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner calls=1
 github.com/orneryd/nornicdb/pkg/txsession.*Manager.OpenForOwner
