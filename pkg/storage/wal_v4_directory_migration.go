@@ -192,7 +192,7 @@ func UpgradeWALV4(dir string, options WALV4UpgradeOptions) (bool, error) {
 		return false, err
 	}
 	records := options.records()
-	if err := validateWALFormat(dir, WALValidateV4Upgrade, records); err != nil {
+	if err := validateWALFormat(dir, WALValidateV4Upgrade, records, walFrameReader{}); err != nil {
 		return false, err
 	}
 	backup := dir + v4WALBackupSuffix

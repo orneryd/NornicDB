@@ -259,7 +259,10 @@ git init --quiet "${fixture}/repo"
 cd "${fixture}/repo"
 git config user.name 'Verify self-test'
 git config user.email 'verify-test@example.invalid'
-git commit --quiet --allow-empty -m base
+mkdir -p lib/llama
+printf 'fixture-revision\n' > lib/llama/REVISION
+git add lib/llama/REVISION
+git commit --quiet -m base
 fork="$(git rev-parse HEAD)"
 git checkout --quiet -b branch
 git commit --quiet --allow-empty -m branch
@@ -270,6 +273,7 @@ BASE=moved-base
 MERGE_BASE="$(git merge-base "${BASE}" branch)"
 STATE_DIR="${fixture}/state"
 LOG_DIR="${fixture}/logs"
+printf 'fixture-archive\n' > "lib/llama/libllama_darwin_$(go env GOARCH).a"
 
 python3() {
   # The first invocation checks the runner itself; the second names both trees.

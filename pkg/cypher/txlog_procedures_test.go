@@ -34,6 +34,29 @@ func newTxlogExecutor(t *testing.T) (*StorageExecutor, *storage.WAL) {
 	return NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test")), wal
 }
 
+func TestTxlogProceduresReadEncryptedWAL(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
+	dir := t.TempDir()
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, badger.Close()) })
+	walDir := filepath.Join(dir, "wal")
+	wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, SyncMode: "none", EncryptionKey: []byte("12345678901234567890123456789012")})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, wal.Close()) })
+	_, err = wal.AppendWithDatabaseReturningSeq(storage.OpTxBegin, storage.WALTxData{TxID: "encrypted-tx"}, "test")
+	require.NoError(t, err)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test"))
+	for _, query := range []string{
+		"CALL db.txlog.entries() YIELD txId RETURN txId",
+		"CALL db.txlog.byTxId('encrypted-tx') YIELD txId RETURN txId",
+	} {
+		result, err := exec.Execute(t.Context(), query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{"encrypted-tx"}}, result.Rows)
+	}
+}
+
 func TestTxlogProceduresRenderTypedWALAsJSON(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	exec, wal := newTxlogExecutor(t)

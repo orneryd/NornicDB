@@ -26,7 +26,14 @@ type StartedRuntime struct {
 // The caller must validate or upgrade persisted WALs before opening the primary
 // store. config.DataDir selects the replication directory, whose WAL is in wal/.
 func StartRuntime(ctx context.Context, base storage.Engine, config *Config) (StartedRuntime, error) {
-	adapter, err := NewStorageAdapterWithWAL(base, filepath.Join(config.DataDir, "wal"))
+	return StartRuntimeWithWALKey(ctx, base, config, nil)
+}
+
+// StartRuntimeWithWALKey starts replication with its local journal encrypted
+// by the database installation key. The transport's own authentication and
+// TLS settings remain separate from encryption of persisted journal bytes.
+func StartRuntimeWithWALKey(ctx context.Context, base storage.Engine, config *Config, key []byte) (StartedRuntime, error) {
+	adapter, err := NewStorageAdapterWithWALKey(base, filepath.Join(config.DataDir, "wal"), key)
 	if err != nil {
 		return StartedRuntime{}, localizedError(localization.NornicDBCoreReplicationStorageAdapterCreateFailed(err), err)
 	}

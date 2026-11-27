@@ -13,6 +13,8 @@ Use a native backup for an online persistent-store copy, or stop the database be
 
 Native full-store backups include persisted system/account records. Graph-only JSON exports do not provide equivalent account/schema coverage. A native `.backup` does not package surrounding WAL, search files, configuration, or models.
 
+**Encrypted live stores do not imply encrypted native backups.** Badger's native streaming backup emits data through a separate format, and a multi-database backup archive stores those streams without an archive encryption layer. Protect completed files, temporary files, and the backup destination with access controls and independent encryption; do not place them in a public or shared location. Retain the database key for restoring into an encrypted destination.
+
 ## Online backup
 
 The destination is on the server, inside permitted filesystem roots; the response does not download it. Create the directory with suitable ownership and restrict backup access.

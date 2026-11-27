@@ -111,6 +111,7 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 	badgerOpts, walConfig := resolveDurabilityOptions(dir, db.config)
 	badgerOpts.MemoryPolicy = db.memoryPolicy
 	badgerOpts.EncryptionKey = db.isolatedStoreEncryptionKey
+	walConfig.EncryptionKey = db.isolatedStoreEncryptionKey
 	var native *storage.BadgerEngine
 	var err error
 	if graph != nil && !verify {
@@ -120,6 +121,11 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(db.isolatedStoreEncryptionKey) != 0 {
+		if err := migrateEncryptedDurabilityArtifacts(ctx, dir, "", db.isolatedStoreEncryptionKey); err != nil {
+			return nil, errors.Join(err, native.Close())
+		}
 	}
 	wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 	if err != nil {
@@ -183,6 +189,9 @@ func openPublishedIsolatedStore(ctx context.Context, dir string, opts storage.Ba
 	if len(opts.EncryptionKey) != 0 {
 		if keyErr := storage.VerifyBadgerEncryptionKey(dir, opts.EncryptionKey); keyErr != nil {
 			return nil, errors.Join(err, keyErr)
+		}
+		if migrationErr := migrateEncryptedDurabilityArtifacts(ctx, dir, "", opts.EncryptionKey); migrationErr != nil {
+			return nil, errors.Join(err, migrationErr)
 		}
 	}
 	recovered, preserved, recoverErr := recoverBadgerStore(ctx, dir, opts, seal)

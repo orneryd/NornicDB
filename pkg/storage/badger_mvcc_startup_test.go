@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNamespaceMVCCRecoveredBeforeFirstTransactionAfterReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	for _, namespace := range []string{"alpha", "beta"} {
 		_, err := engine.CreateNode(context.Background(), &Node{ID: NodeID(namespace + ":node"), Labels: []string{"N"}})
@@ -19,7 +20,7 @@ func TestNamespaceMVCCRecoveredBeforeFirstTransactionAfterReopen(t *testing.T) {
 	}
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	for _, namespace := range []string{"alpha", "beta"} {
@@ -40,7 +41,7 @@ func TestNamespaceMVCCRecoveredBeforeFirstTransactionAfterReopen(t *testing.T) {
 }
 
 func TestNamespaceMVCCConcurrentColdCallersShareState(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer engine.Close()
 	const callers = 24
@@ -65,7 +66,7 @@ func TestNamespaceMVCCConcurrentColdCallersShareState(t *testing.T) {
 }
 
 func TestNamespaceMVCCColdLoadFailureCanRetry(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer engine.Close()
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {

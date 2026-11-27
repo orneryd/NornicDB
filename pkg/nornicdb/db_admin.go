@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1536,7 +1535,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 			if db.config != nil && db.config.Database.DataDir != "" {
 				marker := filepath.Join(db.config.Database.DataDir, nativeRestoreMarker)
 				boundary := nativeRestoreBoundary{RestoredAt: time.Now().UTC(), WALSequence: restoreWALFloor}
-				data, err := json.Marshal(boundary)
+				data, err := valueconvert.PropertyJSON.Marshal(boundary)
 				if err != nil {
 					db.mu.Unlock()
 					return fmt.Errorf("encode native restore recovery boundary: %w", err)

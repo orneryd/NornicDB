@@ -417,7 +417,7 @@
   },
   "pkg/storage/snapshot_stream.go:readSnapshot": {
     "reason": "Typed snapshot footer/checksum framing; entity payloads use the binary/property recovery owner.",
-    "sha256": "77d5a24c2f5f4dbad48df225d24caf46c9eff77be0182b21287576141a33e80b"
+    "sha256": "b291bbb14b2f68e0578507c709d3ac7a1938c8186d8f7fcc6f507832c96ba8c9"
   },
   "pkg/storage/wal_diagnostics.go:WAL.reportCorruption": {
     "reason": "Typed corruption diagnostic report; no property payload.",
@@ -635,9 +635,9 @@
     "reason": "Author: #1665 implementation lane (Codex). Explicit historical Gob-or-JSON fallback, gated by allowJSON and strict trailing rejection; current format admission is separate.",
     "sha256": "151eb2c5908e723125d276757d00dcde7a08db40d13345373cad982f0a71132d"
   },
-  "scripts/wal-read/main.go:writeEntries": {
+  "scripts/wal-read/main.go:writeEntriesWithKey": {
     "reason": "Author: #1665 implementation lane (Codex). Offline inspection serializes rendered WAL report rows after the retained reader validates records; it is not a storage write or recovery decoder.",
-    "sha256": "cf9351703388e50347a20396881dde4e541004a264d7c65b5b5a7c09c3217304"
+    "sha256": "f97b561663c7d16a2166f530b00fb1be0e8be542b1fba040a51d76f3ab73f0a0"
   },
   "scripts/go_owner_bindings/main.go:run": {
     "reason": "Release developer tool: reads one JSON request of root and file paths and writes go/types binding evidence; no graph properties, Cypher parameters or persisted state. Reviewed by the L6 / #1665 lane (Claude Opus 5.5).",

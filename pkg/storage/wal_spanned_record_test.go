@@ -324,7 +324,7 @@ func TestWALUnknownFrameVersionIsRefused(t *testing.T) {
 	active := walActivePath(dir)
 	raw, err := os.ReadFile(active)
 	require.NoError(t, err)
-	raw[4] = walFormatVersionSpanned + 1
+	raw[4] = walFormatVersionEncryptedSpanned + 1
 	require.NoError(t, os.WriteFile(active, raw, 0o644))
 	require.ErrorIs(t, ValidateWALFormat(dir, WALValidateCurrent), ErrWALUnsupportedVersion)
 	_, err = ReadWALEntries(t.Context(), active, nil)

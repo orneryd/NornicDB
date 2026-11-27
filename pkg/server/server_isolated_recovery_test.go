@@ -115,7 +115,8 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	closeDB()
 
 	// Capture the first node, then append a durable WAL record after that snapshot.
-	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
+	walDir := filepath.Join(dir, "wal")
+	wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, EncryptionKey: key})
 	require.NoError(t, err)
 	native, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(
 		storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, EncryptionKey: key}),
@@ -123,7 +124,7 @@ func checkIsolatedStoreRecovery(t *testing.T, missingManifest, encrypted bool) {
 	require.NoError(t, err)
 	snapshots := filepath.Join(dir, "snapshots")
 	require.NoError(t, os.MkdirAll(snapshots, 0700))
-	require.NoError(t, storage.SaveStreamingSnapshot(t.Context(), native, filepath.Join(snapshots, "snapshot-00000000000000000001.json"), storage.SnapshotOptions{Sequence: wal.Sequence()}))
+	require.NoError(t, storage.SaveStreamingSnapshot(t.Context(), native, filepath.Join(snapshots, "snapshot-00000000000000000001.json"), storage.SnapshotOptions{Sequence: wal.Sequence(), EncryptionKey: key}))
 	require.NoError(t, native.Close())
 	require.NoError(t, wal.AppendWithDatabase(storage.OpCreateNode, storage.WALNodeData{
 		Node: &storage.Node{ID: "after-snapshot", Labels: []string{"Recovery"}},

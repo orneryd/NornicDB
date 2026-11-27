@@ -57,7 +57,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
-	if err := ValidateWALFormat(wal.config.Dir, WALValidateCurrent); err != nil {
+	// NewWAL has already selected the frame cipher. Keep validation, torn-tail
+	// handling, and replay on that same authenticated read path.
+	frameReader := walFrameReader{cipher: wal.cipher}
+	if err := validateWALFormat(wal.config.Dir, WALValidateCurrent, nil, frameReader); err != nil {
 		return 0, err
 	}
 	// The batch reader retains engine state through import, physical apply
@@ -79,7 +82,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// the last good boundary before reading (the same conservative repair
 	// the snapshot+WAL recovery path runs).
 	activePath := walActivePath(wal.config.Dir)
-	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
+	_, _, _ = repairWALTailWithReader(activePath, defaultWALLogger{}, frameReader)
 
 	var pending []bufferedCommit
 	var historicalNumericAliases map[walNumericToken]string
@@ -98,7 +101,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		pendingBytes = 0
 		return nil
 	}
-	err = VisitWALEntriesAfterFromDir(b.work.Context(), wal.config.Dir, afterSeq, func(entry WALEntry) error {
+	err = visitWALEntriesAfterFromDir(b.work.Context(), wal.config.Dir, afterSeq, frameReader, func(entry WALEntry) error {
 		if entry.Operation == OpEntityCommit {
 			// Keep the existing streaming replay owner: an earlier physical
 			// batch must finish before this semantic record can inspect its

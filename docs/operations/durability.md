@@ -61,7 +61,9 @@ Automatic native buffer rotation starts at 50 ms and adapts between 5 ms and 1 s
 | `search/` | Search generations/checkpoints, with a readiness and rebuild lifecycle separate from graph commit completion. |
 | Replication data directory | Cluster log/state; may be outside the graph data directory. |
 
-Current WAL frames use format **6**, typed recovery payloads, checksums, and completion markers. Larger buffered payloads can be compressed. These detect invalid/truncated records; alignment and checksums do not make arbitrary disk writes atomic or repair arbitrary corruption. See [Recovery format compatibility](recovery-format-compatibility.md) for upgrade and rollback rules.
+Unencrypted WAL frames use format **6** (or **7** for spanned records). With database encryption enabled, WAL frames use authenticated formats **8** and **9**. Recovery snapshots use an authenticated envelope around the streaming snapshot format. The WAL, including retained segments and a separately configured replication WAL, and automatic snapshots are encrypted with the configured database key. Startup converts older plaintext WAL files and automatic snapshots before admitting traffic; a failed conversion stops startup without discarding a recovery record. Keep the password or key material available for replay and restore. Older binaries cannot read the encrypted formats.
+
+The formats retain typed recovery payloads and completion markers. Authentication rejects modified encrypted frames and snapshots; it does not repair corruption or make arbitrary disk writes atomic. Native streaming backups and backup archives are separate artifacts and may expose plaintext even when the live database is encrypted; restrict and encrypt backup storage independently. Copies made before this upgrade, including filesystem backups, diagnostic WAL copies, and older upgrade archives, may still contain plaintext and need their own retention or disposal decision. See [Recovery format compatibility](recovery-format-compatibility.md) and [Backup and restore](backup-restore.md).
 
 ## Startup and recovery
 

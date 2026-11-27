@@ -109,7 +109,7 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 }
 
 func TestChangeEventFloorPreservesTransactionSnapshot(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
@@ -138,7 +138,7 @@ func TestChangeEventFloorPreservesTransactionSnapshot(t *testing.T) {
 
 func TestChangeEventBoundsSurviveReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
 	for _, id := range []NodeID{"cdc:a", "cdc:b", "cdc:c"} {
@@ -150,7 +150,7 @@ func TestChangeEventBoundsSurviveReopen(t *testing.T) {
 	require.Equal(t, 2, pruned)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	first, last, err := reopened.ChangeBounds("cdc")
@@ -167,7 +167,7 @@ func TestChangeEventBoundsSurviveReopen(t *testing.T) {
 // BenchmarkChangeBoundsAfterPrune compares the retained cursor with the
 // legacy prefix seek on the same tombstone-heavy store.
 func BenchmarkChangeBoundsAfterPrune(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

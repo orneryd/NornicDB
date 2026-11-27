@@ -131,9 +131,11 @@ func TestEmbeddingCallerAuthorityRefusesOperationBeforeSubmitting(t *testing.T) 
 	require.Equal(t, 2, retried)
 
 	worker.TriggerImmediate()
+	// The provider call can precede the accepted-outcome callback that updates
+	// Processed, so observe both outcomes before asserting their counters.
 	require.Eventually(t, func() bool {
 		parked := parkedEmbeddingTexts(t, worker)
-		return len(parked) == 2
+		return len(parked) == 2 && worker.Stats().Processed == 1
 	}, 5*time.Second, time.Millisecond)
 
 	calls := recordedCallerEmbeddingInputs(provider)

@@ -832,8 +832,8 @@
     },
     {
       "path": "operations/backup-restore.md",
-      "sha256": "b4ea9440906796c63b8cf6e0c59b4278df0f32bc9c0c3d28b4781144f97da2d0",
-      "bytes": 6097
+      "sha256": "43e34c0b4e58bc3d7b228d09cdc2b1a5ba195a9b2e8921d9c56877e52895e3ef",
+      "bytes": 6565
     },
     {
       "path": "operations/cli-commands.md",
@@ -867,8 +867,8 @@
     },
     {
       "path": "operations/durability.md",
-      "sha256": "ed66f09be82c88271aac44e3be678c6e88c5bf2581c9dcd05da32d32c5584967",
-      "bytes": 8998
+      "sha256": "30d4c03549191580db93ddf8a02b55935459d2622bb28f3a8d5bc00b9d3361e4",
+      "bytes": 9996
     },
     {
       "path": "operations/environment-variables.md",
@@ -902,8 +902,8 @@
     },
     {
       "path": "operations/recovery-format-compatibility.md",
-      "sha256": "84b82b951c203ec737cf9af5d5f4d9a233726be67a300de4b2b72a32c18e6ba8",
-      "bytes": 15546
+      "sha256": "8f4cf94382c4bd0c7e636a02be2628cad798c4dd5d86668bb57733f669c593e2",
+      "bytes": 15699
     },
     {
       "path": "operations/reverse-proxy.md",
@@ -932,8 +932,8 @@
     },
     {
       "path": "operations/wal-compaction.md",
-      "sha256": "4601a956abf8c2e8f0c3ab50ccc1cd09eb645896cdeec1f3c32b6d6ed9119e03",
-      "bytes": 9670
+      "sha256": "12be1a4156fc95611fd3c92738d0fba840aceb69e8dac35ea8056de79908f85a",
+      "bytes": 9907
     },
     {
       "path": "packaging/README.md",

@@ -39,8 +39,12 @@ var spaceClasses = map[string]string{
 	// The pending-embedding index is a work queue, not entity state: its
 	// reader revalidates every entry against the node (dropping stale and
 	// no-longer-needed ones), and RefreshPendingEmbeddingsIndex rebuilds it.
-	"prefixPendingEmbed":      "embedding-queue",
-	"prefixEmbedding":         "entity-sidecar",
+	"prefixPendingEmbed": "embedding-queue",
+	"prefixEmbedding":    "entity-sidecar",
+	// The parked-failure index is derived from embedding metadata. Readers
+	// revalidate each indexed key against that metadata, and startup can
+	// rebuild the index after an interrupted backfill.
+	"prefixEmbeddingFailure":  "embedding-queue",
 	"prefixMVCCNode":          "entity-version",
 	"prefixMVCCEdge":          "entity-version",
 	"prefixMVCCNodeHead":      "entity-head",
@@ -60,6 +64,7 @@ var spaceClasses = map[string]string{
 	"prefixPropKeyReverse":    "property-key-dictionary",
 	"prefixPropKeyCounter":    "property-key-dictionary",
 	"prefixChangeEvent":       "change-log",
+	"prefixChangeBounds":      "change-log",
 
 	"prefixMVCCMetaSchemaVersion":           "store-metadata",
 	"prefixMVCCMetaEdgeBetweenIndexReady":   "store-metadata",
@@ -75,6 +80,7 @@ var spaceClasses = map[string]string{
 	"prefixMVCCMetaEdgeTypeStartLabelCount": "derived-count",
 	"prefixMVCCMetaEdgeTypeEndLabelCount":   "derived-count",
 	"prefixMVCCMetaLargeCommitIntent":       "store-metadata",
+	"prefixMVCCMetaEmbeddingFailureReady":   "store-metadata",
 	// Durable namespace cleanup intent, written atomically by the commit owner.
 	"prefixMVCCMetaNamespaceDrop":       "store-metadata",
 	"prefixMVCCMetaDeleteCleanupMarker": "store-metadata",

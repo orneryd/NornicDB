@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +68,7 @@ func TestNativeRestoreAcceptsJSONOpeningBytes(t *testing.T) {
 		backup := found[opening]
 		require.NotEmpty(t, backup, "no native backup started with %q", opening)
 		t.Run(name, func(t *testing.T) {
-			control, err := storage.NewBadgerEngine(t.TempDir())
+			control, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, control.Close()) })
 			require.NoError(t, control.Restore(backup), "native engine control")
