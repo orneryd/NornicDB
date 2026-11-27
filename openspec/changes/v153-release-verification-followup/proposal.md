@@ -8,8 +8,9 @@ requesting that build. The correction should use the existing lazy warming
 owner when the current index has no population record, preserving the
 procedure timeout and the startup readiness promise.
 
-The current run also exposed a storage allocation census drift from the
-encrypted durability wrappers and a transient coverage artifact upload error.
+The current run also exposed a storage allocation inventory drift from the
+encrypted durability wrappers, a stale generated stored-entity census from
+the integrated storage changes, and a transient coverage artifact upload error.
 Review each exact-head failure,
 correct product or census ownership at its source, and rerun affected checks
 before qualifying the release. Do not change the differential corpus or weaken
