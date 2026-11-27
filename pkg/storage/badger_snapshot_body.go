@@ -196,6 +196,25 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}
+	// Ordinary stores keep the established projection read and cache contract.
+	// Partial body admission exists only for databases created with projected.
+	if !b.projected {
+		node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
+		if !cached {
+			err := item.Value(func(value []byte) error {
+				var decodeErr error
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
+				return decodeErr
+			})
+			if err != nil {
+				return node, err
+			}
+		}
+		if node != nil && access == nodeBodyDetached && projectionHydration(nodeItemBodyOnly, include) != nodeItemBodyOnly {
+			return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, false)
+		}
+		return node, nil
+	}
 	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
 	node := read.node
 	// A label scan whose population exceeds the cache cannot retain its scan

@@ -10,8 +10,36 @@ import (
 	"time"
 )
 
-func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
+func newProjectedBodyCacheTestEngine(t *testing.T) *BadgerEngine {
+	t.Helper()
+	b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, Projected: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() })
+	return b
+}
+
+func TestProjectedReadsDefaultStoreDoesNotAdmitPartialBodies(t *testing.T) {
 	b := createTestBadgerEngine(t)
+	id := NodeID("test:ordinary-projection-cache")
+	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{
+		"key": "one", "body": strings.Repeat("body", 4096),
+	}})
+	require.NoError(t, err)
+	b.cacheDeleteNode(id, nodeCacheAllForms)
+	narrow, err := b.GetNodeProjected(t.Context(), id, []string{"key"})
+	require.NoError(t, err)
+	require.Equal(t, "one", narrow.Properties["key"])
+	b.nodeBodyCacheMu.RLock()
+	_, partial := b.nodeBodyCache[id]
+	b.nodeBodyCacheMu.RUnlock()
+	require.False(t, partial, "ordinary stores must retain the existing projection cache contract")
+	wide, err := b.GetNodeProjected(t.Context(), id, []string{"body"})
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("body", 4096), wide.Properties["body"])
+}
+
+func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:partial-cache")
 	body := strings.Repeat("unrequested document body ", 1024)
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"key": "one", "body": body, "bytes": []byte{1, 2, 3}}})
@@ -80,7 +108,7 @@ func TestProjectedReadsProjectedBodyCacheCoverageAndOwnership(t *testing.T) {
 }
 
 func TestProjectedReadsPhysicalSnapshotPreservesEmbeddingMetadata(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:projection-physical-snapshot")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "one"}})
 	require.NoError(t, err)
@@ -106,7 +134,7 @@ func TestProjectedReadsPhysicalSnapshotPreservesEmbeddingMetadata(t *testing.T) 
 }
 
 func TestProjectedReadsProjectedBodyCacheSnapshotAndInvalidation(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:projected-version")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "old", "body": "old body"}})
 	require.NoError(t, err)
@@ -129,7 +157,7 @@ func TestProjectedReadsProjectedBodyCacheSnapshotAndInvalidation(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheBudget(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	b.nodeCacheMaxEntries = 1
 	b.nodeBodyCacheMaxBytes = 2048
 	for _, id := range []NodeID{"test:partial-one", "test:partial-two"} {
@@ -149,7 +177,7 @@ func TestProjectedReadsProjectedBodyCacheBudget(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheLatestAdmission(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:projection-current")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"key": "one", "body": "body"}})
 	require.NoError(t, err)
@@ -184,7 +212,7 @@ func TestProjectedReadsProjectedBodyCacheLatestAdmission(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheConcurrentWrites(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:projection-concurrent")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"sequence": int64(0), "body": "body"}})
 	require.NoError(t, err)
@@ -224,7 +252,7 @@ func TestProjectedReadsProjectedBodyCacheConcurrentWrites(t *testing.T) {
 }
 
 func TestProjectedReadsProjectedBodyCacheConcurrentLazyFill(t *testing.T) {
-	b := createTestBadgerEngine(t)
+	b := newProjectedBodyCacheTestEngine(t)
 	id := NodeID("test:projection-union")
 	_, err := b.CreateNode(t.Context(), &Node{ID: id, Properties: map[string]any{"a": int64(1), "b": int64(2), "c": int64(3)}})
 	require.NoError(t, err)

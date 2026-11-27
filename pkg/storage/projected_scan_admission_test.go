@@ -12,7 +12,7 @@ func TestProjectedReadsOversizedProjectionScanRetainsExistingCoverage(t *testing
 		t.Run(fmt.Sprintf("snapshot=%t", snapshot), func(t *testing.T) {
 
 			const count = labelScanPointLookups + 300
-			b, ids := labelScanFixture(t, count)
+			b, ids := labelScanFixtureWithMode(t, count, true)
 			b.nodeCacheMaxEntries = labelScanPointLookups + 100
 			for _, id := range ids {
 				b.cacheDeleteNode(id, nodeCacheAllForms)

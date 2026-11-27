@@ -557,8 +557,8 @@
     },
     {
       "path": "development/projected-reads.md",
-      "sha256": "19abac0de5a1b2983a4999f752d7da3928f1c1e9c0b4fc200632fda0ffa42bbd",
-      "bytes": 4922
+      "sha256": "63189520017f897eb17f26176df372e46533815ddcb091e24874f8bff513df1a",
+      "bytes": 6083
     },
     {
       "path": "development/replay-snapshot-completion.md",
@@ -827,8 +827,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "c082f84bb6d40ad8c9a2e40e5bf3fd67bf5dce9c8d0a66e60ae2ce8803799c64",
-      "bytes": 14150
+      "sha256": "8fc7db953ebe8bee9aaeb9b3de2e0eec5a252f3b2d4106ba1ed8d251d9bc3c1e",
+      "bytes": 14999
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",
