@@ -10,7 +10,9 @@ procedure timeout and the startup readiness promise.
 
 The current run also exposed a storage allocation inventory drift from the
 encrypted durability wrappers, a stale generated stored-entity census from
-the integrated storage changes, and a transient coverage artifact upload error.
+the integrated storage changes, and repeated coverage artifact upload errors
+on the trusted runner after coverage itself passed. The upload should retry
+transient transport failures while still failing the job if every attempt fails.
 Review each exact-head failure,
 correct product or census ownership at its source, and rerun affected checks
 before qualifying the release. Do not change the differential corpus or weaken
