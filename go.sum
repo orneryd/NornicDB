@@ -289,8 +289,8 @@ github.com/onsi/gomega v1.10.1/go.mod h1:iN09h71vgCQne3DLsj+A5owkum+a2tYe+TOCB1y
 github.com/onsi/gomega v1.16.0/go.mod h1:HnhC7FXeEQY45zxNK3PPoIUhzk/80Xly9PcubAlGdZY=
 github.com/orneryd/go-json v0.11.3-0.20261103144209-3e94695582bd h1:JlNNi+Q7R0VzA6UivnuDHphyRxg2pKhTwqpd1j3hryA=
 github.com/orneryd/go-json v0.11.3-0.20261103144209-3e94695582bd/go.mod h1:RthGEXzQqswFJ7+diFa5fDOZTLzPQXbFpIcfJWFzlwA=
-github.com/orneryd/nornic-badger/v4 v4.0.0-20261127152744-26bc8f83516e h1:8yqzqbfEUBHBvN7/DNb8M5I6z/kdYGoqroMH5GYyKvw=
-github.com/orneryd/nornic-badger/v4 v4.0.0-20261127152744-26bc8f83516e/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261127153159-a25816f9dfac h1:f5CSqWaRdGCsY28FbTZsg4caa/p7cF8gwVu2688Chus=
+github.com/orneryd/nornic-badger/v4 v4.0.0-20261127153159-a25816f9dfac/go.mod h1:Xa9dAupjbwAacupWFCpa6YEn9E1PjBXkfZYr2I/8aWg=
 github.com/pierrec/lz4/v4 v4.1.26 h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
 github.com/pierrec/lz4/v4 v4.1.26/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
