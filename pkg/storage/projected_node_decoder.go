@@ -197,7 +197,7 @@ func (d *projectedNodeDecoder) decodePhysicalItem(item *badger.Item) (*Node, boo
 	if d.filterSelection != nil {
 		selection = d.filterSelection
 	}
-	node, used, err := d.b.readPhysicalProjectedNode(d.txn, item, id, selection, nil)
+	node, used, err := d.b.readPhysicalProjectedNode(d.txn, item, id, selection, nil, nil)
 	if err != nil || !used {
 		return node, used, err
 	}

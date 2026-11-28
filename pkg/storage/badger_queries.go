@@ -525,6 +525,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		if options.scanDecodesFilter() {
 			filtered = newProjectedNodeDecoder(b, txn, options)
 		}
+		var projectionTokens *projectedTokenResolver
+		if b.projected && properties != nil {
+			projectionTokens = &projectedTokenResolver{b: b, txn: txn}
+		}
 		// readHydrated reads one label row with the embedding hydration the scan
 		// asks of it. A row that settles embedding state takes this view's
 		// absence proof, so a view whose whole embedding range is empty pays no
@@ -606,6 +610,9 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			}
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
+			}
+			if projectionTokens != nil {
+				return b.readProjectedNodeItemProjectedInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, projectionTokens, admitProjectionBodies)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}

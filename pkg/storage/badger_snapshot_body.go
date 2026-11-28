@@ -215,6 +215,13 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		}
 		return node, nil
 	}
+	return b.readProjectedNodeItemProjectedInTxn(txn, item, id, properties, include, access, nil, admitNew...)
+}
+
+// readProjectedNodeItemProjectedInTxn is the projected-store half of the
+// canonical item reader. Label scans pass a resolver tied to their read view;
+// point reads resolve bindings directly from their own view.
+func (b *BadgerEngine) readProjectedNodeItemProjectedInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess, resolver *projectedTokenResolver, admitNew ...bool) (*Node, error) {
 	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
 	node := read.node
 	// A label scan whose population exceeds the cache cannot retain its scan
@@ -229,7 +236,7 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 				decodeInclude[name] = struct{}{}
 			}
 		}
-		physical, usedPhysical, err := b.readPhysicalProjectedNode(txn, item, id, decodeInclude, node)
+		physical, usedPhysical, err := b.readPhysicalProjectedNode(txn, item, id, decodeInclude, node, resolver)
 		if usedPhysical && err == nil {
 			node = physical
 		}
