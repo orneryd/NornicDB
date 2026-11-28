@@ -114,6 +114,13 @@ func (b *BadgerEngine) decodePhysicalProjectedNodeRanges(txn *badger.Txn, item *
 	if into.Properties == nil {
 		into.Properties = make(map[string]any, len(include))
 	}
+	var valueReader bytes.Reader
+	var decoder *msgpack.Decoder
+	defer func() {
+		if decoder != nil {
+			msgpack.PutDecoder(decoder)
+		}
+	}()
 	namespace := namespaceForNodeID(id)
 	for name := range include {
 		if name == hasEmbeddingProperty {
@@ -144,15 +151,16 @@ func (b *BadgerEngine) decodePhysicalProjectedNodeRanges(txn *badger.Txn, item *
 			if crc32.Checksum(value, projectedNodeCRC) != region.crc {
 				return fmt.Errorf("projected node property %q checksum mismatch: %w", name, ErrInvalidData)
 			}
-			reader := bytes.NewReader(value)
-			decoder := msgpack.GetDecoder()
-			decoder.Reset(reader)
-			defer msgpack.PutDecoder(decoder)
+			if decoder == nil {
+				decoder = msgpack.GetDecoder()
+			}
+			valueReader.Reset(value)
+			decoder.Reset(&valueReader)
 			decoded, err := decodeStrictTypedValue(decoder)
 			if err != nil {
 				return err
 			}
-			if reader.Len() != 0 {
+			if valueReader.Len() != 0 {
 				return fmt.Errorf("projected node property %q has trailing bytes: %w", name, ErrInvalidData)
 			}
 			into.Properties[name] = restoreStoredTemporalValue(decoded)
