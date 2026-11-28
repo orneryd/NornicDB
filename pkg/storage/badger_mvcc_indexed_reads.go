@@ -101,22 +101,11 @@ func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, versi
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNodeProjected(txn, namespace, val, include)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				node = decoded
-				return nil
-			}); err != nil {
+			node, err := b.readProjectedNodeItemInTxn(txn, item, id, projection.properties, include, nodeBodyDetached)
+			if err != nil {
 				return nil, err
 			}
-			if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
+			if node == nil || b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -150,7 +139,7 @@ func (b *BadgerEngine) getNodeProjectedAtInTxn(txn *badger.Txn, id NodeID, versi
 		return nil, ErrNotFound
 	}
 	node := projectCachedNodeForRead(record.Node, projection.properties, true)
-	if b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
+	if node == nil || b.filterEntityByDecay(projection.visibility, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
@@ -321,6 +310,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	// snapshot answers its range question once instead of paying one missing
 	// sidecar and chunk lookup per hydrated node (snapshotEmbeddingAbsence).
 	var absence snapshotEmbeddingAbsence
+	admitProjectionBodies := true
 	return view(func(txn *badger.Txn) error {
 		// readHydrated reads one candidate with the embedding hydration the
 		// scan asks of it. A row that settles embedding state takes this
@@ -344,7 +334,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		emit := func(node *Node) error {
 			if node == nil || !hasLabel(node.Labels, label) {
@@ -394,11 +384,13 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			if !coversDecided && lookups >= labelScanPointLookups {
 				// Author: storage-format-owners lane (Codex), 1 November 2026.
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {

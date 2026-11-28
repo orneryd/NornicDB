@@ -387,6 +387,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 	// and materialize thousands of bodies it will reject.
 	var covers bool
 	coversDecided := false
+	admitProjectionBodies := true
 	// A filtered scan settles its filter on an image the node read cache holds
 	// of a node, as the other label reads do, and reads the node records the
 	// cache does not hold. When the scan of a label the cache can hold repeats,
@@ -473,6 +474,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return err
 			}
 			coversDecided = true
+			admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			resident = holds && labelled >= 0 && !covers && label != "" &&
 				(b.nodeCacheMaxEntries <= 0 || labelled <= int64(b.nodeCacheMaxEntries)) &&
 				b.filteredLabelScans.repeats(scope, label)
@@ -522,6 +524,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 		var filtered *projectedNodeDecoder
 		if options.scanDecodesFilter() {
 			filtered = newProjectedNodeDecoder(b, txn, options)
+		}
+		var projectionTokens *projectedTokenResolver
+		if b.projected && properties != nil {
+			projectionTokens = &projectedTokenResolver{b: b, txn: txn}
 		}
 		// readHydrated reads one label row with the embedding hydration the scan
 		// asks of it. A row that settles embedding state takes this view's
@@ -583,12 +589,14 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 				return node, nil
 			}
 			if filtered != nil {
-				var node *Node
-				err := item.Value(func(val []byte) error {
-					var decodeErr error
-					node, decodeErr = filtered.decode(item.Key(), val)
-					return decodeErr
-				})
+				node, usedPhysical, err := filtered.decodePhysicalItem(item)
+				if !usedPhysical && err == nil {
+					err = item.Value(func(val []byte) error {
+						var decodeErr error
+						node, decodeErr = filtered.decode(item.Key(), val)
+						return decodeErr
+					})
+				}
 				if err != nil {
 					// A decode failure is a scan error, just as in the generic scanner.
 					// The decoder may skip unneeded values on a rejected row; it
@@ -603,7 +611,10 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 			if properties == nil {
 				return readHydrated(nodeID, item, nodeItemFullEmbeddings)
 			}
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached)
+			if projectionTokens != nil {
+				return b.readProjectedNodeItemProjectedInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, projectionTokens, admitProjectionBodies)
+			}
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include, nodeBodyDetached, admitProjectionBodies)
 		}
 		// cachedNode is the row the node read cache gives for a label entry.
 		// For a filtered scan it reports kept when the filter kept the node on
@@ -711,11 +722,13 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(ctx context.Context, s
 
 			if !coversDecided && lookups >= labelScanPointLookups {
 				var err error
-				covers, _, err = b.labelCoversScope(ctx, scope, label)
+				var labelled int64
+				covers, labelled, err = b.labelCoversScope(ctx, scope, label)
 				if err != nil {
 					return err
 				}
 				coversDecided = true
+				admitProjectionBodies = b.projectedLabelBodyAdmission(labelled)
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {

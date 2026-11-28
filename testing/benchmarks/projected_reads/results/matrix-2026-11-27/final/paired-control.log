@@ -1,0 +1,28 @@
+2026-11-27 23:38:27 SERVER 72977
+1 baseline revenue_by_category 12 queries in 48.941478209s, mean 4.078456517s
+1 baseline low_stock_products 12 queries in 2.948199459s, mean 245.683288ms
+1 baseline products_in_category 12 queries in 32.654583ms, mean 2.721215ms
+1 baseline customer_order_details 12 queries in 13.469167ms, mean 1.12243ms
+1 baseline random_wide {'p50_ms': 0.230834, 'p95_ms': 0.567833, 'p99_ms': 1.260084, 'queries_second': 22864.3905205281, 'result_sha256': 'f406a081487282ec89e126ffcf8e7a024ed6bddac68faeb141eeeac4599c36e2'}
+2026-11-27 23:39:30 SERVER STOP 0
+2026-11-27 23:39:33 SERVER 73056
+1 final revenue_by_category 12 queries in 45.560579792s, mean 3.796714982s
+1 final low_stock_products 12 queries in 2.970258375s, mean 247.521531ms
+1 final products_in_category 12 queries in 32.159833ms, mean 2.679986ms
+1 final customer_order_details 12 queries in 13.526083ms, mean 1.127173ms
+1 final random_wide {'p50_ms': 0.237833, 'p95_ms': 0.589208, 'p99_ms': 1.2205, 'queries_second': 21688.790124243656, 'result_sha256': 'f406a081487282ec89e126ffcf8e7a024ed6bddac68faeb141eeeac4599c36e2'}
+2026-11-27 23:40:33 SERVER STOP 0
+2026-11-27 23:40:37 SERVER 73149
+2 final revenue_by_category 12 queries in 43.669280708s, mean 3.639106725s
+2 final low_stock_products 12 queries in 3.07781575s, mean 256.484645ms
+2 final products_in_category 12 queries in 38.436125ms, mean 3.20301ms
+2 final customer_order_details 12 queries in 16.277959ms, mean 1.356496ms
+2 final random_wide {'p50_ms': 0.282375, 'p95_ms': 1.871917, 'p99_ms': 5.775459, 'queries_second': 11707.647354469173, 'result_sha256': 'f406a081487282ec89e126ffcf8e7a024ed6bddac68faeb141eeeac4599c36e2'}
+2026-11-27 23:41:37 SERVER STOP 0
+2026-11-27 23:41:41 SERVER 73294
+2 baseline revenue_by_category 12 queries in 46.57688975s, mean 3.881407479s
+2 baseline low_stock_products 12 queries in 4.559797042s, mean 379.983086ms
+2 baseline products_in_category 12 queries in 42.174ms, mean 3.5145ms
+2 baseline customer_order_details 12 queries in 17.412667ms, mean 1.451055ms
+2 baseline random_wide {'p50_ms': 0.280833, 'p95_ms': 1.066375, 'p99_ms': 3.344583, 'queries_second': 14840.110185691046, 'result_sha256': 'f406a081487282ec89e126ffcf8e7a024ed6bddac68faeb141eeeac4599c36e2'}
+2026-11-27 23:42:42 SERVER STOP 0

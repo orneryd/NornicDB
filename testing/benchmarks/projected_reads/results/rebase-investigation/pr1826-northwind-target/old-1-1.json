@@ -1,0 +1,522 @@
+{
+  "label": "old-1-1",
+  "uri": "bolt://127.0.0.1:17687",
+  "database": "nornic",
+  "started_at": "2026-11-15T21:49:53.582407025Z",
+  "finished_at": "2026-11-15T21:50:09.347666211Z",
+  "seed_duration_ms": 0,
+  "seed_wipe_ms": 0,
+  "seed_index_ms": 0,
+  "seed_ingestion_ms": 0,
+  "seed_batch_size": 500,
+  "seed_parallelism": 4,
+  "total_benchmark_duration_ms": 15765.258,
+  "total_benchmark_operations": 90,
+  "iterations_per_query": 30,
+  "warmup_iterations": 5,
+  "categories": 96,
+  "suppliers": 144,
+  "customers": 1200,
+  "products": 48000,
+  "orders": 48000,
+  "order_lines_min": 1,
+  "order_lines_max": 6,
+  "random_seed": 42,
+  "seed_nodes": 0,
+  "seed_relationships": 0,
+  "approx_seed_payload_bytes": 0,
+  "seed_counts": {
+    "categories": 0,
+    "suppliers": 0,
+    "customers": 0,
+    "products": 0,
+    "orders": 0,
+    "part_of_edges": 0,
+    "supplies_edges": 0,
+    "purchased_edges": 0,
+    "orders_edges": 0
+  },
+  "queries": [
+    {
+      "name": "low_stock_products",
+      "description": "Selective numeric property filter followed by a stable top-100 product sort.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (p:Product)\n\t\t\tWHERE p.unitsInStock < 25\n\t\t\tRETURN p.productName AS product, p.unitsInStock AS unitsInStock, p.unitPrice AS unitPrice\n\t\t\tORDER BY unitsInStock ASC, product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        452.795,
+        441.094,
+        430.471,
+        442.537,
+        449.796,
+        434.256,
+        422.353,
+        427.114,
+        499.795,
+        517.061,
+        445.047,
+        428.426,
+        438.766,
+        430.197,
+        453.434,
+        438.5,
+        432.478,
+        442.349,
+        459.758,
+        456.483,
+        438.598,
+        436.696,
+        433.989,
+        423.344,
+        421.022,
+        425.149,
+        425.257,
+        456.678,
+        438.32,
+        432.066
+      ],
+      "mean_ms": 442.46096666666665,
+      "median_ms": 438.40999999999997,
+      "p95_ms": 481.7783499999999,
+      "p99_ms": 512.0538600000001,
+      "min_ms": 421.022,
+      "max_ms": 517.061,
+      "stddev_ms": 21.036169394449036,
+      "ops_per_second": 2.2594391230319997,
+      "row_count": 100,
+      "result_hash": "a8f2f994d920e6d8ae57eadc26307c585f3e5d99733ee6452a92ae70668d6ae4",
+      "first_rows": [
+        {
+          "product": "aged biscuit 7705",
+          "unitPrice": 183.87,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged cheese 22851",
+          "unitPrice": 188.23,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged cheese 9484",
+          "unitPrice": 174.62,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged coffee 4912",
+          "unitPrice": 144.08,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged honey 7722",
+          "unitPrice": 53.15,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged sauce 32280",
+          "unitPrice": 143.49,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged spread 42102",
+          "unitPrice": 9.42,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged tea 37722",
+          "unitPrice": 112.68,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal biscuit 36865",
+          "unitPrice": 89.53,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal coffee 25601",
+          "unitPrice": 194.08,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal cracker 3272",
+          "unitPrice": 92.71,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal jerky 40297",
+          "unitPrice": 48.28,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal preserve 12317",
+          "unitPrice": 25.59,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal preserve 4528",
+          "unitPrice": 170.96,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal sauce 12625",
+          "unitPrice": 195.41,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal sauce 43343",
+          "unitPrice": 75.74,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed biscuit 46826",
+          "unitPrice": 113.99,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed chocolate 14465",
+          "unitPrice": 164.3,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed jerky 17284",
+          "unitPrice": 122.33,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed jerky 30273",
+          "unitPrice": 74.45,
+          "unitsInStock": 0
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "products_in_category",
+      "description": "Selective category lookup and adjacent product traversal with a top-100 result.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Category {categoryID: 7})<-[:PART_OF]-(p:Product)\n\t\t\tRETURN p.productName AS product, p.unitPrice AS unitPrice, p.unitsInStock AS unitsInStock\n\t\t\tORDER BY product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        4.1,
+        3.958,
+        3.915,
+        3.875,
+        4.174,
+        4.087,
+        3.859,
+        3.937,
+        3.946,
+        3.94,
+        4.993,
+        4.277,
+        3.903,
+        3.89,
+        4.109,
+        3.968,
+        3.869,
+        3.935,
+        3.838,
+        3.978,
+        3.924,
+        3.995,
+        4.068,
+        3.875,
+        3.876,
+        3.82,
+        3.809,
+        3.787,
+        3.939,
+        4.22
+      ],
+      "mean_ms": 3.9954666666666667,
+      "median_ms": 3.9379999999999997,
+      "p95_ms": 4.2513499999999995,
+      "p99_ms": 4.785360000000001,
+      "min_ms": 3.787,
+      "max_ms": 4.993,
+      "stddev_ms": 0.224015968232152,
+      "ops_per_second": 245.43226422111852,
+      "row_count": 100,
+      "result_hash": "e207262bf51ed857ac41573f2b31db119608b1fb9264ca76c47c92447db2c4fc",
+      "first_rows": [
+        {
+          "product": "aged biscuit 16903",
+          "unitPrice": 30.28,
+          "unitsInStock": 370
+        },
+        {
+          "product": "aged biscuit 19111",
+          "unitPrice": 179.27,
+          "unitsInStock": 118
+        },
+        {
+          "product": "aged biscuit 37351",
+          "unitPrice": 23.01,
+          "unitsInStock": 310
+        },
+        {
+          "product": "aged cheese 20647",
+          "unitPrice": 31.21,
+          "unitsInStock": 366
+        },
+        {
+          "product": "aged chocolate 27271",
+          "unitPrice": 95.57,
+          "unitsInStock": 157
+        },
+        {
+          "product": "aged chocolate 27367",
+          "unitPrice": 187.14,
+          "unitsInStock": 366
+        },
+        {
+          "product": "aged coffee 15079",
+          "unitPrice": 120.38,
+          "unitsInStock": 95
+        },
+        {
+          "product": "aged condiment 40807",
+          "unitPrice": 19.17,
+          "unitsInStock": 23
+        },
+        {
+          "product": "aged cracker 35911",
+          "unitPrice": 187.8,
+          "unitsInStock": 173
+        },
+        {
+          "product": "aged cracker 7111",
+          "unitPrice": 121.2,
+          "unitsInStock": 426
+        },
+        {
+          "product": "aged honey 17287",
+          "unitPrice": 52.79,
+          "unitsInStock": 32
+        },
+        {
+          "product": "aged honey 23239",
+          "unitPrice": 135.32,
+          "unitsInStock": 202
+        },
+        {
+          "product": "aged honey 23431",
+          "unitPrice": 58.55,
+          "unitsInStock": 218
+        },
+        {
+          "product": "aged jerky 37639",
+          "unitPrice": 29.33,
+          "unitsInStock": 112
+        },
+        {
+          "product": "aged jerky 45703",
+          "unitPrice": 19.42,
+          "unitsInStock": 364
+        },
+        {
+          "product": "aged oil 16327",
+          "unitPrice": 31.91,
+          "unitsInStock": 294
+        },
+        {
+          "product": "aged oil 18919",
+          "unitPrice": 166.92,
+          "unitsInStock": 469
+        },
+        {
+          "product": "aged pasta 12775",
+          "unitPrice": 17.55,
+          "unitsInStock": 372
+        },
+        {
+          "product": "aged pasta 33895",
+          "unitPrice": 149.27,
+          "unitsInStock": 388
+        },
+        {
+          "product": "aged preserve 1159",
+          "unitPrice": 117.43,
+          "unitsInStock": 477
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "customer_order_details",
+      "description": "Selective customer lookup followed by order-line expansion and computed row projection.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Customer {customerID: 42})-[:PURCHASED]->(o:Order)-[r:ORDERS]->(p:Product)\n\t\t\tRETURN o.orderID AS orderID, p.productName AS product, r.quantity AS quantity,\n\t\t\t       p.unitPrice * r.quantity AS extendedPrice\n\t\t\tORDER BY orderID ASC, product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        1.607,
+        2.513,
+        1.742,
+        1.69,
+        1.689,
+        1.688,
+        1.69,
+        1.654,
+        1.637,
+        1.755,
+        1.735,
+        1.658,
+        1.773,
+        1.688,
+        1.654,
+        1.899,
+        1.625,
+        1.627,
+        1.764,
+        1.73,
+        1.774,
+        1.722,
+        1.744,
+        1.799,
+        1.685,
+        1.674,
+        1.706,
+        1.819,
+        1.691,
+        1.71
+      ],
+      "mean_ms": 1.738066666666667,
+      "median_ms": 1.6985000000000001,
+      "p95_ms": 1.8629999999999998,
+      "p99_ms": 2.3349400000000005,
+      "min_ms": 1.607,
+      "max_ms": 2.513,
+      "stddev_ms": 0.15937267825669696,
+      "ops_per_second": 544.2367316581473,
+      "row_count": 100,
+      "result_hash": "9d6ef178ee445057678660149407cfe91461a7143fc8c381ebb4cafb83749a55",
+      "first_rows": [
+        {
+          "extendedPrice": 1628.76,
+          "orderID": 11058,
+          "product": "fair-trade cracker 32670",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 133.16,
+          "orderID": 11058,
+          "product": "organic pasta 46113",
+          "quantity": 2
+        },
+        {
+          "extendedPrice": 308.07,
+          "orderID": 11058,
+          "product": "small-batch tea 45959",
+          "quantity": 9
+        },
+        {
+          "extendedPrice": 2385.84,
+          "orderID": 11058,
+          "product": "stone-milled preserve 20183",
+          "quantity": 24
+        },
+        {
+          "extendedPrice": 455.88,
+          "orderID": 11871,
+          "product": "cold-pressed preserve 36887",
+          "quantity": 12
+        },
+        {
+          "extendedPrice": 490.32,
+          "orderID": 11871,
+          "product": "stone-milled oil 21793",
+          "quantity": 3
+        },
+        {
+          "extendedPrice": 2434.68,
+          "orderID": 11871,
+          "product": "wild-caught jerky 39860",
+          "quantity": 18
+        },
+        {
+          "extendedPrice": 2355.2,
+          "orderID": 11871,
+          "product": "wild-caught wine 4734",
+          "quantity": 16
+        },
+        {
+          "extendedPrice": 2267.7999999999997,
+          "orderID": 12919,
+          "product": "hand-picked oil 27988",
+          "quantity": 23
+        },
+        {
+          "extendedPrice": 566.8,
+          "orderID": 12919,
+          "product": "heritage soda 24095",
+          "quantity": 20
+        },
+        {
+          "extendedPrice": 4002.39,
+          "orderID": 12919,
+          "product": "stone-milled coffee 8485",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 402.04,
+          "orderID": 12919,
+          "product": "wild-caught chocolate 43375",
+          "quantity": 4
+        },
+        {
+          "extendedPrice": 3283.77,
+          "orderID": 12919,
+          "product": "wild-caught wine 45962",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 834.3000000000001,
+          "orderID": 13817,
+          "product": "cold-pressed biscuit 19342",
+          "quantity": 5
+        },
+        {
+          "extendedPrice": 972.5799999999999,
+          "orderID": 13817,
+          "product": "cold-pressed oil 28941",
+          "quantity": 7
+        },
+        {
+          "extendedPrice": 790.4,
+          "orderID": 13817,
+          "product": "free-range preserve 23678",
+          "quantity": 16
+        },
+        {
+          "extendedPrice": 1866.06,
+          "orderID": 13817,
+          "product": "hand-picked biscuit 4839",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 1356.52,
+          "orderID": 13817,
+          "product": "hand-picked honey 43373",
+          "quantity": 11
+        },
+        {
+          "extendedPrice": 302.4,
+          "orderID": 13817,
+          "product": "premium wine 28690",
+          "quantity": 5
+        },
+        {
+          "extendedPrice": 259.92,
+          "orderID": 16209,
+          "product": "heritage cheese 736",
+          "quantity": 19
+        }
+      ],
+      "correctness_ok": true
+    }
+  ],
+  "overall_mean_ms": 149.39816666666673,
+  "overall_ops_per_second": 5.708755289637505,
+  "query_latency_only_ops_per_second": 6.693522566653538,
+  "sampled_server_rss": {
+    "before_kib": 1888712,
+    "peak_kib": 1969940,
+    "after_kib": 1969940
+  }
+}

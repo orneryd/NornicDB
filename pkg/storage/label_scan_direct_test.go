@@ -26,7 +26,20 @@ func streamLabelNodes(t *testing.T, eng *BadgerEngine, scope, label string, prop
 // the Rare label.
 func labelScanFixture(t *testing.T, count int) (*BadgerEngine, []NodeID) {
 	t.Helper()
-	eng := newTestEngine(t)
+	return labelScanFixtureWithMode(t, count, false)
+}
+
+func labelScanFixtureWithMode(t *testing.T, count int, projected bool) (*BadgerEngine, []NodeID) {
+	t.Helper()
+	var eng *BadgerEngine
+	if projected {
+		var err error
+		eng, err = NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, Projected: true})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = eng.Close() })
+	} else {
+		eng = newTestEngine(t)
+	}
 	created := make([]NodeID, 0, count)
 	for i := count - 1; i >= 0; i-- {
 		labels := []string{"Common"}

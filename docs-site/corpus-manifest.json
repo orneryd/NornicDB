@@ -377,8 +377,8 @@
     },
     {
       "path": "development/README.md",
-      "sha256": "b021ecf4928aa2b2fbb88403e831088a4edd99f1ef249f7ab696d5d6caab148f",
-      "bytes": 2539
+      "sha256": "1994efd747be918f1750650ebf8da8afb0323edb29ddc912d2fd546eb0c44b16",
+      "bytes": 2578
     },
     {
       "path": "development/access-metadata-write-ownership.md",
@@ -554,6 +554,11 @@
       "path": "development/procedure-node-images.md",
       "sha256": "297afeddbc1e00b9270047c15893a841a1bc6740c540c9ace654e6bc47cd56c1",
       "bytes": 1772
+    },
+    {
+      "path": "development/projected-reads.md",
+      "sha256": "63189520017f897eb17f26176df372e46533815ddcb091e24874f8bff513df1a",
+      "bytes": 6083
     },
     {
       "path": "development/replay-snapshot-completion.md",
@@ -822,8 +827,8 @@
     },
     {
       "path": "operations/admin-tool.md",
-      "sha256": "8b506f7436750a6a130161914ce28a06a85eae39d2df41d0230aa22d2bb0725d",
-      "bytes": 13692
+      "sha256": "8fc7db953ebe8bee9aaeb9b3de2e0eec5a252f3b2d4106ba1ed8d251d9bc3c1e",
+      "bytes": 14999
     },
     {
       "path": "operations/alerts/nornicdb-alerts-v1.yaml",

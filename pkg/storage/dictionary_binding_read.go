@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -25,6 +26,39 @@ type storedBinding struct {
 	kind      storedBindingKind
 	namespace string
 	number    uint64
+}
+
+// readStoredPropertyToken resolves a name to its property ID in the same
+// Badger view as a projected node. New names staged by this very transaction
+// are read from its owned pending bindings; other current-cache entries may
+// be newer than the view and must be read from the persisted forward key.
+func (b *BadgerEngine) readStoredPropertyToken(txn *badger.Txn, namespace, name string) (uint64, bool, error) {
+	d := b.propKeyDict
+	if token, known := d.lookupID(namespace, name); known {
+		d.txnMu.Lock()
+		pending, owned := d.txnPendingForward[txn][propKeyName{namespace: namespace, name: name}]
+		d.txnMu.Unlock()
+		if owned && pending == token {
+			return token, true, nil
+		}
+	}
+	item, err := txn.Get(propKeyForwardKey(namespace, name))
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	var token uint64
+	err = item.Value(func(value []byte) error {
+		id, n, parseErr := readUvarint(value)
+		if parseErr != nil || n != len(value) {
+			return fmt.Errorf("invalid stored property ID for %q: %w", name, ErrInvalidData)
+		}
+		token = id
+		return nil
+	})
+	return token, err == nil, err
 }
 
 // readStoredBinding resolves a binding in the reader's physical view.

@@ -164,4 +164,4 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 )
 
-replace github.com/dgraph-io/badger/v4 => github.com/orneryd/nornic-badger/v4 v4.0.0-20261124030415-4d3441d363c6
+replace github.com/dgraph-io/badger/v4 => github.com/orneryd/nornic-badger/v4 v4.0.0-20261127162758-54ab23badf33

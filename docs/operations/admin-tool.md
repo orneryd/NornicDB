@@ -92,6 +92,33 @@ CREATE DATABASE tenant_a OPTIONS {storage: 'shared'};
 
 Storage layout is set at creation. Each isolated store has its own caches and background maintenance. Shared storage pools those resources, which can be useful when hosting many small databases. In-memory and replicated deployments use shared storage.
 
+The separate `layout` option selects the physical encoding. It defaults to
+`standard`. To try the experimental property encoding and columnar Badger
+tables, create a new isolated database on a persistent standalone server:
+
+```cypher
+CREATE DATABASE analytics_trial OPTIONS {layout: 'experimental'};
+```
+
+The layout is fixed at creation. Existing databases keep their current format.
+Offline import and staged import do not support the experimental layout.
+
+The independent `projected` creation option defaults to `false`. A new
+isolated database can opt into physical property projection:
+
+```cypher
+CREATE DATABASE analytics_projected OPTIONS {storage: 'isolated', projected: true};
+```
+
+This option stores a property-ID directory inside each node value. Badger reads
+the directory and only requested property value ranges for eligible projected
+reads, including encrypted value-log records. The directory uses offsets within
+the current node value, so value-log relocation does not leave saved disk
+addresses behind. Full-entity reads still reconstruct the whole node. The
+choice is fixed at database creation: an existing store cannot be converted by
+changing the option, and reopening it with the opposite setting is rejected.
+`projected: false` keeps the established node encoding and read behavior.
+
 Each dedicated store writes its WAL under `prepared-databases/<store-id>/wal/`. WAL auto-compaction writes recovery snapshots under `prepared-databases/<store-id>/snapshots/` when enabled. Automatic recovery for a damaged isolated store requires its own usable snapshot and replays later WAL entries. The snapshot covers data written before the available WAL, including imported data and data whose older WAL segments have been compacted. If recovery cannot open a store safely, that database stays offline and the rest of the server starts. A full native backup carries the stored schema and catalog metadata as well as graph data.
 
 `POST /admin/backup` and Qdrant full snapshots include all local databases and the system catalog. The request is the same for either layout. Shared-only installations use the native Badger file format. Installations with dedicated stores write one versioned archive of native Badger backup streams, including the shared root and each dedicated store. The archive contains logical Badger backup records. Raw WAL files and auto-compaction snapshot files live in their own directories for local recovery. Each backup stream is consistent at the time it is captured. Database creation, publication, and deletion wait for the backup's catalog view to finish.

@@ -1,0 +1,50 @@
+{
+  "results": [
+    {
+      "columns": [
+        "name",
+        "options"
+      ],
+      "data": [
+        {
+          "row": [
+            "matrix",
+            {
+              "layout": "experimental",
+              "projected": "false",
+              "storage": "isolated"
+            }
+          ],
+          "meta": [
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        {
+          "row": [
+            "nornic",
+            {}
+          ],
+          "meta": [
+            null
+          ]
+        },
+        {
+          "row": [
+            "system",
+            {}
+          ],
+          "meta": [
+            null
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "lastBookmarks": [
+    "FB:nornicdb:1795827571394533000"
+  ]
+}

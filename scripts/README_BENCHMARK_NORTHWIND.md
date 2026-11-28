@@ -21,6 +21,20 @@ numbers are isolated. Every engine seeds the identical deterministic dataset
 
 ## What the workload does
 
+To compare physical layouts on one NornicDB process, run:
+
+```bash
+SKIP_POWERMETRICS=1 scripts/benchmark_northwind_vs_neo4j.sh \
+  --nornic-only --layout=standard --layout=experimental
+```
+
+Supply one layout to measure it alone, or pass both in the order to run.
+The script creates separate isolated databases, seeds each through Bolt, and
+uses the server's default node and query result caches.
+Each layout gets its own query results and on-disk size. The server lifecycle
+and optional power sampling cover the pair. Reversing the flags gives a second
+trial with the opposite run order.
+
 For each database:
 
 1. Wipe the data directory for a clean baseline.

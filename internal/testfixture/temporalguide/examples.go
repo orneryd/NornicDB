@@ -20,7 +20,8 @@ func Example(t testing.TB, guide, name string) string {
 		t.Fatal(err)
 	}
 	marker := "<!-- temporal-example: " + name + " -->"
-	text := string(data)
+	// Git checkouts and archived fixtures may retain CRLF line endings.
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if strings.Count(text, marker) != 1 {
 		t.Fatalf("%s must contain exactly one %s", path, marker)
 	}

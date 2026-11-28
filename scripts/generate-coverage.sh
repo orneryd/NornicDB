@@ -43,9 +43,14 @@ run_pkg_with_retry() {
 	local attempts=3
 	local attempt_started status
 	local timeout=30m
+	local cache_flags=()
 	# Match the trusted Cypher test shard's budget for the full package.
 	if [[ "$pkg" == github.com/orneryd/nornicdb/pkg/cypher ]]; then
 		timeout=45m
+		# Cypher's broad fixture suite can generate gigabytes of Go test-cache
+		# file-access logs. A counted run disables that cache and its testlog,
+		# while ensuring release coverage executes this package afresh.
+		cache_flags=(-count=1)
 	fi
 
 	# Portable "expand-if-set" pattern: ${arr[@]+"${arr[@]}"} so set -u does
@@ -54,7 +59,7 @@ run_pkg_with_retry() {
 	for attempt in $(seq 1 "$attempts"); do
 		attempt_started=$SECONDS
 		printf 'coverage test: %s (attempt %s/%s) started (GOMEMLIMIT=%s)\n' "$pkg" "$attempt" "$attempts" "${GOMEMLIMIT:-default}"
-		if go test -p 1 -parallel 4 -timeout "$timeout" -coverprofile="$prof" ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
+		if go test -p 1 -parallel 4 -timeout "$timeout" -coverprofile="$prof" ${cache_flags[@]+"${cache_flags[@]}"} ${extra_flags[@]+"${extra_flags[@]}"} "$pkg"; then
 			printf 'coverage test: %s passed in %ss\n' "$pkg" "$((SECONDS - attempt_started))"
 			return 0
 		else

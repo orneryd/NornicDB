@@ -2,6 +2,7 @@ package storage
 
 import (
 	"container/list"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -32,6 +33,9 @@ import (
 // cacheFill* admits read images against their captured source version.
 
 type nodeBodyCacheEntry struct {
+	// nil coverage means a complete body; otherwise it includes known-absent keys.
+	coverage    map[string]struct{}
+	current     bool // admitted by a latest point read; durable writes revoke this entry
 	itemVersion uint64
 	node        *Node
 	bytes       int64
@@ -188,17 +192,24 @@ func (b *BadgerEngine) putNodeLocked(copied *Node, mode nodeReadCacheMode) {
 	}
 	// Evict individual immutable images instead of clearing every hot node
 	// when one large vector payload reaches the budget.
-	for id := range b.nodeCache {
-		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
-			break
+	// Starting a map iterator can scan a large, sparsely populated cache even
+	// when the first loop body immediately breaks. Prove room before entering
+	// either iterator; eviction and its accounting remain owned by this path.
+	if b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.nodeCache) >= b.nodeCacheMaxEntries && mode != nodeReadCacheQuery) {
+		for id := range b.nodeCache {
+			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.nodeCache) < b.nodeCacheMaxEntries || mode == nodeReadCacheQuery) {
+				break
+			}
+			b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 		}
-		b.deleteNodeReadCacheLocked(id, nodeReadCacheFull)
 	}
-	for id := range b.queryNodeCache {
-		if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
-			break
+	if b.nodeCacheBytes+bytes > limit || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) >= b.nodeCacheMaxEntries && mode == nodeReadCacheQuery) {
+		for id := range b.queryNodeCache {
+			if b.nodeCacheBytes+bytes <= limit && (b.nodeCacheMaxEntries <= 0 || len(b.queryNodeCache) < b.nodeCacheMaxEntries || mode != nodeReadCacheQuery) {
+				break
+			}
+			b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 		}
-		b.deleteNodeReadCacheLocked(id, nodeReadCacheQuery)
 	}
 	if mode == nodeReadCacheQuery {
 		if b.queryNodeCache == nil {
@@ -289,30 +300,77 @@ func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
 	return copyNode(cached), true
 }
 
+type nodeBodyCacheRead struct {
+	version  uint64
+	node     *Node
+	missing  []string
+	complete bool
+}
+
 func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess) (*Node, bool) {
+	read := b.readNodeBodyCache(id, itemVersion, properties, access, false, false)
+	return read.node, read.complete
+}
+
+// readNodeBodyCache can retain covered fields while listing exactly the missing
+// fields of a wider projection. Complete-body callers never accept partials.
+func (b *BadgerEngine) readNodeBodyCache(id NodeID, itemVersion uint64, properties []string, access nodeBodyAccess, allowPartial, currentOnly bool) nodeBodyCacheRead {
 	if id == "" {
-		return nil, false
+		return nodeBodyCacheRead{}
 	}
 	b.nodeBodyCacheMu.RLock()
 	entry, ok := b.nodeBodyCache[id]
-	if !ok || entry.itemVersion != itemVersion || entry.node == nil {
+	if !ok || entry.node == nil || (currentOnly && !entry.current) || (!currentOnly && entry.itemVersion != itemVersion) {
 		b.nodeBodyCacheMu.RUnlock()
-		if ok {
+		if ok && !currentOnly {
 			b.nodeBodyCacheMu.Lock()
 			if current := b.nodeBodyCache[id]; current == entry {
 				b.removeNodeBodyCacheEntryLocked(id, entry)
 			}
 			b.nodeBodyCacheMu.Unlock()
 		}
-		return nil, false
+		return nodeBodyCacheRead{}
+	}
+	var missing []string
+	if entry.coverage != nil {
+		if properties == nil {
+			b.nodeBodyCacheMu.RUnlock()
+			return nodeBodyCacheRead{}
+		}
+		for _, name := range properties {
+			if _, covered := entry.coverage[name]; !covered {
+				if !allowPartial {
+					b.nodeBodyCacheMu.RUnlock()
+					return nodeBodyCacheRead{}
+				}
+				missing = append(missing, name)
+			}
+		}
 	}
 	entry.referenced.Store(true)
 	node := entry.node
-	if access != nodeBodyBorrowed {
+	// A lazy fill must always own its result before merging freshly decoded data.
+	if access != nodeBodyBorrowed || len(missing) > 0 {
 		node = projectCachedNodeForRead(node, properties, true)
 	}
 	b.nodeBodyCacheMu.RUnlock()
-	return node, true
+	return nodeBodyCacheRead{version: entry.itemVersion, node: node, missing: missing, complete: len(missing) == 0}
+}
+
+// markNodeBodyCurrent uses the same generation and durable source-floor proof
+// as current-value point-cache publication. Snapshot fills never grant this bit.
+// The entry is still revoked by the canonical durable invalidation owner.
+func (b *BadgerEngine) markNodeBodyCurrent(id NodeID, version, source, generation uint64) {
+	b.durableCaches.mu.Lock()
+	defer b.durableCaches.mu.Unlock()
+	if source < b.durableCaches.nodeFloor(id) || generation != b.nodeCacheGen.current() {
+		return
+	}
+	b.nodeBodyCacheMu.Lock()
+	if entry := b.nodeBodyCache[id]; entry != nil && entry.itemVersion == version {
+		entry.current = true
+	}
+	b.nodeBodyCacheMu.Unlock()
 }
 
 // nodeBodyCacheable reports whether a decoded body can be cached without
@@ -328,7 +386,14 @@ func nodeBodyCacheable(node *Node) bool {
 	return len(node.ChunkEmbeddings) == 0 || node.RuntimeMetadata().EmbeddingsStoredSeparately
 }
 
-func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node, source uint64) {
+// projectedLabelBodyAdmission shares the scan's existing population decision.
+// Unknown counts keep normal admission; a known oversized population must not
+// churn the body cache on each full walk.
+func (b *BadgerEngine) projectedLabelBodyAdmission(labelled int64) bool {
+	return labelled < 0 || b.nodeCacheMaxEntries <= 0 || labelled <= int64(b.nodeCacheMaxEntries)
+}
+
+func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *Node, source uint64, projection ...[]string) {
 	if id == "" || node == nil {
 		return
 	}
@@ -341,15 +406,55 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 		return
 	}
 	cached := copyNodeWithoutEmbeddings(node)
-	retainedBytes := estimateNodeBodyCacheBytes(cached)
-	if retainedBytes > b.nodeBodyCacheMaxBytes {
-		return
+	var coverage map[string]struct{}
+	if len(projection) > 0 && projection[0] != nil {
+		// The physical identity belongs to the immutable cached image. Bind it
+		// once here rather than rebuilding runtime records on every cache hit.
+		b.bindNodeReadSource(cached, id, itemVersion)
+		coverage = make(map[string]struct{}, len(projection[0]))
+		for _, name := range projection[0] {
+			coverage[strings.Clone(name)] = struct{}{}
+		}
 	}
 	b.nodeBodyCacheMu.Lock()
-	if previous, ok := b.nodeBodyCache[id]; ok {
+	previous := b.nodeBodyCache[id]
+	if previous != nil && previous.itemVersion == itemVersion && coverage != nil {
+		if previous.coverage == nil {
+			b.nodeBodyCacheMu.Unlock()
+			return
+		}
+		// One entity/version entry accumulates all fields read so far, including
+		// known-absent keys. Cached values are immutable; caller results are copies.
+		for name := range previous.coverage {
+			coverage[name] = struct{}{}
+		}
+		if cached.Properties == nil {
+			cached.Properties = make(map[string]any, len(previous.node.Properties))
+		}
+		for name, value := range previous.node.Properties {
+			if _, present := cached.Properties[name]; !present {
+				cached.Properties[name] = value
+			}
+		}
+	}
+	retainedBytes := estimateNodeBodyCacheBytes(cached)
+	if coverage != nil {
+		retainedBytes += 64
+		for name := range coverage {
+			retainedBytes += int64(32 + len(name))
+		}
+	}
+	if retainedBytes > b.nodeBodyCacheMaxBytes {
+		b.nodeBodyCacheMu.Unlock()
+		return
+	}
+	if previous != nil {
 		b.removeNodeBodyCacheEntryLocked(id, previous)
 	}
-	entry := &nodeBodyCacheEntry{itemVersion: itemVersion, node: cached, bytes: retainedBytes}
+	entry := &nodeBodyCacheEntry{itemVersion: itemVersion, node: cached, bytes: retainedBytes, coverage: coverage}
+	if previous != nil && previous.itemVersion == itemVersion {
+		entry.current = previous.current
+	}
 	entry.referenced.Store(true)
 	entry.lruElement = b.nodeBodyCacheLRU.PushFront(id)
 	b.nodeBodyCache[id] = entry

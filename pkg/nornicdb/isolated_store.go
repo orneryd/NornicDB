@@ -112,6 +112,8 @@ func (db *DB) openIsolatedStore(ctx context.Context, dir, name string, options m
 	badgerOpts.MemoryPolicy = db.memoryPolicy
 	badgerOpts.EncryptionKey = db.isolatedStoreEncryptionKey
 	walConfig.EncryptionKey = db.isolatedStoreEncryptionKey
+	badgerOpts.ExperimentalLayout = options[multidb.OptionPhysicalLayout] == multidb.LayoutExperimental
+	badgerOpts.Projected = options[multidb.OptionProjected] == "true"
 	var native *storage.BadgerEngine
 	var err error
 	if graph != nil && !verify {

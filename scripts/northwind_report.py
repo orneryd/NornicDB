@@ -1144,6 +1144,10 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
 DISPLAY_NAMES = {
     "nornicdb": "NornicDB",
     "nornicdb-antlr": "NornicDB (ANTLR parser)",
+    "nornicdb-standard": "NornicDB (standard layout)",
+    "nornicdb-experimental": "NornicDB (experimental layout)",
+    "nornicdb-antlr-standard": "NornicDB (ANTLR, standard layout)",
+    "nornicdb-antlr-experimental": "NornicDB (ANTLR, experimental layout)",
     "neo4j": "Neo4j",
     "falkor": "FalkorDB",
     "memgraph": "Memgraph",
@@ -1285,7 +1289,7 @@ def main():
         sys.exit(1)
 
     runs = {}
-    for label in ("nornicdb", "nornicdb-antlr", "neo4j", "falkor", "memgraph", "ladybug"):
+    for label in DISPLAY_NAMES:
         try:
             runs[label] = load_run(out_dir, label)
         except FileNotFoundError as e:

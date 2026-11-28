@@ -17,7 +17,7 @@ Lower-level callers own more of the lifecycle. Read the applicable contract befo
 | Integration | Contract |
 | --- | --- |
 | Query classification/preparation | [Preparation context](cypher-preparation-context-api.md), [source stages](cypher-source-stage-api.md), [statement API migration](../api-reference/README.md#embedded-go-query-readers-v1-4-4-migration). |
-| Stored entities | [Bulk reads](storage-bulk-read-go-api.md), [read delivery](storage-read-delivery.md), [transaction deletion](transaction-node-deletion-api.md). |
+| Stored entities | [Bulk reads](storage-bulk-read-go-api.md), [read delivery](storage-read-delivery.md), [projected reads](projected-reads.md), [transaction deletion](transaction-node-deletion-api.md). |
 | Indexes | [Full-text Go API](fulltext-index-api.md), [index publication](index-publication.md), [cancellation](index-read-cancellation.md). |
 | Catalogs/functions/plugins | [Catalog contexts](catalog-context-api.md), [function context](function-context-go-api.md), [plugin metadata](plugin-host-metadata-api.md), [Heimdall prompt modes](heimdall-prompt-modes-go-api.md). |
 | Background and accepted work | [Work lifetime](work-lifetime.md), [snapshot/replay completion](replay-snapshot-completion.md), [replicated commits](replicated-entity-commits.md). |

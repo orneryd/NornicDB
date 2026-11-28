@@ -192,19 +192,76 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 
 // readProjectedNodeItemInTxn shares the versioned body decision between point,
 // label and MVCC projection readers. A nil projection retains full hydration.
-func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess) (*Node, error) {
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess, admitNew ...bool) (*Node, error) {
 	if properties == nil {
 		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings, nodeBodyCacheAdmit, false, nil)
 	}
-	node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
-	if !cached {
-		err := item.Value(func(value []byte) error {
-			var err error
-			node, err = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
-			return err
-		})
+	// Ordinary stores keep the established projection read and cache contract.
+	// Partial body admission exists only for databases created with projected.
+	if !b.projected {
+		node, cached := b.cacheLoadNodeBody(id, item.Version(), properties, access)
+		if !cached {
+			err := item.Value(func(value []byte) error {
+				var decodeErr error
+				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, include)
+				return decodeErr
+			})
+			if err != nil {
+				return node, err
+			}
+		}
+		if node != nil && access == nodeBodyDetached && projectionHydration(nodeItemBodyOnly, include) != nodeItemBodyOnly {
+			return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, false)
+		}
+		return node, nil
+	}
+	return b.readProjectedNodeItemProjectedInTxn(txn, item, id, properties, include, access, nil, admitNew...)
+}
+
+// readProjectedNodeItemProjectedInTxn is the projected-store half of the
+// canonical item reader. Label scans pass a resolver tied to their read view;
+// point reads resolve bindings directly from their own view.
+func (b *BadgerEngine) readProjectedNodeItemProjectedInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}, access nodeBodyAccess, resolver *projectedTokenResolver, admitNew ...bool) (*Node, error) {
+	read := b.readNodeBodyCache(id, item.Version(), properties, access, true, false)
+	node := read.node
+	// A label scan whose population exceeds the cache cannot retain its scan
+	// images. It still widens any version-matched entry already held; point
+	// reads retain their usual admission and eviction behavior.
+	admit := len(admitNew) == 0 || admitNew[0] || node != nil
+	if !read.complete {
+		decodeInclude := include
+		if node != nil {
+			decodeInclude = make(map[string]struct{}, len(read.missing))
+			for _, name := range read.missing {
+				decodeInclude[name] = struct{}{}
+			}
+		}
+		physical, usedPhysical, err := b.readPhysicalProjectedNode(txn, item, id, decodeInclude, node, resolver)
+		if usedPhysical && err == nil {
+			node = physical
+		}
+		if !usedPhysical && err == nil {
+			err = item.Value(func(value []byte) error {
+				if node == nil {
+					var decodeErr error
+					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(id), value, decodeInclude)
+					return decodeErr
+				}
+				// The version-matched cache supplied the metadata. Only the
+				// missing properties need decoding from this physical image.
+				envelope, decodeErr := SplitNodeEnvelope(value)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				_, decodeErr = b.decodeTokenizedPropertiesInto(txn, namespaceForNodeID(id), envelope.properties, decodeInclude, node.Properties)
+				return decodeErr
+			})
+		}
 		if err != nil {
 			return node, err
+		}
+		if admit {
+			b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs(), properties)
 		}
 	}
 	// A projection that names has_embedding gets the node's embedding metadata

@@ -2016,5 +2016,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	if err != nil || !used {
 		return nil, false, false, err
 	}
+	// Use the same read-tail proof as the label stream. It includes
+	// residual predicates and declines whole entities, writes and viewports.
+	if projection, safe := pipelineLabelScanProjectionForHint(ctx, nodePattern, whereClause, hint); safe {
+		plan.projection = projection
+	}
 	return e.readNodeIndexCandidatePlan(ctx, plan)
 }

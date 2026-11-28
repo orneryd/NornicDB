@@ -316,6 +316,8 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 				return nil, fmt.Errorf("varint overflow")
 			case nodeEnvelopeShortProperties:
 				return nil, fmt.Errorf("wal: truncated node properties")
+			case nodeEnvelopeInvalidProjected:
+				return nil, fmt.Errorf("wal: invalid projected node directory")
 			}
 			end = len(body) - len(envelope.metadata)
 			start = end - len(envelope.properties)
@@ -348,7 +350,14 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 			rebound = append(rebound, body[:start]...)
 		}
 		rebound = append(rebound, props...)
-		out[key] = append(rebound, body[end:]...)
+		rebound = append(rebound, body[end:]...)
+		if key[0] == prefixNode && body[0] == nodeFormatProjectedV1 {
+			rebound, err = buildProjectedNodeFrame(rebound)
+			if err != nil {
+				return nil, fmt.Errorf("wal: rebuild projected node directory for %q: %w", key[1:], err)
+			}
+		}
+		out[key] = rebound
 	}
 	return out, nil
 }
@@ -356,6 +365,13 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 // remapPropertyTokens changes only key varints. Values retain their exact
 // msgpack bytes (including temporal extensions, integer widths and vectors).
 func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]byte, error) {
+	return walkPhysicalPropertyValues(data, resolve, nil)
+}
+
+// walkPhysicalPropertyValues owns raw token/value spans for physical consumers.
+// A nil resolver observes the original frame without allocating a replacement.
+// Values remain opaque: token rebinding and column layout use the same framing.
+func walkPhysicalPropertyValues(data []byte, resolve func(uint64) (uint64, error), visit func(token uint64, start, end int)) ([]byte, error) {
 	if len(data) == 0 {
 		return data, nil
 	}
@@ -378,9 +394,12 @@ func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]b
 		if _, err := reader.Seek(int64(size), io.SeekCurrent); err != nil {
 			return nil, err
 		}
-		mapped, err := resolve(id)
-		if err != nil {
-			return nil, err
+		mapped := id
+		if resolve != nil {
+			mapped, err = resolve(id)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if mapped != id {
 			out = append(out, data[unchanged:offset]...)
@@ -389,6 +408,9 @@ func remapPropertyTokens(data []byte, resolve func(uint64) (uint64, error)) ([]b
 		}
 		if err := dec.Skip(); err != nil {
 			return nil, err
+		}
+		if visit != nil {
+			visit(id, offset+size, len(data)-reader.Len())
 		}
 	}
 	if reader.Len() != 0 {

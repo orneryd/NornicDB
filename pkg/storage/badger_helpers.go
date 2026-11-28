@@ -1032,7 +1032,7 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		return nil, false, fmt.Errorf("invalid node properties: %w", err)
 	}
 
-	propsBytes, err := b.encodeTokenizedProperties(txn, namespace, n.Properties)
+	propsBytes, regions, err := b.encodeTokenizedPropertiesWithRegions(txn, namespace, n.Properties, b.projected)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1040,13 +1040,16 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 	bodyCopy := *n
 	bodyCopy.Properties = nil
 
-	assemble := func(bodyBytes []byte) []byte {
+	assemble := func(bodyBytes []byte) ([]byte, error) {
+		if b.projected {
+			return buildProjectedNodeFrameFromRegions(propsBytes, bodyBytes, regions)
+		}
 		out := make([]byte, 0, 1+binary.MaxVarintLen64+len(propsBytes)+len(bodyBytes))
 		out = append(out, nodeFormatTokenizedV1)
 		out = binary.AppendUvarint(out, uint64(len(propsBytes)))
 		out = append(out, propsBytes...)
 		out = append(out, bodyBytes...)
-		return out
+		return out, nil
 	}
 
 	if chunkEmbeddingValues(bodyCopy.ChunkEmbeddings) <= maxNodeSize {
@@ -1054,7 +1057,10 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 		if err != nil {
 			return nil, false, err
 		}
-		data := assemble(bodyBytes)
+		data, err := assemble(bodyBytes)
+		if err != nil {
+			return nil, false, err
+		}
 		if len(data) <= maxNodeSize {
 			return data, false, nil
 		}
@@ -1093,7 +1099,8 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 	if err != nil {
 		return nil, false, err
 	}
-	return assemble(bodyBytes), true, nil
+	data, err := assemble(bodyBytes)
+	return data, true, err
 }
 
 // chunkEmbeddingValues counts the vector values of chunks.

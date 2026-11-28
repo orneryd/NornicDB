@@ -1,0 +1,28 @@
+{
+  "old_binary": "/tmp/pr1826-baseline",
+  "new_binary": "/tmp/pr1826-candidate",
+  "old_source": "935955a42",
+  "new_source": "40b7951be",
+  "clients": [
+    1
+  ],
+  "trials": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "warmup": 5,
+  "phase": "",
+  "queries": 30,
+  "ordinary_storage_format": true,
+  "query_cache_size": 0,
+  "workload": "northwind",
+  "parser": "nornic",
+  "GOGC": 400,
+  "GOMEMLIMIT": "8GiB",
+  "measurement_kind": "timing",
+  "work_directory_retained": "/tmp/combined-projection-u6y9drej",
+  "source_stores_unchanged": true,
+  "fixture_receipt": null
+}

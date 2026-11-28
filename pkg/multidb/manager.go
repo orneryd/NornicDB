@@ -467,6 +467,14 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 		return fmt.Errorf("invalid storage layout %q: %w", layout, storage.ErrInvalidData)
 	}
 	isolated := layout == StorageIsolated || layout == "" && config != nil && config.Create != nil
+	experimental := request.Options[OptionPhysicalLayout] == LayoutExperimental
+	projected := request.Options[OptionProjected] == "true"
+	if experimental && !isolated {
+		return fmt.Errorf("experimental layout requires isolated storage on a persistent standalone server: %w", storage.ErrInvalidData)
+	}
+	if projected && !isolated {
+		return fmt.Errorf("projected storage requires isolated storage on a persistent standalone server: %w", storage.ErrInvalidData)
+	}
 	policy := catalogTransitionPolicy{}
 	if isolated {
 		if config == nil || config.Create == nil {
@@ -482,7 +490,7 @@ func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCr
 			return nil
 		}
 		if err := m.checkSharedNamespace(ctx, request.Name); err != nil {
-			if layout == "" && errors.Is(err, ErrDatabaseExists) {
+			if layout == "" && !experimental && !projected && errors.Is(err, ErrDatabaseExists) {
 				return nil
 			}
 			return err
@@ -531,6 +539,24 @@ func (m *DatabaseManager) addStandardDatabase(request DatabaseCreateRequest) err
 		for key, value := range request.Options {
 			if key == OptionStorageLayout {
 				continue
+			}
+			if key == OptionPhysicalLayout {
+				switch value {
+				case LayoutStandard, LayoutExperimental:
+					options[key] = value
+					continue
+				default:
+					return fmt.Errorf("invalid database layout %q: %w", value, storage.ErrInvalidData)
+				}
+			}
+			if key == OptionProjected {
+				switch value {
+				case "true", "false":
+					options[key] = value
+					continue
+				default:
+					return fmt.Errorf("invalid projected option %q: %w", value, storage.ErrInvalidData)
+				}
 			}
 			mode := strings.ToUpper(strings.TrimSpace(value))
 			if key != OptionTxLogEnrichment || (mode != "OFF" && mode != "DIFF" && mode != "FULL") {

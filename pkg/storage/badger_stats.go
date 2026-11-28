@@ -1114,25 +1114,31 @@ func (b *BadgerEngine) readStreamNodeItem(ctx context.Context, txn *badger.Txn, 
 		// replaying a user callback when concurrent writes advance the view.
 		node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemFullEmbeddings, admission, embeddingRecordsAbsent, nil)
 	} else {
-		err = item.Value(func(val []byte) error {
-			key := item.Key()
-			if len(key) <= 1 {
-				return nil
-			}
-			if projected != nil {
+		usedPhysical := false
+		if projected != nil {
+			node, usedPhysical, err = projected.decodePhysicalItem(item)
+		}
+		if !usedPhysical && err == nil {
+			err = item.Value(func(val []byte) error {
+				key := item.Key()
+				if len(key) <= 1 {
+					return nil
+				}
+				if projected != nil {
+					var decodeErr error
+					node, decodeErr = projected.decode(key, val)
+					return decodeErr
+				}
+				nodeID := NodeID(key[1:])
 				var decodeErr error
-				node, decodeErr = projected.decode(key, val)
+				if opts.WithEmbeddings {
+					node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+				} else {
+					node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
+				}
 				return decodeErr
-			}
-			nodeID := NodeID(key[1:])
-			var decodeErr error
-			if opts.WithEmbeddings {
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-			} else {
-				node, decodeErr = b.decodeNodeProjected(txn, namespaceForNodeID(nodeID), val, nil)
-			}
-			return decodeErr
-		})
+			})
+		}
 	}
 	if err != nil {
 		return nil, err
