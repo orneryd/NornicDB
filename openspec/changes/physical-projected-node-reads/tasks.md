@@ -18,10 +18,10 @@
       on-disk marker that rejects incompatible open modes.
 - [x] Connect point, scan, cache-widening and transactional projected reads
       to snapshot-correct property IDs and the physical read API.
-- [ ] Profile baseline regressions and measure each viable improvement against
+- [x] Profile baseline regressions and measure each viable improvement against
       the same workload. Revert experiments that do not clear measurement noise
       or add unjustified complexity; preserve accepted and rejected evidence.
-- [ ] Publish the final four-mode Northwind and mixed-corpus report separately
+- [x] Publish the final four-mode Northwind and mixed-corpus report separately
       from the immutable baseline, including per-query and per-phase comparisons.
 - [ ] Verify mutation, TTL, delete, MVCC, missing-property, mixed type,
       compaction, value-log GC, reopen, backup/restore and WAL/snapshot recovery.

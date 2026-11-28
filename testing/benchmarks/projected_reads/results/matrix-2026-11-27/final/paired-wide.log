@@ -1,0 +1,24 @@
+2026-11-27 23:44:11 SERVER 73523
+1 0 baseline {'p50_ms': 0.24375, 'p95_ms': 0.621, 'p99_ms': 1.374458, 'queries_second': 20332.995149196995, 'sampled_server_peak_rss_kib': 3104176, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:13 SERVER STOP 0
+2026-11-27 23:44:16 SERVER 73626
+1 1 final {'p50_ms': 0.238291, 'p95_ms': 0.589125, 'p99_ms': 1.392083, 'queries_second': 21575.463727617873, 'sampled_server_peak_rss_kib': 3098352, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:18 SERVER STOP 0
+2026-11-27 23:44:21 SERVER 73725
+1 2 final {'p50_ms': 0.30025, 'p95_ms': 2.278042, 'p99_ms': 8.61675, 'queries_second': 9246.37568899039, 'sampled_server_peak_rss_kib': 2842272, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:24 SERVER STOP 0
+2026-11-27 23:44:27 SERVER 73893
+1 3 baseline {'p50_ms': 0.292625, 'p95_ms': 1.876584, 'p99_ms': 5.75325, 'queries_second': 10614.370608067327, 'sampled_server_peak_rss_kib': 2594816, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:30 SERVER STOP 0
+2026-11-27 23:44:33 SERVER 74064
+2 0 final {'p50_ms': 0.2535, 'p95_ms': 0.649083, 'p99_ms': 1.533875, 'queries_second': 19806.842032530873, 'sampled_server_peak_rss_kib': 3087600, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:34 SERVER STOP 0
+2026-11-27 23:44:37 SERVER 74172
+2 1 baseline {'p50_ms': 0.241416, 'p95_ms': 0.618209, 'p99_ms': 1.426583, 'queries_second': 21347.338143516226, 'sampled_server_peak_rss_kib': 3092816, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:39 SERVER STOP 0
+2026-11-27 23:44:42 SERVER 74271
+2 2 baseline {'p50_ms': 0.247708, 'p95_ms': 0.622083, 'p99_ms': 1.344, 'queries_second': 20894.137624410854, 'sampled_server_peak_rss_kib': 3115088, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:44 SERVER STOP 0
+2026-11-27 23:44:47 SERVER 74371
+2 3 final {'p50_ms': 0.243541, 'p95_ms': 0.622583, 'p99_ms': 1.417084, 'queries_second': 20887.042230209423, 'sampled_server_peak_rss_kib': 3106272, 'result_sha256': '1d1cf3159c62287d18e92aa9e9e39bfdf8c1abde0479acc1cb357f2f14b14e1a'}
+2026-11-27 23:44:48 SERVER STOP 0

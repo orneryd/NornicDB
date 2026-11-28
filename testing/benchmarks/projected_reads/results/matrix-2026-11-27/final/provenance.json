@@ -1,0 +1,38 @@
+{
+  "head": "b5666cd157caa2dfd7fd8e4345b12e9b2e0f9387",
+  "platform": "Darwin louise.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:39:09 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6020 arm64",
+  "go": "go version go1.27.4 darwin/arm64",
+  "binary_sha256": {
+    "northwind": "89b539cbb2e9b76df938d8c2775025a6a55679dd2c22a2785c622639ccf23d84",
+    "nornicdb": "e608fdb1c07114ab9c1ccc00791be1e72e303065a63702e9260058f3ceaea729",
+    "mixed": "e73df8f593e71a1ede4de948422afb32c00b2565021d1a5308ffe38c742c4376"
+  },
+  "northwind": {
+    "categories": 96,
+    "suppliers": 144,
+    "customers": 1200,
+    "products": 48000,
+    "orders": 48000,
+    "order_lines_min": 1,
+    "order_lines_max": 6,
+    "batch_size": 2000,
+    "parallel": 4,
+    "seed": 42,
+    "iterations": 30,
+    "warmup": 5
+  },
+  "mixed": {
+    "documents": 4352,
+    "clients": 8,
+    "queries_per_phase": 4000,
+    "warmup": 64
+  },
+  "server": {
+    "async_writes": true,
+    "query_cache": false,
+    "graph_only": true,
+    "GOGC": 400,
+    "GOMEMLIMIT": "8GiB",
+    "parser": "nornic"
+  }
+}
